@@ -1,19 +1,19 @@
 /**
  * API route: GET /api/items
  * Fetch and rank items for a given category and time period
+ * 
+ * NOTE: This ONLY reads from the database cache.
+ * Data is populated by periodic syncs from Inoreader (see /api/admin/sync)
+ * This ensures the read path is decoupled from the API and avoids rate limits.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { Category } from "@/src/lib/model";
-import { createInoreaderClient } from "@/src/lib/inoreader/client";
-import { getStreamsByCategory } from "@/src/config/feeds";
-import { normalizeItems } from "@/src/lib/pipeline/normalize";
-import { categorizeItems } from "@/src/lib/pipeline/categorize";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { saveItems, loadItemsByCategory, updateItemsCacheMetadata } from "@/src/lib/db/items";
+import { loadItemsByCategory } from "@/src/lib/db/items";
 import { saveItemScores } from "@/src/lib/db/scores";
 import { saveDigestSelections } from "@/src/lib/db/selections";
 
@@ -49,137 +49,45 @@ function parseQueryParams(req: NextRequest) {
 
 /**
  * GET /api/items?category=newsletters&period=week
+ * 
+ * Reads from database cache only. No Inoreader API calls.
+ * To refresh data, call POST /api/admin/sync/category?category=newsletters
  */
 export async function GET(req: NextRequest) {
   try {
     const { category, periodDays } = parseQueryParams(req);
 
-    logger.info(`Fetching items for category: ${category}, period: ${periodDays}d`);
+    logger.info(`[GET /api/items] Fetching items for category: ${category}, period: ${periodDays}d`);
 
     // Initialize database
     await initializeDatabase();
 
-    // Try to load items from database cache first
-    logger.debug("Attempting to load items from database cache...");
+    // Load items from database cache
+    logger.debug(`[GET /api/items] Loading items from database for category: ${category}`);
     const cachedItems = await loadItemsByCategory(category, periodDays);
-    if (cachedItems && cachedItems.length > 0) {
-      logger.info(`Loaded ${cachedItems.length} items from database cache for category: ${category}`);
-      
-      // Still need to rank them
-      const rankedItems = await rankCategory(cachedItems, category, periodDays);
-      const selectionResult = selectWithDiversity(rankedItems, category);
-      const finalItems = selectionResult.items;
-      
-      // Save scores to database for analytics
-      await saveItemScores(rankedItems, category);
-      
-      // Save digest selections with diversity reasons
-      const period = periodDays === 7 ? "week" : "month";
-      await saveDigestSelections(
-        finalItems.map((item, rank) => ({
-          itemId: item.id,
-          category,
-          period,
-          rank: rank + 1,
-          diversityReason: selectionResult.reasons.get(item.id),
-        }))
-      );
-      
-      logger.info(`Returning ${finalItems.length} final items from cached data`);
-
+    
+    if (!cachedItems || cachedItems.length === 0) {
+      logger.warn(`[GET /api/items] No items found in database for category: ${category}`);
       return NextResponse.json({
-        items: finalItems.map((item: typeof finalItems[number]) => ({
-          id: item.id,
-          title: item.title,
-          url: item.url,
-          sourceTitle: item.sourceTitle,
-          publishedAt: item.publishedAt.toISOString(),
-          summary: item.summary,
-          contentSnippet: item.contentSnippet,
-          category: item.category,
-          bm25Score: item.bm25Score,
-          llmScore: item.llmScore,
-          recencyScore: item.recencyScore,
-          finalScore: item.finalScore,
-          reasoning: item.reasoning,
-        })),
+        items: [],
         category,
         period: periodDays === 7 ? "week" : "month",
-        count: finalItems.length,
-        source: "cache",
+        count: 0,
+        message: `No cached items for category: ${category}. Run POST /api/admin/sync to fetch from Inoreader.`,
+        hint: `curl -X POST http://localhost:3000/api/admin/sync/category?category=${category}`,
       });
     }
 
-    logger.info("Items cache empty or expired, fetching from Inoreader API...");
-
-    // Create Inoreader client
-    const client = createInoreaderClient();
-
-    // Get all streams for this category (async)
-    const streamIds = await getStreamsByCategory(category);
-    if (streamIds.length === 0) {
-      logger.warn(`No streams configured for category: ${category}`);
-      return NextResponse.json({
-        items: [],
-        category,
-        period: periodDays,
-        message: "No streams configured for this category",
-      });
-    }
-
-    logger.info(`Found ${streamIds.length} streams for category: ${category}`);
-
-    // Fetch items from all streams
-    const allItems = [];
-    for (const streamId of streamIds) {
-      try {
-        logger.debug(`Fetching stream: ${streamId}`);
-        const response = await client.getStreamContents(streamId, { n: 100 });
-        allItems.push(...response.items);
-        logger.info(`Fetched ${response.items.length} items from ${streamId}`);
-      } catch (error) {
-        logger.error(`Failed to fetch stream ${streamId}`, error);
-        // Continue with other streams on error
-      }
-    }
-
-    if (allItems.length === 0) {
-      logger.warn(`No items fetched for category: ${category}`);
-      return NextResponse.json({
-        items: [],
-        category,
-        period: periodDays,
-        message: "No items found",
-      });
-    }
-
-    logger.info(`Fetched ${allItems.length} total items from API`);
-
-    // Normalize items
-    let items = await normalizeItems(allItems);
-    logger.info(`Normalized ${items.length} items`);
-
-    // Categorize items
-    items = categorizeItems(items);
-
-    // Filter to items in this category
-    const categoryItems = items.filter((i: typeof items[number]) => i.category === category);
-    logger.info(`${categoryItems.length} items match category: ${category}`);
-
-    // Save to database for future cache hits
-    await saveItems(categoryItems);
-    await updateItemsCacheMetadata(periodDays, categoryItems.length);
-
-    // Rank items
-    const rankedItems = await rankCategory(categoryItems, category, periodDays);
-
-    // Save scores for analytics
-    await saveItemScores(rankedItems, category);
-
-    // Select top items with diversity constraints
+    logger.info(`[GET /api/items] Loaded ${cachedItems.length} items from database cache for category: ${category}`);
+    
+    // Rank items using scoring pipeline
+    const rankedItems = await rankCategory(cachedItems, category, periodDays);
     const selectionResult = selectWithDiversity(rankedItems, category);
     const finalItems = selectionResult.items;
-
+    
+    // Save scores to database for analytics
+    await saveItemScores(rankedItems, category);
+    
     // Save digest selections with diversity reasons
     const period = periodDays === 7 ? "week" : "month";
     await saveDigestSelections(
@@ -191,8 +99,8 @@ export async function GET(req: NextRequest) {
         diversityReason: selectionResult.reasons.get(item.id),
       }))
     );
-
-    logger.info(`Returning ${finalItems.length} final items from fresh fetch`);
+    
+    logger.info(`[GET /api/items] Returning ${finalItems.length} final items (ranked from ${cachedItems.length} in cache)`);
 
     return NextResponse.json({
       items: finalItems.map((item: typeof finalItems[number]) => ({
@@ -211,12 +119,12 @@ export async function GET(req: NextRequest) {
         reasoning: item.reasoning,
       })),
       category,
-      period: periodDays === 7 ? "week" : "month",
+      period,
       count: finalItems.length,
-      source: "api",
-    });
-  } catch (error) {
-    logger.error("Error in /api/items", error);
+      source: "database_cache",
+      });
+      } catch (error) {
+      logger.error("[GET /api/items] Error", error);
 
     return NextResponse.json(
       {
