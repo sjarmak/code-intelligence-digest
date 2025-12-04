@@ -15,6 +15,7 @@ import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { saveItems, loadItemsByCategory, updateItemsCacheMetadata } from "@/src/lib/db/items";
 import { saveItemScores } from "@/src/lib/db/scores";
+import { saveDigestSelections } from "@/src/lib/db/selections";
 
 /**
  * Validate query parameters
@@ -66,10 +67,23 @@ export async function GET(req: NextRequest) {
       
       // Still need to rank them
       const rankedItems = await rankCategory(cachedItems, category, periodDays);
-      const finalItems = selectWithDiversity(rankedItems, category);
+      const selectionResult = selectWithDiversity(rankedItems, category);
+      const finalItems = selectionResult.items;
       
       // Save scores to database for analytics
       await saveItemScores(rankedItems, category);
+      
+      // Save digest selections with diversity reasons
+      const period = periodDays === 7 ? "week" : "month";
+      await saveDigestSelections(
+        finalItems.map((item, rank) => ({
+          itemId: item.id,
+          category,
+          period,
+          rank: rank + 1,
+          diversityReason: selectionResult.reasons.get(item.id),
+        }))
+      );
       
       logger.info(`Returning ${finalItems.length} final items from cached data`);
 
@@ -163,7 +177,20 @@ export async function GET(req: NextRequest) {
     await saveItemScores(rankedItems, category);
 
     // Select top items with diversity constraints
-    const finalItems = selectWithDiversity(rankedItems, category);
+    const selectionResult = selectWithDiversity(rankedItems, category);
+    const finalItems = selectionResult.items;
+
+    // Save digest selections with diversity reasons
+    const period = periodDays === 7 ? "week" : "month";
+    await saveDigestSelections(
+      finalItems.map((item, rank) => ({
+        itemId: item.id,
+        category,
+        period,
+        rank: rank + 1,
+        diversityReason: selectionResult.reasons.get(item.id),
+      }))
+    );
 
     logger.info(`Returning ${finalItems.length} final items from fresh fetch`);
 
