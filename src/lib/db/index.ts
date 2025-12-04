@@ -113,6 +113,15 @@ export async function initializeDatabase() {
       );
     `);
 
+    // Create item_embeddings table
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS item_embeddings (
+        item_id TEXT PRIMARY KEY,
+        embedding TEXT NOT NULL,
+        generated_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+    `);
+
     // Create indexes for common queries
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);
