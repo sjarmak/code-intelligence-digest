@@ -12,6 +12,9 @@ import { categorizeItems } from "@/src/lib/pipeline/categorize";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { logger } from "@/src/lib/logger";
+import { initializeDatabase } from "@/src/lib/db/index";
+import { saveItems, loadItemsByCategory, updateItemsCacheMetadata } from "@/src/lib/db/items";
+import { saveItemScores } from "@/src/lib/db/scores";
 
 /**
  * Validate query parameters
@@ -51,6 +54,49 @@ export async function GET(req: NextRequest) {
     const { category, periodDays } = parseQueryParams(req);
 
     logger.info(`Fetching items for category: ${category}, period: ${periodDays}d`);
+
+    // Initialize database
+    await initializeDatabase();
+
+    // Try to load items from database cache first
+    logger.debug("Attempting to load items from database cache...");
+    const cachedItems = await loadItemsByCategory(category, periodDays);
+    if (cachedItems && cachedItems.length > 0) {
+      logger.info(`Loaded ${cachedItems.length} items from database cache for category: ${category}`);
+      
+      // Still need to rank them
+      const rankedItems = await rankCategory(cachedItems, category, periodDays);
+      const finalItems = selectWithDiversity(rankedItems, category);
+      
+      // Save scores to database for analytics
+      await saveItemScores(rankedItems, category);
+      
+      logger.info(`Returning ${finalItems.length} final items from cached data`);
+
+      return NextResponse.json({
+        items: finalItems.map((item: typeof finalItems[number]) => ({
+          id: item.id,
+          title: item.title,
+          url: item.url,
+          sourceTitle: item.sourceTitle,
+          publishedAt: item.publishedAt.toISOString(),
+          summary: item.summary,
+          contentSnippet: item.contentSnippet,
+          category: item.category,
+          bm25Score: item.bm25Score,
+          llmScore: item.llmScore,
+          recencyScore: item.recencyScore,
+          finalScore: item.finalScore,
+          reasoning: item.reasoning,
+        })),
+        category,
+        period: periodDays === 7 ? "week" : "month",
+        count: finalItems.length,
+        source: "cache",
+      });
+    }
+
+    logger.info("Items cache empty or expired, fetching from Inoreader API...");
 
     // Create Inoreader client
     const client = createInoreaderClient();
@@ -93,7 +139,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    logger.info(`Fetched ${allItems.length} total items`);
+    logger.info(`Fetched ${allItems.length} total items from API`);
 
     // Normalize items
     let items = await normalizeItems(allItems);
@@ -106,13 +152,20 @@ export async function GET(req: NextRequest) {
     const categoryItems = items.filter((i: typeof items[number]) => i.category === category);
     logger.info(`${categoryItems.length} items match category: ${category}`);
 
+    // Save to database for future cache hits
+    await saveItems(categoryItems);
+    await updateItemsCacheMetadata(periodDays, categoryItems.length);
+
     // Rank items
     const rankedItems = await rankCategory(categoryItems, category, periodDays);
+
+    // Save scores for analytics
+    await saveItemScores(rankedItems, category);
 
     // Select top items with diversity constraints
     const finalItems = selectWithDiversity(rankedItems, category);
 
-    logger.info(`Returning ${finalItems.length} final items`);
+    logger.info(`Returning ${finalItems.length} final items from fresh fetch`);
 
     return NextResponse.json({
       items: finalItems.map((item: typeof finalItems[number]) => ({
@@ -133,6 +186,7 @@ export async function GET(req: NextRequest) {
       category,
       period: periodDays === 7 ? "week" : "month",
       count: finalItems.length,
+      source: "api",
     });
   } catch (error) {
     logger.error("Error in /api/items", error);

@@ -6,6 +6,13 @@
 import { Category } from "../lib/model";
 import { createInoreaderClient } from "../lib/inoreader/client";
 import { logger } from "../lib/logger";
+import { initializeDatabase } from "../lib/db/index";
+import {
+  saveFeeds as saveFeedsDb,
+  loadAllFeeds,
+  isFeedsCacheValid,
+  updateFeedsCacheMetadata,
+} from "../lib/db/feeds";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -28,7 +35,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   paper: "research",
   papers: "research",
   arxiv: "research",
-  academic: "academic",
+  academic: "research",
 
   // Tech Articles / Blogs
   "tech articles": "tech_articles",
@@ -115,7 +122,7 @@ function loadFeedsFromCache(): FeedConfig[] | null {
       return cached;
     }
   } catch (error) {
-    logger.warn("Failed to load feeds from disk cache", error);
+    logger.warn("Failed to load feeds from disk cache", { error });
   }
   return null;
 }
@@ -132,13 +139,14 @@ function saveFeedsToCache(feeds: FeedConfig[]): void {
     fs.writeFileSync(FEEDS_CACHE_FILE, JSON.stringify(feeds, null, 2));
     logger.info(`Saved ${feeds.length} feeds to disk cache`);
   } catch (error) {
-    logger.warn("Failed to save feeds to disk cache", error);
+    logger.warn("Failed to save feeds to disk cache", { error });
   }
 }
 
 /**
  * Dynamically fetch all feeds from Inoreader
  * Organizes them by folder/label into categories
+ * Uses database-backed cache with fallback to Inoreader API
  */
 export async function getFeeds(): Promise<FeedConfig[]> {
   // Use in-memory cache if available
@@ -146,14 +154,22 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     return cachedFeeds;
   }
 
-  // Try to load from disk cache first (much faster, avoids rate limits)
-  const diskCache = loadFeedsFromCache();
-  if (diskCache) {
-    cachedFeeds = diskCache;
-    return diskCache;
-  }
-
   try {
+    // Initialize database on first use
+    await initializeDatabase();
+
+    // Try to load from database cache first (much faster, avoids rate limits)
+    const isCacheValid = await isFeedsCacheValid();
+    if (isCacheValid) {
+      const dbFeeds = await loadAllFeeds();
+      if (dbFeeds && dbFeeds.length > 0) {
+        logger.info(`Loaded ${dbFeeds.length} feeds from database cache`);
+        cachedFeeds = dbFeeds;
+        return dbFeeds;
+      }
+    }
+
+    logger.info("Database cache expired or empty, fetching from Inoreader API...");
     const client = createInoreaderClient();
     const subscriptionList = await client.getSubscriptions();
 
@@ -201,20 +217,36 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     logger.info(`Loaded ${feeds.length} feeds from Inoreader`);
     cachedFeeds = feeds;
     
-    // Save to disk cache for future use
+    // Save to database cache and update metadata
+    await saveFeedsDb(feeds);
+    await updateFeedsCacheMetadata(feeds.length);
+    
+    // Also keep disk cache in sync for backwards compatibility
     saveFeedsToCache(feeds);
     
     return feeds;
   } catch (error) {
     logger.error("Failed to fetch feeds from Inoreader", error);
-    // No in-memory cache, but try to return stale disk cache as fallback
+    // Try to return cached feeds from database
+    try {
+      const dbFeeds = await loadAllFeeds();
+      if (dbFeeds && dbFeeds.length > 0) {
+        logger.warn("Returning feeds from database cache due to API fetch error");
+        cachedFeeds = dbFeeds;
+        return dbFeeds;
+      }
+    } catch (dbError) {
+      logger.error("Also failed to load from database cache", dbError);
+    }
+    
+    // Final fallback: try disk cache
     const staleDiskCache = loadFeedsFromCache();
     if (staleDiskCache && staleDiskCache.length > 0) {
-      logger.warn("Returning stale feeds from disk cache due to fetch error");
+      logger.warn("Returning stale feeds from disk cache as final fallback");
       cachedFeeds = staleDiskCache;
       return staleDiskCache;
     }
-    // Return empty array if no cache available
+    
     logger.error("No feeds available - API error and no cache");
     return [];
   }
