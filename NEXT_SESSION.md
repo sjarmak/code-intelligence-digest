@@ -1,4 +1,4 @@
-# Next Session: Cache Strategy & Smart Invalidation
+# Next Session: Semantic Search & LLM Q&A
 
 ## Current Status
 
@@ -12,33 +12,43 @@
 - Added `SelectionResult` interface to track diversity reasons for each item
 - Created `src/lib/db/selections.ts` with full CRUD for digest_selections table
 - Updated `selectWithDiversity()` to return items + diversity reasons map
-- Updated `/api/items/route.ts` to persist digest selections on every request
-- Created `/api/admin/ranking-debug` endpoint:
-  - Shows top 50 ranked items (before selection filtering)
-  - Displays BM25, LLM, recency, final scores with reasoning
-  - Shows score range (min/max/avg) per category
-- Created `/api/admin/analytics/scores` endpoint:
-  - Average scores per category from item_scores table
-  - Score distributions (histograms) for BM25, LLM relevance/usefulness, recency, final
-  - Top performing sources by average score
-- Created `/api/admin/analytics/selections` endpoint:
-  - Overall selection statistics per period
-  - Per-category selection breakdown with diversity reasons
-  - Analysis of why items were selected vs excluded
+- Persist digest selections to database on every /api/items request
+- Created `/api/admin/ranking-debug`: top 50 ranked items with scores and reasoning
+- Created `/api/admin/analytics/scores`: score distributions and top-performing sources
+- Created `/api/admin/analytics/selections`: selection decision tracking with diversity analysis
+
+✅ **Cache invalidation complete** (code-intel-digest-bkx)
+- Created `src/lib/db/cache.ts` with TTL checks and manual invalidation
+- Created `src/lib/backoff.ts` with exponential backoff utilities (1m→2m→4m→8m up to 8h)
+- Created `POST /api/admin/cache/invalidate` endpoint:
+  - Supports scope: 'feeds' | 'items' | 'all'
+  - Per-category items invalidation
+- Created `GET /api/admin/cache/status` endpoint:
+  - Shows cache health with TTL status (valid/expiring-soon/expired)
+  - Tracks total cached items count
+  - Human-readable timestamps and countdowns
+- Documented rate limit safety (10/100 req/day used, 90 available)
 
 All code passes typecheck and lint.
 
 ## Ready to Start
 
-### 1. **code-intel-digest-bkx** (HIGH PRIORITY)
-**Add caching expiration and cache invalidation strategy**
-
-Goal: Smart cache refresh without hammering Inoreader API
-
-### 2. **code-intel-digest-mop** (AFTER #1)
+### 1. **code-intel-digest-mop** (MEDIUM)
 **Add semantic search and LLM Q&A endpoints**
 
-This becomes possible once cache strategy and admin endpoints are solid.
+Goal: Enable intelligent queries over cached digest content
+
+Tasks:
+1. Build vector index on item summaries (using an embedding model)
+2. Create `/api/search?q=code+intelligence&category=research` endpoint:
+   - Semantic search over cached items
+   - Return top-K results with relevance scores
+3. Create `/api/ask?question=How+do+code+agents+handle+context?` endpoint:
+   - LLM Q&A over selected digest items
+   - Return answer + source citations
+4. Implement caching for embeddings (avoid recomputing)
+
+Test: Verify search and Q&A work on cached digest data without additional API calls.
 
 ## Testing Checklist
 
