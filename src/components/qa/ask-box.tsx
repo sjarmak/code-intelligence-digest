@@ -1,0 +1,102 @@
+'use client';
+
+import { useState } from 'react';
+import { Category } from '@/src/lib/model';
+
+interface AskBoxProps {
+  onAsk: (question: string, category: Category | null, period: 'week' | 'month') => void;
+  isLoading: boolean;
+}
+
+const CATEGORIES: Array<{ id: Category; label: string }> = [
+  { id: 'newsletters', label: 'Newsletters' },
+  { id: 'podcasts', label: 'Podcasts' },
+  { id: 'tech_articles', label: 'Tech Articles' },
+  { id: 'ai_news', label: 'AI News' },
+  { id: 'product_news', label: 'Product News' },
+  { id: 'community', label: 'Community' },
+  { id: 'research', label: 'Research' },
+];
+
+export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
+  const [question, setQuestion] = useState('');
+  const [category, setCategory] = useState<Category | null>(null);
+  const [period, setPeriod] = useState<'week' | 'month'>('week');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (question.trim()) {
+      onAsk(question, category, period);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Question Input */}
+      <div>
+        <label htmlFor="ask-question" className="block text-sm font-medium mb-2">
+          Ask a Question
+        </label>
+        <textarea
+          id="ask-question"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="e.g., How do code agents handle context windows? What are the latest advances in semantic search?"
+          rows={3}
+          className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+          disabled={isLoading}
+        />
+      </div>
+
+      {/* Filters */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Category Filter */}
+        <div>
+          <label htmlFor="ask-category" className="block text-sm font-medium mb-2">
+            Category (Optional)
+          </label>
+          <select
+            id="ask-category"
+            value={category || ''}
+            onChange={(e) => setCategory((e.target.value as Category) || null)}
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={isLoading}
+          >
+            <option value="">All Categories</option>
+            {CATEGORIES.map((cat) => (
+              <option key={cat.id} value={cat.id}>
+                {cat.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Period Filter */}
+        <div>
+          <label htmlFor="ask-period" className="block text-sm font-medium mb-2">
+            Time Period
+          </label>
+          <select
+            id="ask-period"
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as 'week' | 'month')}
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={isLoading}
+          >
+            <option value="week">This Week</option>
+            <option value="month">This Month</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Submit Button */}
+      <button
+        type="submit"
+        disabled={isLoading || !question.trim()}
+        className="w-full px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {isLoading ? 'Finding answer...' : 'Ask'}
+      </button>
+    </form>
+  );
+}
