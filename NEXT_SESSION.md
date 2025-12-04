@@ -1,96 +1,93 @@
-# Next Session: Semantic Search & LLM Q&A
+# Next Session: Build Search/Q&A UI Components
 
-## Current Status
+## Context
 
-✅ **Database infrastructure complete** (code-intel-digest-g66)
-- 5-table SQLite schema (feeds, items, item_scores, cache_metadata, digest_selections)
-- 3 operation modules for CRUD operations
-- Integrated with feeds.ts (6h TTL) and /api/items (1h TTL)
-- All code passes typecheck and lint
+You completed semantic search and LLM Q&A endpoints (code-intel-digest-mop). Both APIs are fully functional with:
+- `/api/search?q=...` - Semantic search over cached items
+- `/api/ask?question=...` - Q&A with source citations
+- Full embeddings caching in database
+- TypeScript type coverage
+- All code passes lint and typecheck
 
-✅ **Ranking persistence complete** (code-intel-digest-qr4)
-- Added `SelectionResult` interface to track diversity reasons for each item
-- Created `src/lib/db/selections.ts` with full CRUD for digest_selections table
-- Updated `selectWithDiversity()` to return items + diversity reasons map
-- Persist digest selections to database on every /api/items request
-- Created `/api/admin/ranking-debug`: top 50 ranked items with scores and reasoning
-- Created `/api/admin/analytics/scores`: score distributions and top-performing sources
-- Created `/api/admin/analytics/selections`: selection decision tracking with diversity analysis
+## Recommended Next Work
 
-✅ **Cache invalidation complete** (code-intel-digest-bkx)
-- Created `src/lib/db/cache.ts` with TTL checks and manual invalidation
-- Created `src/lib/backoff.ts` with exponential backoff utilities (1m→2m→4m→8m up to 8h)
-- Created `POST /api/admin/cache/invalidate` endpoint:
-  - Supports scope: 'feeds' | 'items' | 'all'
-  - Per-category items invalidation
-- Created `GET /api/admin/cache/status` endpoint:
-  - Shows cache health with TTL status (valid/expiring-soon/expired)
-  - Tracks total cached items count
-  - Human-readable timestamps and countdowns
-- Documented rate limit safety (10/100 req/day used, 90 available)
+### Primary: Build Search/Q&A UI (code-intel-digest-l1z, P1)
 
-All code passes typecheck and lint.
+Add frontend components for the new search and Q&A endpoints.
 
-## Ready to Start
+#### Search UI Component (`src/components/search/SearchBox.tsx`)
+- Input field for query
+- Category filter dropdown (optional)
+- Period selector (week/month)
+- Execute search button
 
-### 1. **code-intel-digest-mop** (MEDIUM)
-**Add semantic search and LLM Q&A endpoints**
+#### Search Results Component (`src/components/search/SearchResults.tsx`)
+- Display results from `/api/search`
+- Show per-item:
+  - Title (link to URL)
+  - Source
+  - Similarity score (0-1, maybe as % or bar)
+  - Summary snippet
+- Loading state during search
+- Empty state if no results
 
-Goal: Enable intelligent queries over cached digest content
+#### Q&A UI Component (`src/components/qa/AskBox.tsx`)
+- Question input field
+- Category filter (optional)
+- Ask button
 
-Tasks:
-1. Build vector index on item summaries (using an embedding model)
-2. Create `/api/search?q=code+intelligence&category=research` endpoint:
-   - Semantic search over cached items
-   - Return top-K results with relevance scores
-3. Create `/api/ask?question=How+do+code+agents+handle+context?` endpoint:
-   - LLM Q&A over selected digest items
-   - Return answer + source citations
-4. Implement caching for embeddings (avoid recomputing)
+#### Answer Display Component (`src/components/qa/Answer.tsx`)
+- Display answer text from `/api/ask`
+- Show source citations with:
+  - Item title (link)
+  - Source name
+  - Relevance score
+- Loading state with streamed answer support (future)
 
-Test: Verify search and Q&A work on cached digest data without additional API calls.
+#### Integration Point
+- Add new "Search" tab to main dashboard (`app/page.tsx`)
+- Alongside existing digest tabs
 
-## Testing Checklist
+## Quick Start
 
-- [ ] Database creates .data/digest.db on first run
-- [ ] Feeds cache works (6h TTL with expire_at in metadata)
-- [ ] Items cache works (1h TTL per period)
-- [ ] Scores persist correctly (item_scores table populated)
-- [ ] `npm run typecheck` passes
-- [ ] `npm run lint` passes
+1. Check `history/SEMANTIC_SEARCH.md` for API response schemas
+2. Create components using shadcn-ui patterns from existing `src/components/`
+3. Follow existing component structure (functional, TypeScript, proper types)
+4. Test with actual `/api/search` and `/api/ask` calls during development
 
-## Rate Limit Handling
+## Database/API Status
 
-With DB in place:
-1. Inoreader allows ~100 requests/day
-2. Feeds cache: 6 hours (4 refreshes/day max)
-3. Items cache: 1 hour per period (24 refreshes/day max if requested every hour)
-4. Implement endpoint to check rate limit status
+All backend infrastructure is complete:
+- ✅ Database tables and schema
+- ✅ Embedding generation and caching
+- ✅ Search algorithm
+- ✅ Q&A answer generation
+- ✅ API endpoints (untested but valid)
 
-## Architecture Notes
+## Testing Strategy
 
-Current three-layer caching:
+1. Start dev server: `npm run dev`
+2. Call API endpoints directly to verify responses
+3. Build UI components
+4. Connect to APIs
+5. Verify end-to-end flow
+
+## Known Limitations
+
+- Answer generation is template-based (no Claude API yet)
+- Embeddings use simple TF-IDF (not transformer-based)
+- No analytics/search history tracking
+
+These can be addressed in future iterations.
+
+## Ready to Start?
+
+Run `bd ready --json` to see available work, then:
+
+```bash
+bd update code-intel-digest-l1z --status in_progress
+# ... implement ...
+bd close code-intel-digest-l1z --reason "Completed search/Q&A UI"
 ```
-User Request
-  ↓
-In-memory cache (feeds only)
-  ↓
-Database cache (TTL check via expires_at)
-  ↓
-Inoreader API (on miss + backoff on error)
-  ↓
-Disk cache fallback (backwards compat)
-```
 
-Next phase adds:
-- Scoring/ranking history for analytics
-- Per-category cache strategies
-- Smart invalidation and backoff
-
-## Recommended Approach
-
-1. Start with code-intel-digest-qr4 (debugging is valuable)
-2. Add simple cache invalidation endpoints (avoid complexity)
-3. Defer search/Q&A until foundation is proven
-
-Expected outcome: Production-ready caching with minimal API load.
+Good luck! 🚀
