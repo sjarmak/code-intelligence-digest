@@ -10,11 +10,12 @@ export async function GET() {
     logger.info("DEBUG: Fetching subscriptions...");
     const subscriptions = await client.getSubscriptions();
     
-    logger.info(`DEBUG: Got response with ${subscriptions.subscriptions?.length || 0} subscriptions`);
+    const subscriptionArray = subscriptions.subscriptions as unknown[];
+    logger.info(`DEBUG: Got response with ${Array.isArray(subscriptionArray) ? subscriptionArray.length : 0} subscriptions`);
     
     return NextResponse.json({
       success: true,
-      subscriptionCount: subscriptions.subscriptions?.length || 0,
+      subscriptionCount: Array.isArray(subscriptionArray) ? subscriptionArray.length : 0,
       rawResponse: subscriptions,
     }, { status: 200 });
   } catch (error) {
