@@ -1,4 +1,4 @@
-# Next Session: Ranking Persistence & Cache Strategy
+# Next Session: Cache Strategy & Smart Invalidation
 
 ## Current Status
 
@@ -8,53 +8,37 @@
 - Integrated with feeds.ts (6h TTL) and /api/items (1h TTL)
 - All code passes typecheck and lint
 
+✅ **Ranking persistence complete** (code-intel-digest-qr4)
+- Added `SelectionResult` interface to track diversity reasons for each item
+- Created `src/lib/db/selections.ts` with full CRUD for digest_selections table
+- Updated `selectWithDiversity()` to return items + diversity reasons map
+- Updated `/api/items/route.ts` to persist digest selections on every request
+- Created `/api/admin/ranking-debug` endpoint:
+  - Shows top 50 ranked items (before selection filtering)
+  - Displays BM25, LLM, recency, final scores with reasoning
+  - Shows score range (min/max/avg) per category
+- Created `/api/admin/analytics/scores` endpoint:
+  - Average scores per category from item_scores table
+  - Score distributions (histograms) for BM25, LLM relevance/usefulness, recency, final
+  - Top performing sources by average score
+- Created `/api/admin/analytics/selections` endpoint:
+  - Overall selection statistics per period
+  - Per-category selection breakdown with diversity reasons
+  - Analysis of why items were selected vs excluded
+
+All code passes typecheck and lint.
+
 ## Ready to Start
 
-### 1. **code-intel-digest-qr4** (HIGH PRIORITY)
-**Implement item ranking and filtering persistence layer**
-
-Goal: Store all ranked items (not just top-K selections) to enable:
-- Algorithm experimentation (what weights work per category?)
-- Score analytics dashboard
-- Ranking history tracking
-
-Tasks:
-1. Create `/api/admin/ranking-debug` endpoint to:
-   - Show top 50 items (ranked but not selected) per category
-   - Display BM25, LLM, recency, final scores
-   - Show why items were filtered (low relevance, off-topic, source cap)
-2. Create `/api/analytics/scores` endpoint:
-   - Average scores per category (trends over time)
-   - Score distribution (histograms)
-   - Top-performing sources/items
-3. Populate `digest_selections` table when items are selected:
-   - Record rank position, diversity reason, timestamp
-   - Track what gets excluded and why
-
-Test: Verify 100+ items stored per category with full score metadata.
-
-### 2. **code-intel-digest-bkx** (MEDIUM)
+### 1. **code-intel-digest-bkx** (HIGH PRIORITY)
 **Add caching expiration and cache invalidation strategy**
 
 Goal: Smart cache refresh without hammering Inoreader API
 
-Tasks:
-1. Implement cache invalidation endpoints:
-   - `POST /api/admin/invalidate-feeds` - force feeds refresh (6h minimum)
-   - `POST /api/admin/invalidate-items?category=research` - per-category items refresh
-2. Add exponential backoff retry logic:
-   - Track failed refresh attempts in cache_metadata
-   - Exponential backoff: 1h, 2h, 4h, 8h between retries
-3. Implement "smart stale" fallback:
-   - If API fails, extend TTL instead of failing hard
-   - Log degradation with timestamp
-
-Test: Verify cache eviction, API rate limiting handling, error recovery.
-
-### 3. **code-intel-digest-mop** (AFTER #2)
+### 2. **code-intel-digest-mop** (AFTER #1)
 **Add semantic search and LLM Q&A endpoints**
 
-This becomes possible once persistence is solid.
+This becomes possible once cache strategy and admin endpoints are solid.
 
 ## Testing Checklist
 
