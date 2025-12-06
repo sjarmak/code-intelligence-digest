@@ -122,6 +122,20 @@ export async function initializeDatabase() {
       );
     `);
 
+    // Create sync_state table for resumable syncs
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS sync_state (
+        id TEXT PRIMARY KEY,
+        continuation_token TEXT,
+        items_processed INTEGER DEFAULT 0,
+        calls_used INTEGER DEFAULT 0,
+        started_at INTEGER NOT NULL,
+        last_updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        status TEXT NOT NULL,
+        error TEXT
+      );
+    `);
+
     // Create indexes for common queries
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);

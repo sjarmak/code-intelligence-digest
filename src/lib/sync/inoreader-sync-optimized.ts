@@ -166,65 +166,86 @@ export async function syncAllCategoriesOptimized(): Promise<{
       `[SYNC-OPTIMIZED] Fetching all items in bulk from: ${allItemsStreamId}`
     );
 
-    // Fetch ALL items (up to 1000) in a single API call
-    // This is the key optimization: one call gets everything
-    const response = await client.getStreamContents(allItemsStreamId, {
-      n: 1000, // Get up to 1000 items (covers a month or more for most users)
-    });
+    // Fetch ALL items with pagination support
+    // Inoreader returns items per call, use continuation token for more
+    // Save after each batch to avoid losing data on errors
+    let continuation: string | undefined;
+    let callCount = 0;
 
-    apiCallsUsed = 1;
+    do {
+      callCount++;
+      logger.debug(
+        `[SYNC-OPTIMIZED] Fetching batch ${callCount}${continuation ? ' (continuation)' : ''}`
+      );
 
-    if (!response.items || response.items.length === 0) {
-      logger.warn('[SYNC-OPTIMIZED] No items found in Inoreader');
-      return {
-        success: false,
-        categoriesProcessed: [],
-        itemsAdded: 0,
-        errors: [{ category: 'newsletters', error: 'No items found' }],
-        apiCallsUsed,
-      };
-    }
+      const response = await client.getStreamContents(allItemsStreamId, {
+        n: 1000, // Get up to 1000 items per call
+        continuation,
+      });
 
-    logger.info(
-      `[SYNC-OPTIMIZED] Fetched ${response.items.length} total items in 1 API call`
-    );
+      if (!response.items || response.items.length === 0) {
+        break;
+      }
 
-    // Normalize items
-    let items = await normalizeItems(response.items);
-    logger.info(`[SYNC-OPTIMIZED] Normalized ${items.length} items`);
+      logger.info(
+        `[SYNC-OPTIMIZED] Batch ${callCount}: fetched ${response.items.length} raw items`
+      );
 
-    // Categorize items
-    items = categorizeItems(items);
-    logger.info(`[SYNC-OPTIMIZED] Categorized items into 7 categories`);
+      // Normalize items immediately
+      let items = await normalizeItems(response.items);
+      logger.debug(`[SYNC-OPTIMIZED] Normalized ${items.length} items`);
 
-    // Process each category
-    for (const category of VALID_CATEGORIES) {
-      try {
+      // Categorize items
+      items = categorizeItems(items);
+
+      // Save immediately by category
+      for (const category of VALID_CATEGORIES) {
         const categoryItems = items.filter((i) => i.category === category);
 
         if (categoryItems.length === 0) {
-          logger.warn(
-            `[SYNC-OPTIMIZED] No items for category: ${category}`
-          );
           continue;
         }
 
-        // Save to database
-        await saveItems(categoryItems);
-        logger.info(
-          `[SYNC-OPTIMIZED] Saved ${categoryItems.length} items for category: ${category}`
-        );
+        try {
+          await saveItems(categoryItems);
+          totalItemsAdded += categoryItems.length;
 
-        categoriesProcessed.push(category);
-        totalItemsAdded += categoryItems.length;
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.error(
-          `[SYNC-OPTIMIZED] Failed to process category: ${category}`,
-          error
-        );
-        errors.push({ category, error: errorMsg });
+          if (!categoriesProcessed.includes(category)) {
+            categoriesProcessed.push(category);
+          }
+
+          logger.debug(
+            `[SYNC-OPTIMIZED] Batch ${callCount}, saved ${categoryItems.length} items to ${category}`
+          );
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          logger.error(
+            `[SYNC-OPTIMIZED] Failed to save ${category} items from batch ${callCount}`,
+            error
+          );
+          if (!errors.find((e) => e.category === category)) {
+            errors.push({ category, error: errorMsg });
+          }
+        }
       }
+
+      continuation = response.continuation;
+      logger.info(
+        `[SYNC-OPTIMIZED] Batch ${callCount} complete: ${totalItemsAdded} total items saved so far`
+      );
+    } while (continuation);
+
+    apiCallsUsed = callCount;
+
+    if (totalItemsAdded === 0) {
+      logger.warn('[SYNC-OPTIMIZED] No items found or saved');
+      return {
+        success: false,
+        categoriesProcessed,
+        itemsAdded: 0,
+        errors: [{ category: 'newsletters', error: 'No items found or saved' }],
+        apiCallsUsed,
+      };
     }
 
     const success = categoriesProcessed.length === VALID_CATEGORIES.length;

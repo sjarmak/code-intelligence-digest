@@ -33,17 +33,24 @@ const VALID_CATEGORIES: Category[] = [
  * POST /api/admin/sync-optimized/all
  * Sync ALL categories with just 1 API call to Inoreader
  */
-export async function POST(req: NextRequest) {
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ slug: string[] }> }
+) {
   try {
-    const { pathname } = new URL(req.url);
     const { searchParams } = new URL(req.url);
+    const resolvedParams = await params;
+    const action = resolvedParams.slug?.[0] || '';
 
-    logger.info(`[SYNC-OPT] Request to: ${pathname}`);
+    logger.info(`[SYNC-OPT] Request action: ${action}, slug: ${JSON.stringify(resolvedParams?.slug)}`);
 
     // Initialize database
     await initializeDatabase();
 
-    if (pathname.includes('/all')) {
+    // Handle params
+    const finalAction = action;
+
+    if (finalAction === 'all') {
       // Sync all categories at once (1 API call)
       logger.info('[SYNC-OPT] Initiating full optimized sync (1 API call)');
 
@@ -62,7 +69,7 @@ export async function POST(req: NextRequest) {
         message: `✅ Synced ${result.itemsAdded} items using only ${result.apiCallsUsed} API call(s)!`,
         timestamp: new Date().toISOString(),
       });
-    } else if (pathname.includes('/category')) {
+    } else if (finalAction === 'category') {
       // Sync single category
       const category = searchParams.get('category') as Category | null;
 
@@ -96,7 +103,7 @@ export async function POST(req: NextRequest) {
         message: `✅ Synced ${result.itemsAdded} items using only ${result.apiCallsUsed} API call(s)!`,
         timestamp: new Date().toISOString(),
       });
-    } else if (pathname.includes('/label')) {
+    } else if (finalAction === 'label') {
       // Sync by label (useful if you've organized feeds by label in Inoreader)
       const labelId = searchParams.get('labelId');
 

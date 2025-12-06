@@ -85,3 +85,18 @@ export const digestSelections = sqliteTable("digest_selections", {
   diversityReason: text("diversity_reason"), // Why it was selected/rejected
   selectedAt: integer("selected_at").default(sql`(strftime('%s', 'now'))`),
 });
+
+/**
+ * Sync state: track progress for resumable syncs
+ * Allows resuming interrupted syncs without losing progress
+ */
+export const syncState = sqliteTable("sync_state", {
+  id: text("id").primaryKey(), // e.g., "daily-sync"
+  continuationToken: text("continuation_token"), // Resume point for pagination
+  itemsProcessed: integer("items_processed").default(0),
+  callsUsed: integer("calls_used").default(0),
+  startedAt: integer("started_at").notNull(),
+  lastUpdatedAt: integer("last_updated_at").default(sql`(strftime('%s', 'now'))`),
+  status: text("status").notNull(), // "in_progress", "completed", "paused"
+  error: text("error"), // If paused due to error
+});
