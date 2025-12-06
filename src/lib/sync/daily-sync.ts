@@ -183,6 +183,18 @@ export async function runDailySync(): Promise<{
       let items = await normalizeItems(response.items);
       items = categorizeItems(items);
 
+      // Filter to last 30 days (client-side enforcement)
+      const thirtyDaysAgoDate = new Date(thirtyDaysAgo * 1000);
+      const beforeFilter = items.length;
+      items = items.filter((item) => item.publishedAt.getTime() >= thirtyDaysAgoDate.getTime());
+      const afterFilter = items.length;
+
+      if (beforeFilter !== afterFilter) {
+        logger.debug(
+          `[DAILY-SYNC] Batch ${batchNumber}: filtered ${beforeFilter - afterFilter} items older than 30 days`
+        );
+      }
+
       // Save by category
       for (const category of VALID_CATEGORIES) {
         const categoryItems = items.filter((i) => i.category === category);
