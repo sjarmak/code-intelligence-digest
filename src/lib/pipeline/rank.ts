@@ -61,7 +61,12 @@ export async function rankCategory(
   // Build BM25 index
   const bm25 = new BM25Index();
   bm25.addDocuments(recentItems);
-  const bm25Scores = bm25.score(config.query);
+  // Parse query string into terms
+  const queryTerms = config.query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+  const bm25Scores = bm25.score(queryTerms);
   const bm25Normalized = bm25.normalizeScores(bm25Scores);
 
   // Score with LLM
