@@ -226,6 +226,25 @@ If scripts differ, update `package.json` and this section in lockstep.
 
 Agents must NOT invent commands. Commands must match `package.json`.
 
+## Daily Sync Command
+
+**Easy way** (shell script with pretty output):
+```bash
+bash scripts/run-sync.sh
+```
+
+**Raw API call**:
+```bash
+curl -X POST http://localhost:3002/api/admin/sync-daily
+```
+
+**Check sync status**:
+```bash
+curl http://localhost:3002/api/admin/sync-daily
+```
+
+**Details**: See `DAILY_SYNC_USAGE.md`
+
 ## Architecture and Structure
 
 Target directory structure for the combined project:
