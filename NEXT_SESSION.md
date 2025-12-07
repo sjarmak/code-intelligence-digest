@@ -1,50 +1,27 @@
-# Next Session: Ranking Pipeline
+# Next Session: LLM Ranking Pipeline
 
-**Session goal**: Implement hybrid ranking (BM25 + LLM) to curate 8,058 cached items
+**Session goal**: Implement LLM scoring (Claude) to complete hybrid ranking
 
 ## Current State
+
+✅ **BM25 Complete** (Dec 7):
+- All 8,058 items scored with BM25 ✅
+- Scores stored in item_scores table ✅
+- Validated: top items manually reviewed, score distribution reasonable ✅
+- Files: src/lib/pipeline/bm25.ts (315 lines, 7 domain term categories)
+- Test scripts: test-bm25.ts, score-items-bm25.ts, verify-bm25-scores.ts ✅
 
 ✅ **Operational**:
 - Daily sync: `bash scripts/run-sync.sh` (resumable, 5-10 API calls)
 - Database: 8,058 items in 30-day window (Nov 10 - Dec 7, 2025)
 - Categories: All 7 populated (research 3.4k, community 2.1k, tech_articles 1.5k, etc.)
 - Time filtering: Automatic client-side (older items dropped)
-- API budget: 100 calls/day (5 remaining today, resets daily)
+- API budget: 100 calls/day (resets daily)
 
-✅ **Ready to rank**:
-- All items in database normalized (title, URL, summary, author, published date)
-- Items categorized (FeedItem model)
-- No new API calls needed for ranking (use cached data)
-
-## Priority P1: Ranking Pipeline
-
-### 1. BM25 Scoring (`src/lib/pipeline/bm25.ts`)
-
-**Goal**: Score items 0-1 using domain term queries
-
-**Implementation**:
-```typescript
-// Domain term categories (from AGENTS.md)
-const DOMAIN_TERMS = {
-  code_search: { weight: 1.6, terms: ['code search', 'symbol search', 'codebase', ...] },
-  ir: { weight: 1.5, terms: ['semantic search', 'RAG', 'embeddings', ...] },
-  context: { weight: 1.5, terms: ['context window', 'token budget', 'compression', ...] },
-  agentic: { weight: 1.4, terms: ['agent', 'tool use', 'planning', ...] },
-  // ... etc
-};
-
-// Per category, per time window:
-// 1. Build BM25 index from cached items
-// 2. Create category-specific query from domain terms
-// 3. Score each item 0-1
-// 4. Store in item_scores table
-```
-
-**Test**:
-```bash
-npm ts-node scripts/test-bm25.ts  # (create this)
-# Output: items ranked by BM25 score per category
-```
+✅ **Ready for LLM ranking**:
+- BM25 scores: 8,058 items scored ✅
+- No new API calls needed from BM25 (used cached data only) ✅
+- Next: Claude API calls for relevance/usefulness ratings
 
 ### 2. LLM Scoring (`src/lib/pipeline/llmScore.ts`)
 
@@ -115,24 +92,28 @@ GET /api/items?category=tech_articles&period=week
 
 ## Next Steps (In Order)
 
-1. **Implement BM25** (code-intel-digest-9gx)
-   - Create term index structure
-   - Implement query builder per category
-   - Score all 8,058 items
-   - Store scores in item_scores table
+1. ✅ **BM25 Complete** (code-intel-digest-9gx)
+   - Term index structure ✅
+   - Query builder per category ✅
+   - All 8,058 items scored ✅
+   - Scores stored in item_scores table ✅
    
-2. **Implement LLM scoring** (code-intel-digest-06q)
+2. **Implement LLM scoring** (code-intel-digest-06q) ← NEXT
    - Set up Claude API client
-   - Batch scoring (100 items per call)
-   - Extract tags and store
+   - Batch scoring (30-50 items per call, ~$0.20 per 100 items)
+   - Extract tags and store in item_scores.llm_tags
+   - Store relevance (0-10) and usefulness (0-10)
+   - Cost estimate: ~$10-20 for all 8,058 items
    
 3. **Merge scoring** (code-intel-digest-phj)
    - Implement rank.ts combining logic
+   - Formula: (LLM_norm * 0.45) + (BM25_norm * 0.35) + (Recency * 0.15)
+   - Apply boost factors (1.0-1.5x) for multi-domain matches
    - Build /api/items endpoint
    - Test with real queries
    
 4. **Diversity selection** (code-intel-digest-8hc)
-   - Cap sources per category (max 2-3 per category)
+   - Cap sources per category (max 2-3 per source per category)
    - Greedy selection algorithm
    
 5. **UI components** (code-intel-digest-htm)
