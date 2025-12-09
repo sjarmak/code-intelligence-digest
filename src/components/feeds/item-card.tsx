@@ -1,5 +1,7 @@
 'use client';
 
+import ItemRelevanceBadge from '../tuning/item-relevance-badge';
+
 interface LLMScore {
   relevance: number;
   usefulness: number;
@@ -13,12 +15,16 @@ interface ItemCardProps {
     url: string;
     sourceTitle: string;
     publishedAt: string;
+    summary?: string;
     contentSnippet?: string;
-    category: string;
+    categories?: string[];
+    category?: string;
     llmScore: LLMScore;
     finalScore: number;
     reasoning: string;
+    diversityReason?: string;
   };
+  rank?: number;
 }
 
 function formatDate(dateString: string): string {
@@ -53,84 +59,107 @@ function getRelevanceColor(relevance: number): string {
   return 'text-gray-400';
 }
 
-export default function ItemCard({ item }: ItemCardProps) {
+export default function ItemCard({ item, rank }: ItemCardProps) {
   return (
-    <div className="card p-4 hover:border-surface-border/80 transition-all hover:shadow-lg">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex-1">
-          <a
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-lg font-semibold text-blue-400 hover:text-blue-300 transition-colors block"
-          >
-            {item.title}
-          </a>
-          <p className="text-sm text-muted mt-1">{item.sourceTitle}</p>
-        </div>
-      </div>
+    <div className="border border-surface-border rounded-lg p-4 hover:border-blue-500/50 hover:bg-surface/80 transition-all hover:shadow-md">
+      {/* Main row with rank, score, and title */}
+      <div className="flex items-start gap-4">
+        {/* Rank number */}
+        {rank !== undefined && (
+          <div className="flex-shrink-0 pt-1">
+            <span className="text-2xl font-bold text-blue-400 w-8 text-right">{rank}</span>
+          </div>
+        )}
 
-      {/* Metadata */}
-      <div className="flex items-center gap-2 text-xs text-muted mb-3">
-        <span>{formatDate(item.publishedAt)}</span>
-        <span>•</span>
-        <span className={`badge ${getCategoryColor(item.category)}`}>
-          {item.category.replace('_', ' ')}
-        </span>
-      </div>
-
-      {/* Snippet */}
-      {item.contentSnippet && (
-        <p className="text-sm text-gray-300 mb-3 line-clamp-2">
-          {item.contentSnippet}
-        </p>
-      )}
-
-      {/* Score Section */}
-      <div className="bg-surface/50 rounded p-3 mb-3 text-xs">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-muted">Relevance</span>
-          <span className={`font-semibold ${getRelevanceColor(item.llmScore.relevance)}`}>
-            {item.llmScore.relevance.toFixed(1)}/10
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-muted">Score</span>
-          <span className="font-semibold text-blue-400">
-            {item.finalScore.toFixed(2)}
-          </span>
-        </div>
-      </div>
-
-      {/* Tags */}
-      {item.llmScore.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-3">
-          {item.llmScore.tags.slice(0, 3).map((tag) => (
-            <span
-              key={tag}
-              className="inline-block px-2 py-1 text-xs bg-surface border border-surface-border rounded text-muted"
+        {/* Score and title */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 mb-1">
+            <span className="text-sm font-semibold text-blue-300 bg-surface/50 px-2 py-1 rounded">
+              {item.finalScore.toFixed(2)}
+            </span>
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-base font-semibold text-blue-400 hover:text-blue-300 transition-colors line-clamp-2"
             >
-              {tag}
-            </span>
-          ))}
-          {item.llmScore.tags.length > 3 && (
-            <span className="text-xs text-muted">
-              +{item.llmScore.tags.length - 3} more
-            </span>
-          )}
-        </div>
-      )}
+              {item.title}
+            </a>
+          </div>
 
-      {/* Footer */}
-      <div className="flex items-center gap-2 pt-3 border-t border-surface-border">
+          {/* Metadata line: source, tags, relevance, date */}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted mb-2">
+            <div className="flex items-center gap-1">
+              <span className="font-medium text-gray-300">{item.sourceTitle}</span>
+              <a
+                href="/admin"
+                className="inline-block px-1.5 py-0.5 rounded text-xs bg-gray-900/50 border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600 transition-colors"
+                title="Tune source relevance"
+              >
+                ⚡
+              </a>
+            </div>
+            <span>•</span>
+
+            {/* Tags */}
+            {item.llmScore.tags.length > 0 && (
+              <>
+                <div className="flex gap-1">
+                  {item.llmScore.tags.slice(0, 2).map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-block px-1.5 py-0.5 bg-surface border border-surface-border rounded text-gray-400"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                  {item.llmScore.tags.length > 2 && (
+                    <span className="text-gray-500">+{item.llmScore.tags.length - 2}</span>
+                  )}
+                </div>
+                <span>•</span>
+              </>
+            )}
+
+            {/* Relevance score */}
+            <span className={`font-semibold ${getRelevanceColor(item.llmScore.relevance)}`}>
+              Relevance: {item.llmScore.relevance.toFixed(0)}/10
+            </span>
+
+            {/* Date */}
+            <span>•</span>
+            <span>{formatDate(item.publishedAt)}</span>
+          </div>
+
+          {/* Category badge and relevance control */}
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            {item.category && (
+              <span className={`inline-block badge text-xs ${getCategoryColor(item.category)}`}>
+                {item.category.replace('_', ' ')}
+              </span>
+            )}
+            
+            {/* Relevance rating badge (read-only display) */}
+            <ItemRelevanceBadge
+              itemId={item.id}
+              currentRating={null}
+              categories={item.category ? [item.category] : []}
+              readOnly={true}
+            />
+          </div>
+        </div>
+
+        {/* External link icon */}
         <a
           href={item.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-blue-400 hover:text-blue-300 text-sm transition-colors"
+          className="flex-shrink-0 text-blue-400 hover:text-blue-300 transition-colors mt-1"
+          title="Open in new tab"
         >
-          Read more →
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
         </a>
       </div>
     </div>

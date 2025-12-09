@@ -113,13 +113,21 @@ export async function initializeDatabase() {
       );
     `);
 
-    // Create item_embeddings table
+    // Create item_embeddings table (BLOB format for efficiency)
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS item_embeddings (
         item_id TEXT PRIMARY KEY,
-        embedding TEXT NOT NULL,
-        generated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        embedding BLOB NOT NULL,
+        embedding_model TEXT DEFAULT 'claude-3-5-sonnet',
+        generated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
       );
+    `);
+
+    // Create index for efficient lookups
+    sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_embeddings_generated_at 
+      ON item_embeddings(generated_at);
     `);
 
     // Create sync_state table for resumable syncs
@@ -136,6 +144,31 @@ export async function initializeDatabase() {
       );
     `);
 
+    // Create starred_items table for relevance tuning
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS starred_items (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL UNIQUE,
+        inoreader_item_id TEXT NOT NULL UNIQUE,
+        relevance_rating INTEGER,
+        notes TEXT,
+        starred_at INTEGER NOT NULL,
+        rated_at INTEGER,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Add source_relevance column to feeds if it doesn't exist
+    try {
+      sqlite.exec(`
+        ALTER TABLE feeds ADD COLUMN source_relevance INTEGER DEFAULT 1;
+      `);
+    } catch {
+      // Column may already exist, ignore error
+    }
+
     // Create indexes for common queries
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);
@@ -145,6 +178,9 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_item_scores_category ON item_scores(category);
       CREATE INDEX IF NOT EXISTS idx_digest_selections_category ON digest_selections(category);
       CREATE INDEX IF NOT EXISTS idx_digest_selections_period ON digest_selections(period);
+      CREATE INDEX IF NOT EXISTS idx_starred_items_item_id ON starred_items(item_id);
+      CREATE INDEX IF NOT EXISTS idx_starred_items_inoreader_id ON starred_items(inoreader_item_id);
+      CREATE INDEX IF NOT EXISTS idx_starred_items_rating ON starred_items(relevance_rating);
     `);
 
     logger.info("Database schema initialized successfully");

@@ -8,7 +8,8 @@ import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { loadItemsByCategory } from "@/src/lib/db/items";
-import { semanticSearch } from "@/src/lib/pipeline/search";
+import { retrieveRelevantItems } from "@/src/lib/pipeline/retrieval";
+import { generateAnswer } from "@/src/lib/pipeline/answer";
 
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
@@ -33,37 +34,6 @@ interface LLMAnswerResponse {
   category?: string;
   period: string;
   generatedAt: string;
-}
-
-/**
- * Generate answer using Claude API
- */
-async function generateAnswerWithClaude(
-  question: string,
-  contextItems: Array<{
-    title: string;
-    summary?: string;
-    sourceTitle: string;
-  }>
-): Promise<string> {
-  // For MVP, use a simple template-based answer
-  // In production, call Claude API or other LLM
-  
-  const sources = contextItems
-    .map((item) => `- "${item.title}" from ${item.sourceTitle}`)
-    .join("\n");
-
-  // Template-based answer (placeholder for LLM integration)
-  const answer = `Based on the code intelligence digest, here's what I found related to "${question}":
-
-Key sources discussing this topic:
-${sources}
-
-The digest contains ${contextItems.length} relevant items on this subject. For more details, review the sources above which cover aspects of code tooling, agents, code search, context management, and developer productivity.
-
-Note: This is a template answer. For full reasoning, integrate with Claude API or preferred LLM.`;
-
-  return answer;
 }
 
 /**
@@ -102,7 +72,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const periodDays = period === "month" ? 30 : 7;
+    // Map period to days
+    const periodDaysMap: Record<string, number> = {
+      day: 1,
+      week: 7,
+      month: 30,
+      all: 90,
+    };
+    const periodDays = periodDaysMap[period] || 7;
 
     logger.info(
       `[ASK] Question: "${question}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}`
@@ -143,10 +120,17 @@ export async function GET(req: NextRequest) {
 
     logger.info(`[ASK] Using ${contextItems.length} context items`);
 
-    // Find relevant items using semantic search
-    const relevantItems = await semanticSearch(question, contextItems, limit);
+    // Use retrieval pipeline to find relevant items
+    const targetCategory = category || "newsletters"; // Default for retrieval
+    const rankedItems = await retrieveRelevantItems(
+      question,
+      contextItems,
+      targetCategory as Category,
+      periodDays,
+      limit
+    );
 
-    if (relevantItems.length === 0) {
+    if (rankedItems.length === 0) {
       logger.warn(`[ASK] No relevant items found for question: "${question}"`);
       return NextResponse.json({
         question,
@@ -154,35 +138,33 @@ export async function GET(req: NextRequest) {
           "While the digest contains content, I could not find items specifically related to your question.",
         sources: [],
         category: category || "all",
-        period: periodDays === 7 ? "week" : "month",
+        period: Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week",
         generatedAt: new Date().toISOString(),
       } as LLMAnswerResponse);
     }
 
-    // Generate answer using LLM (context items)
-    const sourceItems = contextItems.filter((item) =>
-      relevantItems.some((rel) => rel.id === item.id)
-    );
+    // Generate answer using retrieved items
+    const answerResult = await generateAnswer(question, rankedItems);
 
-    const answer = await generateAnswerWithClaude(question, sourceItems);
+    logger.info(`[ASK] Generated answer with ${rankedItems.length} source citations`);
 
-    logger.info(
-      `[ASK] Generated answer with ${relevantItems.length} source citations`
-    );
+    // Map period back to string
+    const periodName =
+      Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
 
     const response: LLMAnswerResponse = {
       question,
-      answer,
-      sources: relevantItems.map((item) => ({
-        id: item.id,
-        title: item.title,
-        url: item.url,
-        sourceTitle: item.sourceTitle,
-        relevance: item.similarity,
+      answer: answerResult.answer,
+      sources: answerResult.sources.map((source) => ({
+        id: source.id,
+        title: source.title,
+        url: source.url,
+        sourceTitle: rankedItems.find((item) => item.id === source.id)?.sourceTitle || "Unknown",
+        relevance: source.relevance,
       })),
       category: category || "all",
-      period: periodDays === 7 ? "week" : "month",
-      generatedAt: new Date().toISOString(),
+      period: periodName,
+      generatedAt: answerResult.generatedAt,
     };
 
     return NextResponse.json(response);

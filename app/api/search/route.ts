@@ -56,7 +56,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const periodDays = period === "month" ? 30 : 7;
+    // Map period to days
+    const periodDaysMap: Record<string, number> = {
+      day: 1,
+      week: 7,
+      month: 30,
+      all: 90,
+    };
+    const periodDays = periodDaysMap[period] || 7;
 
     logger.info(
       `[SEARCH] Query: "${query}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}`
@@ -87,10 +94,13 @@ export async function GET(req: NextRequest) {
       logger.warn(
         `[SEARCH] No items found for ${category ? `category: ${category}` : "any category"}`
       );
+      // Map periodDays back to period name
+      const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
+      
       return NextResponse.json({
         query,
         category: category || "all",
-        period: periodDays === 7 ? "week" : "month",
+        period: periodName,
         results: [],
         message: "No items found for search",
       });
@@ -98,25 +108,37 @@ export async function GET(req: NextRequest) {
 
     logger.info(`[SEARCH] Searching over ${searchItems.length} items`);
 
+    // Validate items have required fields
+    const invalidItems = searchItems.filter((item) => !item.title || !item.url);
+    if (invalidItems.length > 0) {
+      logger.warn(`[SEARCH] Found ${invalidItems.length} items with missing title or url`);
+    }
+
     // Perform semantic search
     const results = await semanticSearch(query, searchItems, limit);
 
     logger.info(`[SEARCH] Returned ${results.length} results`);
 
+    // Map periodDays back to period name for response
+    const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
+    
     return NextResponse.json({
       query,
       category: category || "all",
-      period: periodDays === 7 ? "week" : "month",
+      period: periodName,
       itemsSearched: searchItems.length,
       resultsReturned: results.length,
       results,
     });
   } catch (error) {
-    logger.error("[SEARCH] Error in /api/search", error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    logger.error("[SEARCH] Error in /api/search", { error: errorMsg, stack: errorStack });
 
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Search failed",
+        error: errorMsg || "Search failed",
+        details: error instanceof Error ? error.stack : undefined,
       },
       { status: 500 }
     );

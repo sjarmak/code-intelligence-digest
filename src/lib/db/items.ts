@@ -189,6 +189,78 @@ export async function getItemsCountByCategory(category: string): Promise<number>
 }
 
 /**
+ * Load pre-computed scores for items from the item_scores table
+ */
+export async function loadScoresForItems(
+  itemIds: string[]
+): Promise<Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[] }>> {
+  try {
+    if (itemIds.length === 0) {
+      return {};
+    }
+
+    const sqlite = getSqlite();
+
+    // Get the most recent scores for each item
+    const placeholders = itemIds.map(() => "?").join(",");
+    const rows = sqlite
+      .prepare(
+        `
+      SELECT item_id, llm_relevance, llm_usefulness, llm_tags
+      FROM item_scores
+      WHERE item_id IN (${placeholders})
+      ORDER BY scored_at DESC
+    `
+      )
+      .all(...itemIds) as Array<{
+      item_id: string;
+      llm_relevance: number;
+      llm_usefulness: number;
+      llm_tags: string | null;
+    }>;
+
+    const scores: Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[] }> = {};
+    const seen = new Set<string>();
+
+    for (const row of rows) {
+      // Only include the first (most recent) score for each item
+      if (!seen.has(row.item_id)) {
+        seen.add(row.item_id);
+        scores[row.item_id] = {
+          llm_relevance: row.llm_relevance,
+          llm_usefulness: row.llm_usefulness,
+          llm_tags: row.llm_tags ? JSON.parse(row.llm_tags) : [],
+        };
+      }
+    }
+
+    return scores;
+  } catch (error) {
+    logger.error("Failed to load scores for items", error);
+    throw error;
+  }
+}
+
+/**
+ * Get the most recent published_at timestamp from all items in database
+ * Used by daily sync to fetch only newer items
+ */
+export async function getLastPublishedTimestamp(): Promise<number | null> {
+  try {
+    const sqlite = getSqlite();
+
+    const result = sqlite
+      .prepare(`SELECT MAX(published_at) as max_published FROM items`)
+      .get() as { max_published: number | null } | undefined;
+
+    return result?.max_published ?? null;
+  } catch (error) {
+    logger.warn("Failed to get last published timestamp", error);
+    return null;
+  }
+}
+
+/**
  * Update cache metadata for items
  */
 export async function updateItemsCacheMetadata(periodDays: number, count: number): Promise<void> {

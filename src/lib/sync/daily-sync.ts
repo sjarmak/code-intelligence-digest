@@ -1,20 +1,22 @@
 /**
- * Daily sync strategy: fetch only recent items (last 30 days)
+ * Daily sync strategy: fetch only items newer than what we already have
  * 
  * Features:
- * - Time-filtered to reduce API calls (only last 30 days)
+ * - Tracks last synced item timestamp in database
+ * - Fetches only items published after that timestamp
+ * - Falls back to 24-hour window if database is empty
  * - Resumable if interrupted by rate limits
  * - Tracks progress and continuation tokens
  * - Designed to fit within 100-call daily limit
  * 
- * Expected cost: 5-10 API calls per sync
- * Remaining budget: 90+ calls for other uses
+ * Expected cost: 1-3 API calls per sync
+ * Remaining budget: 97+ calls for other uses
  */
 
 import { createInoreaderClient } from '../inoreader/client';
 import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
-import { saveItems } from '../db/items';
+import { saveItems, getLastPublishedTimestamp } from '../db/items';
 import { logger } from '../logger';
 import { Category } from '../model';
 import { getSqlite } from '../db/index';
@@ -41,7 +43,7 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const SYNC_ID = 'daily-sync';
-const DAYS_TO_FETCH = 30;
+const FALLBACK_HOURS_IF_EMPTY = 24; // Fallback window if database has no items
 
 /**
  * Get current sync state from database
@@ -104,7 +106,8 @@ function clearSyncState(): void {
 }
 
 /**
- * Run daily sync: fetch last 30 days of items
+ * Run daily sync: fetch items newer than the last one in our database
+ * This ensures we never miss items and uses minimal API calls
  */
 export async function runDailySync(): Promise<{
   success: boolean;
@@ -115,7 +118,7 @@ export async function runDailySync(): Promise<{
   paused: boolean;
   error?: string;
 }> {
-  logger.info('[DAILY-SYNC] Starting daily sync (last 30 days)');
+  logger.info('[DAILY-SYNC] Starting daily sync (fetch newer items)');
 
   const existingState = getSyncState();
   const resumed = existingState ? existingState.status === 'paused' : false;
@@ -142,12 +145,25 @@ export async function runDailySync(): Promise<{
 
     callsUsed++;
 
-    // Calculate time window: last 30 days
-    const thirtyDaysAgo = Math.floor((Date.now() - DAYS_TO_FETCH * 24 * 60 * 60 * 1000) / 1000);
+    // Determine sync time window
+    const lastPublished = await getLastPublishedTimestamp();
+    let syncSinceTimestamp: number;
+    let reason: string;
+
+    if (lastPublished) {
+      // Fetch items newer than the most recent one we have
+      syncSinceTimestamp = lastPublished;
+      reason = `since last item (${new Date(lastPublished * 1000).toISOString()})`;
+    } else {
+      // Database is empty: fallback to last 24 hours
+      syncSinceTimestamp = Math.floor((Date.now() - FALLBACK_HOURS_IF_EMPTY * 60 * 60 * 1000) / 1000);
+      reason = `last ${FALLBACK_HOURS_IF_EMPTY} hours (database empty)`;
+    }
+
     const allItemsStreamId = `user/${userId}/state/com.google/all`;
 
     logger.info(
-      `[DAILY-SYNC] Fetching items from last ${DAYS_TO_FETCH} days (since ${new Date(thirtyDaysAgo * 1000).toISOString()})`
+      `[DAILY-SYNC] Fetching items ${reason} (${new Date(syncSinceTimestamp * 1000).toISOString()})`
     );
 
     let batchNumber = 0;
@@ -160,11 +176,12 @@ export async function runDailySync(): Promise<{
         `[DAILY-SYNC] Fetching batch ${batchNumber}${continuation ? ' (continuation)' : ''} (${callsUsed} calls used so far)`
       );
 
-      // Fetch batch
+      // Fetch batch (items newer than last sync)
+      // Note: xt parameter with unix timestamp excludes read items BEFORE that time
       const response = await client.getStreamContents(allItemsStreamId, {
         n: 1000,
         continuation,
-        xt: `user/${userId}/state/com.google/read/unix:${thirtyDaysAgo}`, // Exclude read items before threshold
+        xt: `user/${userId}/state/com.google/read/unix:${syncSinceTimestamp}`, // Exclude read items older than sync threshold
       });
 
       callsUsed++;
@@ -183,15 +200,15 @@ export async function runDailySync(): Promise<{
       let items = await normalizeItems(response.items);
       items = categorizeItems(items);
 
-      // Filter to last 30 days (client-side enforcement)
-      const thirtyDaysAgoDate = new Date(thirtyDaysAgo * 1000);
+      // Filter to only items newer than sync threshold (client-side enforcement)
+      const syncThresholdDate = new Date(syncSinceTimestamp * 1000);
       const beforeFilter = items.length;
-      items = items.filter((item) => item.publishedAt.getTime() >= thirtyDaysAgoDate.getTime());
+      items = items.filter((item) => item.publishedAt.getTime() > syncThresholdDate.getTime());
       const afterFilter = items.length;
 
       if (beforeFilter !== afterFilter) {
         logger.debug(
-          `[DAILY-SYNC] Batch ${batchNumber}: filtered ${beforeFilter - afterFilter} items older than 30 days`
+          `[DAILY-SYNC] Batch ${batchNumber}: filtered ${beforeFilter - afterFilter} items at/before sync threshold`
         );
       }
 

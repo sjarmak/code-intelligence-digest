@@ -6,7 +6,7 @@
 import { FeedItem, RankedItem, Category } from "../model";
 import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
-import { scoreWithLLM, computeLLMScore } from "./llmScore";
+import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
 
 /**
@@ -69,15 +69,30 @@ export async function rankCategory(
   const bm25Scores = bm25.score(queryTerms);
   const bm25Normalized = bm25.normalizeScores(bm25Scores);
 
-  // Score with LLM
-  const llmScores = await scoreWithLLM(recentItems);
+  // Load pre-computed LLM scores from database (only during daily sync should new scores be calculated)
+  const itemIds = recentItems.map((item) => item.id);
+  const preComputedScores = await loadScoresForItems(itemIds);
+  
+  // Convert to LLMScoreResult format expected by the ranking logic
+  const llmScores: Record<string, { relevance: number; usefulness: number; tags: string[] }> = {};
+  for (const itemId of itemIds) {
+    const score = preComputedScores[itemId];
+    if (score) {
+      llmScores[itemId] = {
+        relevance: score.llm_relevance,
+        usefulness: score.llm_usefulness,
+        tags: score.llm_tags,
+      };
+    }
+  }
 
   // Compute all scores and combine
   const rankedItems: RankedItem[] = recentItems.map((item) => {
     const bm25Score = bm25Normalized.get(item.id) ?? 0;
     const llmResult = llmScores[item.id];
+    // Compute LLM score from pre-computed relevance and usefulness (0.7 * relevance + 0.3 * usefulness)
     const llmScore = llmResult
-      ? computeLLMScore(llmResult) / 10 // Normalize to [0, 1]
+      ? (0.7 * llmResult.relevance + 0.3 * llmResult.usefulness) / 10 // Normalize to [0, 1]
       : 0.5;
     const recencyScore = computeRecencyScore(item.publishedAt, config.halfLifeDays);
 

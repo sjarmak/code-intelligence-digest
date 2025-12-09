@@ -1,7 +1,7 @@
 # Ranking Pipeline Status
 
 **Last Updated**: December 7, 2025  
-**Progress**: ██████████████████ 80% (3 of 5 core phases complete)
+**Progress**: ██████████████████████ 90% (4 of 5 core phases complete)
 
 ## Completion Status
 
@@ -96,15 +96,16 @@
 
 ---
 
-### ⏳ Phase 4: Diversity & Selection (Not Started)
-- **Bead**: code-intel-digest-8hc (Not started)
-- **Files**: src/lib/pipeline/select.ts (exists)
+### ✅ Phase 4: Diversity & Selection (Complete)
+- **Bead**: code-intel-digest-8hc ✅
+- **Files**: src/lib/pipeline/select.ts (verified), app/api/items/route.ts (updated)
 
-**What's Needed**:
-- Cap sources per category (max 2-3 per source)
-- Greedy selection from ranked items
-- Return digestSelections table updates
-- Per-source tracking
+**Completed**:
+- ✅ Per-source caps enforced (2 for weekly, 3 for monthly, 4 for all-time)
+- ✅ Greedy selection from ranked items
+- ✅ Reason tracking for each selection
+- ✅ API endpoint updated with diversity selection
+- ✅ All quality gates passing
 
 ---
 
@@ -140,39 +141,35 @@ Currently populated with:
 
 ## Quick Reference: What to Do Next
 
-### Session: Diversity Selection (code-intel-digest-8hc) - NEXT
+### Session: UI Components (code-intel-digest-htm) - NEXT
 
-**Goal**: Implement per-source caps and greedy selection algorithm
+**Goal**: Build frontend components for digest rendering
 
-**Steps**:
-1. In rank.ts or new select.ts:
-   - Track items per source per category
-   - Enforce per-source caps (recommended: 2 per source weekly, 3 per source monthly)
-   - Greedy selection: iterate top-down, skip items exceeding cap
-   - Stop after CATEGORY_CONFIG[category].maxItems
+**Components to Create**:
+1. ItemCard: Display individual item with score badges, source, date
+2. CategoryTabs: Tab navigation between content categories
+3. PeriodSelector: Toggle between weekly/monthly/all-time views
+4. ItemsGrid: Responsive grid layout for items
+5. DigestHeader: Title, description, period info
 
-2. Create digestSelections table entries:
-   - item_id, category, period, rank, diversity_reason
-   - Store which items made final digest per category/period
-
-3. Update API endpoint:
-   - Filter ranked items through diversity selection
-   - Return final digest items only
-
-4. Test:
-   - Verify per-source caps enforced
-   - Check source distribution is balanced
-   - Verify top items still included (not always cap-limited)
+**Integration**:
+- Hook up `/api/items` endpoint
+- Load items by category and period
+- Display with proper styling using shadcn components
+- Show diversity reasons in tooltips/info
 
 **Files to Create**:
-- src/lib/pipeline/select.ts (diversity selection, ~80 lines)
-- scripts/test-diversity.ts (validation, ~60 lines)
+- app/components/layout/top-nav.tsx
+- app/components/digest/category-tabs.tsx
+- app/components/digest/period-selector.tsx
+- app/components/digest/item-card.tsx
+- app/components/digest/items-grid.tsx
 
 **Command**:
 ```bash
-bd update code-intel-digest-8hc --status in_progress
-# ... implement ...
-bd close code-intel-digest-8hc --reason "Diversity selection with per-source caps"
+bd update code-intel-digest-htm --status in_progress
+# ... implement UI components ...
+bd close code-intel-digest-htm --reason "UI components for digest rendering"
 ```
 
 ---
@@ -255,18 +252,19 @@ Cached Items (8,058)
     └──────┬──────┘
            ↓
     ┌─────────────────────┐
-    │ Merge Scoring ⏳     │ ← NEXT
+    │ Merge Scoring ✅    │ (Phase 3)
     │ (Hybrid Ranking)    │
     │ → finalScore        │
     └──────┬──────────────┘
            ↓
-    ┌─────────────┐
-    │ Diversity   │ ⏳ Not started
-    │ Selection   │
-    └──────┬──────┘
+    ┌─────────────────────┐
+    │ Diversity Select ✅ │ (Phase 4)
+    │ Per-source caps     │
+    │ → final items       │
+    └──────┬──────────────┘
            ↓
     ┌─────────────┐
-    │ API / UI    │ ⏳ Not started
+    │ UI / API    │ ⏳ NEXT (Phase 5)
     │ Components  │
     └─────────────┘
 ```

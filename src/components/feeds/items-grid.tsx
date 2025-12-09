@@ -11,7 +11,8 @@ interface RankedItemResponse {
   publishedAt: string;
   summary?: string;
   contentSnippet?: string;
-  category: string;
+  categories?: string[];
+  category?: string;
   bm25Score: number;
   llmScore: {
     relevance: number;
@@ -21,11 +22,12 @@ interface RankedItemResponse {
   recencyScore: number;
   finalScore: number;
   reasoning: string;
+  diversityReason?: string;
 }
 
 interface ItemsGridProps {
   category: string;
-  period: 'week' | 'month';
+  period: 'day' | 'week' | 'month' | 'all';
 }
 
 export default function ItemsGrid({ category, period }: ItemsGridProps) {
@@ -86,9 +88,9 @@ export default function ItemsGrid({ category, period }: ItemsGridProps) {
   }
 
   return (
-    <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
-      {items.map((item) => (
-        <ItemCard key={item.id} item={item} />
+    <div className="space-y-3 max-w-4xl">
+      {items.map((item, index) => (
+        <ItemCard key={item.id} item={item} rank={index + 1} />
       ))}
     </div>
   );
