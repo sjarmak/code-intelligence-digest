@@ -1,144 +1,94 @@
 /**
- * Vector embeddings infrastructure
- * Uses local embeddings (no external API dependency)
- * Caches computed embeddings in the database
+ * Embedding utilities and vector operations
+ * Re-exports generate function and provides vector math utilities
  */
 
-import { logger } from "../logger";
-
-// Using a simple, lightweight approach: compute embeddings client-side
-// For production, consider: Hugging Face API, OpenAI embeddings, or local models
-// This is a placeholder that will use simple string similarity for MVP
-
-export interface ItemEmbedding {
-  itemId: string;
-  vector: number[];
-  generatedAt: number; // Unix timestamp
-}
-
-/**
- * Generate embedding for text using simple TF-IDF approach
- * Returns normalized vector in 384-dim space (matching standard embeddings)
- * 
- * In production, replace with:
- * - OpenAI: embed-3-small (1536 dims)
- * - Hugging Face: all-MiniLM-L6-v2 (384 dims)
- * - Local: @xenova/transformers
- */
-export async function generateEmbedding(text: string): Promise<number[]> {
-  // Simple TF-IDF-inspired approach for MVP
-  // Tokenize and create a basic semantic vector
-  const tokens = tokenize(text.toLowerCase());
-  const vector = computeTFIDFVector(tokens);
-  
-  logger.debug(`Generated embedding for text: "${text.substring(0, 50)}..."`);
-  return vector;
-}
-
-/**
- * Generate embeddings for multiple texts in batch
- */
-export async function generateEmbeddingsBatch(texts: string[]): Promise<number[][]> {
-  logger.info(`Generating embeddings for batch of ${texts.length} items`);
-  const embeddings = await Promise.all(
-    texts.map((text) => generateEmbedding(text))
-  );
-  return embeddings;
-}
+export { generateEmbedding, generateEmbeddingsBatch } from "./generate";
 
 /**
  * Compute cosine similarity between two vectors
+ * Returns a value between -1 and 1, typically 0-1 for unit vectors
  */
-export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) {
-    throw new Error("Vectors must have same length");
+export function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  if (vecA.length !== vecB.length) {
+    throw new Error(`Vector dimensions must match: ${vecA.length} vs ${vecB.length}`);
   }
 
   let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
+  let magnitudeA = 0;
+  let magnitudeB = 0;
 
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    magnitudeA += vecA[i] * vecA[i];
+    magnitudeB += vecB[i] * vecB[i];
   }
 
-  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-  if (denominator === 0) return 0;
-  
-  return dotProduct / denominator;
+  magnitudeA = Math.sqrt(magnitudeA);
+  magnitudeB = Math.sqrt(magnitudeB);
+
+  if (magnitudeA === 0 || magnitudeB === 0) {
+    return 0; // Undefined similarity if either vector is zero
+  }
+
+  return dotProduct / (magnitudeA * magnitudeB);
 }
 
 /**
- * Find top K most similar items by cosine similarity
+ * Find top-K most similar vectors by cosine similarity
  */
+export interface SimilarityMatch {
+  id: string;
+  score: number; // Cosine similarity score
+}
+
 export function topKSimilar(
   queryVector: number[],
-  candidateVectors: Array<{ id: string; vector: number[] }>,
-  k: number = 10
-): Array<{ id: string; score: number }> {
-  const scores = candidateVectors.map((candidate) => ({
+  candidates: Array<{ id: string; vector: number[] }>,
+  k: number
+): SimilarityMatch[] {
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  // Compute similarities for all candidates
+  const similarities = candidates.map((candidate) => ({
     id: candidate.id,
     score: cosineSimilarity(queryVector, candidate.vector),
   }));
 
-  return scores
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+  // Sort by score descending and take top K
+  return similarities.sort((a, b) => b.score - a.score).slice(0, k);
 }
 
 /**
- * Simple tokenizer for text
+ * Encode embedding vector to binary format for storage
+ * Uses Float32Array for compact binary representation
  */
-function tokenize(text: string): string[] {
-  // Remove punctuation, split on whitespace and hyphens
-  const cleaned = text
-    .replace(/[^\w\s\-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  
-  const tokens = cleaned.split(/[\s\-]+/);
-  return tokens.filter((t) => t.length > 2); // Filter short tokens
+export function encodeEmbedding(embedding: number[]): Buffer {
+  const float32Array = new Float32Array(embedding);
+  return Buffer.from(float32Array.buffer);
 }
 
 /**
- * Compute simple TF-IDF vector (384-dimensional for compatibility)
+ * Decode embedding vector from binary format
  */
-function computeTFIDFVector(tokens: string[]): number[] {
-  const VECTOR_DIM = 384; // Standard embedding dimension
-  const vector = new Array(VECTOR_DIM).fill(0);
-
-  if (tokens.length === 0) return vector;
-
-  // Simple hash-based approach: distribute tokens across dimensions
-  const tokenSet = new Set(tokens);
-  
-  for (const token of tokenSet) {
-    // Hash token to dimension
-    const hashCode = hashString(token);
-    const dim = Math.abs(hashCode) % VECTOR_DIM;
-    vector[dim] += 1 / Math.sqrt(tokens.length);
+export function decodeEmbedding(buffer: Buffer): number[] {
+  if (!buffer || buffer.length === 0) {
+    // Return zero vector if buffer is empty
+    return Array(768).fill(0);
   }
-
-  // L2 normalize
-  const magnitude = Math.sqrt(vector.reduce((sum, val) => sum + val * val, 0));
-  if (magnitude > 0) {
-    return vector.map((val) => val / magnitude);
-  }
-
-  return vector;
+  const float32Array = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.length / 4);
+  return Array.from(float32Array);
 }
 
 /**
- * Simple string hash function for consistent dimension mapping
+ * Normalize embedding vector to unit length
  */
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32-bit integer
+export function normalizeEmbedding(embedding: number[]): number[] {
+  const magnitude = Math.sqrt(embedding.reduce((sum, x) => sum + x * x, 0));
+  if (magnitude === 0) {
+    return embedding;
   }
-  return hash;
+  return embedding.map((x) => x / magnitude);
 }

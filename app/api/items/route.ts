@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadItemsByCategory } from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
+import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 
@@ -20,6 +21,7 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const PERIOD_DAYS: Record<string, number> = {
+  day: 1,
   week: 7,
   month: 30,
   all: 90,
@@ -65,13 +67,23 @@ export async function GET(request: NextRequest) {
     const rankedItems = await rankCategory(items, category, periodDays);
     logger.info(`Ranked to ${rankedItems.length} items`);
 
+    // Apply diversity selection based on period
+    const perSourceCaps = { day: 1, week: 2, month: 3, all: 4 };
+    const maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
+    const selectionResult = selectWithDiversity(rankedItems, category, maxPerSource);
+    logger.info(
+      `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`
+    );
+
     // Return response
     return NextResponse.json({
       category,
       period,
       periodDays,
-      totalItems: rankedItems.length,
-      items: rankedItems.map((item) => ({
+      totalItems: selectionResult.items.length,
+      itemsRanked: rankedItems.length,
+      itemsFiltered: rankedItems.length - selectionResult.items.length,
+      items: selectionResult.items.map((item) => ({
         id: item.id,
         title: item.title,
         url: item.url,
@@ -80,6 +92,7 @@ export async function GET(request: NextRequest) {
         summary: item.summary,
         author: item.author,
         categories: item.categories,
+        category: item.category,
         bm25Score: Number(item.bm25Score.toFixed(3)),
         llmScore: {
           relevance: item.llmScore.relevance,
@@ -89,6 +102,7 @@ export async function GET(request: NextRequest) {
         recencyScore: Number(item.recencyScore.toFixed(3)),
         finalScore: Number(item.finalScore.toFixed(3)),
         reasoning: item.reasoning,
+        diversityReason: selectionResult.reasons.get(item.id),
       })),
     });
   } catch (error) {

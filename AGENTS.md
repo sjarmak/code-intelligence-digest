@@ -245,6 +245,89 @@ curl http://localhost:3002/api/admin/sync-daily
 
 **Details**: See `DAILY_SYNC_USAGE.md`
 
+## Relevance Tuning Commands
+
+### Sync Starred Items from Inoreader
+Pulls all starred/important items from your Inoreader account for manual curation and relevance ranking:
+
+```bash
+curl -X POST http://localhost:3002/api/admin/sync-starred \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN"
+```
+
+Returns:
+```json
+{
+  "success": true,
+  "message": "Synced N starred items",
+  "stats": {
+    "fetched": N,
+    "saved": N,
+    "starred": N
+  }
+}
+```
+
+### Get Source Relevance Ratings
+View all sources with their current relevance scores (0-3 scale):
+
+```bash
+curl http://localhost:3002/api/admin/source-relevance
+```
+
+Returns list of all sources with `sourceRelevance` field:
+- `0`: Ignore (filtered out)
+- `1`: Neutral (default, no adjustment)
+- `2`: Relevant (1.3x boost)
+- `3`: Highly Relevant (1.6x boost)
+
+### Set Source Relevance
+Tune how much a source contributes to scoring:
+
+```bash
+curl -X POST http://localhost:3002/api/admin/source-relevance \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "streamId": "feed/https://...",
+    "relevance": 2
+  }'
+```
+
+### Get Starred Items for Rating
+Fetch starred items ready for relevance assignment:
+
+```bash
+curl "http://localhost:3002/api/admin/starred?onlyUnrated=true&limit=20"
+```
+
+Query params:
+- `onlyUnrated=true`: Only unrated items
+- `limit=50`: Max items to return
+- `offset=0`: Pagination offset
+
+Returns items with `relevanceRating` field (null = unrated).
+
+### Rate a Starred Item
+Assign relevance ranking to a starred item (0-3):
+
+```bash
+curl -X PATCH http://localhost:3002/api/admin/starred/:inoreaderItemId \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "rating": 2,
+    "notes": "Great explanation of semantic search"
+  }'
+```
+
+Rating scale:
+- `0`: Not Relevant
+- `1`: Somewhat Relevant
+- `2`: Relevant
+- `3`: Highly Relevant
+- `null`: Clear rating
+
 ## Architecture and Structure
 
 Target directory structure for the combined project:

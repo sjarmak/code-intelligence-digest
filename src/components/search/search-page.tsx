@@ -30,12 +30,12 @@ export default function SearchPage() {
       }
 
       const response = await fetch(`/api/search?${params.toString()}`);
+      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error('Failed to search');
+        throw new Error(data.error || `Search failed (${response.status})`);
       }
 
-      const data = await response.json();
       setResults(data.results || []);
       setItemsSearched(data.itemsSearched || 0);
     } catch (err) {

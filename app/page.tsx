@@ -7,8 +7,8 @@ import QAPage from '@/src/components/qa/qa-page';
 
 export const dynamic = 'force-dynamic';
 
-type Period = 'week' | 'month';
-type TabType = 'digest' | 'search' | 'ask';
+type Period = 'day' | 'week' | 'month' | 'all';
+type TabType = 'resources' | 'search' | 'ask';
 
 function Loading() {
   return <div className="text-center py-12 text-muted">Loading...</div>;
@@ -17,7 +17,7 @@ function Loading() {
 export default function Home() {
   const [period, setPeriod] = useState<Period>('week');
   const [activeCategory, setActiveCategory] = useState<string>('newsletters');
-  const [activeTab, setActiveTab] = useState<TabType>('digest');
+  const [activeTab, setActiveTab] = useState<TabType>('resources');
 
   const categories = [
     { id: 'newsletters', label: 'Newsletters' },
@@ -38,10 +38,27 @@ export default function Home() {
             <div>
               <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
               <p className="text-muted mt-2">
-                Weekly and monthly digests of code intelligence, tools, and AI agents
+                Daily, weekly, and monthly digests of code intelligence, tools, and AI agents
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap items-start">
+              <a
+                href="/admin"
+                className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+                title="Manage relevance tuning"
+              >
+                ⚙️ Tuning
+              </a>
+              <button
+                onClick={() => setPeriod('day')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  period === 'day'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-surface border border-surface-border text-muted hover:text-foreground'
+                }`}
+              >
+                Daily
+              </button>
               <button
                 onClick={() => setPeriod('week')}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -62,6 +79,16 @@ export default function Home() {
               >
                 Monthly
               </button>
+              <button
+                onClick={() => setPeriod('all')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  period === 'all'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-surface border border-surface-border text-muted hover:text-foreground'
+                }`}
+              >
+                All-time
+              </button>
             </div>
           </div>
         </div>
@@ -72,17 +99,17 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <nav className="flex overflow-x-auto gap-6" role="tablist">
             <button
-              onClick={() => setActiveTab('digest')}
-              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                activeTab === 'digest'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-muted hover:text-foreground'
-              }`}
-              role="tab"
-              aria-selected={activeTab === 'digest'}
-            >
-              Digest
-            </button>
+               onClick={() => setActiveTab('resources')}
+               className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 activeTab === 'resources'
+                   ? 'border-blue-500 text-blue-400'
+                   : 'border-transparent text-muted hover:text-foreground'
+               }`}
+               role="tab"
+               aria-selected={activeTab === 'resources'}
+             >
+               Resources
+             </button>
             <button
               onClick={() => setActiveTab('search')}
               className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
@@ -111,8 +138,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Category Tabs (only show for digest tab) */}
-      {activeTab === 'digest' && (
+      {/* Category Tabs (only show for resources tab) */}
+      {activeTab === 'resources' && (
         <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <nav className="flex overflow-x-auto gap-2" role="tablist">
@@ -138,7 +165,7 @@ export default function Home() {
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'digest' && (
+        {activeTab === 'resources' && (
           <Suspense fallback={<Loading />}>
             <ItemsGrid category={activeCategory} period={period} />
           </Suspense>

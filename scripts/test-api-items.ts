@@ -5,6 +5,7 @@
 
 import { loadItemsByCategory } from "../src/lib/db/items";
 import { rankCategory } from "../src/lib/pipeline/rank";
+import { selectWithDiversity } from "../src/lib/pipeline/select";
 import { Category } from "../src/lib/model";
 import { logger } from "../src/lib/logger";
 
@@ -25,13 +26,21 @@ async function testAPIEndpoint() {
       const items = await loadItemsByCategory(testCase.category, testCase.periodDays);
       const rankedItems = await rankCategory(items, testCase.category, testCase.periodDays);
 
+      // Apply diversity selection
+      const perSourceCaps = { week: 2, month: 3, all: 4 };
+      const maxPerSource = perSourceCaps[testCase.period as keyof typeof perSourceCaps] ?? 2;
+      const selectionResult = selectWithDiversity(rankedItems, testCase.category, maxPerSource);
+      const selectedItems = selectionResult.items;
+
       // Format response like the API would
       const response = {
         category: testCase.category,
         period: testCase.period,
         periodDays: testCase.periodDays,
-        totalItems: rankedItems.length,
-        items: rankedItems.slice(0, 3).map((item) => ({
+        totalItems: selectedItems.length,
+        itemsRanked: rankedItems.length,
+        itemsFiltered: rankedItems.length - selectedItems.length,
+        items: selectedItems.slice(0, 3).map((item) => ({
           id: item.id,
           title: item.title,
           url: item.url,

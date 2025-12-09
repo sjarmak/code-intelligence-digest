@@ -15,6 +15,7 @@ export const feeds = sqliteTable("feeds", {
   defaultCategory: text("default_category").notNull(),
   vendor: text("vendor"),
   tags: text("tags"), // JSON array stringified
+  sourceRelevance: integer("source_relevance").default(1), // 0-3 scale, default 1 (neutral)
   createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
   updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
 });
@@ -99,4 +100,20 @@ export const syncState = sqliteTable("sync_state", {
   lastUpdatedAt: integer("last_updated_at").default(sql`(strftime('%s', 'now'))`),
   status: text("status").notNull(), // "in_progress", "completed", "paused"
   error: text("error"), // If paused due to error
+});
+
+/**
+ * Starred items table: tracks items marked as starred/important in Inoreader
+ * Used for targeted curation and relevance tuning
+ */
+export const starredItems = sqliteTable("starred_items", {
+  id: text("id").primaryKey(),
+  itemId: text("item_id").notNull().unique(), // Reference to items table
+  inoreaderItemId: text("inoreader_item_id").notNull().unique(), // Original Inoreader ID
+  relevanceRating: integer("relevance_rating"), // 0-3: unset, low, medium, high
+  notes: text("notes"), // User notes about why it's relevant
+  starredAt: integer("starred_at").notNull(), // When marked as starred in Inoreader
+  ratedAt: integer("rated_at"), // When relevance was assigned
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
 });
