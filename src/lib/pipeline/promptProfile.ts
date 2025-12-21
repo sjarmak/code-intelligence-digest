@@ -42,7 +42,7 @@ export async function buildPromptProfile(prompt: string): Promise<PromptProfile 
     try {
       const response = await client.chat.completions.create({
         model: "gpt-4o-mini",
-        max_tokens: 300,
+        max_completion_tokens: 300,
         response_format: { type: "json_object" },
         messages: [
           {

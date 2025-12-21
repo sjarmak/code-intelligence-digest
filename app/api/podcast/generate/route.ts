@@ -1,6 +1,10 @@
 /**
  * POST /api/podcast/generate
- * Generate a podcast episode from selected categories
+ * Generate a podcast episode from selected categories using four-stage pipeline
+ * Stage A: Extract per-item digests (gpt-5.2-instant)
+ * Stage B: Build rundown with editorial clustering (gpt-5.2-thinking)
+ * Stage C: Write conversational script (gpt-5.2-pro)
+ * Stage D: Verify against digests (gpt-5.2-thinking)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -10,8 +14,11 @@ import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
 import { rerankWithPrompt, filterByExclusions } from "@/src/lib/pipeline/promptRerank";
-import { generatePodcastContent, PodcastSegment } from "@/src/lib/pipeline/podcast";
-import { Category, FeedItem } from "@/src/lib/model";
+import { extractPodcastBatchDigests } from "@/src/lib/pipeline/podcastDigest";
+import { generatePodcastRundown } from "@/src/lib/pipeline/podcastRundown";
+import { generatePodcastScript } from "@/src/lib/pipeline/podcastScript";
+import { verifyPodcastScript, generateVerificationReport } from "@/src/lib/pipeline/podcastVerify";
+import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 
 interface PodcastRequest {
@@ -21,6 +28,20 @@ interface PodcastRequest {
   prompt?: string;
   format?: string;
   voiceStyle?: string;
+}
+
+interface PodcastSegmentResponse {
+  title: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+}
+
+interface VerificationInfo {
+  passed: boolean;
+  issueCount: number;
+  errorCount: number;
+  report: string;
 }
 
 interface PodcastResponse {
@@ -33,7 +54,7 @@ interface PodcastResponse {
   itemsRetrieved: number;
   itemsIncluded: number;
   transcript: string;
-  segments: PodcastSegment[];
+  segments: PodcastSegmentResponse[];
   showNotes: string;
   generationMetadata: {
     promptUsed: string;
@@ -42,6 +63,12 @@ interface PodcastResponse {
     voiceStyle: string;
     duration: string;
     promptProfile: PromptProfile | null;
+    pipelineStages: {
+      digestExtraction: boolean;
+      rundownGeneration: boolean;
+      scriptWriting: boolean;
+      verification: VerificationInfo;
+    };
   };
 }
 
@@ -56,6 +83,59 @@ const ALLOWED_CATEGORIES: Category[] = [
 ];
 
 const VOICE_STYLES = ["conversational", "technical", "executive"];
+
+/**
+ * Build show notes from digests and rundown
+ */
+function buildShowNotes(
+  digests: Awaited<ReturnType<typeof extractPodcastBatchDigests>>,
+  rundown: Awaited<ReturnType<typeof generatePodcastRundown>>
+): string {
+  let notes = "# Show Notes\n\n";
+
+  // Attribution plan section
+  notes += "## Sources & Attribution\n\n";
+  for (const attr of rundown.attribution_plan) {
+    const digest = digests.find((d) => d.url === attr.url);
+    if (digest) {
+      notes += `- [${digest.title}](${digest.url}) — ${digest.source_name}\n`;
+      notes += `  ${attr.spoken_attribution}\n`;
+    }
+  }
+
+  // Segments section
+  notes += "\n## Segments\n\n";
+  for (const segment of rundown.segments) {
+    notes += `### ${segment.name} (~${segment.time_seconds}s)\n\n`;
+    for (const url of segment.stories_used) {
+      const digest = digests.find((d) => d.url === url);
+      if (digest) {
+        notes += `- [${digest.title}](${digest.url}) — ${digest.source_name}\n`;
+      }
+    }
+    notes += "\n";
+  }
+
+  // Lightning round
+  if (rundown.lightning_round.length > 0) {
+    notes += "## Lightning Round\n\n";
+    for (const item of rundown.lightning_round) {
+      const digest = digests.find((d) => d.url === item.url);
+      if (digest) {
+        notes += `- [${item.headline}](${item.url}) — ${digest.source_name}\n`;
+      }
+    }
+    notes += "\n";
+  }
+
+  // All digests as reference
+  notes += "## All Items\n\n";
+  for (const digest of digests) {
+    notes += `- [${digest.title}](${digest.url}) — ${digest.source_name} (${digest.credibility_notes})\n`;
+  }
+
+  return notes;
+}
 
 function validateRequest(body: unknown): { valid: boolean; error?: string; data?: PodcastRequest } {
   if (typeof body !== "object" || body === null) {
@@ -135,31 +215,31 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       allItems.push(...items);
     }
 
-    // Step 2: Rank candidates
-    const rankedPerCategory = await Promise.all(
-      req.categories.map(async (category) => {
-        const categoryItems = allItems.filter((item) => item.category === category);
-        const ranked = await rankCategory(categoryItems, category as Category, periodDays);
-        return { category, items: ranked };
-      })
-    );
+    // Step 2: Rank ALL candidates (no pre-filtering)
+     const rankedPerCategory = await Promise.all(
+       req.categories.map(async (category) => {
+         const categoryItems = allItems.filter((item) => item.category === category);
+         const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+         return { category, items: ranked };
+       })
+     );
 
-    // Merge and take top candidates per category
-    let mergedItems = [];
-    for (const { items } of rankedPerCategory) {
-      mergedItems.push(...items.slice(0, req.limit * 3));
-    }
+     // Merge ALL ranked items from all categories
+     let mergedItems: RankedItem[] = [];
+     for (const { items } of rankedPerCategory) {
+       mergedItems.push(...items);
+     }
 
-    // Deduplicate by ID
-    const deduped = new Map();
-    for (const item of mergedItems) {
-      if (!deduped.has(item.id)) {
-        deduped.set(item.id, item);
-      }
-    }
-    mergedItems = Array.from(deduped.values());
+     // Deduplicate by ID (keep highest-ranked)
+     const deduped = new Map<string, RankedItem>();
+     for (const item of mergedItems) {
+       if (!deduped.has(item.id)) {
+         deduped.set(item.id, item);
+       }
+     }
+     mergedItems = Array.from(deduped.values());
 
-    logger.info(`Retrieved ${mergedItems.length} candidate items`);
+     logger.info(`Retrieved ${mergedItems.length} candidate items from all categories`);
 
     // Step 3: Parse prompt and re-rank if needed
     let profile: PromptProfile | null = null;
@@ -175,21 +255,53 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       }
     }
 
-    // Step 4: Diversity selection
+    // Step 4: Diversity selection with limit
     const maxPerSource = req.period === "week" ? 2 : 3;
-    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, 12);
+    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, req.limit);
     const selectedItems = selection.items;
 
-    logger.info(`Selected ${selectedItems.length} items with diversity constraints`);
+    logger.info(`Selected ${selectedItems.length} items (requested limit: ${req.limit}) with diversity constraints`);
 
-    // Step 5: Generate content
-    const { transcript, segments, showNotes, estimatedDuration } = await generatePodcastContent(
-      selectedItems,
+    // FOUR-STAGE PIPELINE:
+
+    // Stage A: Extract per-item digests
+    logger.info("Stage A: Extracting per-item digests (gpt-5.2-instant)...");
+    const digests = await extractPodcastBatchDigests(selectedItems, req.prompt || "");
+    logger.info(`Stage A complete: ${digests.length} digests extracted`);
+
+    // Stage B: Build editorial rundown
+    logger.info("Stage B: Generating podcast rundown (gpt-5.2-thinking)...");
+    const rundown = await generatePodcastRundown(
+      digests,
+      req.period,
+      req.categories as Category[],
+      profile
+    );
+    logger.info(`Stage B complete: ${rundown.segments.length} segments, ${rundown.total_time_seconds}s total`);
+
+    // Stage C: Write conversational script
+    logger.info("Stage C: Writing podcast script (gpt-5.2-pro)...");
+    const { transcript, segments, estimatedDuration } = await generatePodcastScript(
+      digests,
+      rundown,
       req.period,
       req.categories as Category[],
       profile,
       req.voiceStyle
     );
+    logger.info(`Stage C complete: ${transcript.split(/\s+/).length} words, ${estimatedDuration} duration`);
+
+    // Stage D: Verify script
+    logger.info("Stage D: Verifying script accuracy (gpt-5.2-thinking)...");
+    const verificationResult = await verifyPodcastScript(transcript, digests);
+    const verificationReport = generateVerificationReport(verificationResult);
+    const errorCount = verificationResult.issues.filter((i) => i.severity === "error").length;
+    logger.info(
+      `Stage D complete: ${verificationResult.issues.length} issues found (${errorCount} errors), passed=${verificationResult.passedVerification}`
+    );
+
+    // Build show notes from rundown
+    const showNotes = buildShowNotes(digests, rundown);
 
     // Build response
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -197,23 +309,39 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
 
     const response: PodcastResponse = {
       id,
-      title: `Code Intelligence Weekly – Episode ${Math.floor(Math.random() * 100)}`,
+      title: rundown.episode_title || `Code Intelligence Digest – ${req.period === "week" ? "Week" : "Month"}`,
       generatedAt: new Date().toISOString(),
       categories: req.categories,
       period: req.period,
       duration: estimatedDuration,
       itemsRetrieved: mergedItems.length,
       itemsIncluded: selectedItems.length,
-      transcript,
-      segments,
+      transcript: verificationResult.script,
+      segments: segments.map((s) => ({
+        title: s.title,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        duration: s.duration,
+      })),
       showNotes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-4o-mini",
-        tokensUsed: Math.ceil(transcript.split(/\s+/).length * 1.3), // Rough estimate: 1.3 tokens per word
+        modelUsed: "gpt-5.2 (digest) + gpt-5.2-pro (rundown) + gpt-5.2-pro (script) + gpt-5.2 (fact-check)",
+        tokensUsed: Math.ceil(transcript.split(/\s+/).length * 1.3 + digests.length * 300 + 2000), // Estimate all stages
         voiceStyle: req.voiceStyle!,
         duration: `${duration}s`,
         promptProfile: profile,
+        pipelineStages: {
+          digestExtraction: true,
+          rundownGeneration: true,
+          scriptWriting: true,
+          verification: {
+            passed: verificationResult.passedVerification,
+            issueCount: verificationResult.issues.length,
+            errorCount,
+            report: verificationReport,
+          },
+        },
       },
     };
 

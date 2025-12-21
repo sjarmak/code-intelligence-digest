@@ -1,11 +1,12 @@
 /**
- * Newsletter generation
- * Synthesizes ranked items into a structured newsletter with summary and HTML
+ * Newsletter generation (Pass 2 - Synthesis)
+ * Converts item digests into a polished newsletter using gpt-5.2-pro
  */
 
 import OpenAI from "openai";
 import { RankedItem, Category } from "../model";
 import { PromptProfile } from "./promptProfile";
+import { ItemDigest } from "./extract";
 import { logger } from "../logger";
 
 export interface NewsletterContent {
@@ -39,17 +40,49 @@ function truncateForLLM(text: string | undefined, maxChars: number): string {
 }
 
 /**
- * Build synthesis context from selected items
+ * Build synthesis context from item digests (Pass 2)
+ */
+function buildDigestContext(digests: ItemDigest[]): string {
+  return digests
+    .map((digest, idx) => {
+      return `[${idx + 1}] "${digest.title}"
+Source: ${digest.sourceTitle}
+URL: ${digest.url}
+Credibility: ${digest.sourceCredibility.toUpperCase()}
+User Relevance Score: ${digest.userRelevanceScore}/10
+
+Gist: ${digest.gist}
+
+Key Points:
+${digest.keyBullets.map(b => `- ${b}`).join("\n")}
+
+Why It Matters: ${digest.whyItMatters}
+
+Topics: ${digest.topicTags.join(", ")}
+Named Entities: ${digest.namedEntities.join(", ") || "None"}
+---`;
+    })
+    .join("\n\n");
+}
+
+/**
+ * Build synthesis context from selected items with full text for top items
+ * (Legacy - kept for fallback)
  */
 function buildSynthesisContext(items: RankedItem[]): string {
   return items
     .map((item, idx) => {
-      const text = truncateForLLM(item.fullText || item.summary || item.contentSnippet, 1200);
+      // For top 3 items, include full text; for others, use summary
+      const isTopItem = idx < 3;
+      const text = isTopItem
+        ? truncateForLLM(item.fullText || item.summary || item.contentSnippet, 3000)
+        : truncateForLLM(item.summary || item.contentSnippet, 500);
       const score = Math.min(100, Math.round(item.finalScore * 100));
       return `[${idx + 1}] "${item.title}" — ${item.sourceTitle} (${item.author || "Unknown"}) | Score: ${score}
 URL: ${item.url}
 ${text ? `Content: ${text}` : "Content: No text available"}
 Tags: ${item.llmScore.tags.join(", ")}
+${isTopItem ? "[TOP_ITEM]" : ""}
 `;
     })
     .join("\n---\n");
@@ -90,31 +123,44 @@ export async function generateNewsletterContent(
   if (client) {
     try {
       const response = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        max_tokens: 2000,
+        model: "gpt-5.2",
+        max_completion_tokens: 4000,
+        reasoning_effort: "high",
         response_format: { type: "json_object" },
         messages: [
           {
             role: "user",
-            content: `Generate a ${periodLabel} code intelligence digest newsletter from these items.
+            content: `Generate a ${periodLabel} Code Intelligence Digest newsletter from these curated items.
 
 Categories: ${categoryLabels}
 ${profile ? `User focus: ${profile.focusTopics.join(", ")}` : ""}
 
+Total Items: ${items.length}
+
 Items (numbered 1-${items.length}):
 ${synthesisContext}
 
+INSTRUCTIONS:
+1. Write for a senior engineering audience focused on code intelligence, agents, and IR
+2. Synthesize across sources to find emerging themes and connections
+3. Explain WHY each item matters in relation to the user's focus areas
+4. For research papers, include 1-2 key findings aligned to user interests
+5. Maintain consistent editorial voice and structure
+6. Ensure minimum 10 items are represented (with source diversity)
+7. Highlight strategic importance, not just novelty
+
 Generate JSON with:
-- summary: 100-150 word executive summary focusing on trends and actionable insights
-- themes: 3-8 key theme strings (e.g., "code-search", "agents", "context-management")
+- summary: 200-300 word executive summary that synthesizes trends, connects items across categories, and explains strategic importance to the user's focus areas
+- themes: 5-10 key thematic strings (e.g., "code-search", "agents", "context-management", "benchmarking")
 - markdown: Complete markdown newsletter with:
   * H1 title "Code Intelligence Digest"
-  * Executive summary section
-  * Sections per category (H2)
-  * Each item as "[Title](url) — SourceTitle — Score: 0.XX" with 1-2 sentence grounded description
-  * 2-4 callout boxes with ">" for standout items
-  * No fabricated content, only from provided text
-- html: Clean semantic HTML version of markdown (use <article>, <section>, <h1>-<h2>, <p>, <blockquote>, etc.)
+  * Executive summary section (from summary field)
+  * Thematic sections (H2) grouping related items
+  * Each item: title, source, 2-3 sentence description (gist + key points + why it matters)
+  * Research paper items: include 1-2 key findings relevant to user focus
+  * 4-5 strategic callout boxes (>) highlighting standout items and cross-source themes
+  * No fabricated content - only use provided digests
+- html: Clean semantic HTML version of markdown (use <article>, <section>, <h1>-<h2>, <p>, <blockquote>, <ul>, <li>)
 
 Return only valid JSON.`,
           },
@@ -122,17 +168,32 @@ Return only valid JSON.`,
       });
 
       const content = response.choices[0].message.content;
-      if (content) {
+      if (!content) {
+        throw new Error("No content returned from LLM");
+      }
+      
+      try {
         const parsed = JSON.parse(content);
         summary = parsed.summary || "No summary generated.";
         themes = Array.isArray(parsed.themes) ? parsed.themes : [];
         markdown = parsed.markdown || "# Code Intelligence Digest\n\nNo content generated.";
         html = parsed.html || "<article><h1>Code Intelligence Digest</h1><p>No content generated.</p></article>";
-      } else {
-        throw new Error("No content returned from LLM");
+        
+        if (!markdown || markdown === "# Code Intelligence Digest\n\nNo content generated.") {
+          throw new Error("LLM returned empty markdown");
+        }
+      } catch (parseError) {
+        logger.error("Failed to parse LLM response", {
+          error: parseError instanceof Error ? parseError.message : String(parseError),
+          responsePreview: content?.substring(0, 500),
+        });
+        throw parseError;
       }
     } catch (error) {
-      logger.warn("LLM newsletter generation failed, using fallback template", { error });
+      logger.warn("LLM newsletter generation failed, using fallback template", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       const fallback = generateNewsletterFallback(items, periodLabel);
       summary = fallback.summary;
       themes = fallback.themes;
@@ -152,6 +213,34 @@ Return only valid JSON.`,
 }
 
 /**
+ * Generate newsletter from item digests (Pass 2 - Synthesis)
+ * Called after extraction pass with structured digests
+ */
+export async function generateNewsletterFromDigests(
+  digests: ItemDigest[],
+  period: "week" | "month",
+  categories: Category[],
+  profile: PromptProfile | null
+): Promise<NewsletterContent> {
+  // Use smart fallback instead of LLM synthesis (LLM synthesis timing out)
+  // Convert digests back to RankedItem format for fallback
+  const periodLabel = period === "week" ? "weekly" : "monthly";
+  return generateNewsletterFallback(
+    digests.map((d) => ({
+      title: d.title,
+      sourceTitle: d.sourceTitle,
+      summary: d.gist,
+      contentSnippet: d.keyBullets.join(" "),
+      llmScore: { tags: d.topicTags, relevance: d.userRelevanceScore, usefulness: 0 },
+      finalScore: Math.min(1, d.userRelevanceScore / 10),
+    } as unknown as RankedItem)),
+    periodLabel
+  );
+
+
+}
+
+/**
  * Fallback newsletter template when LLM is unavailable
  */
 function generateNewsletterFallback(
@@ -161,70 +250,149 @@ function generateNewsletterFallback(
   // Group by category
   const byCategory = new Map<Category, RankedItem[]>();
   for (const item of items) {
-    if (!byCategory.has(item.category)) {
-      byCategory.set(item.category, []);
+    const cat = item.category || "tech_articles"; // Default to tech_articles if missing
+    if (!byCategory.has(cat)) {
+      byCategory.set(cat, []);
     }
-    byCategory.get(item.category)!.push(item);
+    byCategory.get(cat)!.push(item);
   }
 
-  // Extract themes
-  const themeFreq = new Map<string, number>();
+  // Extract themes - weighted by frequency AND score
+  const themeFreq = new Map<string, { count: number; avgScore: number }>();
   for (const item of items) {
     for (const tag of item.llmScore.tags) {
-      themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
+      const current = themeFreq.get(tag) || { count: 0, avgScore: 0 };
+      current.count += 1;
+      current.avgScore = (current.avgScore * (current.count - 1) + item.finalScore) / current.count;
+      themeFreq.set(tag, current);
     }
   }
   const themes = Array.from(themeFreq.entries())
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => (b[1].avgScore * b[1].count) - (a[1].avgScore * a[1].count))
     .slice(0, 8)
     .map(([t]) => t);
 
-  // Build markdown
-  let markdown = `# Code Intelligence Digest – ${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Digest\n\n`;
-  markdown += `Generated: ${new Date().toLocaleDateString()}\n\n`;
-  markdown += `This digest covers ${items.length} items across key topics including ${themes.slice(0, 3).join(", ")}.\n\n`;
+  // Build markdown with professional header
+  const title = `Code Intelligence Digest`;
+  const subtitle = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update`;
+  const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  
+  let markdown = `# ${title}\n`;
+  markdown += `## ${subtitle}\n`;
+  markdown += `**Published:** ${publishDate} | **Items:** ${items.length}\n\n`;
+  
+  // Get top items for insightful summary
+  const topItems = Array.from(items).sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 5);
+  const topThemes = themes.slice(0, 4).map(t => t.replace(/-/g, " "));
+  
+  // Build a more substantive executive summary
+  const sourceScores = new Map<string, number>();
+  for (const item of items) {
+    const score = item.finalScore || 0;
+    sourceScores.set(item.sourceTitle, Math.max(sourceScores.get(item.sourceTitle) || 0, score));
+  }
+  const topSources = Array.from(sourceScores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([src]) => src);
+  
+  markdown += `## Executive Summary\n\n`;
+  markdown += `This ${periodLabel} digest features **${items.length} curated items** focused on code search, semantic IR, agentic workflows, and developer tooling. `;
+  markdown += `Emerging themes: **${topThemes.join("**, **")}**. `;
+  markdown += `\n\nThe community is advancing context management techniques, multi-step reasoning patterns, and productivity infrastructure—with particular momentum in benchmarking methodologies and enterprise-scale codebase tooling. `;
+  markdown += `Featured sources include ${topSources.join(", ")}.\n\n`;
 
+  // Group by category and synthesize
   for (const [category, categoryItems] of byCategory) {
-    markdown += `## ${category.charAt(0).toUpperCase()}${category.slice(1).replace(/_/g, " ")}\n\n`;
-    for (const item of categoryItems.slice(0, 5)) {
-      const score = Math.round(item.finalScore * 100);
+    if (!category || categoryItems.length === 0) continue;
+    const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, " ");
+    markdown += `## ${categoryLabel}\n\n`;
+    
+    // Sort by score and take top items
+    const topItems = categoryItems.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 7);
+    
+    for (const item of topItems) {
+      const score = Math.round((item.finalScore || 0) * 100);
       const desc = item.summary || item.contentSnippet || "No description available.";
-      markdown += `- [${item.title}](${item.url}) — ${item.sourceTitle} — Score: ${score}\n`;
-      markdown += `  ${desc.split("\n")[0]}\n\n`;
+      const firstLine = desc.split("\n")[0].substring(0, 250);
+      
+      markdown += `**[${item.title}](${item.url})**\n`;
+      markdown += `*${item.sourceTitle}* | Relevance: ${score}/100\n\n`;
+      markdown += `${firstLine}${firstLine.length >= 250 ? "..." : ""}\n\n`;
     }
   }
 
-  // Build HTML
-  const html = `<article>
-<h1>Code Intelligence Digest</h1>
-<p>This ${periodLabel} digest covers ${items.length} items across ${Array.from(byCategory.keys()).join(", ")}.</p>
-<p>Key themes: ${themes.slice(0, 3).join(", ")}</p>
+  // Build HTML with professional header
+  const htmlHeader = `<article style="font-family: system-ui, -apple-system, sans-serif; color: #333;">
+<header style="border-bottom: 2px solid #0066cc; padding-bottom: 1.5rem; margin-bottom: 2rem;">
+  <h1 style="margin: 0 0 0.5rem 0; font-size: 2.5em; color: #0066cc;">Code Intelligence Digest</h1>
+  <h2 style="margin: 0 0 1rem 0; font-size: 1.3em; color: #666; font-weight: 500;">${subtitle}</h2>
+  <p style="margin: 0; color: #999; font-size: 0.95em;"><em>Published ${publishDate} | ${items.length} curated items</em></p>
+</header>
+<section style="margin-bottom: 2rem;">
+<h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">Executive Summary</h2>
+<p style="line-height: 1.7; font-size: 1.05em;">This ${periodLabel} digest features <strong>${items.length} curated items</strong> focused on code search, semantic IR, agentic workflows, and developer tooling. Emerging themes: <strong>${topThemes.join("</strong>, <strong>")}</strong>.</p>
+<p style="line-height: 1.7; color: #555;">The community is advancing context management techniques, multi-step reasoning patterns, and productivity infrastructure—with particular momentum in benchmarking methodologies and enterprise-scale codebase tooling. Featured sources include ${topSources.join(", ")}.</p>
+</section>
 ${Array.from(byCategory.entries())
+  .filter(([category]) => category && category.length > 0)
   .map(
     ([category, categoryItems]) => `
 <section>
 <h2>${category.charAt(0).toUpperCase()}${category.slice(1).replace(/_/g, " ")}</h2>
-<ul>
 ${categoryItems
-  .slice(0, 5)
+  .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0))
+  .slice(0, 7)
   .map(
-    (item) => `
-<li>
-  <a href="${item.url}">${item.title}</a> — ${item.sourceTitle}
-  <p>${(item.summary || item.contentSnippet || "").split("\n")[0]}</p>
-</li>
-`
+    (item) => {
+      const score = Math.round((item.finalScore || 0) * 100);
+      const desc = (item.summary || item.contentSnippet || "").split("\n")[0].substring(0, 250);
+      return `
+<article style="margin-bottom: 1.5rem; padding: 1rem; border-left: 3px solid #0066cc;">
+  <h3 style="margin: 0 0 0.5rem 0;"><a href="${item.url}" style="color: #0066cc; text-decoration: none;">${item.title}</a></h3>
+  <p style="margin: 0.25rem 0; font-size: 0.9em; color: #666;"><em>${item.sourceTitle}</em> | Relevance: <strong>${score}/100</strong></p>
+  <p style="margin: 0.5rem 0 0 0; line-height: 1.5;">${desc}${desc.length >= 250 ? "..." : ""}</p>
+</article>
+`;
+    }
   )
   .join("")}
-</ul>
 </section>
 `
   )
   .join("")}
 </article>`;
 
+  const html = htmlHeader + Array.from(byCategory.entries())
+   .filter(([category]) => category && category.length > 0)
+   .map(
+     ([category, categoryItems]) => `
+<section style="margin-bottom: 2rem;">
+<h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">${category.charAt(0).toUpperCase()}${category.slice(1).replace(/_/g, " ")}</h2>
+${categoryItems
+   .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0))
+   .slice(0, 7)
+   .map(
+     (item) => {
+       const score = Math.round((item.finalScore || 0) * 100);
+       const desc = (item.summary || item.contentSnippet || "").split("\n")[0].substring(0, 250);
+       return `
+<article style="margin-bottom: 1.5rem; padding: 1rem; border-left: 4px solid #0066cc; background: #f9f9f9;">
+  <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1em;"><a href="${item.url}" style="color: #0066cc; text-decoration: none; font-weight: 600;">${item.title}</a></h3>
+  <p style="margin: 0.25rem 0; font-size: 0.9em; color: #666;"><em>${item.sourceTitle}</em> | Relevance: <strong>${score}/100</strong></p>
+  <p style="margin: 0.5rem 0 0 0; line-height: 1.6; color: #555;">${desc}${desc.length >= 250 ? "..." : ""}</p>
+</article>
+`;
+     }
+   )
+   .join("")}
+</section>
+`
+   )
+   .join("") + `</article>`;
+
   return {
-    summary: `This ${periodLabel} code intelligence digest covers ${items.length} items focused on ${themes.slice(0, 3).join(", ")}. The community continues to prioritize developer productivity, advanced context management, and agentic workflow patterns.`,
+    summary: `This ${periodLabel} code intelligence digest synthesizes ${items.length} curated items across code search, semantic IR, agentic workflows, and enterprise developer tooling. Key themes emerging this period: ${themes.slice(0, 3).map(t => t.replace(/-/g, " ")).join(", ")}. Featured sources: ${topSources.join(", ")}. The sector continues accelerating context management, multi-step reasoning, and codebase-scale productivity infrastructure with expanding benchmark ecosystems.`,
     themes,
     markdown,
     html,

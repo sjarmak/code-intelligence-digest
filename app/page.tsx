@@ -41,61 +41,79 @@ export default function Home() {
                 Daily, weekly, and monthly digests of code intelligence, tools, and AI agents
               </p>
             </div>
-            <div className="flex gap-2 flex-wrap items-start">
-              <a
-                href="/research"
-                className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
-                title="View ADS research libraries"
-              >
-                Libraries
-              </a>
-              <a
-                href="/admin"
-                className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
-                title="Manage relevance tuning"
-              >
-                Tuning
-              </a>
-              <button
-                onClick={() => setPeriod('day')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  period === 'day'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                }`}
-              >
-                Daily
-              </button>
-              <button
-                onClick={() => setPeriod('week')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  period === 'week'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                }`}
-              >
-                Weekly
-              </button>
-              <button
-                onClick={() => setPeriod('month')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  period === 'month'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                }`}
-              >
-                Monthly
-              </button>
-              <button
-                onClick={() => setPeriod('all')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  period === 'all'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                }`}
-              >
-                All-time
-              </button>
+            <div className="space-y-2">
+              <div className="flex gap-2 flex-wrap items-start">
+                <a
+                  href="/research"
+                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+                  title="View ADS research libraries"
+                >
+                  Libraries
+                </a>
+                <a
+                  href="/admin"
+                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+                  title="Manage relevance tuning"
+                >
+                  Tuning
+                </a>
+                <button
+                  onClick={() => setPeriod('day')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                    period === 'day'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
+                  }`}
+                >
+                  Daily
+                </button>
+                <button
+                  onClick={() => setPeriod('week')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                    period === 'week'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
+                  }`}
+                >
+                  Weekly
+                </button>
+                <button
+                  onClick={() => setPeriod('month')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                    period === 'month'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
+                  }`}
+                >
+                  Monthly
+                </button>
+                <button
+                  onClick={() => setPeriod('all')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                    period === 'all'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
+                  }`}
+                >
+                  All-time
+                </button>
+              </div>
+              <div className="flex gap-2 flex-wrap items-start">
+                <a
+                  href="/synthesis/podcast"
+                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+                  title="Generate podcast episodes"
+                >
+                  Podcast Generator
+                </a>
+                <a
+                  href="/synthesis/newsletter"
+                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+                  title="Generate newsletters"
+                >
+                  Newsletter Generator
+                </a>
+              </div>
             </div>
           </div>
         </div>

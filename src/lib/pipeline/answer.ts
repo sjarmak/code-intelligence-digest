@@ -69,7 +69,7 @@ export async function generateAnswer(
       try {
         const response = await client.chat.completions.create({
           model: "gpt-4o-mini",
-          max_tokens: 800,
+          max_completion_tokens: 800,
           messages: [
             {
               role: "user",

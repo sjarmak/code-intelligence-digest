@@ -10,8 +10,9 @@ import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
 import { rerankWithPrompt, filterByExclusions } from "@/src/lib/pipeline/promptRerank";
-import { generateNewsletterContent } from "@/src/lib/pipeline/newsletter";
-import { Category, FeedItem } from "@/src/lib/model";
+import { generateNewsletterFromDigests } from "@/src/lib/pipeline/newsletter";
+import { extractBatchDigests } from "@/src/lib/pipeline/extract";
+import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 
 interface NewsletterRequest {
@@ -130,14 +131,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       })
     );
 
-    // Merge and take top candidates per category
-    let mergedItems = [];
+    // Merge ALL ranked items from all categories (no pre-filtering)
+    let mergedItems: RankedItem[] = [];
     for (const { items } of rankedPerCategory) {
-      mergedItems.push(...items.slice(0, req.limit * 3));
+      mergedItems.push(...items);
     }
 
-    // Deduplicate by ID
-    const deduped = new Map();
+    // Deduplicate by ID (keep highest-ranked)
+    const deduped = new Map<string, RankedItem>();
     for (const item of mergedItems) {
       if (!deduped.has(item.id)) {
         deduped.set(item.id, item);
@@ -145,7 +146,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     }
     mergedItems = Array.from(deduped.values());
 
-    logger.info(`Retrieved ${mergedItems.length} candidate items`);
+    logger.info(`Retrieved ${mergedItems.length} candidate items from all categories`);
 
     // Step 3: Parse prompt and re-rank if needed
     let profile: PromptProfile | null = null;
@@ -163,16 +164,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       }
     }
 
-    // Step 4: Diversity selection
+    // Step 4: Diversity selection with limit
     const maxPerSource = req.period === "week" ? 2 : 3;
-    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, 15);
+    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, req.limit);
     const selectedItems = selection.items;
 
-    logger.info(`Selected ${selectedItems.length} items with diversity constraints`);
+    logger.info(`Selected ${selectedItems.length} items (requested limit: ${req.limit}) with diversity constraints`);
 
-    // Step 5: Generate content
-    const { summary, themes, markdown, html } = await generateNewsletterContent(
-      selectedItems,
+    // Step 5: Extract item digests (Pass 1)
+    const digests = await extractBatchDigests(selectedItems, req.prompt || "");
+    logger.info(`Extracted ${digests.length} item digests`);
+
+    // Step 6: Synthesize newsletter from digests (Pass 2)
+    const { summary, themes, markdown, html } = await generateNewsletterFromDigests(
+      digests,
       req.period,
       req.categories as Category[],
       profile
@@ -196,8 +201,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       themes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-4o-mini",
-        tokensUsed: Math.ceil(selectedItems.length * 250), // Rough estimate
+        modelUsed: "gpt-5.2-instant (extraction) + gpt-5.2-pro (synthesis)",
+        tokensUsed: Math.ceil(selectedItems.length * 300 + 3000), // Extraction + synthesis estimate
         duration: `${duration}s`,
         promptProfile: profile,
         rerankApplied,

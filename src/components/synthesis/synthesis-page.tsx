@@ -116,12 +116,22 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
   return (
     <div className="space-y-6">
+      {/* Back Button */}
+      <div className="mb-4">
+        <a
+          href="/"
+          className="inline-block px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+        >
+          ← Back to Home
+        </a>
+      </div>
+
       {/* Header */}
       <div className="space-y-2 mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">
-          {type === "newsletter" ? "📰 Newsletter" : "🎙️ Podcast"} Generator
-        </h1>
-        <p className="text-gray-600">
+        <h1 className="text-3xl font-bold text-white">
+           {type === "newsletter" ? "Newsletter" : "Podcast"} Generator
+         </h1>
+        <p className="text-muted">
           {type === "newsletter"
             ? "Generate a curated newsletter from your selected content categories"
             : "Generate a podcast episode transcript from your selected content"}
@@ -130,18 +140,18 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
       {/* Error Alert */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-sm font-semibold text-red-900">❌ Error</p>
-          <p className="text-sm text-red-800 mt-1">{error}</p>
+        <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
+          <p className="text-sm font-semibold text-red-200">Error</p>
+          <p className="text-sm text-red-100 mt-1">{error}</p>
         </div>
       )}
 
       {/* Success Alert */}
       {result && !isLoading && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <p className="text-sm font-semibold text-green-900">✅ Success</p>
-          <p className="text-sm text-green-800 mt-1">
-            {type === "newsletter" ? "Newsletter" : "Podcast"} generated successfully! 🎉
+        <div className="bg-green-900/30 border border-green-700 rounded-lg p-4">
+          <p className="text-sm font-semibold text-green-200">Success</p>
+          <p className="text-sm text-green-100 mt-1">
+            {type === "newsletter" ? "Newsletter" : "Podcast"} generated successfully!
           </p>
         </div>
       )}
@@ -170,11 +180,11 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
               )}
             </>
           ) : (
-            <div className="bg-gray-50 rounded-lg border border-gray-200 p-12 text-center">
-              <p className="text-gray-600">
+            <div className="bg-surface rounded-lg border border-surface-border p-12 text-center">
+              <p className="text-muted">
                 {type === "newsletter"
-                  ? "📋 Configure your newsletter settings and click 'Generate Newsletter' to get started"
-                  : "🎙️ Configure your podcast and click 'Generate Podcast' to get started"}
+                  ? "Configure your newsletter settings and click 'Generate Newsletter' to get started"
+                  : "Configure your podcast and click 'Generate Podcast' to get started"}
               </p>
             </div>
           )}

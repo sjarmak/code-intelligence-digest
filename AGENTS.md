@@ -590,19 +590,42 @@ Rules:
 - No duplicate tracking systems.
 - No markdown TODO lists.
 
-## Managing AI-Generated Planning Documents
+## Documentation and Code Style Guidelines
 
-All AI-generated planning and design docs go into `history/`:
+### Root Directory Sacred Rule
 
-- `PLAN.md`, `IMPLEMENTATION.md`, `ARCHITECTURE.md`, `DESIGN.md`, `CODEBASE_SUMMARY.md`, `INTEGRATION_PLAN.md`, `TESTING_GUIDE.md`, `TECHNICAL_DESIGN.md`, etc.
+**What belongs in root (ONLY):**
+- `README.md`, `AGENTS.md`, `LICENSE`
+- Essential config: `package.json`, `tsconfig.json`, `next.config.ts`
+- Essential directories: `src/`, `app/`, `public/`, `scripts/`, `.beads/`
 
-Optional `.gitignore`:
+**What NEVER goes in root:**
+- Status/progress docs (STATUS.md, PROGRESS.md, LANDING_PLANE.md) → `history/`
+- Planning docs (PLAN.md, DESIGN.md, IMPLEMENTATION.md) → `history/`
+- Fix summaries, session reports → `history/`
+- JSON outputs, artifacts → `.data/` or `.cache/`
+- Meeting notes, scratch files → `history/`
 
-```gitignore
-history/
+**Check before committing:**
+```bash
+ls -1 | grep -E "\.md$" | grep -v -E "^(README|AGENTS|LICENSE)\.md$"
+# Should return nothing—everything else goes in history/
 ```
 
-Keep repository root focused on durable artifacts. Planning docs are ephemeral and can be safely ignored unless explicitly requested.
+### AI-Generated Documentation
+
+- Never create fix summaries, session reports, or implementation docs in root
+- Planning is ephemeral; don't commit it unless it's a durable design artifact
+- If you write a summary, put it in `history/` and don't commit
+- **Code is the source of truth**—let it speak for itself
+
+### Code Generation Best Practices
+
+- Generate code, not documentation
+- Commit focused, reviewable changes
+- One feature/fix per commit with clear messages
+- Let tests prove correctness, not docs
+- Avoid over-explaining in comments; name things clearly instead
 
 ## Landing the Plane
 

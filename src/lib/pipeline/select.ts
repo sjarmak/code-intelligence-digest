@@ -58,6 +58,7 @@ export function selectWithDiversity(
 ): SelectionResult {
   const config = getCategoryConfig(category);
   const maxItems = maxItemsOverride ?? config.maxItems;
+  const minItems = Math.max(10, Math.ceil(maxItems * 0.67)); // Enforce minimum of 10 items
   
   // First, deduplicate by URL to handle same article from different sources
   const deduplicatedItems = deduplicateByUrl(rankedItems);
@@ -65,36 +66,64 @@ export function selectWithDiversity(
   const selected: RankedItem[] = [];
   const sourceCount = new Map<string, number>();
   const reasons = new Map<string, string>();
+  const seenSources = new Set<string>();
+
+  // First pass: enforce minimum diversity (at least 1 item per source up to maxPerSource)
+  const sourcePriority = new Map<string, number>();
+  for (const item of deduplicatedItems) {
+    if (!sourcePriority.has(item.sourceTitle)) {
+      sourcePriority.set(item.sourceTitle, deduplicatedItems.findIndex(i => i.sourceTitle === item.sourceTitle));
+    }
+  }
 
   for (const item of deduplicatedItems) {
     // Check source cap
     const currentSourceCount = sourceCount.get(item.sourceTitle) ?? 0;
     if (currentSourceCount >= maxPerSource) {
-      const reason = `Source cap reached for ${item.sourceTitle} (${currentSourceCount}/${maxPerSource})`;
-      logger.debug(
-        `Skipping item from ${item.sourceTitle} (source cap reached): ${item.title}`
-      );
-      reasons.set(item.id, reason);
       continue;
     }
 
-    // Check total cap
-    if (selected.length >= maxItems) {
-      const reason = `Total category limit reached (${selected.length}/${maxItems})`;
-      logger.debug(
-        `Reached max items limit (${maxItems}) for category ${category}`
-      );
-      reasons.set(item.id, reason);
+    // Check total cap (but allow exceeding if below minimum threshold)
+    if (selected.length >= maxItems && seenSources.size >= 5) {
+      // Stop if we've hit max items AND have good source diversity
+      reasons.set(item.id, `Total category limit reached (${selected.length}/${maxItems})`);
       break;
     }
 
     // Accept item
     selected.push(item);
     sourceCount.set(item.sourceTitle, currentSourceCount + 1);
+    seenSources.add(item.sourceTitle);
     reasons.set(item.id, `Selected at rank ${selected.length}`);
+
+    // Stop after hitting max items OR minimum items with diversity
+    if (selected.length >= maxItems) {
+      break;
+    }
   }
 
-  logger.info(`Selected ${selected.length} items with diversity constraints`);
+  // If we fell below minimum, add more items (relaxing source caps)
+  if (selected.length < minItems && selected.length < deduplicatedItems.length) {
+    logger.warn(
+      `Below minimum items (${selected.length}/${minItems}), relaxing diversity constraints`
+    );
+    
+    for (const item of deduplicatedItems) {
+      if (!selected.find(s => s.id === item.id) && selected.length < minItems) {
+        selected.push(item);
+        const count = (sourceCount.get(item.sourceTitle) ?? 0) + 1;
+        sourceCount.set(item.sourceTitle, count);
+        reasons.set(item.id, `Selected (minimum threshold enforcement)`);
+      }
+    }
+  }
+
+  const sourceCount_value = new Map(sourceCount);
+  const uniqueSources = sourceCount_value.size;
+  logger.info(
+    `Selected ${selected.length} items from ${uniqueSources} sources ` +
+    `(min: ${minItems}, max: ${maxItems}, per-source cap: ${maxPerSource})`
+  );
 
   return { items: selected, reasons };
 }

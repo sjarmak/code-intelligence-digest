@@ -47,13 +47,14 @@ export function SynthesisForm({
   isLoading = false,
   type,
 }: SynthesisFormProps) {
-  const [selectedCategories, setSelectedCategories] = useState<Category[]>([
-    "tech_articles",
-    "ai_news",
-  ]);
+  const [selectedCategories, setSelectedCategories] = useState<Category[]>(
+    ALLOWED_CATEGORIES
+  );
   const [period, setPeriod] = useState<"week" | "month">("week");
-  const [limit, setLimit] = useState(15);
-  const [prompt, setPrompt] = useState("");
+  const [limit, setLimit] = useState(50);
+  const [prompt, setPrompt] = useState(
+    "focus on code search, information retrieval or RAG or context management for coding agents, software engineering with coding agents, and benchmarks"
+  );
   const [voiceStyle, setVoiceStyle] = useState<"conversational" | "technical" | "executive">(
     "conversational"
   );
@@ -85,12 +86,12 @@ export function SynthesisForm({
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
-      <div className="border-b border-gray-200 px-6 py-4">
-        <h2 className="text-lg font-bold text-gray-900">
+    <div className="bg-surface rounded-lg border border-surface-border shadow-sm">
+      <div className="border-b border-surface-border px-6 py-4">
+        <h2 className="text-lg font-bold text-white">
           {type === "newsletter" ? "Generate Newsletter" : "Generate Podcast"}
         </h2>
-        <p className="text-sm text-gray-600 mt-1">
+        <p className="text-sm text-muted mt-1">
           {type === "newsletter"
             ? "Create a curated newsletter from selected content categories"
             : "Create an episode transcript from selected content"}
@@ -100,7 +101,7 @@ export function SynthesisForm({
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Categories */}
           <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-3">Content Categories</label>
+            <label className="block text-sm font-semibold text-white mb-3">Content Categories</label>
             <div className="grid grid-cols-2 gap-3">
               {ALLOWED_CATEGORIES.map((category) => (
                 <div key={category} className="flex items-center">
@@ -110,11 +111,11 @@ export function SynthesisForm({
                     checked={selectedCategories.includes(category)}
                     onChange={() => handleCategoryToggle(category)}
                     disabled={isLoading}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="rounded border-surface-border text-blue-600 focus:ring-blue-500 bg-surface"
                   />
                   <label
                     htmlFor={category}
-                    className="ml-2 text-sm text-gray-700 cursor-pointer"
+                    className="ml-2 text-sm text-foreground cursor-pointer"
                   >
                     {CATEGORY_LABELS[category]}
                   </label>
@@ -125,7 +126,7 @@ export function SynthesisForm({
 
           {/* Period */}
           <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-3">Time Period</label>
+            <label className="block text-sm font-semibold text-white mb-3">Time Period</label>
             <div className="space-y-2">
               <div className="flex items-center">
                 <input
@@ -138,7 +139,7 @@ export function SynthesisForm({
                   disabled={isLoading}
                   className="text-blue-600 focus:ring-blue-500"
                 />
-                <label htmlFor="week" className="ml-2 text-sm text-gray-700 cursor-pointer">
+                <label htmlFor="week" className="ml-2 text-sm text-foreground cursor-pointer">
                   This Week (7 days)
                 </label>
               </div>
@@ -153,7 +154,7 @@ export function SynthesisForm({
                   disabled={isLoading}
                   className="text-blue-600 focus:ring-blue-500"
                 />
-                <label htmlFor="month" className="ml-2 text-sm text-gray-700 cursor-pointer">
+                <label htmlFor="month" className="ml-2 text-sm text-foreground cursor-pointer">
                   This Month (30 days)
                 </label>
               </div>
@@ -162,7 +163,7 @@ export function SynthesisForm({
 
           {/* Limit */}
           <div>
-            <label htmlFor="limit" className="block text-sm font-semibold text-gray-900 mb-2">
+            <label htmlFor="limit" className="block text-sm font-semibold text-white mb-2">
               Item Limit
             </label>
             <input
@@ -173,15 +174,15 @@ export function SynthesisForm({
               value={limit}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLimit(Math.max(1, Math.min(50, parseInt(e.target.value) || 15)))}
               disabled={isLoading}
-              className="block w-20 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="block w-20 px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-surface text-white"
             />
-            <p className="text-xs text-gray-500 mt-1">Max items to retrieve (1-50)</p>
+            <p className="text-xs text-muted mt-1">Max items to retrieve (1-50)</p>
           </div>
 
           {/* Voice Style (Podcast only) */}
           {type === "podcast" && (
             <div>
-              <label htmlFor="voiceStyle" className="block text-sm font-semibold text-gray-900 mb-2">
+              <label htmlFor="voiceStyle" className="block text-sm font-semibold text-white mb-2">
                 Voice Style
               </label>
               <select
@@ -189,7 +190,7 @@ export function SynthesisForm({
                 value={voiceStyle}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVoiceStyle(e.target.value as "conversational" | "technical" | "executive")}
                 disabled={isLoading}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-surface text-white"
               >
                 <option value="conversational">Conversational</option>
                 <option value="technical">Technical</option>
@@ -200,7 +201,7 @@ export function SynthesisForm({
 
           {/* Prompt */}
           <div>
-            <label htmlFor="prompt" className="block text-sm font-semibold text-gray-900 mb-2">
+            <label htmlFor="prompt" className="block text-sm font-semibold text-white mb-2">
               Optional Guidance (Prompt)
             </label>
             <textarea
@@ -214,9 +215,9 @@ export function SynthesisForm({
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrompt(e.target.value)}
               disabled={isLoading}
               rows={4}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+              className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none bg-surface text-white placeholder-muted"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted mt-1">
               Leave empty for a comprehensive {type === "newsletter" ? "digest" : "episode"}
             </p>
           </div>
@@ -229,11 +230,10 @@ export function SynthesisForm({
           >
             {isLoading ? (
               <>
-                ⏳ Generating...
+                Generating...
               </>
             ) : (
               <>
-                {type === "newsletter" ? "📰" : "🎙️"}{" "}
                 {type === "newsletter" ? "Generate Newsletter" : "Generate Podcast"}
               </>
             )}
