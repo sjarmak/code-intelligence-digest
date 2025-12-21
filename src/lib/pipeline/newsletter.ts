@@ -304,109 +304,109 @@ async function generateNewsletterFromDigestData(
   periodLabel: string,
   userPrompt: string
 ): Promise<NewsletterContent> {
+  const client = new OpenAI();
+  const apiKey = process.env.OPENAI_API_KEY;
+
   // Categorize items using LLM
   const byCategory = await categorizItemsWithLLM(digests, userPrompt);
 
-  // Extract themes
-  const themeFreq = new Map<string, { count: number; avgScore: number }>();
+  // Extract themes for metadata
+  const themeFreq = new Map<string, number>();
   for (const digest of digests) {
     for (const tag of digest.topicTags) {
-      const current = themeFreq.get(tag) || { count: 0, avgScore: 0 };
-      current.count += 1;
-      current.avgScore = (current.avgScore * (current.count - 1) + digest.userRelevanceScore / 10) / current.count;
-      themeFreq.set(tag, current);
+      themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
     }
   }
   const themes = Array.from(themeFreq.entries())
-    .sort((a, b) => (b[1].avgScore * b[1].count) - (a[1].avgScore * a[1].count))
+    .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
     .map(([t]) => t);
 
-  // Build executive summary from LLM-generated categories
-  const categoryNames = Array.from(byCategory.keys()).slice(0, 3);
-  const categoryDescriptions = categoryNames
-    .map(name => {
-      const count = byCategory.get(name)?.length || 0;
-      return `${name} (${count} items)`;
+  // Build categorized digest text for LLM
+  const categorizedContent = Array.from(byCategory.entries())
+    .map(([catName, categoryDigests]) => {
+      const itemsList = categoryDigests
+        .map(d => `- **${d.title}** (${d.sourceTitle})\n  ${d.whyItMatters}`)
+        .join("\n");
+      return `## ${catName}\n\n${itemsList}`;
     })
-    .join(", ");
+    .join("\n\n");
 
-  let summaryText = `This ${periodLabel} digest curates ${digests.length} items across ${Array.from(byCategory.keys()).length} thematic areas. `;
-  summaryText += `Top focuses: ${categoryDescriptions}. `;
-  summaryText += `The collection reflects current momentum in these areas, with emphasis on practical applications and scalability.`;
-
-  const subtitle = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update`;
-  const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-  const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
-
-  // Build markdown
-  let markdown = `# Code Intelligence Digest\n`;
-  markdown += `## ${subtitle}\n`;
-  markdown += `**Published:** ${publishDate} | **Items:** ${digests.length}\n\n`;
-  markdown += `## Executive Summary\n\n`;
-  markdown += `${summaryText}\n\n`;
-  markdown += `Featured sources: ${topSources.join(", ")}.\n\n`;
-
-  // Group by semantic categories and render items
-  for (const [catName, categoryDigests] of byCategory) {
-    if (!categoryDigests.length) continue;
-    markdown += `## ${catName}\n\n`;
-    
-    // Sort by relevance
-    const sorted = categoryDigests.sort((a, b) => b.userRelevanceScore - a.userRelevanceScore).slice(0, 7);
-    
-    for (const digest of sorted) {
-      markdown += `**[${digest.title}](${digest.url})**\n`;
-      markdown += `*${digest.sourceTitle}*\n\n`;
-      markdown += `${digest.whyItMatters}\n\n`;
-    }
+  if (!apiKey) {
+    // Fallback: return basic structure
+    logger.warn("No OPENAI_API_KEY for synthesis, using basic template");
+    return generateNewsletterFallback(
+      digests.map(d => ({
+        title: d.title,
+        sourceTitle: d.sourceTitle,
+        summary: d.gist,
+        contentSnippet: d.keyBullets.join(" "),
+        llmScore: { tags: d.topicTags, relevance: d.userRelevanceScore, usefulness: 0 },
+        finalScore: Math.min(1, d.userRelevanceScore / 10),
+      } as unknown as RankedItem)),
+      periodLabel
+    );
   }
 
-  // Build HTML with dark theme
-  const html = `<article style="font-family: system-ui, -apple-system, sans-serif; color: #e8e8e8; background: #1a1a1a;">
- <header style="border-bottom: 2px solid #0066cc; padding-bottom: 1.5rem; margin-bottom: 2rem;">
-   <h1 style="margin: 0 0 0.5rem 0; font-size: 2.5em; color: #0066cc;">Code Intelligence Digest</h1>
-   <h2 style="margin: 0 0 1rem 0; font-size: 1.3em; color: #b0b0b0; font-weight: 500;">${subtitle}</h2>
-   <p style="margin: 0; color: #888; font-size: 0.95em;"><em>Published ${publishDate} | ${digests.length} curated items</em></p>
- </header>
- <section style="margin-bottom: 2rem;">
-   <h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #333; padding-bottom: 0.5rem;">Executive Summary</h2>
-   <p style="line-height: 1.7; font-size: 1.05em; color: #e8e8e8;">${summaryText}</p>
-   <p style="margin-top: 1rem; color: #b0b0b0;">Featured sources: ${topSources.join(", ")}.</p>
- </section>
- ${Array.from(byCategory.entries())
-   .filter(([, items]) => items.length > 0)
-   .map(
-     ([catName, categoryDigests]) => {
-       return `
- <section style="margin-bottom: 2rem;">
-   <h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #333; padding-bottom: 0.5rem;">${catName}</h2>
-   ${categoryDigests
-     .sort((a, b) => b.userRelevanceScore - a.userRelevanceScore)
-     .slice(0, 7)
-     .map(
-       (digest) => `
-   <article style="margin-bottom: 1.5rem; padding: 1.25rem; border-left: 4px solid #0066cc; background: #252525;">
-     <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1em;"><a href="${digest.url}" style="color: #0066cc; text-decoration: none; font-weight: 600;">${digest.title}</a></h3>
-     <p style="margin: 0.25rem 0 0.75rem 0; font-size: 0.9em; color: #999;"><em>${digest.sourceTitle}</em></p>
-     <p style="margin: 0; color: #d0d0d0; line-height: 1.6;">${digest.whyItMatters}</p>
-   </article>
-   `
-     )
-     .join("")}
- </section>
- `;
-     }
-   )
-   .join("")}
- </article>`;
+  try {
+    const response = await client.chat.completions.create({
+      model: "gpt-5.2",
+      max_completion_tokens: 4000,
+      reasoning_effort: "high",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "user",
+          content: `Generate a curated ${periodLabel} digest newsletter.
 
-  return {
-    summary: summaryText,
-    themes,
-    markdown,
-    html,
-  };
+User Focus: ${userPrompt}
+
+Total Items: ${digests.length}
+
+Categorized Items:
+${categorizedContent}
+
+Generate JSON with:
+- summary: 150-200 word executive summary (synthesize trends, highlight what's important for the user focus)
+- themes: 4-6 key thematic tags
+- markdown: Complete markdown newsletter with:
+  * H1 title "Code Intelligence Digest"
+  * H2 subtitle "${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update"
+  * Published date and item count
+  * Executive summary section
+  * Category sections with items
+  * Only use provided content, no fabrications
+- html: Clean semantic HTML (dark theme: #1a1a1a background, #e8e8e8 text, #0066cc accents, #252525 cards)
+
+Return ONLY valid JSON.`,
+        },
+      ],
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) throw new Error("No response from LLM");
+
+    const result = JSON.parse(content);
+    return {
+      summary: result.summary || "Curated weekly digest",
+      themes: Array.isArray(result.themes) ? result.themes : themes,
+      markdown: result.markdown || "# Code Intelligence Digest\n\nNo content generated.",
+      html: result.html || "<article>No content generated.</article>",
+    };
+  } catch (error) {
+    logger.warn("LLM synthesis failed, using fallback", { error });
+    return generateNewsletterFallback(
+      digests.map(d => ({
+        title: d.title,
+        sourceTitle: d.sourceTitle,
+        summary: d.gist,
+        contentSnippet: d.keyBullets.join(" "),
+        llmScore: { tags: d.topicTags, relevance: d.userRelevanceScore, usefulness: 0 },
+        finalScore: Math.min(1, d.userRelevanceScore / 10),
+      } as unknown as RankedItem)),
+      periodLabel
+    );
+  }
 }
 
 /**
