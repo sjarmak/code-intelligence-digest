@@ -220,48 +220,92 @@ export async function generateNewsletterFromDigests(
   digests: ItemDigest[],
   period: "week" | "month",
   categories: Category[],
-  profile: PromptProfile | null
+  profile: PromptProfile | null,
+  userPrompt?: string
 ): Promise<NewsletterContent> {
   const periodLabel = period === "week" ? "weekly" : "monthly";
-  return generateNewsletterFromDigestData(digests, periodLabel);
+  return await generateNewsletterFromDigestData(digests, periodLabel, userPrompt || "");
+}
+
+/**
+ * Categorize items using LLM based on user prompt
+ */
+async function categorizItemsWithLLM(
+  digests: ItemDigest[],
+  userPrompt: string
+): Promise<Map<string, ItemDigest[]>> {
+  const client = new OpenAI();
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey || digests.length === 0) {
+    // Fallback: group by first topic tag
+    const byCategory = new Map<string, ItemDigest[]>();
+    for (const digest of digests) {
+      const cat = digest.topicTags[0]?.replace(/_|-/g, " ") || "Other";
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat)!.push(digest);
+    }
+    return byCategory;
+  }
+
+  try {
+    const itemsList = digests.map((d, idx) => `${idx + 1}. "${d.title}" - ${d.whyItMatters}`).join("\n");
+
+    const response = await client.chat.completions.create({
+      model: "gpt-5.2-chat-latest",
+      max_completion_tokens: 1000,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "user",
+          content: `Given this user focus: "${userPrompt}"
+
+Categorize these items into logical thematic groups (3-6 categories max). Use category names that make sense for the user's interests.
+
+Items:
+${itemsList}
+
+Return JSON with:
+- categories: [{ name: "category name", items: [1, 2, 3] }]
+
+Return ONLY valid JSON.`,
+        },
+      ],
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) throw new Error("No response from LLM");
+
+    const result = JSON.parse(content);
+    const byCategory = new Map<string, ItemDigest[]>();
+
+    for (const cat of result.categories || []) {
+      byCategory.set(cat.name, (cat.items || []).map((idx: number) => digests[idx - 1]).filter(Boolean));
+    }
+
+    return byCategory;
+  } catch (error) {
+    logger.warn("LLM categorization failed, falling back to tag-based grouping", { error });
+    const byCategory = new Map<string, ItemDigest[]>();
+    for (const digest of digests) {
+      const cat = digest.topicTags[0]?.replace(/_|-/g, " ") || "Other";
+      if (!byCategory.has(cat)) byCategory.set(cat, []);
+      byCategory.get(cat)!.push(digest);
+    }
+    return byCategory;
+  }
 }
 
 /**
  * Generate newsletter directly from ItemDigest data (better quality)
  */
-function generateNewsletterFromDigestData(
+async function generateNewsletterFromDigestData(
   digests: ItemDigest[],
-  periodLabel: string
-): NewsletterContent {
-  // Define semantic categories based on common focus areas
-  const categoryDefs = [
-    { name: "Coding agents", keywords: ["agent", "coding agent", "agentic", "tool use", "orchestration"] },
-    { name: "Benchmarks", keywords: ["benchmark", "evaluation", "dataset", "metric"] },
-    { name: "Context management", keywords: ["context", "window", "compression", "retrieval", "rag"] },
-    { name: "Code search", keywords: ["code search", "semantic search", "indexing", "navigation"] },
-    { name: "Information retrieval", keywords: ["retrieval", "ir", "search", "ranking"] },
-  ];
-
-  // Classify digests into categories
-  const byCategory = new Map<string, ItemDigest[]>();
-  for (const digest of digests) {
-    let classified = false;
-    for (const cat of categoryDefs) {
-      const text = `${digest.title} ${digest.whyItMatters}`.toLowerCase();
-      if (cat.keywords.some(kw => text.includes(kw))) {
-        if (!byCategory.has(cat.name)) byCategory.set(cat.name, []);
-        byCategory.get(cat.name)!.push(digest);
-        classified = true;
-        break;
-      }
-    }
-    // Fallback to first tag if not classified
-    if (!classified) {
-      const cat = digest.topicTags[0]?.replace(/_|-/g, " ") || "Other";
-      if (!byCategory.has(cat)) byCategory.set(cat, []);
-      byCategory.get(cat)!.push(digest);
-    }
-  }
+  periodLabel: string,
+  userPrompt: string
+): Promise<NewsletterContent> {
+  // Categorize items using LLM
+  const byCategory = await categorizItemsWithLLM(digests, userPrompt);
 
   // Extract themes
   const themeFreq = new Map<string, { count: number; avgScore: number }>();

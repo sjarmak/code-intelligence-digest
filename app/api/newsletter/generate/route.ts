@@ -180,7 +180,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       digests,
       req.period,
       req.categories as Category[],
-      profile
+      profile,
+      req.prompt
     );
 
     // Build response
