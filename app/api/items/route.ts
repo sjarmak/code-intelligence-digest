@@ -9,6 +9,7 @@ import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
+import { getCategoryConfig } from "@/src/config/categories";
 
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
@@ -32,6 +33,16 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const category = searchParams.get("category") as Category | null;
     const period = searchParams.get("period") || "week";
+    const limitParam = searchParams.get("limit");
+    
+    // Parse limit, clamp to [1, 50]
+    let customLimit: number | undefined;
+    if (limitParam) {
+      const parsed = parseInt(limitParam, 10);
+      if (!isNaN(parsed)) {
+        customLimit = Math.min(Math.max(parsed, 1), 50);
+      }
+    }
 
     // Validate category
     if (!category || !VALID_CATEGORIES.includes(category)) {
@@ -68,9 +79,22 @@ export async function GET(request: NextRequest) {
     logger.info(`Ranked to ${rankedItems.length} items`);
 
     // Apply diversity selection based on period
-    const perSourceCaps = { day: 1, week: 2, month: 3, all: 4 };
-    const maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
-    const selectionResult = selectWithDiversity(rankedItems, category, maxPerSource);
+    // Increased caps to allow ranking system to show quality results (not just diversity)
+    const perSourceCaps = { day: 1, week: 4, month: 5, all: 6 };
+    let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
+    
+    // Increase per-source caps proportionally if custom limit is higher
+    if (customLimit && customLimit > getCategoryConfig(category).maxItems) {
+      const expansionRatio = customLimit / getCategoryConfig(category).maxItems;
+      maxPerSource = Math.ceil(maxPerSource * expansionRatio);
+    }
+    
+    const selectionResult = selectWithDiversity(
+      rankedItems, 
+      category, 
+      maxPerSource,
+      customLimit // Pass custom limit to override category config
+    );
     logger.info(
       `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`
     );

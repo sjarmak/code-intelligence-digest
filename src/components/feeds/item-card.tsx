@@ -53,11 +53,7 @@ function getCategoryColor(category: string): string {
   return colors[category] || 'bg-gray-900/30 text-gray-300 border-gray-700';
 }
 
-function getRelevanceColor(relevance: number): string {
-  if (relevance >= 8) return 'text-green-400';
-  if (relevance >= 6) return 'text-yellow-400';
-  return 'text-gray-400';
-}
+
 
 export default function ItemCard({ item, rank }: ItemCardProps) {
   return (
@@ -96,7 +92,7 @@ export default function ItemCard({ item, rank }: ItemCardProps) {
                 className="inline-block px-1.5 py-0.5 rounded text-xs bg-gray-900/50 border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600 transition-colors"
                 title="Tune source relevance"
               >
-                ⚡
+                Tune
               </a>
             </div>
             <span>•</span>
@@ -121,13 +117,7 @@ export default function ItemCard({ item, rank }: ItemCardProps) {
               </>
             )}
 
-            {/* Relevance score */}
-            <span className={`font-semibold ${getRelevanceColor(item.llmScore.relevance)}`}>
-              Relevance: {item.llmScore.relevance.toFixed(0)}/10
-            </span>
-
             {/* Date */}
-            <span>•</span>
             <span>{formatDate(item.publishedAt)}</span>
           </div>
 

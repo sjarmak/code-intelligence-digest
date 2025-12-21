@@ -27,7 +27,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     query:
       "code search semantic search codebase intelligence agents code review devtools IDE",
     halfLifeDays: 3,
-    maxItems: 5,
+    maxItems: 10,
     minRelevance: 5,
     weights: {
       llm: 0.45,
@@ -42,7 +42,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     query:
       "AI coding podcast agents code search LLM developer productivity tools infrastructure",
     halfLifeDays: 7,
-    maxItems: 4,
+    maxItems: 10,
     minRelevance: 5,
     weights: {
       llm: 0.5,
@@ -57,7 +57,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     query:
       "code search semantic search codebase refactoring agents code intelligence testing CI/CD architecture patterns",
     halfLifeDays: 5,
-    maxItems: 6,
+    maxItems: 10,
     minRelevance: 5,
     weights: {
       llm: 0.4,
@@ -72,7 +72,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     query:
       "LLM transformer model reasoning AI inference coding agents foundation models context window",
     halfLifeDays: 2,
-    maxItems: 5,
+    maxItems: 10,
     minRelevance: 5,
     weights: {
       llm: 0.45,
@@ -87,7 +87,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     query:
       "release feature announcement changelog IDE debugger code review tool productivity integrations",
     halfLifeDays: 4,
-    maxItems: 6,
+    maxItems: 10,
     minRelevance: 5,
     weights: {
       llm: 0.45,
@@ -102,7 +102,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     query:
       "code search agents devtools codebase refactoring code review testing CI/CD best practices",
     halfLifeDays: 3,
-    maxItems: 4,
+    maxItems: 10,
     minRelevance: 4,
     weights: {
       llm: 0.4,
@@ -118,7 +118,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     query:
       "semantic search code search program synthesis AST machine learning software engineering empirical study",
     halfLifeDays: 10,
-    maxItems: 5,
+    maxItems: 10,
     minRelevance: 5,
     weights: {
       llm: 0.5,

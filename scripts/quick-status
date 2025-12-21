@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Ultra-fast status check (< 1 second)
+
+DB_PATH=".data/digest.db"
+
+echo "Full Text Coverage Status ($(date '+%H:%M:%S'))"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+# Overall
+echo "📊 OVERALL"
+sqlite3 "$DB_PATH" "SELECT COUNT(*) as Total, SUM(CASE WHEN full_text IS NOT NULL THEN 1 ELSE 0 END) as Cached, ROUND(100.0*SUM(CASE WHEN full_text IS NOT NULL THEN 1 ELSE 0 END)/COUNT(*), 1) as 'Pct%', ROUND(SUM(LENGTH(COALESCE(full_text,'')))/1024.0/1024.0, 2) as 'MB' FROM items;" | awk -F'|' '{printf "   %s / %s items (%.1f%%)  [%.2f MB]\n", $2, $1, $3, $4}'
+
+echo ""
+echo "📂 BY CATEGORY"
+sqlite3 "$DB_PATH" "SELECT category, COUNT(*), SUM(CASE WHEN full_text IS NOT NULL THEN 1 ELSE 0 END), ROUND(100.0*SUM(CASE WHEN full_text IS NOT NULL THEN 1 ELSE 0 END)/COUNT(*), 1) FROM items GROUP BY category ORDER BY CAST(ROUND(100.0*SUM(CASE WHEN full_text IS NOT NULL THEN 1 ELSE 0 END)/COUNT(*), 1) AS FLOAT) DESC;" | awk -F'|' '{printf "   %-20s %4s / %-5s (%5.1f%%)\n", $1, $3, $2, $4}'
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Live:    bash scripts/monitor-fulltext.sh"
+echo "Analyze: npx tsx scripts/diagnose-fulltext-failures.ts"
+echo ""

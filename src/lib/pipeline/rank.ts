@@ -91,32 +91,92 @@ export async function rankCategory(
     const bm25Score = bm25Normalized.get(item.id) ?? 0;
     const llmResult = llmScores[item.id];
     // Compute LLM score from pre-computed relevance and usefulness (0.7 * relevance + 0.3 * usefulness)
+    // No score = use BM25 as proxy (better than hardcoded 5/10)
     const llmScore = llmResult
       ? (0.7 * llmResult.relevance + 0.3 * llmResult.usefulness) / 10 // Normalize to [0, 1]
-      : 0.5;
+      : bm25Score; // Use BM25 as fallback when no LLM score
     const recencyScore = computeRecencyScore(item.publishedAt, config.halfLifeDays);
 
+    // Apply boosts for domain-specific terms (code search, agents, evaluation, etc.)
+    let boostMultiplier = 1.0;
+    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
+    const boostTags: string[] = [];
+    
+    // SOURCEGRAPH: Highest priority
+    const hasSourcegraph = contentToSearch.includes('sourcegraph');
+    
+    // Core domain terms
+    const coreTerms = [
+      'deep search',
+      'code search',
+      'code intelligence',
+      'coding agent',
+      'codebase understanding',
+      'information retrieval',
+      'context management',
+      'context window',
+      'software engineering',
+      'benchmark',
+      'evaluation',
+      'developer productivity',
+      'ai tooling',
+    ];
+    
+    if (hasSourcegraph) {
+      // Sourcegraph gets maximum boost - it's a core product we want to highlight
+      boostMultiplier = 5.0;
+      boostTags.push('sourcegraph');
+      logger.debug(`Applied 5x SOURCEGRAPH BOOST: "${item.title}"`);
+    } else {
+      // Count matching core terms (excluding sourcegraph)
+      const matchingCoreTerms = coreTerms.filter(term => contentToSearch.includes(term)).length;
+      
+      // Check for compound terms (agent + code search/intelligence/context)
+      const hasAgent = contentToSearch.includes('agent') || contentToSearch.includes('agentic') || contentToSearch.includes('coding agent');
+      const hasCodeContext = coreTerms.slice(1, 8).some(term => contentToSearch.includes(term)); // code search through context management
+      
+      if (matchingCoreTerms >= 3) {
+        // Multiple domain terms = strong signal
+        boostMultiplier = 3.0;
+        logger.debug(`Applied 3x boost (${matchingCoreTerms} core terms): "${item.title}"`);
+      } else if (matchingCoreTerms === 2) {
+        boostMultiplier = 2.0;
+        logger.debug(`Applied 2x boost (2 core terms): "${item.title}"`);
+      } else if (hasAgent && hasCodeContext) {
+        // Agent + code search/context = sweet spot
+        boostMultiplier = 2.5;
+        logger.debug(`Applied 2.5x boost (agent + code context): "${item.title}"`);
+      } else if (matchingCoreTerms === 1) {
+        boostMultiplier = 1.5;
+        logger.debug(`Applied 1.5x boost (1 core term): "${item.title}"`);
+      }
+    }
+
     // Compute final score
-    const finalScore =
+    let finalScore =
       config.weights.llm * llmScore +
       config.weights.bm25 * bm25Score +
       config.weights.recency * recencyScore;
+    
+    // Apply boost multiplier
+    finalScore = finalScore * boostMultiplier;
 
     // Build reasoning string
     const reasoning = [
       `LLM: relevance=${llmResult?.relevance.toFixed(1)}, usefulness=${llmResult?.usefulness.toFixed(1)}`,
       `BM25=${bm25Score.toFixed(2)}`,
       `Recency=${recencyScore.toFixed(2)} (age: ${Math.round((Date.now() - item.publishedAt.getTime()) / (1000 * 60 * 60 * 24))}d)`,
+      boostMultiplier > 1.0 ? `[BOOST] ${boostMultiplier}x (core domain terms)` : '',
       `Tags: ${llmResult?.tags.join(", ") || "none"}`,
-    ].join(" | ");
+    ].filter(Boolean).join(" | ");
 
     return {
       ...item,
       bm25Score,
       llmScore: {
-        relevance: llmResult?.relevance ?? 5,
-        usefulness: llmResult?.usefulness ?? 5,
-        tags: llmResult?.tags ?? [],
+        relevance: llmResult?.relevance ?? Math.round((bm25Score * 10)),
+        usefulness: llmResult?.usefulness ?? Math.round((bm25Score * 10)),
+        tags: [...(llmResult?.tags ?? []), ...boostTags],
       },
       recencyScore,
       finalScore,
@@ -127,14 +187,18 @@ export async function rankCategory(
   // Filter out off-topic items
   const validItems = rankedItems.filter((item) => {
     const isOffTopic = item.llmScore.tags.includes("off-topic");
-    const meetsMinRelevance = item.llmScore.relevance >= config.minRelevance;
+    // For items without LLM scores (using BM25 fallback), be more lenient:
+    // require relevance >= 3 instead of config.minRelevance (typically 5)
+    const hasLLMScore = llmScores[item.id];
+    const minThreshold = hasLLMScore ? config.minRelevance : 3;
+    const meetsMinRelevance = item.llmScore.relevance >= minThreshold;
 
     if (isOffTopic) {
       logger.debug(`Filtering out off-topic item: ${item.title}`);
     }
     if (!meetsMinRelevance) {
       logger.debug(
-        `Filtering out low relevance item: ${item.title} (score: ${item.llmScore.relevance})`
+        `Filtering out low relevance item: ${item.title} (score: ${item.llmScore.relevance}, threshold: ${minThreshold})`
       );
     }
 

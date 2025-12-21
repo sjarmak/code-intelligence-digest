@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     const offset = parseInt(url.searchParams.get("offset") || "0");
 
     const items = await getStarredItems({
-      onlyRated: !onlyUnrated,
+      onlyUnrated,
       limit,
       offset,
     });
@@ -81,14 +81,6 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    // Verify auth
-    const authHeader = request.headers.get("authorization");
-    const adminToken = process.env.ADMIN_API_TOKEN;
-
-    if (adminToken && authHeader !== `Bearer ${adminToken}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     await initializeDatabase();
 
     // Extract inoreaderItemId from URL

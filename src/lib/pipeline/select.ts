@@ -48,14 +48,16 @@ function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
  * Apply diversity constraints:
  * - Deduplication: max 1 item per unique URL
  * - Per-source cap: max N items per source per category
- * - Total cap: max CATEGORY_CONFIG[category].maxItems
+ * - Total cap: max CATEGORY_CONFIG[category].maxItems (or custom limit if provided)
  */
 export function selectWithDiversity(
   rankedItems: RankedItem[],
   category: Category,
-  maxPerSource: number = 2
+  maxPerSource: number = 2,
+  maxItemsOverride?: number
 ): SelectionResult {
   const config = getCategoryConfig(category);
+  const maxItems = maxItemsOverride ?? config.maxItems;
   
   // First, deduplicate by URL to handle same article from different sources
   const deduplicatedItems = deduplicateByUrl(rankedItems);
@@ -77,10 +79,10 @@ export function selectWithDiversity(
     }
 
     // Check total cap
-    if (selected.length >= config.maxItems) {
-      const reason = `Total category limit reached (${selected.length}/${config.maxItems})`;
+    if (selected.length >= maxItems) {
+      const reason = `Total category limit reached (${selected.length}/${maxItems})`;
       logger.debug(
-        `Reached max items limit (${config.maxItems}) for category ${category}`
+        `Reached max items limit (${maxItems}) for category ${category}`
       );
       reasons.set(item.id, reason);
       break;

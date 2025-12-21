@@ -245,6 +245,39 @@ curl http://localhost:3002/api/admin/sync-daily
 
 **Details**: See `DAILY_SYNC_USAGE.md`
 
+## ADS Libraries Integration
+
+The Code Intelligence Digest now includes a research libraries view that pulls papers from your NASA ADS (Astrophysics Data System) libraries.
+
+### Setup
+
+1. Get your API token: https://ui.adsabs.harvard.edu/settings/token
+2. Add to `.env.local`: `ADS_API_TOKEN=<your-token>`
+3. Test: `npx tsx scripts/test-ads-api.ts`
+
+### Access
+
+- **UI**: http://localhost:3000/research or click "📚 Libraries" button
+- **API**: `GET /api/libraries?library=Benchmarks&rows=20&start=0&metadata=true`
+
+### Key Files
+
+- `src/lib/ads/client.ts` - ADS API client with retry logic
+- `src/components/libraries/libraries-view.tsx` - React UI component
+- `app/api/libraries/route.ts` - API endpoints
+- `scripts/test-ads-api.ts` - Integration test script
+- `ADS_LIBRARIES_GUIDE.md` - Full documentation
+
+### API Endpoints
+
+```bash
+# Get library items (with pagination)
+curl "http://localhost:3000/api/libraries?library=Benchmarks&rows=20&start=0&metadata=true"
+
+# List all available libraries
+curl -X POST http://localhost:3000/api/libraries
+```
+
 ## Relevance Tuning Commands
 
 ### Sync Starred Items from Inoreader

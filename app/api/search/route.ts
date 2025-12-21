@@ -8,7 +8,7 @@ import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { loadItemsByCategory } from "@/src/lib/db/items";
-import { semanticSearch } from "@/src/lib/pipeline/search";
+import { hybridSearch, semanticSearch, keywordSearch } from "@/src/lib/pipeline/search";
 
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
@@ -21,13 +21,17 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 /**
- * GET /api/search?q=code+intelligence&category=research&period=week&limit=10
+ * GET /api/search?q=code+intelligence&category=research&period=week&limit=10&type=hybrid
  * 
  * Query parameters:
  * - q (required): Search query string
  * - category (optional): Restrict to specific category
  * - period (optional): "week" or "month" (default: "week")
  * - limit (optional): Max results (default: 10, max: 100)
+ * - type (optional): "hybrid" (default), "semantic", or "keyword"
+ *   - "hybrid": Combines BM25 (40%) + embeddings (60%) - RECOMMENDED
+ *   - "semantic": Pure embedding-based search (slower, good for conceptual queries)
+ *   - "keyword": BM25 term matching only (fast, good for exact matches)
  */
 export async function GET(req: NextRequest) {
   try {
@@ -37,6 +41,7 @@ export async function GET(req: NextRequest) {
     const category = searchParams.get("category") as Category | null;
     const period = searchParams.get("period") || "week";
     const limit = Math.min(parseInt(searchParams.get("limit") || "10"), 100);
+    const searchType = (searchParams.get("type") || "hybrid") as "hybrid" | "semantic" | "keyword";
 
     // Validate required parameters
     if (!query || query.trim().length === 0) {
@@ -66,7 +71,7 @@ export async function GET(req: NextRequest) {
     const periodDays = periodDaysMap[period] || 7;
 
     logger.info(
-      `[SEARCH] Query: "${query}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}`
+      `[SEARCH] Query: "${query}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}, type: ${searchType}`
     );
 
     // Initialize database
@@ -114,10 +119,21 @@ export async function GET(req: NextRequest) {
       logger.warn(`[SEARCH] Found ${invalidItems.length} items with missing title or url`);
     }
 
-    // Perform semantic search
-    const results = await semanticSearch(query, searchItems, limit);
-
-    logger.info(`[SEARCH] Returned ${results.length} results`);
+    // Perform search based on type
+    let results;
+    if (searchType === "keyword") {
+      // Keyword search: BM25 term matching only (fastest)
+      results = await keywordSearch(query, searchItems, limit);
+      logger.info(`[SEARCH] Keyword search returned ${results.length} results`);
+    } else if (searchType === "semantic") {
+      // Semantic search: Pure embedding-based (slower, good for concepts)
+      results = await semanticSearch(query, searchItems, limit);
+      logger.info(`[SEARCH] Semantic search returned ${results.length} results`);
+    } else {
+      // Hybrid search: BM25 + embeddings (DEFAULT - balanced)
+      results = await hybridSearch(query, searchItems, limit);
+      logger.info(`[SEARCH] Hybrid search returned ${results.length} results`);
+    }
 
     // Map periodDays back to period name for response
     const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
@@ -126,6 +142,7 @@ export async function GET(req: NextRequest) {
       query,
       category: category || "all",
       period: periodName,
+      searchType,
       itemsSearched: searchItems.length,
       resultsReturned: results.length,
       results,

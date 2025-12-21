@@ -93,7 +93,7 @@ export async function saveStarredItems(
  * Get all starred items with optional rating filter
  */
 export async function getStarredItems(options?: {
-  onlyRated?: boolean;
+  onlyUnrated?: boolean;
   limit?: number;
   offset?: number;
 }) {
@@ -118,8 +118,8 @@ export async function getStarredItems(options?: {
       LEFT JOIN items i ON si.item_id = i.id
     `;
 
-    if (options?.onlyRated) {
-      sql += ` WHERE si.relevance_rating IS NOT NULL`;
+    if (options?.onlyUnrated) {
+      sql += ` WHERE si.relevance_rating IS NULL`;
     }
 
     sql += ` ORDER BY si.starred_at ASC`;

@@ -33,6 +33,9 @@ export const items = sqliteTable("items", {
   publishedAt: integer("published_at").notNull(), // Unix timestamp
   summary: text("summary"),
   contentSnippet: text("content_snippet"),
+  fullText: text("full_text"), // Full article text (fetched on demand)
+  fullTextFetchedAt: integer("full_text_fetched_at"), // When full text was fetched
+  fullTextSource: text("full_text_source"), // "web_scrape" | "arxiv" | "error"
   categories: text("categories"), // JSON array stringified
   category: text("category").notNull(),
   createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
@@ -114,6 +117,58 @@ export const starredItems = sqliteTable("starred_items", {
   notes: text("notes"), // User notes about why it's relevant
   starredAt: integer("starred_at").notNull(), // When marked as starred in Inoreader
   ratedAt: integer("rated_at"), // When relevance was assigned
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
+});
+
+/**
+ * ADS papers table: stores paper metadata fetched from ADS API
+ * Allows local caching of paper details for LLM processing and research
+ */
+export const adsPapers = sqliteTable("ads_papers", {
+  bibcode: text("bibcode").primaryKey(), // e.g., "2025arXiv251212730D"
+  title: text("title"), // Paper title
+  authors: text("authors"), // JSON array of author names
+  pubdate: text("pubdate"), // Publication date
+  abstract: text("abstract"), // Paper abstract
+  year: integer("year"), // Publication year
+  journal: text("journal"), // Journal abbreviation from bibcode
+  adsUrl: text("ads_url"), // URL to ADS abstract page
+  arxivUrl: text("arxiv_url"), // URL to arXiv if available
+  fullText: text("full_text"), // Optional: cached full text or PDF content
+  fulltextSource: text("fulltext_source"), // Where full text came from (e.g., "arxiv_api", "manual_upload")
+  fetchedAt: integer("fetched_at").default(sql`(strftime('%s', 'now'))`),
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
+});
+
+/**
+ * ADS library papers junction table: links papers to libraries
+ * Allows tracking which papers appear in which user libraries
+ */
+export const adsLibraryPapers = sqliteTable(
+  "ads_library_papers",
+  {
+    libraryId: text("library_id").notNull(),
+    bibcode: text("bibcode").notNull(),
+    addedAt: integer("added_at").default(sql`(strftime('%s', 'now'))`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.libraryId, table.bibcode] }),
+  })
+);
+
+/**
+ * ADS libraries metadata table: stores user's library info from ADS
+ * Caches library metadata for faster access
+ */
+export const adsLibraries = sqliteTable("ads_libraries", {
+  id: text("id").primaryKey(), // ADS library ID
+  name: text("name").notNull(),
+  description: text("description"),
+  numDocuments: integer("num_documents").notNull().default(0),
+  isPublic: integer("is_public").notNull().default(0), // Boolean stored as int
+  fetchedAt: integer("fetched_at").default(sql`(strftime('%s', 'now'))`),
   createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
   updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
 });

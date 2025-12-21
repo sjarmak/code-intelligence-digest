@@ -4,11 +4,17 @@
  * Falls back to heuristics if OPENAI_API_KEY is not set
  */
 
-import { initializeDatabase, getSqlite } from "../src/lib/db/index";
-import { loadItemsByCategory } from "../src/lib/db/items";
-import { scoreWithLLM } from "../src/lib/pipeline/llmScore";
-import { logger } from "../src/lib/logger";
-import { Category } from "../src/lib/model";
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+
+// Load .env.local
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+
+import { initializeDatabase, getSqlite } from "../src/lib/db/index.js";
+import { loadItemsByCategory } from "../src/lib/db/items.js";
+import { scoreWithLLM } from "../src/lib/pipeline/llmScore.js";
+import { logger } from "../src/lib/logger.js";
+import { Category } from "../src/lib/model.js";
 
 const CATEGORIES: Category[] = [
   "newsletters",
@@ -20,7 +26,7 @@ const CATEGORIES: Category[] = [
   "podcasts",
 ];
 
-const BATCH_SIZE = 30; // Items per API call
+const BATCH_SIZE = 3; // Items per API call (reduced to avoid token limit with large summaries)
 
 async function main() {
   console.log("\n=== Scoring Items with GPT-4o ===\n");

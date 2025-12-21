@@ -144,6 +144,25 @@ export async function initializeDatabase() {
       );
     `);
 
+    // Create global_api_budget table for tracking across all syncs
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS global_api_budget (
+        date TEXT PRIMARY KEY,
+        calls_used INTEGER DEFAULT 0,
+        last_updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        quota_limit INTEGER DEFAULT 100
+      );
+    `);
+
+    // Create user_cache table for storing inoreader user ID (never changes)
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS user_cache (
+        key TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        cached_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+    `);
+
     // Create starred_items table for relevance tuning
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS starred_items (
@@ -188,4 +207,76 @@ export async function initializeDatabase() {
     logger.error("Failed to initialize database schema", error);
     throw error;
   }
+}
+
+/**
+ * Global API budget tracking (cross-endpoint)
+ * Tracks all Inoreader API calls made in a single day
+ */
+
+export function getGlobalApiBudget(): { callsUsed: number; remaining: number; quotaLimit: number } {
+  const sqlite = getSqlite();
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  
+  const row = sqlite
+    .prepare('SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?')
+    .get(today) as { calls_used: number; quota_limit: number } | undefined;
+  
+  if (!row) {
+    // Initialize for today
+    sqlite
+      .prepare('INSERT OR IGNORE INTO global_api_budget (date, calls_used) VALUES (?, 0)')
+      .run(today);
+    return { callsUsed: 0, remaining: 100, quotaLimit: 100 };
+  }
+  
+  return {
+    callsUsed: row.calls_used,
+    remaining: row.quota_limit - row.calls_used,
+    quotaLimit: row.quota_limit,
+  };
+}
+
+export function incrementGlobalApiCalls(count: number): { callsUsed: number; remaining: number } {
+  const sqlite = getSqlite();
+  const today = new Date().toISOString().split('T')[0];
+  
+  sqlite
+    .prepare(`
+      INSERT INTO global_api_budget (date, calls_used) 
+      VALUES (?, ?)
+      ON CONFLICT(date) DO UPDATE SET 
+        calls_used = calls_used + ?,
+        last_updated_at = strftime('%s', 'now')
+    `)
+    .run(today, count, count);
+  
+  const budget = getGlobalApiBudget();
+  return {
+    callsUsed: budget.callsUsed,
+    remaining: budget.remaining,
+  };
+}
+
+/**
+ * Cache Inoreader user ID (stable, never changes)
+ * First run: fetch from API (1 call)
+ * Subsequent runs: retrieve from cache (0 calls)
+ */
+export function getCachedUserId(): string | null {
+  const sqlite = getSqlite();
+  const row = sqlite
+    .prepare('SELECT user_id FROM user_cache WHERE key = ?')
+    .get('inoreader_user_id') as { user_id: string } | undefined;
+  return row?.user_id || null;
+}
+
+export function setCachedUserId(userId: string): void {
+  const sqlite = getSqlite();
+  sqlite
+    .prepare(`
+      INSERT OR REPLACE INTO user_cache (key, user_id) 
+      VALUES (?, ?)
+    `)
+    .run('inoreader_user_id', userId);
 }

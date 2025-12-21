@@ -48,8 +48,8 @@ export async function POST() {
       paused: result.paused,
       error: result.error,
       message: result.paused
-        ? `⏸️ Sync paused (${result.itemsAdded} items added, ${result.apiCallsUsed} calls used). Will resume tomorrow.`
-        : `✅ Sync complete (${result.itemsAdded} items, ${result.apiCallsUsed} calls, ${100 - result.apiCallsUsed} remaining)`,
+        ? `Sync paused (${result.itemsAdded} items added, ${result.apiCallsUsed} calls used). Will resume tomorrow.`
+        : `Sync complete (${result.itemsAdded} items, ${result.apiCallsUsed} calls, ${100 - result.apiCallsUsed} remaining)`,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
