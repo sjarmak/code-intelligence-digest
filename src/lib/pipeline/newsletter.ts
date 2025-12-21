@@ -302,7 +302,7 @@ function generateNewsletterFallback(
   markdown += `\n\nThe community is advancing context management techniques, multi-step reasoning patterns, and productivity infrastructure—with particular momentum in benchmarking methodologies and enterprise-scale codebase tooling. `;
   markdown += `Featured sources include ${topSources.join(", ")}.\n\n`;
 
-  // Group by category and synthesize
+  // Group by category and synthesize (markdown only)
   for (const [category, categoryItems] of byCategory) {
     if (!category || categoryItems.length === 0) continue;
     const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, " ");
@@ -322,25 +322,25 @@ function generateNewsletterFallback(
     }
   }
 
-  // Build HTML with professional header
-  const htmlHeader = `<article style="font-family: system-ui, -apple-system, sans-serif; color: #333;">
-<header style="border-bottom: 2px solid #0066cc; padding-bottom: 1.5rem; margin-bottom: 2rem;">
+  // Build HTML with professional header and improved contrast
+  const html = `<article style="font-family: system-ui, -apple-system, sans-serif; color: #1a1a1a;">
+  <header style="border-bottom: 2px solid #0066cc; padding-bottom: 1.5rem; margin-bottom: 2rem;">
   <h1 style="margin: 0 0 0.5rem 0; font-size: 2.5em; color: #0066cc;">Code Intelligence Digest</h1>
-  <h2 style="margin: 0 0 1rem 0; font-size: 1.3em; color: #666; font-weight: 500;">${subtitle}</h2>
-  <p style="margin: 0; color: #999; font-size: 0.95em;"><em>Published ${publishDate} | ${items.length} curated items</em></p>
-</header>
-<section style="margin-bottom: 2rem;">
-<h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">Executive Summary</h2>
-<p style="line-height: 1.7; font-size: 1.05em;">This ${periodLabel} digest features <strong>${items.length} curated items</strong> focused on code search, semantic IR, agentic workflows, and developer tooling. Emerging themes: <strong>${topThemes.join("</strong>, <strong>")}</strong>.</p>
-<p style="line-height: 1.7; color: #555;">The community is advancing context management techniques, multi-step reasoning patterns, and productivity infrastructure—with particular momentum in benchmarking methodologies and enterprise-scale codebase tooling. Featured sources include ${topSources.join(", ")}.</p>
-</section>
-${Array.from(byCategory.entries())
+  <h2 style="margin: 0 0 1rem 0; font-size: 1.3em; color: #333; font-weight: 500;">${subtitle}</h2>
+  <p style="margin: 0; color: #666; font-size: 0.95em;"><em>Published ${publishDate} | ${items.length} curated items</em></p>
+  </header>
+  <section style="margin-bottom: 2rem;">
+  <h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">Executive Summary</h2>
+  <p style="line-height: 1.7; font-size: 1.05em; color: #1a1a1a;">This ${periodLabel} digest features <strong>${items.length} curated items</strong> focused on code search, semantic IR, agentic workflows, and developer tooling. Emerging themes: <strong>${topThemes.join("</strong>, <strong>")}</strong>.</p>
+  <p style="line-height: 1.7; color: #333;">The community is advancing context management techniques, multi-step reasoning patterns, and productivity infrastructure—with particular momentum in benchmarking methodologies and enterprise-scale codebase tooling. Featured sources include ${topSources.join(", ")}.</p>
+  </section>
+  ${Array.from(byCategory.entries())
   .filter(([category]) => category && category.length > 0)
   .map(
     ([category, categoryItems]) => `
-<section>
-<h2>${category.charAt(0).toUpperCase()}${category.slice(1).replace(/_/g, " ")}</h2>
-${categoryItems
+  <section style="margin-bottom: 2rem;">
+  <h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">${category.charAt(0).toUpperCase()}${category.slice(1).replace(/_/g, " ")}</h2>
+  ${categoryItems
   .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0))
   .slice(0, 7)
   .map(
@@ -348,48 +348,20 @@ ${categoryItems
       const score = Math.round((item.finalScore || 0) * 100);
       const desc = (item.summary || item.contentSnippet || "").split("\n")[0].substring(0, 250);
       return `
-<article style="margin-bottom: 1.5rem; padding: 1rem; border-left: 3px solid #0066cc;">
-  <h3 style="margin: 0 0 0.5rem 0;"><a href="${item.url}" style="color: #0066cc; text-decoration: none;">${item.title}</a></h3>
-  <p style="margin: 0.25rem 0; font-size: 0.9em; color: #666;"><em>${item.sourceTitle}</em> | Relevance: <strong>${score}/100</strong></p>
-  <p style="margin: 0.5rem 0 0 0; line-height: 1.5;">${desc}${desc.length >= 250 ? "..." : ""}</p>
-</article>
-`;
+  <article style="margin-bottom: 1.5rem; padding: 1.25rem; border-left: 4px solid #0066cc; background: #f8f9fa;">
+  <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1em;"><a href="${item.url}" style="color: #0066cc; text-decoration: none; font-weight: 600;">${item.title}</a></h3>
+  <p style="margin: 0.25rem 0; font-size: 0.9em; color: #555;"><em>${item.sourceTitle}</em> | Relevance: <strong>${score}/100</strong></p>
+  <p style="margin: 0.75rem 0 0 0; line-height: 1.6; color: #333;">${desc}${desc.length >= 250 ? "..." : ""}</p>
+  </article>
+  `;
     }
   )
   .join("")}
-</section>
-`
+  </section>
+  `
   )
   .join("")}
-</article>`;
-
-  const html = htmlHeader + Array.from(byCategory.entries())
-   .filter(([category]) => category && category.length > 0)
-   .map(
-     ([category, categoryItems]) => `
-<section style="margin-bottom: 2rem;">
-<h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">${category.charAt(0).toUpperCase()}${category.slice(1).replace(/_/g, " ")}</h2>
-${categoryItems
-   .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0))
-   .slice(0, 7)
-   .map(
-     (item) => {
-       const score = Math.round((item.finalScore || 0) * 100);
-       const desc = (item.summary || item.contentSnippet || "").split("\n")[0].substring(0, 250);
-       return `
-<article style="margin-bottom: 1.5rem; padding: 1rem; border-left: 4px solid #0066cc; background: #f9f9f9;">
-  <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1em;"><a href="${item.url}" style="color: #0066cc; text-decoration: none; font-weight: 600;">${item.title}</a></h3>
-  <p style="margin: 0.25rem 0; font-size: 0.9em; color: #666;"><em>${item.sourceTitle}</em> | Relevance: <strong>${score}/100</strong></p>
-  <p style="margin: 0.5rem 0 0 0; line-height: 1.6; color: #555;">${desc}${desc.length >= 250 ? "..." : ""}</p>
-</article>
-`;
-     }
-   )
-   .join("")}
-</section>
-`
-   )
-   .join("") + `</article>`;
+  </article>`;
 
   return {
     summary: `This ${periodLabel} code intelligence digest synthesizes ${items.length} curated items across code search, semantic IR, agentic workflows, and enterprise developer tooling. Key themes emerging this period: ${themes.slice(0, 3).map(t => t.replace(/-/g, " ")).join(", ")}. Featured sources: ${topSources.join(", ")}. The sector continues accelerating context management, multi-step reasoning, and codebase-scale productivity infrastructure with expanding benchmark ecosystems.`,
