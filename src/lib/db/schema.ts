@@ -172,3 +172,23 @@ export const adsLibraries = sqliteTable("ads_libraries", {
   createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
   updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
 });
+
+/**
+ * Generated podcast audio table: stores metadata for rendered podcast audio
+ * Allows caching and tracking of audio generation
+ */
+export const generatedPodcastAudio = sqliteTable("generated_podcast_audio", {
+  id: text("id").primaryKey(), // e.g., "aud-uuid"
+  podcastId: text("podcast_id"), // Reference to podcast, if stored
+  transcriptHash: text("transcript_hash").notNull().unique(), // sha256 of sanitized transcript + config
+  provider: text("provider").notNull(), // "openai" | "elevenlabs" | "nemo"
+  voice: text("voice"), // Voice ID/name used
+  format: text("format").notNull(), // "mp3" | "wav"
+  duration: text("duration"), // "MM:SS" format
+  durationSeconds: integer("duration_seconds"), // Seconds
+  audioUrl: text("audio_url").notNull(), // Public/signed URL
+  segmentAudio: text("segment_audio"), // JSON array of segment metadata
+  bytes: integer("bytes").notNull(), // File size in bytes
+  generatedAt: integer("generated_at").default(sql`(strftime('%s', 'now'))`),
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+});

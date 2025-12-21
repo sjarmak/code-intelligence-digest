@@ -148,6 +148,37 @@ npm run build
 npm start
 ```
 
+## Audio Rendering System (NEW - Jan 2025)
+
+Convert podcast transcripts to high-quality MP3/WAV audio files using multiple TTS providers:
+
+- **OpenAI TTS** (tts-1, tts-1-hd) - Primary provider
+- **ElevenLabs TTS** - High-quality synthesis
+- **NeMo TTS** - NVIDIA Riva endpoint
+
+**Features:**
+- Automatic transcript sanitization (removes `[INTRO]`, `[PAUSE]`, etc.)
+- Intelligent caching by transcript hash
+- Multi-provider abstraction (easy to add more)
+- Local file storage (swappable to S3/GCS/R2)
+- Full error handling with timeouts
+
+**Quick Start:**
+```bash
+export OPENAI_API_KEY=sk-...
+
+curl -X POST http://localhost:3002/api/podcast/render-audio \
+  -H "Content-Type: application/json" \
+  -d '{"transcript":"Welcome to the show","provider":"openai"}'
+```
+
+**Documentation:**
+- [Quick Reference](./AUDIO_QUICK_REFERENCE.md) - One-page cheat sheet
+- [Complete Guide](./AUDIO_RENDERING_GUIDE.md) - Full technical details
+- [Examples](./AUDIO_RENDERING_EXAMPLES.md) - Copy-paste examples
+- [API Reference](./API_REFERENCE.md) - Full API documentation
+- [Test Report](./TEST_EXECUTION_REPORT.md) - All 18 tests passing
+
 ## API Reference
 
 ### GET /api/items

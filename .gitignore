@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# documentation
+# Archive directory contains legacy session notes, planning docs, and old snapshots
+# Keep current documentation in root only
+history/
+
+# temp files
+*.log
+*~

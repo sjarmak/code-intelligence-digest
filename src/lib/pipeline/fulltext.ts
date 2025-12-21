@@ -74,7 +74,7 @@ async function fetchWebPage(url: string): Promise<string> {
  */
 function extractTextFromHTML(html: string): string {
   // Remove script and style elements
-  let text = html
+  const text = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
     // Remove HTML tags

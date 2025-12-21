@@ -188,6 +188,25 @@ export async function initializeDatabase() {
       // Column may already exist, ignore error
     }
 
+    // Create generated_podcast_audio table for audio rendering
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS generated_podcast_audio (
+        id TEXT PRIMARY KEY,
+        podcast_id TEXT,
+        transcript_hash TEXT NOT NULL UNIQUE,
+        provider TEXT NOT NULL,
+        voice TEXT,
+        format TEXT NOT NULL,
+        duration TEXT,
+        duration_seconds INTEGER,
+        audio_url TEXT NOT NULL,
+        segment_audio TEXT,
+        bytes INTEGER NOT NULL,
+        generated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+    `);
+
     // Create indexes for common queries
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);
@@ -200,6 +219,8 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_starred_items_item_id ON starred_items(item_id);
       CREATE INDEX IF NOT EXISTS idx_starred_items_inoreader_id ON starred_items(inoreader_item_id);
       CREATE INDEX IF NOT EXISTS idx_starred_items_rating ON starred_items(relevance_rating);
+      CREATE INDEX IF NOT EXISTS idx_podcast_audio_hash ON generated_podcast_audio(transcript_hash);
+      CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
     `);
 
     logger.info("Database schema initialized successfully");
