@@ -1,10 +1,18 @@
 /**
- * Semantic search pipeline
- * Searches over cached items using vector similarity
+ * Hybrid search pipeline
+ * Combines BM25 keyword matching + semantic search (embeddings)
+ * 
+ * Hybrid approach:
+ * 1. BM25: Fast, keyword-based, good for exact term matches
+ * 2. Semantic: Slow (embeddings), good for conceptual matches
+ * 3. Combined: Weighted average of both scores
+ * 
+ * Embeddings are 768-dimensional pseudo-embeddings (deterministic hash-based)
+ * In production, replace with OpenAI/Anthropic embeddings
  */
 
 import { FeedItem, RankedItem } from "../model";
-import { generateEmbedding, topKSimilar } from "../embeddings";
+import { generateEmbedding, topKSimilar, cosineSimilarity } from "../embeddings";
 import { getEmbeddingsBatch, saveEmbeddingsBatch } from "../db/embeddings";
 import { logger } from "../logger";
 
@@ -17,11 +25,133 @@ export interface SearchResult {
   summary?: string;
   contentSnippet?: string;
   category: string;
-  similarity: number; // 0-1 cosine similarity score
+  similarity: number; // 0-1 final score (hybrid)
+  bm25Score?: number; // Raw BM25 score
+  semanticScore?: number; // Raw semantic similarity
 }
 
 /**
- * Search items by semantic similarity to query
+ * Hybrid search: BM25 + semantic (embeddings)
+ * Combines keyword relevance with conceptual similarity
+ * Default approach - balances speed and relevance
+ */
+export async function hybridSearch(
+  query: string,
+  items: FeedItem[],
+  limit: number = 10,
+  semanticWeight: number = 0.6, // 60% semantic, 40% BM25
+  maxSemanticItems: number = 100 // Only compute embeddings for top 100 BM25 results
+): Promise<SearchResult[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  logger.info(`Performing hybrid search for: "${query}" (semantic weight: ${semanticWeight})`);
+
+  try {
+    // Step 1: Quick BM25 pass to filter to top candidates
+    const bm25Results = await keywordSearch(query, items, maxSemanticItems);
+    logger.info(`BM25 filtered to ${bm25Results.length} candidates`);
+
+    if (bm25Results.length === 0) {
+      logger.warn("BM25 search returned no results");
+      return [];
+    }
+
+    // Step 2: Get semantic scores for top BM25 results
+    const topItems = items.filter((item) => bm25Results.some((r) => r.id === item.id));
+    const semanticScores = await computeSemanticScores(query, topItems);
+
+    // Step 3: Hybrid ranking: combine BM25 + semantic
+    const hybridResults = bm25Results.map((bm25Result) => {
+      const semanticScore = semanticScores.get(bm25Result.id) ?? 0;
+      const item = items.find((i) => i.id === bm25Result.id);
+      if (!item) return null;
+
+      // Normalize scores to [0, 1]
+      const normalizedBm25 = Math.min(1, bm25Result.similarity); // BM25 similarity already 0-1
+      const normalizedSemantic = semanticScore; // Already 0-1
+
+      // Weighted combination
+      const hybridScore = normalizedSemantic * semanticWeight + normalizedBm25 * (1 - semanticWeight);
+
+      return {
+        ...bm25Result,
+        similarity: hybridScore,
+        semanticScore: normalizedSemantic,
+        bm25Score: normalizedBm25,
+      };
+    }).filter((x) => x !== null) as SearchResult[];
+
+    // Step 4: Re-sort by hybrid score and return top K
+    return hybridResults
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, limit);
+  } catch (error) {
+    logger.error(`Hybrid search failed for query: "${query}"`, error);
+    throw error;
+  }
+}
+
+/**
+ * Compute semantic scores (embeddings + cosine similarity) for items
+ * Reuses cached embeddings when available
+ */
+async function computeSemanticScores(
+  query: string,
+  items: FeedItem[]
+): Promise<Map<string, number>> {
+  try {
+    // Generate query embedding
+    const queryEmbedding = await generateEmbedding(query);
+
+    // Get cached embeddings
+    const itemIds = items.map((item) => item.id);
+    const cachedEmbeddings = await getEmbeddingsBatch(itemIds);
+
+    // Generate missing embeddings
+    const itemsNeedingEmbeddings = items.filter((item) => !cachedEmbeddings.has(item.id));
+    const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
+
+    for (const item of itemsNeedingEmbeddings) {
+      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 2000) : "";
+      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`;
+      const embedding = await generateEmbedding(text);
+      newEmbeddings.push({ itemId: item.id, embedding });
+      cachedEmbeddings.set(item.id, embedding);
+    }
+
+    // Save newly generated embeddings
+    if (newEmbeddings.length > 0) {
+      await saveEmbeddingsBatch(newEmbeddings);
+      logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
+    }
+
+    // Compute cosine similarity for all items
+    const scores = new Map<string, number>();
+    for (const item of items) {
+      const vector = cachedEmbeddings.get(item.id);
+      if (vector && vector.length > 0) {
+        const similarity = cosineSimilarity(queryEmbedding, vector);
+        // Normalize to [0, 1] (cosine similarity is [-1, 1], but typically [0, 1] for unit vectors)
+        const normalizedScore = Math.max(0, similarity);
+        scores.set(item.id, normalizedScore);
+      } else {
+        scores.set(item.id, 0);
+      }
+    }
+
+    return scores;
+  } catch (error) {
+    logger.error("Failed to compute semantic scores", error);
+    // Return zero scores on error to allow BM25 to continue
+    return new Map(items.map((item) => [item.id, 0]));
+  }
+}
+
+/**
+ * Pure semantic search: embeddings only
+ * Slower but good for conceptual/abstract queries
  * Generates embeddings on first search, then caches them
  */
 export async function semanticSearch(
@@ -49,7 +179,9 @@ export async function semanticSearch(
     // Generate missing embeddings
     const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
     for (const item of itemsNeedingEmbeddings) {
-      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""}`;
+      // Include full text if available (first 2000 chars to avoid excessive token usage)
+      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 2000) : "";
+      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`;
       const embedding = await generateEmbedding(text);
       newEmbeddings.push({ itemId: item.id, embedding });
       cachedEmbeddings.set(item.id, embedding);
@@ -119,6 +251,82 @@ export async function semanticSearch(
 }
 
 /**
+ * Keyword search: BM25-style term matching with exact match boost
+ * Used when user explicitly selects keyword search (e.g., for "sourcegraph")
+ */
+export async function keywordSearch(
+  query: string,
+  items: FeedItem[],
+  limit: number
+): Promise<SearchResult[]> {
+  const queryTerms = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((term) => term.length > 0);
+
+  logger.info(`Keyword search for query: "${query}", terms: [${queryTerms.join(", ")}], items: ${items.length}`);
+
+  if (queryTerms.length === 0) {
+    logger.warn("No query terms found");
+    return [];
+  }
+
+  // Score items by term matches with exact phrase boost
+  const scored = items
+    .map((item) => {
+      const title = item.title.toLowerCase();
+      // Include full text if available (first 5000 chars for better matching)
+      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 5000).toLowerCase() : "";
+      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
+
+      let score = 0;
+
+      // Exact phrase match in title (highest boost)
+      if (title.includes(query.toLowerCase())) {
+        score += 100;
+      }
+
+      // Individual term scoring
+      for (const term of queryTerms) {
+        // Exact matches in title (3x boost)
+        const titleMatches = (title.match(new RegExp(`\\b${term}\\b`, "g")) || []).length;
+        score += titleMatches * 30;
+
+        // Partial matches in title (2x boost)
+        const titlePartialMatches = (title.match(new RegExp(term, "g")) || []).length - titleMatches;
+        score += titlePartialMatches * 10;
+
+        // Exact matches in full text (1x boost)
+        const exactMatches = (text.match(new RegExp(`\\b${term}\\b`, "g")) || []).length - titleMatches;
+        score += exactMatches * 5;
+
+        // Partial matches in full text (0.5x boost)
+        const partialMatches = (text.match(new RegExp(term, "g")) || []).length - exactMatches - titleMatches - titlePartialMatches;
+        score += Math.min(partialMatches, 10) * 2; // Increased cap from 5 to 10 for full text
+      }
+
+      return { item, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+
+  logger.info(`Keyword search returned ${scored.length} results with query: "${query}" from ${items.length} items`);
+
+  return scored.map((x) => ({
+    id: x.item.id,
+    title: x.item.title,
+    url: x.item.url,
+    sourceTitle: x.item.sourceTitle,
+    publishedAt: x.item.publishedAt.toISOString(),
+    summary: x.item.summary,
+    contentSnippet: x.item.contentSnippet,
+    category: x.item.category,
+    similarity: Math.min(1.0, Math.round((x.score / 100) * 1000) / 1000), // Normalize to [0, 1]
+  }));
+}
+
+/**
  * Fallback: simple term-based search for when semantic search is insufficient
  * Matches query terms in title, summary, and snippet
  */
@@ -142,7 +350,9 @@ function termBasedSearch(
   // Score items by term matches
   const scored = items
     .map((item) => {
-      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""}`.toLowerCase();
+      // Include full text if available
+      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 5000).toLowerCase() : "";
+      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
 
       // Count term occurrences
       let score = 0;
@@ -151,9 +361,9 @@ function termBasedSearch(
         const titleMatches = (item.title.toLowerCase().match(new RegExp(term, "g")) || []).length;
         score += titleMatches * 3;
 
-        // Standard matches in summary/snippet
+        // Standard matches in full text
         const textMatches = (text.match(new RegExp(term, "g")) || []).length;
-        score += Math.min(textMatches, 5); // Cap to avoid over-weighting long documents
+        score += Math.min(textMatches, 10); // Increased cap from 5 to 10 for full text
       }
 
       return { item, score };

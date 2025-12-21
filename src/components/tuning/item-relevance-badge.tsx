@@ -90,7 +90,8 @@ export default function ItemRelevanceBadge({
   return (
     <div className="relative">
       <button
-        onClick={() => {
+        onClick={(e) => {
+          e.stopPropagation();
           if (!readOnly && !loading) {
             setIsOpen(!isOpen);
           }
@@ -100,8 +101,8 @@ export default function ItemRelevanceBadge({
           currentOption?.color || 'text-gray-500'
         } ${
           isOpen
-            ? 'bg-surface-border border-blue-500'
-            : 'bg-surface border-surface-border hover:border-surface-focus'
+            ? 'bg-blue-500 border-blue-500'
+            : 'bg-gray-700 border-gray-600 hover:border-gray-500'
         } ${loading ? 'opacity-50 cursor-not-allowed' : ''} ${readOnly ? 'cursor-default opacity-70' : ''}`}
         title={`Rating: ${currentOption?.label || 'Unrated'}${readOnly ? ' (read-only)' : ''}`}
       >

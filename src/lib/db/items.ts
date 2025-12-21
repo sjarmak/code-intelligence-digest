@@ -78,6 +78,7 @@ export async function loadItemsByCategory(
       content_snippet: string | null;
       categories: string;
       category: string;
+      full_text: string | null;
     }>;
 
     const items: FeedItem[] = rows.map((row) => {
@@ -95,6 +96,7 @@ export async function loadItemsByCategory(
         categories: JSON.parse(row.categories),
         category,
         raw: {}, // Raw data not stored in DB
+        fullText: row.full_text || undefined, // Include full text for search
       };
     });
 
@@ -201,7 +203,7 @@ export async function loadScoresForItems(
 
     const sqlite = getSqlite();
 
-    // Get the most recent scores for each item
+    // Get the OLDEST (real LLM) scores for each item, not the newest (heuristics)
     const placeholders = itemIds.map(() => "?").join(",");
     const rows = sqlite
       .prepare(
@@ -209,7 +211,7 @@ export async function loadScoresForItems(
       SELECT item_id, llm_relevance, llm_usefulness, llm_tags
       FROM item_scores
       WHERE item_id IN (${placeholders})
-      ORDER BY scored_at DESC
+      ORDER BY scored_at ASC
     `
       )
       .all(...itemIds) as Array<{
@@ -255,7 +257,7 @@ export async function getLastPublishedTimestamp(): Promise<number | null> {
 
     return result?.max_published ?? null;
   } catch (error) {
-    logger.warn("Failed to get last published timestamp", error);
+    logger.warn("Failed to get last published timestamp", { error });
     return null;
   }
 }
@@ -282,5 +284,96 @@ export async function updateItemsCacheMetadata(periodDays: number, count: number
   } catch (error) {
     logger.error("Failed to update items cache metadata", error);
     throw error;
+  }
+}
+
+/**
+ * Save full text for an item
+ */
+export async function saveFullText(
+  itemId: string,
+  fullText: string,
+  source: "web_scrape" | "arxiv" | "error"
+): Promise<void> {
+  try {
+    const sqlite = getSqlite();
+
+    sqlite.prepare(`
+      UPDATE items 
+      SET full_text = ?, 
+          full_text_fetched_at = strftime('%s', 'now'),
+          full_text_source = ?,
+          updated_at = strftime('%s', 'now')
+      WHERE id = ?
+    `).run(fullText || null, source, itemId);
+
+    logger.info(`Saved full text for item ${itemId} (${fullText?.length || 0} chars, source: ${source})`);
+  } catch (error) {
+    logger.error(`Failed to save full text for item ${itemId}`, error);
+    throw error;
+  }
+}
+
+/**
+ * Load full text for an item
+ */
+export async function loadFullText(itemId: string): Promise<{ text: string; source: string } | null> {
+  try {
+    const sqlite = getSqlite();
+
+    const row = sqlite
+      .prepare(`SELECT full_text, full_text_source FROM items WHERE id = ?`)
+      .get(itemId) as { full_text: string | null; full_text_source: string | null } | undefined;
+
+    if (!row || !row.full_text) {
+      return null;
+    }
+
+    return {
+      text: row.full_text,
+      source: row.full_text_source || "unknown",
+    };
+  } catch (error) {
+    logger.error(`Failed to load full text for item ${itemId}`, error);
+    return null;
+  }
+}
+
+/**
+ * Check how many items have cached full text
+ */
+export async function getFullTextCacheStats(): Promise<{
+  total: number;
+  cached: number;
+  bySource: Record<string, number>;
+}> {
+  try {
+    const sqlite = getSqlite();
+
+    const total = (
+      sqlite.prepare(`SELECT COUNT(*) as count FROM items`).get() as { count: number }
+    ).count;
+
+    const cached = (
+      sqlite
+        .prepare(`SELECT COUNT(*) as count FROM items WHERE full_text IS NOT NULL`)
+        .get() as { count: number }
+    ).count;
+
+    const bySource = sqlite
+      .prepare(
+        `SELECT full_text_source, COUNT(*) as count FROM items 
+         WHERE full_text IS NOT NULL GROUP BY full_text_source`
+      )
+      .all() as Array<{ full_text_source: string; count: number }>;
+
+    return {
+      total,
+      cached,
+      bySource: Object.fromEntries(bySource.map(row => [row.full_text_source, row.count])),
+    };
+  } catch (error) {
+    logger.error("Failed to get full text cache stats", error);
+    return { total: 0, cached: 0, bySource: {} };
   }
 }

@@ -18,11 +18,7 @@ interface StarredItem {
   ratedAt: string | null;
 }
 
-interface StarredItemsPanelProps {
-  adminToken?: string;
-}
-
-export default function StarredItemsPanel({ adminToken }: StarredItemsPanelProps) {
+export default function StarredItemsPanel() {
   const [items, setItems] = useState<StarredItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,9 +65,6 @@ export default function StarredItemsPanel({ adminToken }: StarredItemsPanelProps
     try {
       const response = await fetch('/api/admin/sync-starred', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${adminToken || process.env.NEXT_PUBLIC_ADMIN_API_TOKEN || ''}`,
-        },
       });
 
       if (!response.ok) {
@@ -105,7 +98,6 @@ export default function StarredItemsPanel({ adminToken }: StarredItemsPanelProps
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${adminToken || process.env.NEXT_PUBLIC_ADMIN_API_TOKEN || ''}`,
           },
           body: JSON.stringify({ rating, notes }),
         }
@@ -198,6 +190,7 @@ export default function StarredItemsPanel({ adminToken }: StarredItemsPanelProps
                   currentRating={item.relevanceRating as ItemRelevanceRating}
                   onRatingChange={handleRateItem}
                   starred={true}
+                  readOnly={false}
                 />
               </div>
 

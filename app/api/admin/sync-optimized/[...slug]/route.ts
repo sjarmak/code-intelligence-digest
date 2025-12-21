@@ -66,7 +66,7 @@ export async function POST(
         itemsAdded: result.itemsAdded,
         errors: result.errors,
         apiCallsUsed: result.apiCallsUsed,
-        message: `✅ Synced ${result.itemsAdded} items using only ${result.apiCallsUsed} API call(s)!`,
+        message: `Synced ${result.itemsAdded} items using only ${result.apiCallsUsed} API call(s)`,
         timestamp: new Date().toISOString(),
       });
     } else if (finalAction === 'category') {
@@ -100,7 +100,7 @@ export async function POST(
         itemsAdded: result.itemsAdded,
         itemsSkipped: result.itemsSkipped,
         apiCallsUsed: result.apiCallsUsed,
-        message: `✅ Synced ${result.itemsAdded} items using only ${result.apiCallsUsed} API call(s)!`,
+        message: `Synced ${result.itemsAdded} items using only ${result.apiCallsUsed} API call(s)`,
         timestamp: new Date().toISOString(),
       });
     } else if (finalAction === 'label') {
@@ -123,7 +123,7 @@ export async function POST(
         labelId,
         itemsAdded: result.itemsAdded,
         apiCallsUsed: result.apiCallsUsed,
-        message: `✅ Synced ${result.itemsAdded} items from label using ${result.apiCallsUsed} API call(s)!`,
+        message: `Synced ${result.itemsAdded} items from label using ${result.apiCallsUsed} API call(s)`,
         timestamp: new Date().toISOString(),
       });
     } else {

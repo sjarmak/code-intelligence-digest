@@ -25,14 +25,6 @@ export async function PATCH(
 ) {
   const { inoreaderItemId } = await params;
   try {
-    // Verify auth
-    const authHeader = request.headers.get("authorization");
-    const adminToken = process.env.ADMIN_API_TOKEN;
-
-    if (adminToken && authHeader !== `Bearer ${adminToken}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     await initializeDatabase();
 
     if (!inoreaderItemId) {

@@ -43,11 +43,18 @@ export default function Home() {
             </div>
             <div className="flex gap-2 flex-wrap items-start">
               <a
+                href="/research"
+                className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+                title="View ADS research libraries"
+              >
+                Libraries
+              </a>
+              <a
                 href="/admin"
                 className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
                 title="Manage relevance tuning"
               >
-                ⚙️ Tuning
+                Tuning
               </a>
               <button
                 onClick={() => setPeriod('day')}

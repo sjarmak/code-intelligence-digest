@@ -24,6 +24,7 @@ export interface FeedItem {
   categories: string[];
   category: Category;
   raw: unknown;
+  fullText?: string; // Optional cached full article text
 }
 
 export interface LLMScoreResult {

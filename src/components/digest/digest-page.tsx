@@ -25,6 +25,7 @@ interface DigestData {
 
 export default function DigestPage() {
   const [period, setPeriod] = useState<Period>('week');
+  const [expandedLimits, setExpandedLimits] = useState<Record<string, number>>({});
   const [digest, setDigest] = useState<DigestData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,13 @@ export default function DigestPage() {
 
     fetchDigest();
   }, [period]);
+
+  const handleExpandCategory = (category: string) => {
+    setExpandedLimits(prev => ({
+      ...prev,
+      [category]: (prev[category] || 10) === 10 ? 50 : 10
+    }));
+  };
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -130,7 +138,11 @@ export default function DigestPage() {
             )}
 
             {/* Highlights */}
-            <DigestHighlights highlights={digest.highlights} />
+             <DigestHighlights 
+               highlights={digest.highlights}
+               expandedLimits={expandedLimits}
+               onExpandCategory={handleExpandCategory}
+             />
           </div>
         )}
       </main>
