@@ -222,22 +222,134 @@ export async function generateNewsletterFromDigests(
   categories: Category[],
   profile: PromptProfile | null
 ): Promise<NewsletterContent> {
-  // Use smart fallback instead of LLM synthesis (LLM synthesis timing out)
-  // Convert digests back to RankedItem format for fallback
   const periodLabel = period === "week" ? "weekly" : "monthly";
-  return generateNewsletterFallback(
-    digests.map((d) => ({
-      title: d.title,
-      sourceTitle: d.sourceTitle,
-      summary: d.gist,
-      contentSnippet: d.keyBullets.join(" "),
-      llmScore: { tags: d.topicTags, relevance: d.userRelevanceScore, usefulness: 0 },
-      finalScore: Math.min(1, d.userRelevanceScore / 10),
-    } as unknown as RankedItem)),
-    periodLabel
-  );
+  return generateNewsletterFromDigestData(digests, periodLabel);
+}
 
+/**
+ * Generate newsletter directly from ItemDigest data (better quality)
+ */
+function generateNewsletterFromDigestData(
+  digests: ItemDigest[],
+  periodLabel: string
+): NewsletterContent {
+  // Group by category (infer from topics)
+  const byCategory = new Map<string, ItemDigest[]>();
+  for (const digest of digests) {
+    const cat = digest.topicTags[0] || "tech_articles";
+    if (!byCategory.has(cat)) {
+      byCategory.set(cat, []);
+    }
+    byCategory.get(cat)!.push(digest);
+  }
 
+  // Extract themes - weighted by frequency AND score
+  const themeFreq = new Map<string, { count: number; avgScore: number }>();
+  for (const digest of digests) {
+    for (const tag of digest.topicTags) {
+      const current = themeFreq.get(tag) || { count: 0, avgScore: 0 };
+      current.count += 1;
+      current.avgScore = (current.avgScore * (current.count - 1) + digest.userRelevanceScore / 10) / current.count;
+      themeFreq.set(tag, current);
+    }
+  }
+  const themes = Array.from(themeFreq.entries())
+    .sort((a, b) => (b[1].avgScore * b[1].count) - (a[1].avgScore * a[1].count))
+    .slice(0, 8)
+    .map(([t]) => t);
+
+  // Build executive summary from top items' "why it matters"
+  const topDigests = [...digests].sort((a, b) => b.userRelevanceScore - a.userRelevanceScore).slice(0, 5);
+  const keyInsights = topDigests
+    .map(d => d.whyItMatters)
+    .filter(Boolean)
+    .slice(0, 3);
+
+  const subtitle = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update`;
+  const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
+
+  // Build markdown
+  let markdown = `# Code Intelligence Digest\n`;
+  markdown += `## ${subtitle}\n`;
+  markdown += `**Published:** ${publishDate} | **Items:** ${digests.length}\n\n`;
+  markdown += `## Executive Summary\n\n`;
+  markdown += `This ${periodLabel} digest features **${digests.length} curated items** focused on code search, semantic IR, agentic workflows, and developer tooling. `;
+  markdown += `Emerging themes: **${themes.slice(0, 4).map(t => t.replace(/-/g, " ")).join("**, **")}**.\n\n`;
+  
+  if (keyInsights.length > 0) {
+    markdown += `Key developments:\n`;
+    keyInsights.forEach(insight => {
+      markdown += `- ${insight}\n`;
+    });
+    markdown += `\n`;
+  }
+
+  markdown += `Featured sources: ${topSources.join(", ")}.\n\n`;
+
+  // Group by topic and render items
+  for (const [topic, categoryDigests] of byCategory) {
+    if (!categoryDigests.length) continue;
+    const categoryLabel = topic.charAt(0).toUpperCase() + topic.slice(1).replace(/_|-/g, " ");
+    markdown += `## ${categoryLabel}\n\n`;
+    
+    // Sort by relevance
+    const sorted = categoryDigests.sort((a, b) => b.userRelevanceScore - a.userRelevanceScore).slice(0, 7);
+    
+    for (const digest of sorted) {
+      markdown += `**[${digest.title}](${digest.url})**\n`;
+      markdown += `*${digest.sourceTitle}*\n\n`;
+      markdown += `${digest.whyItMatters}\n\n`;
+    }
+  }
+
+  // Build HTML
+  const html = `<article style="font-family: system-ui, -apple-system, sans-serif; color: #1a1a1a;">
+ <header style="border-bottom: 2px solid #0066cc; padding-bottom: 1.5rem; margin-bottom: 2rem;">
+   <h1 style="margin: 0 0 0.5rem 0; font-size: 2.5em; color: #0066cc;">Code Intelligence Digest</h1>
+   <h2 style="margin: 0 0 1rem 0; font-size: 1.3em; color: #333; font-weight: 500;">${subtitle}</h2>
+   <p style="margin: 0; color: #666; font-size: 0.95em;"><em>Published ${publishDate} | ${digests.length} curated items</em></p>
+ </header>
+ <section style="margin-bottom: 2rem;">
+   <h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">Executive Summary</h2>
+   <p style="line-height: 1.7; font-size: 1.05em; color: #1a1a1a;">This ${periodLabel} digest features <strong>${digests.length} curated items</strong> focused on code search, semantic IR, agentic workflows, and developer tooling. Emerging themes: <strong>${themes.slice(0, 4).map(t => t.replace(/-/g, " ")).join("</strong>, <strong>")}</strong>.</p>
+   ${keyInsights.length > 0 ? `<div style="margin-top: 1rem;"><strong>Key developments:</strong><ul style="margin: 0.5rem 0; padding-left: 1.5rem;">${keyInsights.map(insight => `<li style="margin: 0.5rem 0; color: #333;">${insight}</li>`).join("")}</ul></div>` : ""}
+   <p style="margin-top: 1rem; color: #333;">Featured sources: ${topSources.join(", ")}.</p>
+ </section>
+ ${Array.from(byCategory.entries())
+   .filter(([, items]) => items.length > 0)
+   .map(
+     ([topic, categoryDigests]) => {
+       const categoryLabel = topic.charAt(0).toUpperCase() + topic.slice(1).replace(/_|-/g, " ");
+       return `
+ <section style="margin-bottom: 2rem;">
+   <h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">${categoryLabel}</h2>
+   ${categoryDigests
+     .sort((a, b) => b.userRelevanceScore - a.userRelevanceScore)
+     .slice(0, 7)
+     .map(
+       (digest) => `
+   <article style="margin-bottom: 1.5rem; padding: 1.25rem; border-left: 4px solid #0066cc; background: #f8f9fa;">
+     <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1em;"><a href="${digest.url}" style="color: #0066cc; text-decoration: none; font-weight: 600;">${digest.title}</a></h3>
+     <p style="margin: 0.25rem 0 0.75rem 0; font-size: 0.9em; color: #555;"><em>${digest.sourceTitle}</em></p>
+     <p style="margin: 0; color: #333; line-height: 1.6;">${digest.whyItMatters}</p>
+   </article>
+   `
+     )
+     .join("")}
+ </section>
+ `;
+     }
+   )
+   .join("")}
+ </article>`;
+
+  return {
+    summary: `This ${periodLabel} digest synthesizes ${digests.length} curated items focusing on code search, semantic IR, agentic workflows, and enterprise developer tooling. Key themes: ${themes.slice(0, 3).map(t => t.replace(/-/g, " ")).join(", ")}. Leading sources: ${topSources.join(", ")}.`,
+    themes,
+    markdown,
+    html,
+  };
 }
 
 /**
