@@ -100,7 +100,7 @@ export async function generateDigestSummary(
 
     const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
-      max_tokens: 500,
+      max_completion_tokens: 500,
       messages: [
         {
           role: "user",

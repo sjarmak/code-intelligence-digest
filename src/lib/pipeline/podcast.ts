@@ -222,7 +222,7 @@ export async function generatePodcastContent(
     try {
       const response = await client.chat.completions.create({
         model: "gpt-4o-mini",
-        max_tokens: 3500,
+        max_completion_tokens: 3500,
         messages: [
           {
             role: "user",

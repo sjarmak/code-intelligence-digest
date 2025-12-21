@@ -62,8 +62,8 @@ export function NewsletterViewer({
   const handleDownloadHTML = () => {
     const element = document.createElement("a");
     const htmlDoc = `<!DOCTYPE html>
-<html>
-<head>
+  <html>
+  <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
@@ -76,8 +76,8 @@ export function NewsletterViewer({
     a:hover { text-decoration: underline; }
     .metadata { background: #f3f4f6; padding: 1rem; border-radius: 0.5rem; margin: 1rem 0; font-size: 0.875rem; }
   </style>
-</head>
-<body>
+  </head>
+  <body>
   ${html}
   <hr style="margin-top: 2rem; border: none; border-top: 1px solid #e5e7eb;">
   <div class="metadata">
@@ -86,8 +86,8 @@ export function NewsletterViewer({
     <p><strong>Items:</strong> ${itemsIncluded} selected from ${itemsRetrieved} retrieved</p>
     <p><strong>Model:</strong> ${generationMetadata.modelUsed} | <strong>Tokens:</strong> ${generationMetadata.tokensUsed}</p>
   </div>
-</body>
-</html>`;
+  </body>
+  </html>`;
     element.setAttribute("href", `data:text/html;charset=utf-8,${encodeURIComponent(htmlDoc)}`);
     element.setAttribute("download", `${id}-newsletter.html`);
     element.style.display = "none";
@@ -96,40 +96,74 @@ export function NewsletterViewer({
     document.body.removeChild(element);
   };
 
+  const handleDownloadPDF = async () => {
+    try {
+      const response = await fetch("/api/newsletter/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          html,
+          title,
+          categories,
+          period,
+          generatedAt,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`PDF generation failed: ${response.statusText}`);
+      }
+
+      // Get HTML content and open in new tab for print-to-PDF
+      const pdfHTML = await response.text();
+      const blob = new Blob([pdfHTML], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const newWindow = window.open(url, "_blank");
+      if (newWindow) {
+        // Wait for page to load, then trigger print
+        setTimeout(() => {
+          newWindow.print();
+        }, 500);
+      }
+    } catch (error) {
+      alert(`Failed to generate PDF: ${error instanceof Error ? error.message : "Unknown error"}`);
+    }
+  };
+
   const generatedDate = new Date(generatedAt).toLocaleString();
 
   return (
     <div className="space-y-4">
       {/* Header Card */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 space-y-4">
+      <div className="bg-surface rounded-lg border border-surface-border shadow-sm p-6 space-y-4">
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
-            <p className="text-sm text-gray-600 mt-1">{generatedDate}</p>
+            <h2 className="text-2xl font-bold text-white">{title}</h2>
+            <p className="text-sm text-muted mt-1">{generatedDate}</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-blue-600">{itemsIncluded}</p>
-            <p className="text-xs text-gray-500">items included</p>
+            <p className="text-2xl font-bold text-blue-400">{itemsIncluded}</p>
+            <p className="text-xs text-muted">items included</p>
           </div>
         </div>
 
         {/* Categories and Stats */}
-        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-surface-border">
           <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase">Categories</p>
+            <p className="text-xs font-semibold text-muted uppercase">Categories</p>
             <div className="flex flex-wrap gap-1 mt-2">
               {categories.map((cat) => (
-                <span key={cat} className="inline-block px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
+                <span key={cat} className="inline-block px-2 py-1 bg-blue-900/30 text-blue-400 text-xs rounded border border-blue-700">
                   {cat}
                 </span>
               ))}
             </div>
           </div>
           <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase">Themes</p>
+            <p className="text-xs font-semibold text-muted uppercase">Themes</p>
             <div className="flex flex-wrap gap-1 mt-2">
               {themes.slice(0, 3).map((theme) => (
-                <span key={theme} className="inline-block px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded">
+                <span key={theme} className="inline-block px-2 py-1 bg-purple-900/30 text-purple-400 text-xs rounded border border-purple-700">
                   #{theme.replace(/_|-/g, "-")}
                 </span>
               ))}
@@ -138,46 +172,52 @@ export function NewsletterViewer({
         </div>
 
         {/* Summary */}
-        <div className="bg-blue-50 border border-blue-200 rounded p-3 mt-4">
-          <p className="text-xs font-semibold text-blue-900 mb-2">Executive Summary</p>
-          <p className="text-sm text-blue-800 leading-relaxed">{summary}</p>
+        <div className="bg-blue-900/30 border border-blue-700 rounded p-3 mt-4">
+          <p className="text-xs font-semibold text-blue-400 mb-2">Executive Summary</p>
+          <p className="text-sm text-blue-300 leading-relaxed">{summary}</p>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-2 pt-2">
+        <div className="flex flex-wrap gap-2 pt-2">
           <button
             onClick={handleCopyMarkdown}
-            className="px-3 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 text-gray-700 font-medium"
+            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-black text-foreground font-medium"
           >
-            📋 Copy Markdown
+            Copy Markdown
           </button>
           <button
             onClick={handleDownloadMarkdown}
-            className="px-3 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 text-gray-700 font-medium"
+            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-black text-foreground font-medium"
           >
-            ⬇️ Download MD
+            Download MD
           </button>
           <button
             onClick={handleDownloadHTML}
-            className="px-3 py-2 text-sm border border-gray-300 rounded hover:bg-gray-50 text-gray-700 font-medium"
+            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-black text-foreground font-medium"
           >
-            ⬇️ Download HTML
+            Download HTML
+          </button>
+          <button
+            onClick={handleDownloadPDF}
+            className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded text-white font-medium"
+          >
+            📄 Download PDF
           </button>
         </div>
       </div>
 
       {/* Content Card with Tabs */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-surface rounded-lg border border-surface-border shadow-sm overflow-hidden">
         {/* Tabs */}
-        <div className="border-b border-gray-200 flex">
+        <div className="border-b border-surface-border flex">
           {(["rendered", "markdown", "metadata"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-600 hover:text-gray-900"
+                  ? "border-blue-400 text-blue-400"
+                  : "border-transparent text-muted hover:text-foreground"
               }`}
             >
               {tab === "rendered" && "Rendered"}
@@ -197,7 +237,7 @@ export function NewsletterViewer({
           )}
 
           {activeTab === "markdown" && (
-            <pre className="bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto text-sm text-gray-700">
+            <pre className="bg-black p-4 rounded border border-surface-border overflow-x-auto text-sm text-foreground">
               {markdown}
             </pre>
           )}
@@ -205,7 +245,7 @@ export function NewsletterViewer({
           {activeTab === "metadata" && (
             <div className="space-y-2 text-sm">
               <p>
-                <strong>ID:</strong> <code className="bg-gray-100 px-2 py-1 rounded text-xs">{id}</code>
+                <strong>ID:</strong> <code className="bg-black px-2 py-1 rounded text-xs text-foreground">{id}</code>
               </p>
               <p>
                 <strong>Generated:</strong> {generatedDate}
@@ -229,7 +269,7 @@ export function NewsletterViewer({
                 <p>
                   <strong>Prompt:</strong>
                   <br />
-                  <span className="text-gray-600 italic">{generationMetadata.promptUsed}</span>
+                  <span className="text-muted italic">{generationMetadata.promptUsed}</span>
                 </p>
               )}
             </div>
