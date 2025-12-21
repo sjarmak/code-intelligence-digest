@@ -322,17 +322,18 @@ async function generateNewsletterFromDigestData(
     .slice(0, 5)
     .map(([t]) => t);
 
-  // Build synthesized executive summary
-  const topDigests = [...digests].sort((a, b) => b.userRelevanceScore - a.userRelevanceScore).slice(0, 8);
-  const agentContent = topDigests.filter(d => d.topicTags.some(t => t.includes("agent"))).length;
-  const benchmarkContent = topDigests.filter(d => d.topicTags.some(t => t.includes("benchmark"))).length;
-  const ragsContent = topDigests.filter(d => d.topicTags.some(t => t.includes("context") || t.includes("retrieval"))).length;
+  // Build executive summary from LLM-generated categories
+  const categoryNames = Array.from(byCategory.keys()).slice(0, 3);
+  const categoryDescriptions = categoryNames
+    .map(name => {
+      const count = byCategory.get(name)?.length || 0;
+      return `${name} (${count} items)`;
+    })
+    .join(", ");
 
-  let summaryText = `This ${periodLabel} digest curates ${digests.length} items around coding agent development, benchmarking, and context management. `;
-  if (agentContent > 0) summaryText += `Key themes include agent architecture and reliability patterns (${agentContent} items). `;
-  if (benchmarkContent > 0) summaryText += `Benchmarking insights inform evaluation methodology (${benchmarkContent} items). `;
-  if (ragsContent > 0) summaryText += `Context and retrieval strategies enable scalable agentic workflows (${ragsContent} items). `;
-  summaryText += `Emerging momentum in production-grade agent deployment, especially around verification and context optimization.`;
+  let summaryText = `This ${periodLabel} digest curates ${digests.length} items across ${Array.from(byCategory.keys()).length} thematic areas. `;
+  summaryText += `Top focuses: ${categoryDescriptions}. `;
+  summaryText += `The collection reflects current momentum in these areas, with emphasis on practical applications and scalability.`;
 
   const subtitle = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update`;
   const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
