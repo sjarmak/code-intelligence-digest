@@ -167,9 +167,34 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     // Step 4: Diversity selection with limit
     const maxPerSource = req.period === "week" ? 2 : 3;
     const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, req.limit);
-    const selectedItems = selection.items;
+    let selectedItems = selection.items;
 
     logger.info(`Selected ${selectedItems.length} items (requested limit: ${req.limit}) with diversity constraints`);
+
+    // Filter out extremely long articles to avoid token limits in extraction
+    // Articles >50KB are likely newsletters, podcasts, or spam; skip them
+    const maxContentLength = 50000; // 50KB threshold
+    const beforeFilter = selectedItems.length;
+    selectedItems = selectedItems.filter((item) => {
+      const contentLength = (item.fullText || item.summary || item.contentSnippet || "").length;
+      if (contentLength > maxContentLength) {
+        logger.info(`Filtering out oversized article: "${item.title}" (${contentLength} chars)`);
+        return false;
+      }
+      return true;
+    });
+    logger.info(`Filtered items: ${beforeFilter} → ${selectedItems.length} (removed ${beforeFilter - selectedItems.length} oversized articles)`);
+
+    // If we filtered too many, replenish from ranked items
+    if (selectedItems.length < Math.ceil(req.limit * 0.7)) {
+      const additionalNeeded = req.limit - selectedItems.length;
+      const selectedIds = new Set(selectedItems.map(i => i.id));
+      const candidates = mergedItems.filter(
+        item => !selectedIds.has(item.id) && (item.fullText || item.summary || item.contentSnippet || "").length <= maxContentLength
+      );
+      selectedItems.push(...candidates.slice(0, additionalNeeded));
+      logger.info(`Replenished selection: added ${Math.min(additionalNeeded, candidates.length)} more items`);
+    }
 
     // Step 5: Extract item digests (Pass 1)
     const digests = await extractBatchDigests(selectedItems, req.prompt || "");

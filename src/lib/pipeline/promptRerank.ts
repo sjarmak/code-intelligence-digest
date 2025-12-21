@@ -71,24 +71,36 @@ export function rerankWithPrompt(
       profile.focusTopics
     );
 
-    // Apply re-rank formula (conservative, don't override baseline)
-    const rerankBoost =
-      Math.min(1.0, item.finalScore) * 0.65 +
-      Math.min(1.0, tagMatchScore) * 0.25 +
-      Math.min(1.0, termPresenceScore) * 0.10;
+    // Apply aggressive re-rank formula to actually favor prompt-relevant items
+    // Prompt alignment is primary signal; baseline score is floor
+    const promptAlignmentScore = 
+      Math.min(1.0, tagMatchScore) * 0.5 +
+      Math.min(1.0, termPresenceScore) * 0.5;
 
-    const adjustedScore = item.finalScore * (0.8 + 0.2 * rerankBoost);
+    // Boost items that match prompt topics significantly
+    // For well-matched items (alignment > 0.4), boost by 1.5-2.5x
+    // For somewhat-matched items (alignment > 0.2), boost by 1.2-1.5x
+    // For non-matched items, preserve baseline
+    let boostFactor = 1.0;
+    if (promptAlignmentScore > 0.4) {
+      boostFactor = 1.5 + (promptAlignmentScore * 1.0); // 1.5-2.5x boost
+    } else if (promptAlignmentScore > 0.2) {
+      boostFactor = 1.2 + (promptAlignmentScore * 1.5); // 1.2-1.5x boost
+    }
+
+    const adjustedScore = item.finalScore * boostFactor;
 
     logger.debug(
       `Item "${item.title}": baseline=${item.finalScore.toFixed(3)}, ` +
       `tagMatch=${tagMatchScore.toFixed(2)}, termMatch=${termPresenceScore.toFixed(2)}, ` +
+      `alignment=${promptAlignmentScore.toFixed(2)}, boost=${boostFactor.toFixed(2)}x, ` +
       `adjusted=${adjustedScore.toFixed(3)}`
     );
 
     return {
       ...item,
       finalScore: adjustedScore,
-      reasoning: `${item.reasoning} [PROMPT-RERANK: tags=${tagMatchScore.toFixed(2)}, terms=${termPresenceScore.toFixed(2)}]`,
+      reasoning: `${item.reasoning} [PROMPT-RERANK: alignment=${promptAlignmentScore.toFixed(2)}, boost=${boostFactor.toFixed(2)}x]`,
     };
   });
 
