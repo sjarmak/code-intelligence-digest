@@ -79,16 +79,21 @@ export async function loadItemsByCategory(
       categories: string;
       category: string;
       full_text: string | null;
+      extracted_url: string | null;
     }>;
 
     const items: FeedItem[] = rows.map((row) => {
       const category = row.category as Category;
+      // Use extracted_url if original URL is invalid (inoreader wrapper)
+      const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
+        ? row.url 
+        : (row.extracted_url || row.url);
       return {
         id: row.id,
         streamId: row.stream_id,
         sourceTitle: row.source_title,
         title: row.title,
-        url: row.url,
+        url: finalUrl,
         author: row.author || undefined,
         publishedAt: new Date(row.published_at * 1000), // Convert from Unix timestamp
         summary: row.summary || undefined,
@@ -131,6 +136,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       content_snippet: string | null;
       categories: string;
       category: string;
+      extracted_url: string | null;
     } | undefined;
 
     if (!row) {
@@ -138,12 +144,16 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
     }
 
     const category = row.category as Category;
+    // Use extracted_url if original URL is invalid (inoreader wrapper)
+    const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
+      ? row.url 
+      : (row.extracted_url || row.url);
     return {
       id: row.id,
       streamId: row.stream_id,
       sourceTitle: row.source_title,
       title: row.title,
-      url: row.url,
+      url: finalUrl,
       author: row.author || undefined,
       publishedAt: new Date(row.published_at * 1000),
       summary: row.summary || undefined,
@@ -375,5 +385,53 @@ export async function getFullTextCacheStats(): Promise<{
   } catch (error) {
     logger.error("Failed to get full text cache stats", error);
     return { total: 0, cached: 0, bySource: {} };
+  }
+}
+
+/**
+ * Save extracted URL for an item (discovered via web search)
+ */
+export async function saveExtractedUrl(itemId: string, extractedUrl: string): Promise<void> {
+  try {
+    const sqlite = getSqlite();
+
+    sqlite.prepare(`
+      UPDATE items 
+      SET extracted_url = ?,
+          updated_at = strftime('%s', 'now')
+      WHERE id = ?
+    `).run(extractedUrl, itemId);
+
+    logger.debug(`Saved extracted URL for item ${itemId}: ${extractedUrl}`);
+  } catch (error) {
+    logger.error(`Failed to save extracted URL for item ${itemId}`, error);
+    throw error;
+  }
+}
+
+/**
+ * Save extracted URLs for multiple items
+ */
+export async function saveExtractedUrls(urlMap: Record<string, string>): Promise<void> {
+  try {
+    const sqlite = getSqlite();
+    const stmt = sqlite.prepare(`
+      UPDATE items 
+      SET extracted_url = ?,
+          updated_at = strftime('%s', 'now')
+      WHERE id = ?
+    `);
+
+    const updateMany = sqlite.transaction((urlMap: Record<string, string>) => {
+      for (const [itemId, url] of Object.entries(urlMap)) {
+        stmt.run(url, itemId);
+      }
+    });
+
+    updateMany(urlMap);
+    logger.info(`Saved extracted URLs for ${Object.keys(urlMap).length} items`);
+  } catch (error) {
+    logger.error("Failed to save extracted URLs", error);
+    throw error;
   }
 }

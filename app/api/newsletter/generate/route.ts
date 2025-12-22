@@ -195,9 +195,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     const digests = await extractBatchDigests(selectedItems, req.prompt || "");
     logger.info(`Extracted ${digests.length} item digests`);
 
+    // Filter out digests without valid URLs before synthesis
+    const validDigests = digests.filter(digest => {
+      const hasValidUrl = digest.url && 
+                         (digest.url.startsWith("http://") || digest.url.startsWith("https://")) && 
+                         !digest.url.includes("inoreader.com");
+      if (!hasValidUrl) {
+        logger.warn(`Excluding digest without valid URL: "${digest.title}" (url: "${digest.url}" source: "${digest.sourceTitle}")`);
+      }
+      return hasValidUrl;
+    });
+    logger.info(`URL filter: ${digests.length} → ${validDigests.length} digests (removed ${digests.length - validDigests.length} without valid URLs)`);
+
     // Step 7: Synthesize newsletter from digests (Pass 2)
     const { summary, themes, markdown, html } = await generateNewsletterFromDigests(
-      digests,
+      validDigests,
       req.period,
       req.categories as Category[],
       profile,
@@ -215,7 +227,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       categories: req.categories,
       period: req.period,
       itemsRetrieved: mergedItems.length,
-      itemsIncluded: selectedItems.length,
+      itemsIncluded: validDigests.length,
       summary,
       markdown,
       html,

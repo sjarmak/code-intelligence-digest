@@ -483,7 +483,7 @@ async function generateNewsletterFromDigestData(
   const summaryText = await buildExecutiveSummary(digests, themes);
 
   // Build markdown directly from categorized digests (don't use LLM)
-  const markdown = buildNewsletterMarkdown(byCategory, periodLabel);
+  const markdown = buildNewsletterMarkdown(byCategory, periodLabel, summaryText);
   
   // Build HTML from markdown
   const html = buildNewsletterHTML(markdown, summaryText);
@@ -697,10 +697,14 @@ Be specific, concrete, and analytical.`,
   /**
    * Build markdown newsletter directly from categorized digests
    */
-  function buildNewsletterMarkdown(byCategory: Map<string, ItemDigest[]>, periodLabel: string): string {
+  function buildNewsletterMarkdown(byCategory: Map<string, ItemDigest[]>, periodLabel: string, summary?: string): string {
     const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
     let markdown = `# Code Intelligence Digest\n\n`;
-    markdown += `**${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update** — Published ${publishDate}\n\n`;
+    markdown += `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Edition — ${publishDate}\n\n`;
+    
+    if (summary) {
+      markdown += `## Overview\n\n${summary}\n\n`;
+    }
 
     // Build each category section
     for (const [categoryName, items] of byCategory) {
@@ -726,21 +730,21 @@ Be specific, concrete, and analytical.`,
   }
 
   /**
-   * Convert markdown newsletter to semantic HTML with dark theme and summary section
+   * Convert markdown newsletter to semantic HTML with light theme
    */
   function buildNewsletterHTML(markdown: string, summary?: string): string {
     let html = markdown;
     
     // Convert markdown headers (before links, so we can detect them)
-    html = html.replace(/^# (.*?)$/gm, '<h1 style="color: #0066cc; margin-bottom: 0.5rem; font-size: 2.5em;">$1</h1>');
-    html = html.replace(/^## (.*?)$/gm, '<h2 style="color: #0066cc; border-bottom: 1px solid #333; padding-bottom: 0.5rem; margin-top: 1.5rem; margin-bottom: 1rem;">$1</h2>');
+    html = html.replace(/^# (.*?)$/gm, '<h1 style="color: #1a1a1a; margin-bottom: 0.25rem; font-size: 2.5em; font-weight: 700;">$1</h1>');
+    html = html.replace(/^## (.*?)$/gm, '<h2 style="color: #1a1a1a; margin-top: 2rem; margin-bottom: 0.75rem; font-size: 1.5em; font-weight: 600;">$1</h2>');
     
     // Convert links BEFORE bold/italic (so we don't accidentally format link text)
-    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" style="color: #0066cc; text-decoration: none; cursor: pointer;" target="_blank" rel="noopener noreferrer">$1</a>');
+    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" style="color: #0066cc; text-decoration: none; font-weight: 500;" target="_blank" rel="noopener noreferrer">$1</a>');
     
     // Convert bold and italic
-    html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600;">$1</strong>');
-    html = html.replace(/\*(.*?)\*/g, '<em style="font-style: italic;">$1</em>');
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600; color: #1a1a1a;">$1</strong>');
+    html = html.replace(/\*(.*?)\*/g, '<em style="font-style: italic; color: #555;">$1</em>');
     
     // Convert list items: collapse consecutive lines starting with - into a list
     const lines = html.split('\n');
@@ -752,12 +756,12 @@ Be specific, concrete, and analytical.`,
       
       if (line.match(/^- /)) {
         if (!inList) {
-          result.push('<ul style="margin-left: 1.5rem; margin-bottom: 1rem;">');
+          result.push('<ul style="margin-left: 1.5rem; margin-bottom: 1.5rem; list-style: none; padding: 0;">');
           inList = true;
         }
         // Remove leading dash and convert to list item
         const itemText = line.replace(/^- /, '').trim();
-        result.push(`<li style="margin-bottom: 0.5rem; line-height: 1.6; color: #ccc;">${itemText}</li>`);
+        result.push(`<li style="margin-bottom: 0.75rem; line-height: 1.6; color: #333; padding-left: 1.5rem; position: relative;"><span style="position: absolute; left: 0;">•</span> ${itemText}</li>`);
       } else {
         if (inList) {
           result.push('</ul>');
@@ -770,14 +774,9 @@ Be specific, concrete, and analytical.`,
         } else if (line.match(/^<h[1-2]/)) {
           // Don't wrap headers in paragraph
           result.push(line);
-          // Add summary section after H1 title
-          if (line.match(/^<h1/) && summary) {
-            result.push(`<h2 style="color: #0066cc; border-bottom: 1px solid #333; padding-bottom: 0.5rem; margin-top: 1.5rem; margin-bottom: 1rem;">Executive Summary</h2>`);
-            result.push(`<p style="line-height: 1.7; color: #ccc; margin-bottom: 1.5rem; font-size: 1.05em;">${summary}</p>`);
-          }
         } else {
           // Wrap regular text in paragraph
-          result.push(`<p style="line-height: 1.7; color: #ccc; margin-bottom: 1rem;">${line}</p>`);
+          result.push(`<p style="line-height: 1.7; color: #333; margin-bottom: 1rem; font-size: 1rem;">${line}</p>`);
         }
       }
     }
@@ -788,7 +787,7 @@ Be specific, concrete, and analytical.`,
     
     html = result.join('\n');
 
-    return `<article style="font-family: system-ui, -apple-system, sans-serif; color: #e8e8e8; background: #1a1a1a; padding: 2rem;">
+    return `<article style="font-family: system-ui, -apple-system, sans-serif; color: #333; background: #ffffff; padding: 3rem 2rem;">
     <div style="max-width: 900px; margin: 0 auto;">
       ${html}
     </div>
