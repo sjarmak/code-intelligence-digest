@@ -88,7 +88,7 @@ export function SynthesisForm({
   return (
     <div className="bg-surface rounded-lg border border-surface-border shadow-sm">
       <div className="border-b border-surface-border px-6 py-4">
-        <h2 className="text-lg font-bold text-white">
+        <h2 className="text-lg font-bold text-black">
           {type === "newsletter" ? "Generate Newsletter" : "Generate Podcast"}
         </h2>
         <p className="text-sm text-muted mt-1">
@@ -101,7 +101,7 @@ export function SynthesisForm({
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Categories */}
           <div>
-            <label className="block text-sm font-semibold text-white mb-3">Content Categories</label>
+            <label className="block text-sm font-semibold text-black mb-3">Content Categories</label>
             <div className="grid grid-cols-2 gap-3">
               {ALLOWED_CATEGORIES.map((category) => (
                 <div key={category} className="flex items-center">
@@ -126,7 +126,7 @@ export function SynthesisForm({
 
           {/* Period */}
           <div>
-            <label className="block text-sm font-semibold text-white mb-3">Time Period</label>
+            <label className="block text-sm font-semibold text-black mb-3">Time Period</label>
             <div className="space-y-2">
               <div className="flex items-center">
                 <input
@@ -163,7 +163,7 @@ export function SynthesisForm({
 
           {/* Limit */}
           <div>
-            <label htmlFor="limit" className="block text-sm font-semibold text-white mb-2">
+            <label htmlFor="limit" className="block text-sm font-semibold text-black mb-2">
               Item Limit
             </label>
             <input
@@ -174,7 +174,7 @@ export function SynthesisForm({
               value={limit}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLimit(Math.max(1, Math.min(50, parseInt(e.target.value) || 15)))}
               disabled={isLoading}
-              className="block w-20 px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-white"
+              className="block w-20 px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-black"
             />
             <p className="text-xs text-muted mt-1">Max items to retrieve (1-50)</p>
           </div>
@@ -182,7 +182,7 @@ export function SynthesisForm({
           {/* Voice Style (Podcast only) */}
           {type === "podcast" && (
             <div>
-              <label htmlFor="voiceStyle" className="block text-sm font-semibold text-white mb-2">
+              <label htmlFor="voiceStyle" className="block text-sm font-semibold text-black mb-2">
                 Voice Style
               </label>
               <select
@@ -190,7 +190,7 @@ export function SynthesisForm({
                 value={voiceStyle}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVoiceStyle(e.target.value as "conversational" | "technical" | "executive")}
                 disabled={isLoading}
-                className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-white"
+                className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-black"
               >
                 <option value="conversational">Conversational</option>
                 <option value="technical">Technical</option>
@@ -201,7 +201,7 @@ export function SynthesisForm({
 
           {/* Prompt */}
           <div>
-            <label htmlFor="prompt" className="block text-sm font-semibold text-white mb-2">
+            <label htmlFor="prompt" className="block text-sm font-semibold text-black mb-2">
               Optional Guidance (Prompt)
             </label>
             <textarea
@@ -215,7 +215,7 @@ export function SynthesisForm({
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrompt(e.target.value)}
               disabled={isLoading}
               rows={4}
-              className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black resize-none bg-surface text-white placeholder-muted"
+              className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black resize-none bg-surface text-black placeholder-muted"
             />
             <p className="text-xs text-muted mt-1">
               Leave empty for a comprehensive {type === "newsletter" ? "digest" : "episode"}
