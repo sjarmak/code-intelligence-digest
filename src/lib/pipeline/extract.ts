@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
 import { decomposeNewsletterItems } from "./decompose";
+import { findArticleUrl, extractUrlFromContent } from "../search/url-finder";
 
 export interface ItemDigest {
   id: string;
@@ -172,6 +173,20 @@ function isEmailNewsletterSource(sourceTitle: string): boolean {
 }
 
 /**
+ * Check if source is a newsletter with original content (not just link aggregation)
+ */
+function isNewsletterOnlyContent(sourceTitle: string): boolean {
+  const newsletterOnlyContent = [
+    "Elevate",
+    "System Design",
+    "Architecture Notes",
+    "Leadership in Tech",
+    "Programming Digest",
+  ];
+  return newsletterOnlyContent.some(n => sourceTitle.includes(n));
+}
+
+/**
  * Strip HTML tags from text
  */
 function stripHtml(html: string): string {
@@ -275,7 +290,18 @@ Return ONLY valid JSON, no markdown.`,
 
     // Keep the URL from item (may have been extracted from HTML content)
     // Email newsletters like TLDR contain links to actual articles - we should preserve those
-    const digestUrl = item.url;
+    let digestUrl = item.url;
+    
+    // If URL is missing or invalid, try to find it via web search
+    // But keep Inoreader URLs for newsletter-only content (Elevate, System Design, etc.)
+    if (!digestUrl || (digestUrl.includes("inoreader.com") && !isNewsletterOnlyContent(item.sourceTitle))) {
+      logger.debug(`Attempting to find URL for article: "${item.title}"`);
+      const foundUrl = await findArticleUrl(item.title, item.sourceTitle, item.summary || item.fullText);
+      if (foundUrl) {
+        digestUrl = foundUrl;
+        logger.info(`Found article URL via search: "${item.title}" -> ${foundUrl}`);
+      }
+    }
     
     // Debug: log URLs for newsletter items
     if (["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(n => item.sourceTitle.includes(n))) {
@@ -390,7 +416,16 @@ function generateFallbackDigest(item: RankedItem, _userPrompt: string): ItemDige
 
   // Keep the URL from item (may have been extracted from HTML content)
   // Email newsletters like TLDR contain links to actual articles - we should preserve those
-  const digestUrl = item.url;
+  let digestUrl = item.url;
+
+  // If URL is missing or looks like Inoreader wrapper, try to extract from content
+  if (!digestUrl || digestUrl.includes("inoreader.com")) {
+    const contentUrl = extractUrlFromContent(item.summary || item.fullText);
+    if (contentUrl) {
+      digestUrl = contentUrl;
+      logger.debug(`Extracted URL from content: "${item.title}" -> ${digestUrl}`);
+    }
+  }
 
   // Try to extract metadata for fallback case too
   const metadataSync = extractMetadataSync(digestUrl);
