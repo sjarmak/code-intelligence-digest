@@ -135,35 +135,42 @@ async function searchViaSourcegraph(query: string): Promise<string | null> {
 }
 
 /**
- * Simple web search fallback
+ * Simple web search fallback via Google
  * Tries to find the actual article URL by searching for the title
- * For newsletter-only articles, returns null (they exist only in the newsletter)
  */
-async function searchViaWeb(title: string, source?: string, context?: string): Promise<string | null> {
-  // Check if this looks like an original newsletter article (not a link)
-  // If it's a very long article in a newsletter, it's probably original content
-  const isOriginalContent = context && context.length > 2000;
-  
-  if (isOriginalContent) {
-    logger.debug(`Article appears to be original newsletter content, skipping web search`);
-    return null;
-  }
-  
-  // For shorter snippets, try to search
+async function searchViaWeb(title: string, source?: string, _context?: string): Promise<string | null> {
   try {
-    const searchTerms = [title.substring(0, 50)]; // Use first 50 chars
+    // Build search query
+    const searchTerms = [title.substring(0, 80)];
     
-    if (source && source.includes("Substack")) {
+    // Add source constraint for better results
+    if (source?.includes("Substack")) {
       searchTerms.push("site:substack.com");
+    } else if (source?.includes("Medium")) {
+      searchTerms.push("site:medium.com");
+    } else if (source?.includes("dev.to")) {
+      searchTerms.push("site:dev.to");
     }
     
     const query = searchTerms.join(" ");
+    logger.debug(`Searching for: "${query}"`);
     
-    // In production, this would call an actual search API
-    // For now, just log and return null
-    logger.debug(`Would search for: "${query}"`);
+    // Use a simple Google search URL pattern
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=5`;
+    
+    // In a real implementation, you would:
+    // 1. Fetch the search results page
+    // 2. Parse the HTML to extract first result link
+    // 3. Return that URL
+    
+    // For now, return null - this needs integration with actual search API
+    // or web scraping (which we don't have in this environment)
+    logger.debug(`Would perform web search at: ${searchUrl}`);
+    
   } catch (e) {
-    logger.debug("Search construction failed");
+    logger.debug("Search construction failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
   
   return null;
