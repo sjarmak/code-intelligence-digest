@@ -26,9 +26,57 @@ export function getProvider(provider: AudioProvider): TtsProvider {
   }
 }
 
+// OpenAI TTS has a 4096 character limit
+const MAX_CHUNK_SIZE = 3800; // Leave some buffer
+
+/**
+ * Split text into chunks at sentence boundaries
+ */
+function chunkText(text: string, maxSize: number = MAX_CHUNK_SIZE): string[] {
+  if (text.length <= maxSize) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxSize) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Find a good break point (sentence end, paragraph, or segment marker)
+    let breakPoint = maxSize;
+
+    // Try to break at segment marker (---)
+    const segmentBreak = remaining.lastIndexOf("---", maxSize);
+    if (segmentBreak > maxSize * 0.5) {
+      breakPoint = segmentBreak + 3;
+    } else {
+      // Try to break at paragraph
+      const paragraphBreak = remaining.lastIndexOf("\n\n", maxSize);
+      if (paragraphBreak > maxSize * 0.5) {
+        breakPoint = paragraphBreak + 2;
+      } else {
+        // Try to break at sentence
+        const sentenceBreak = remaining.lastIndexOf(". ", maxSize);
+        if (sentenceBreak > maxSize * 0.5) {
+          breakPoint = sentenceBreak + 2;
+        }
+      }
+    }
+
+    chunks.push(remaining.substring(0, breakPoint).trim());
+    remaining = remaining.substring(breakPoint).trim();
+  }
+
+  return chunks;
+}
+
 /**
  * Render transcript to audio bytes
- * Handles sanitization, provider selection, and basic caching
+ * Handles sanitization, provider selection, chunking for long transcripts
  */
 export async function renderAudio(
   transcript: string,
@@ -60,7 +108,45 @@ export async function renderAudio(
   const startTime = Date.now();
 
   try {
-    // Render audio
+    // Check if we need to chunk
+    if (sanitized.length > MAX_CHUNK_SIZE) {
+      const chunks = chunkText(sanitized, MAX_CHUNK_SIZE);
+      logger.info(`Transcript too long (${sanitized.length} chars), splitting into ${chunks.length} chunks`);
+
+      const audioBuffers: Buffer[] = [];
+      let totalDuration = 0;
+
+      for (let i = 0; i < chunks.length; i++) {
+        logger.info(`Rendering chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)`);
+        const chunkResult = await ttsProvider.render({
+          transcript: chunks[i],
+          provider,
+          format,
+          voice,
+        });
+        audioBuffers.push(chunkResult.bytes);
+        totalDuration += chunkResult.durationSeconds || 0;
+      }
+
+      // Stitch audio chunks together
+      const stitchedAudio = stitchAudioBuffers(audioBuffers);
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+      logger.info("Chunked audio render completed", {
+        provider: ttsProvider.getName(),
+        chunks: chunks.length,
+        bytes: stitchedAudio.length,
+        duration: totalDuration,
+        elapsed: `${elapsed}s`,
+      });
+
+      return {
+        bytes: stitchedAudio,
+        durationSeconds: totalDuration,
+      };
+    }
+
+    // Single chunk render
     const result = await ttsProvider.render({
       transcript: sanitized,
       provider,
