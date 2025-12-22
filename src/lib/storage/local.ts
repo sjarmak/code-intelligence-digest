@@ -10,7 +10,7 @@ import { StorageAdapter } from "../audio/types";
 import { logger } from "../logger";
 
 const AUDIO_DIR = path.join(process.cwd(), ".data", "audio");
-const PUBLIC_PATH = "/public/audio";
+const API_PATH = "/api/audio"; // Serve via API route instead of static files
 
 /**
  * Ensure audio directory exists
@@ -54,7 +54,7 @@ export class LocalStorageAdapter implements StorageAdapter {
       });
 
       return {
-        url: `${PUBLIC_PATH}/${key}`,
+        url: `${API_PATH}/${key}`,
         bytes: bytes.length,
       };
     } catch (error) {
@@ -72,7 +72,7 @@ export class LocalStorageAdapter implements StorageAdapter {
   }
 
   getUrl(key: string): string {
-    return `${PUBLIC_PATH}/${key}`;
+    return `${API_PATH}/${key}`;
   }
 }
 
