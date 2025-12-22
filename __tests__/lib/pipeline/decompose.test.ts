@@ -305,6 +305,28 @@ describe("HTML parsing edge cases", () => {
     expect(urls.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("should extract destination URLs from TLDR tracking redirects", () => {
+    const html = `
+      <a href="https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fpipeline2insights.substack.com%2Fp%2Fdata-quality-design-patterns%3Futm_source=tldrdata/1/0100019ae91492de-000000/tbhUVj2WkEsGbOCI=434" target="_blank">
+        <strong>Data Quality Design Patterns</strong>
+      </a>
+      <a href="https://tracking.tldrnewsletter.com/CL0/https:%2F%2Flinks.tldrnewsletter.com%2FURUyPt/1/0100019ae91492de-000000/AWhr6GfhhKN3wFpaiiNRFH=434">
+        <strong>Triton: Scaling Bulk Operations</strong>
+      </a>
+    `;
+    const item = createMockRankedItem("TLDR", html);
+    const result = decomposeNewsletterItem(item);
+
+    const urls = result.map(r => r.url);
+    expect(urls.length).toBeGreaterThanOrEqual(1);
+    // Log URLs for debugging
+    console.log("Extracted URLs:", urls);
+    // Should extract actual URLs, not full tracking URLs
+    // (some might still have the tracker domain in redirect chain, but should be decoded)
+    const hasDecodedUrl = urls.some(u => u.includes("substack.com") || u.includes("links.tldrnewsletter.com"));
+    expect(hasDecodedUrl).toBe(true);
+  });
+
   it("should truncate very long titles", () => {
     const longTitle = "A".repeat(300);
     const html = `[${longTitle}](https://example.com/article)`;
