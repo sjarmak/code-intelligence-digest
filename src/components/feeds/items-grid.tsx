@@ -73,8 +73,8 @@ export default function ItemsGrid({ category, period }: ItemsGridProps) {
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-900 bg-red-900/20 p-4">
-        <p className="text-red-400">Error: {error}</p>
+      <div className="rounded-lg border border-red-300 bg-red-50 p-4">
+        <p className="text-red-900">Error: {error}</p>
       </div>
     );
   }

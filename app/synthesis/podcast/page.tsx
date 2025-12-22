@@ -11,7 +11,7 @@ export const metadata = {
 
 export default function PodcastPage() {
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-white text-black">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <SynthesisPage type="podcast" />
       </div>

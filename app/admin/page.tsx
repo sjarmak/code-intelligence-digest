@@ -8,7 +8,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<AdminTab>('sources');
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-white text-black">
       {/* Header */}
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -29,8 +29,8 @@ export default function AdminPage() {
               onClick={() => setActiveTab('sources')}
               className={`px-1 py-4 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'sources'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-muted hover:text-foreground'
+                  ? 'border-black text-black'
+                  : 'border-transparent text-gray-600 hover:text-black'
               }`}
               role="tab"
               aria-selected={activeTab === 'sources'}
@@ -41,8 +41,8 @@ export default function AdminPage() {
               onClick={() => setActiveTab('starred')}
               className={`px-1 py-4 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'starred'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-muted hover:text-foreground'
+                  ? 'border-black text-black'
+                  : 'border-transparent text-gray-600 hover:text-black'
               }`}
               role="tab"
               aria-selected={activeTab === 'starred'}

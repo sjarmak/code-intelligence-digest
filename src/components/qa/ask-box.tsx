@@ -43,7 +43,7 @@ export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="e.g., How do code agents handle context windows? What are the latest advances in semantic search?"
           rows={3}
-          className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+          className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent resize-none"
           disabled={isLoading}
         />
       </div>
@@ -59,10 +59,10 @@ export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
             id="ask-category"
             value={category || ''}
             onChange={(e) => setCategory((e.target.value as Category) || null)}
-            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            disabled={isLoading}
-          >
-            <option value="">All Categories</option>
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+             disabled={isLoading}
+            >
+             <option value="">All Categories</option>
             {CATEGORIES.map((cat) => (
               <option key={cat.id} value={cat.id}>
                 {cat.label}
@@ -80,7 +80,7 @@ export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
             id="ask-period"
             value={period}
             onChange={(e) => setPeriod(e.target.value as 'week' | 'month')}
-            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
             disabled={isLoading}
           >
             <option value="week">This Week</option>
@@ -93,7 +93,7 @@ export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
       <button
         type="submit"
         disabled={isLoading || !question.trim()}
-        className="w-full px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full px-4 py-2 bg-black text-white rounded-md font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {isLoading ? 'Finding answer...' : 'Ask'}
       </button>

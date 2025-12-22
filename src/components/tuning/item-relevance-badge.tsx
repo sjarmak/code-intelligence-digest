@@ -9,10 +9,10 @@ const RATING_OPTIONS: Array<{
   label: string;
   color: string;
 }> = [
-  { value: 0, label: 'Not Relevant', color: 'text-red-400' },
-  { value: 1, label: 'Somewhat Relevant', color: 'text-gray-400' },
-  { value: 2, label: 'Relevant', color: 'text-yellow-400' },
-  { value: 3, label: 'Highly Relevant', color: 'text-green-400' },
+  { value: 0, label: 'Not Relevant', color: 'text-red-900' },
+  { value: 1, label: 'Somewhat Relevant', color: 'text-gray-600' },
+  { value: 2, label: 'Relevant', color: 'text-gray-700' },
+  { value: 3, label: 'Highly Relevant', color: 'text-green-700' },
   { value: null, label: 'Clear rating', color: 'text-gray-500' },
 ];
 
@@ -101,7 +101,7 @@ export default function ItemRelevanceBadge({
           currentOption?.color || 'text-gray-500'
         } ${
           isOpen
-            ? 'bg-blue-500 border-blue-500'
+            ? 'bg-blue-500 border-gray-400'
             : 'bg-gray-700 border-gray-600 hover:border-gray-500'
         } ${loading ? 'opacity-50 cursor-not-allowed' : ''} ${readOnly ? 'cursor-default opacity-70' : ''}`}
         title={`Rating: ${currentOption?.label || 'Unrated'}${readOnly ? ' (read-only)' : ''}`}
@@ -109,7 +109,7 @@ export default function ItemRelevanceBadge({
         {/* Star icon */}
         <svg
           className={`w-3 h-3 ${
-            starred ? 'fill-yellow-400 text-yellow-400' : 'text-gray-500'
+            starred ? 'fill-yellow-400 text-gray-700' : 'text-gray-500'
           }`}
           viewBox="0 0 24 24"
         >
@@ -152,7 +152,7 @@ export default function ItemRelevanceBadge({
                     disabled={loading}
                     className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
                       currentRating === option.value
-                        ? 'bg-blue-600 text-white font-semibold'
+                        ? 'bg-black text-white font-semibold'
                         : 'hover:bg-surface-border text-foreground'
                     } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
@@ -165,7 +165,7 @@ export default function ItemRelevanceBadge({
               <div className="border-t border-surface-border pt-2">
                 <button
                   onClick={() => setShowNotes(!showNotes)}
-                  className="text-xs text-blue-400 hover:text-blue-300 mb-1"
+                  className="text-xs text-black hover:text-gray-700 mb-1"
                 >
                   {showNotes ? 'Hide notes' : 'Add notes'}
                 </button>
@@ -175,7 +175,7 @@ export default function ItemRelevanceBadge({
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Why is this relevant?"
-                    className="w-full px-2 py-1 text-xs bg-surface-border border border-surface-border rounded text-foreground placeholder-muted focus:outline-none focus:border-blue-500"
+                    className="w-full px-2 py-1 text-xs bg-surface-border border border-surface-border rounded text-foreground placeholder-muted focus:outline-none focus:border-gray-400"
                     rows={2}
                   />
                 )}

@@ -28,12 +28,12 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 // Note: Colors organized for potential future use or styling expansion
 const categoryStyles = {
-  newsletters: 'from-blue-900/30 to-blue-900/10 border-blue-500/30',
-  podcasts: 'from-purple-900/30 to-purple-900/10 border-purple-500/30',
-  tech_articles: 'from-green-900/30 to-green-900/10 border-green-500/30',
+  newsletters: 'from-gray-100 to-white border-gray-400/30',
+  podcasts: 'from-gray-100 to-white border-gray-300',
+  tech_articles: 'from-gray-100 to-white border-gray-300',
   ai_news: 'from-orange-900/30 to-orange-900/10 border-orange-500/30',
-  product_news: 'from-pink-900/30 to-pink-900/10 border-pink-500/30',
-  community: 'from-cyan-900/30 to-cyan-900/10 border-cyan-500/30',
+  product_news: 'from-gray-100 to-white border-gray-300',
+  community: 'from-gray-100 to-white border-gray-300',
   research: 'from-yellow-900/30 to-yellow-900/10 border-yellow-500/30',
 } as const;
 
@@ -68,7 +68,7 @@ export default function DigestHighlights({
                {hasMore && (
                  <button
                    onClick={() => onExpandCategory?.(category)}
-                   className="text-xs text-blue-400 hover:text-blue-300 font-medium"
+                   className="text-xs text-black hover:text-gray-700 font-medium"
                  >
                    {limit === 10 ? 'Expand' : 'Collapse'}
                  </button>
@@ -84,7 +84,7 @@ export default function DigestHighlights({
                        href={item.url}
                        target="_blank"
                        rel="noopener noreferrer"
-                       className="text-blue-400 hover:text-blue-300 font-medium text-sm break-words line-clamp-2"
+                       className="text-black hover:text-gray-700 font-medium text-sm break-words line-clamp-2"
                      >
                        {item.title}
                      </Link>
@@ -104,7 +104,7 @@ export default function DigestHighlights({
 
              <Link
                href={`/?category=${category}`}
-               className="text-xs text-blue-400 hover:text-blue-300 mt-4 inline-block"
+               className="text-xs text-black hover:text-gray-700 mt-4 inline-block"
              >
                View all {CATEGORY_LABELS[category].toLowerCase()} →
              </Link>

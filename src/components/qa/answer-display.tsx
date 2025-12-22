@@ -19,10 +19,10 @@ interface AnswerDisplayProps {
 }
 
 function getSimilarityColor(score: number): string {
-  if (score >= 0.8) return 'text-green-400';
-  if (score >= 0.6) return 'text-yellow-400';
-  if (score >= 0.4) return 'text-orange-400';
-  return 'text-red-400';
+  if (score >= 0.8) return 'text-green-700';
+  if (score >= 0.6) return 'text-gray-700';
+  if (score >= 0.4) return 'text-gray-600';
+  return 'text-red-700';
 }
 
 export default function AnswerDisplay({
@@ -44,9 +44,9 @@ export default function AnswerDisplay({
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-900 bg-red-900/20 p-4">
-        <p className="text-red-400 font-medium">Error</p>
-        <p className="text-red-300 text-sm mt-1">{error}</p>
+      <div className="rounded-lg border border-red-300 bg-red-50 p-4">
+        <p className="text-red-900 font-medium">Error</p>
+        <p className="text-red-800 text-sm mt-1">{error}</p>
       </div>
     );
   }
@@ -82,13 +82,13 @@ export default function AnswerDisplay({
           </p>
           <div className="space-y-3">
             {sources.map((source, idx) => (
-              <div key={source.id} className="border-l-2 border-blue-600/30 pl-3">
+              <div key={source.id} className="border-l-2 border-gray-400 pl-3">
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <a
                     href={source.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors flex-1"
+                    className="text-sm font-medium text-black hover:text-gray-700 transition-colors flex-1"
                   >
                     {idx + 1}. {source.title}
                   </a>
@@ -104,8 +104,8 @@ export default function AnswerDisplay({
       )}
 
       {sources.length === 0 && (
-        <div className="rounded-lg border border-amber-900 bg-amber-900/20 p-4">
-          <p className="text-amber-400 text-sm">
+        <div className="rounded-lg border border-gray-300 bg-gray-50 p-4">
+          <p className="text-gray-700 text-sm">
             No source citations available. Try a different question or adjust your filters.
           </p>
         </div>

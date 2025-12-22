@@ -10,30 +10,30 @@ interface SearchResultsProps {
 }
 
 function getSimilarityColor(score: number): string {
-  if (score >= 0.8) return 'text-green-400';
-  if (score >= 0.6) return 'text-yellow-400';
-  if (score >= 0.4) return 'text-orange-400';
-  return 'text-red-400';
+  if (score >= 0.8) return 'text-green-700';
+  if (score >= 0.6) return 'text-gray-700';
+  if (score >= 0.4) return 'text-gray-600';
+  return 'text-red-700';
 }
 
 function getSimilarityBarColor(score: number): string {
-  if (score >= 0.8) return 'bg-green-600';
-  if (score >= 0.6) return 'bg-yellow-600';
-  if (score >= 0.4) return 'bg-orange-600';
-  return 'bg-red-600';
+  if (score >= 0.8) return 'bg-green-400';
+  if (score >= 0.6) return 'bg-gray-400';
+  if (score >= 0.4) return 'bg-gray-300';
+  return 'bg-red-400';
 }
 
 function getCategoryColor(category: string): string {
   const colors: Record<string, string> = {
-    newsletters: 'bg-blue-900/30 text-blue-300 border-blue-700',
-    podcasts: 'bg-purple-900/30 text-purple-300 border-purple-700',
-    tech_articles: 'bg-cyan-900/30 text-cyan-300 border-cyan-700',
-    ai_news: 'bg-amber-900/30 text-amber-300 border-amber-700',
-    product_news: 'bg-green-900/30 text-green-300 border-green-700',
-    community: 'bg-pink-900/30 text-pink-300 border-pink-700',
-    research: 'bg-indigo-900/30 text-indigo-300 border-indigo-700',
+    newsletters: 'bg-gray-100 text-gray-800 border-gray-300',
+    podcasts: 'bg-gray-100 text-gray-800 border-gray-300',
+    tech_articles: 'bg-gray-100 text-gray-800 border-gray-300',
+    ai_news: 'bg-gray-100 text-gray-800 border-gray-300',
+    product_news: 'bg-gray-100 text-gray-800 border-gray-300',
+    community: 'bg-gray-100 text-gray-800 border-gray-300',
+    research: 'bg-gray-100 text-gray-800 border-gray-300',
   };
-  return colors[category] || 'bg-gray-900/30 text-gray-300 border-gray-700';
+  return colors[category] || 'bg-gray-100 text-gray-800 border-gray-300';
 }
 
 export default function SearchResults({
@@ -52,9 +52,9 @@ export default function SearchResults({
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-900 bg-red-900/20 p-4">
-        <p className="text-red-400 font-medium">Search Error</p>
-        <p className="text-red-300 text-sm mt-1">{error}</p>
+      <div className="rounded-lg border border-red-300 bg-red-50 p-4">
+        <p className="text-red-900 font-medium">Search Error</p>
+        <p className="text-red-800 text-sm mt-1">{error}</p>
       </div>
     );
   }
@@ -88,13 +88,13 @@ export default function SearchResults({
             <div className="flex items-start justify-between gap-3 mb-3">
               <div className="flex-1">
                 <a
-                  href={result.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-lg font-semibold text-blue-400 hover:text-blue-300 transition-colors block"
-                >
-                  {result.title}
-                </a>
+                   href={result.url}
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   className="text-lg font-semibold text-black hover:text-gray-700 transition-colors block"
+                 >
+                   {result.title}
+                 </a>
                 <p className="text-sm text-muted mt-1">{result.sourceTitle}</p>
               </div>
             </div>
@@ -110,7 +110,7 @@ export default function SearchResults({
 
             {/* Summary */}
             {result.summary && (
-              <p className="text-sm text-gray-300 mb-3 line-clamp-2">{result.summary}</p>
+              <p className="text-sm text-gray-700 mb-3 line-clamp-2">{result.summary}</p>
             )}
 
             {/* Similarity Score with Bar */}
@@ -135,7 +135,7 @@ export default function SearchResults({
                 href={result.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-400 hover:text-blue-300 text-sm transition-colors"
+                className="text-black hover:text-gray-700 text-sm transition-colors"
               >
                 Read more →
               </a>

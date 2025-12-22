@@ -54,7 +54,7 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-white text-black">
       {/* Header */}
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -68,83 +68,83 @@ export default function Home() {
             <div className="space-y-2">
               <div className="flex gap-2 flex-wrap items-start">
                 <button
-                  onClick={handleSync}
-                  disabled={isSyncing}
-                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white"
-                  title="Sync today's content from Inoreader"
-                >
-                  {isSyncing ? 'Syncing...' : '↻ Sync'}
-                </button>
-                <a
-                  href="/research"
-                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
-                  title="View ADS research libraries"
-                >
-                  Libraries
-                </a>
-                <a
-                  href="/admin"
-                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
-                  title="Manage relevance tuning"
-                >
-                  Tuning
-                </a>
+                   onClick={handleSync}
+                   disabled={isSyncing}
+                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-black hover:bg-gray-800 disabled:bg-gray-400 text-white"
+                   title="Sync today's content from Inoreader"
+                 >
+                   {isSyncing ? 'Syncing...' : '↻ Sync'}
+                 </button>
+                 <a
+                   href="/research"
+                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                   title="View ADS research libraries"
+                 >
+                   Libraries
+                 </a>
+                 <a
+                   href="/admin"
+                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                   title="Manage relevance tuning"
+                 >
+                   Tuning
+                 </a>
                 <button
-                  onClick={() => setPeriod('day')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    period === 'day'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                  }`}
-                >
-                  Daily
-                </button>
-                <button
-                  onClick={() => setPeriod('week')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    period === 'week'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                  }`}
-                >
-                  Weekly
-                </button>
-                <button
-                  onClick={() => setPeriod('month')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    period === 'month'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                  }`}
-                >
-                  Monthly
-                </button>
-                <button
-                  onClick={() => setPeriod('all')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                    period === 'all'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-surface border border-surface-border text-muted hover:text-foreground'
-                  }`}
-                >
-                  All-time
-                </button>
+                   onClick={() => setPeriod('day')}
+                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                     period === 'day'
+                       ? 'bg-black text-white'
+                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                   }`}
+                 >
+                   Daily
+                 </button>
+                 <button
+                   onClick={() => setPeriod('week')}
+                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                     period === 'week'
+                       ? 'bg-black text-white'
+                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                   }`}
+                 >
+                   Weekly
+                 </button>
+                 <button
+                   onClick={() => setPeriod('month')}
+                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                     period === 'month'
+                       ? 'bg-black text-white'
+                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                   }`}
+                 >
+                   Monthly
+                 </button>
+                 <button
+                   onClick={() => setPeriod('all')}
+                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                     period === 'all'
+                       ? 'bg-black text-white'
+                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                   }`}
+                 >
+                   All-time
+                 </button>
               </div>
               <div className="flex gap-2 flex-wrap items-start">
                 <a
-                  href="/synthesis/podcast"
-                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
-                  title="Generate podcast episodes"
-                >
-                  Podcast Generator
-                </a>
-                <a
-                  href="/synthesis/newsletter"
-                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
-                  title="Generate newsletters"
-                >
-                  Newsletter Generator
-                </a>
+                   href="/synthesis/podcast"
+                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                   title="Generate podcast episodes"
+                 >
+                   Podcast Generator
+                 </a>
+                 <a
+                   href="/synthesis/newsletter"
+                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                   title="Generate newsletters"
+                 >
+                   Newsletter Generator
+                 </a>
               </div>
             </div>
           </div>
@@ -155,8 +155,8 @@ export default function Home() {
       {syncMessage && (
         <div className={`border-b px-4 py-2 text-sm font-medium text-center ${
           syncMessage.startsWith('✓')
-            ? 'bg-green-900/30 border-green-700 text-green-200'
-            : 'bg-red-900/30 border-red-700 text-red-200'
+            ? 'bg-green-100 border-green-300 text-green-900'
+            : 'bg-red-100 border-red-300 text-red-900'
         }`}>
           {syncMessage}
         </div>
@@ -167,41 +167,41 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <nav className="flex overflow-x-auto gap-6" role="tablist">
             <button
-               onClick={() => setActiveTab('resources')}
+                onClick={() => setActiveTab('resources')}
+                className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                  activeTab === 'resources'
+                    ? 'border-black text-black'
+                    : 'border-transparent text-gray-600 hover:text-black'
+                }`}
+                role="tab"
+                aria-selected={activeTab === 'resources'}
+              >
+                Resources
+              </button>
+             <button
+               onClick={() => setActiveTab('search')}
                className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                 activeTab === 'resources'
-                   ? 'border-blue-500 text-blue-400'
-                   : 'border-transparent text-muted hover:text-foreground'
+                 activeTab === 'search'
+                   ? 'border-black text-black'
+                   : 'border-transparent text-gray-600 hover:text-black'
                }`}
                role="tab"
-               aria-selected={activeTab === 'resources'}
+               aria-selected={activeTab === 'search'}
              >
-               Resources
+               Search
              </button>
-            <button
-              onClick={() => setActiveTab('search')}
-              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                activeTab === 'search'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-muted hover:text-foreground'
-              }`}
-              role="tab"
-              aria-selected={activeTab === 'search'}
-            >
-              Search
-            </button>
-            <button
-              onClick={() => setActiveTab('ask')}
-              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                activeTab === 'ask'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-muted hover:text-foreground'
-              }`}
-              role="tab"
-              aria-selected={activeTab === 'ask'}
-            >
-              Ask
-            </button>
+             <button
+               onClick={() => setActiveTab('ask')}
+               className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 activeTab === 'ask'
+                   ? 'border-black text-black'
+                   : 'border-transparent text-gray-600 hover:text-black'
+               }`}
+               role="tab"
+               aria-selected={activeTab === 'ask'}
+             >
+               Ask
+             </button>
           </nav>
         </div>
       </div>
@@ -213,18 +213,18 @@ export default function Home() {
             <nav className="flex overflow-x-auto gap-2" role="tablist">
               {categories.map((cat) => (
                 <button
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                    activeCategory === cat.id
-                      ? 'border-blue-500 text-blue-400'
-                      : 'border-transparent text-muted hover:text-foreground'
-                  }`}
-                  role="tab"
-                  aria-selected={activeCategory === cat.id}
-                >
-                  {cat.label}
-                </button>
+                   key={cat.id}
+                   onClick={() => setActiveCategory(cat.id)}
+                   className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                     activeCategory === cat.id
+                       ? 'border-black text-black'
+                       : 'border-transparent text-gray-600 hover:text-black'
+                   }`}
+                   role="tab"
+                   aria-selected={activeCategory === cat.id}
+                 >
+                   {cat.label}
+                 </button>
               ))}
             </nav>
           </div>

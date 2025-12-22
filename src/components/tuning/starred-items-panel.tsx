@@ -132,8 +132,8 @@ export default function StarredItemsPanel() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-900 bg-red-900/20 p-3">
-          <p className="text-sm text-red-400">Error: {error}</p>
+        <div className="rounded-lg border border-red-300 bg-red-50 p-3">
+          <p className="text-sm text-red-900">Error: {error}</p>
         </div>
       )}
 
@@ -142,7 +142,7 @@ export default function StarredItemsPanel() {
         <button
           onClick={handleSyncStarred}
           disabled={syncing}
-          className="px-4 py-2 rounded font-medium text-sm transition-colors bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-4 py-2 rounded font-medium text-sm transition-colors bg-black hover:bg-gray-800 text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {syncing ? 'Syncing...' : 'Sync from Inoreader'}
         </button>
@@ -151,7 +151,7 @@ export default function StarredItemsPanel() {
           onClick={() => setFilterUnrated(!filterUnrated)}
           className={`px-4 py-2 rounded font-medium text-sm transition-colors ${
             filterUnrated
-              ? 'bg-blue-600 text-white'
+              ? 'bg-black text-white'
               : 'bg-surface border border-surface-border text-muted hover:text-foreground'
           }`}
         >
@@ -173,14 +173,14 @@ export default function StarredItemsPanel() {
           {items.map((item) => (
             <div
               key={item.itemId}
-              className="border border-surface-border rounded-lg p-3 hover:border-blue-500/50 hover:bg-surface/50 transition-all"
+              className="border border-surface-border rounded-lg p-3 hover:border-gray-400/50 hover:bg-surface/50 transition-all"
             >
               <div className="flex items-start justify-between gap-3 mb-2">
                 <a
                   href={item.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex-1 text-sm font-semibold text-blue-400 hover:text-blue-300 line-clamp-2"
+                  className="flex-1 text-sm font-semibold text-black hover:text-gray-700 line-clamp-2"
                 >
                   {item.title}
                 </a>
@@ -207,7 +207,7 @@ export default function StarredItemsPanel() {
               )}
 
               {item.notes && (
-                <p className="text-xs text-yellow-400/70 italic">
+                <p className="text-xs text-gray-700/70 italic">
                   Note: {item.notes}
                 </p>
               )}

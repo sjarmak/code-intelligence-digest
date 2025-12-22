@@ -10,10 +10,10 @@ const RELEVANCE_OPTIONS: Array<{
   description: string;
   color: string;
 }> = [
-  { value: 0, label: 'Ignore', description: 'Filter out (0.0x)', color: 'text-red-400' },
-  { value: 1, label: 'Neutral', description: 'No boost (1.0x)', color: 'text-gray-400' },
-  { value: 2, label: 'Relevant', description: '1.3x boost', color: 'text-yellow-400' },
-  { value: 3, label: 'Highly Relevant', description: '1.6x boost', color: 'text-green-400' },
+  { value: 0, label: 'Ignore', description: 'Filter out (0.0x)', color: 'text-red-900' },
+  { value: 1, label: 'Neutral', description: 'No boost (1.0x)', color: 'text-gray-600' },
+  { value: 2, label: 'Relevant', description: '1.3x boost', color: 'text-gray-700' },
+  { value: 3, label: 'Highly Relevant', description: '1.6x boost', color: 'text-green-700' },
 ];
 
 interface SourceRelevanceDropdownProps {
@@ -75,7 +75,7 @@ export default function SourceRelevanceDropdown({
           currentOption?.color
         } ${
           isOpen
-            ? 'bg-surface-border border-blue-500'
+            ? 'bg-surface-border border-gray-400'
             : 'bg-surface border-surface-border hover:border-surface-focus'
         } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
         title={`Current: ${currentOption?.label || 'Unknown'}`}
@@ -95,7 +95,7 @@ export default function SourceRelevanceDropdown({
           <div className="absolute right-0 mt-2 w-48 bg-surface border border-surface-border rounded-lg shadow-lg z-50">
             <div className="p-2">
               {error && (
-                <div className="text-xs text-red-400 mb-2 px-2 py-1 bg-red-900/20 rounded">
+                <div className="text-xs text-red-900 mb-2 px-2 py-1 bg-red-50 rounded">
                   {error}
                 </div>
               )}
@@ -107,7 +107,7 @@ export default function SourceRelevanceDropdown({
                   disabled={loading}
                   className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
                     currentRelevance === option.value
-                      ? 'bg-blue-600 text-white font-semibold'
+                      ? 'bg-black text-white font-semibold'
                       : 'hover:bg-surface-border text-foreground'
                   } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >

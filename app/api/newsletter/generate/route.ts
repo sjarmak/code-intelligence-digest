@@ -179,11 +179,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     }
 
     // Step 5: Diversity selection with limit
+    // Note: After extraction & decomposition, item count may increase.
+    // Reduce pre-selection to account for newsletter decomposition (~1.3x expansion typical).
+    // This ensures final digest count is close to requested limit.
     const maxPerSource = req.period === "week" ? 2 : 3;
-    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, req.limit);
+    const decompositionFactor = 1.3; // Typical expansion from newsletter decomposition
+    const adjustedLimit = Math.ceil(req.limit / decompositionFactor);
+    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, adjustedLimit);
     const selectedItems = selection.items;
 
-    logger.info(`Selected ${selectedItems.length} items (requested limit: ${req.limit}) with diversity constraints`);
+    logger.info(`Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${req.limit}) with diversity constraints`);
     
     // Log newsletter items being selected
     const selectedNewsletters = selectedItems.filter(item => item.sourceTitle.includes("TLDR") || item.sourceTitle.includes("Byte Byte Go") || item.sourceTitle.includes("Elevate") || item.sourceTitle.includes("Pointer"));
@@ -193,7 +198,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     // Step 6: Extract item digests (Pass 1)
     const digests = await extractBatchDigests(selectedItems, req.prompt || "");
-    logger.info(`Extracted ${digests.length} item digests`);
+    logger.info(`Extracted ${digests.length} item digests from ${selectedItems.length} selected items`);
 
     // Filter out digests without valid URLs before synthesis
     const validDigests = digests.filter(digest => {
@@ -206,6 +211,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       return hasValidUrl;
     });
     logger.info(`URL filter: ${digests.length} → ${validDigests.length} digests (removed ${digests.length - validDigests.length} without valid URLs)`);
+    
+    // Critical: Track count discrepancy
+    if (validDigests.length !== selectedItems.length) {
+      logger.warn(`Item count mismatch: selected ${selectedItems.length}, extracted ${digests.length}, valid ${validDigests.length}`);
+    }
 
     // Step 7: Synthesize newsletter from digests (Pass 2)
     const { summary, themes, markdown, html } = await generateNewsletterFromDigests(

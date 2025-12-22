@@ -237,168 +237,33 @@ export async function generateNewsletterFromDigests(
 }
 
 /**
- * Extract key topics from user prompt
- */
-function extractPromptTopics(userPrompt: string): string[] {
-  if (!userPrompt) return [];
-  
-  // Split by common delimiters and filter meaningful tokens
-  const keywords = userPrompt
-    .toLowerCase()
-    .split(/[,;:\s]+/)
-    .filter(w => w.length > 3 && !["and", "the", "for", "with", "about", "your"].includes(w));
-  
-  return keywords.slice(0, 5); // Top 5 topics
-}
-
-/**
- * Categorize items using LLM based on user prompt
- */
-/**
- * Group digests by their resource category label (research, community, newsletters, etc.)
+  * Group digests by their resource category label (research, community, newsletters, etc.)
  */
 function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[]> {
-  const byCategory = new Map<string, ItemDigest[]>();
-  
-  // Category label mapping for display
-  const categoryLabels: Record<string, string> = {
-    newsletters: "Newsletters",
-    podcasts: "Podcasts",
-    tech_articles: "Tech Articles",
-    ai_news: "AI News",
-    product_news: "Product News",
-    community: "Community",
-    research: "Research",
-  };
-  
-  for (const digest of digests) {
-    const displayLabel = categoryLabels[digest.category] || digest.category;
-    
-    if (!byCategory.has(displayLabel)) {
-      byCategory.set(displayLabel, []);
-    }
-    byCategory.get(displayLabel)!.push(digest);
-  }
-  
-  return byCategory;
-}
-
-async function categorizItemsWithLLM(
-  digests: ItemDigest[],
-  userPrompt: string
-): Promise<Map<string, ItemDigest[]>> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  const client = new OpenAI({ apiKey });
-
-  if (!apiKey || digests.length === 0) {
-    // Fallback: group by first topic tag
-    const byCategory = new Map<string, ItemDigest[]>();
-    for (const digest of digests) {
-      const cat = digest.topicTags[0]?.replace(/_|-/g, " ") || "Other";
-      if (!byCategory.has(cat)) byCategory.set(cat, []);
-      byCategory.get(cat)!.push(digest);
-    }
-    return byCategory;
-  }
-
-  // Extract key topics from user prompt for focused categorization
-  const promptTopics = extractPromptTopics(userPrompt);
-
-  try {
-    const itemsList = digests.map((d, idx) => `${idx + 1}. "${d.title}" - ${d.whyItMatters}`).join("\n");
-
-    const focusInstructions = promptTopics.length > 0
-      ? `CRITICAL: Create categories that directly align with user focus: ${promptTopics.join(", ")}\n` +
-        `Examples of good categories for this focus:\n` +
-        promptTopics.slice(0, 3).map(t => `- "${t.charAt(0).toUpperCase() + t.slice(1)} & Related Topics"`).join("\n") + "\n"
-      : "";
-
-    const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
-      max_completion_tokens: 1500,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "user",
-          content: `Categorize these ${digests.length} items into 4-8 thematic groups.
-
-    User focus: ${userPrompt}
-    ${focusInstructions}
-
-    Items:
-    ${itemsList}
-
-    Return JSON with categories array (each has: name, items: [1,2,3...]).
-    Create 4-8 distinct categories. Distribute items across categories.
-    Prioritize categories that match user focus topics.
-
-    Return ONLY valid JSON.`,
-        },
-      ],
-    });
-
-    if (!response.choices || response.choices.length === 0) {
-      logger.error("LLM categorization returned no choices", { response });
-      throw new Error("LLM categorization returned no choices");
-    }
-
-    const content = response.choices[0].message.content;
-    if (!content) {
-      logger.error("LLM categorization returned empty content", {
-        choice: response.choices[0],
-      });
-      throw new Error("No response from LLM categorization");
-    }
-
-    let result;
-    try {
-      result = JSON.parse(content);
-    } catch (parseErr) {
-      logger.error("Failed to parse LLM categorization response", {
-        error: parseErr instanceof Error ? parseErr.message : String(parseErr),
-        responsePreview: content.substring(0, 500),
-      });
-      throw parseErr;
-    }
-
-    const byCategory = new Map<string, ItemDigest[]>();
-
-    if (!result.categories || result.categories.length === 0) {
-      logger.warn("LLM returned no categories, falling back to tag-based grouping");
-      throw new Error("LLM returned empty categories");
-    }
-
-    for (const cat of result.categories) {
-      if (!cat.name || !Array.isArray(cat.items)) {
-        logger.warn(`Skipping malformed category: ${JSON.stringify(cat)}`);
-        continue;
-      }
-      const categoryItems = cat.items.map((idx: number) => digests[idx - 1]).filter(Boolean);
-      if (categoryItems.length > 0) {
-        byCategory.set(cat.name, categoryItems);
-      }
-    }
-
-    if (byCategory.size === 0) {
-      logger.warn("No valid categories extracted from LLM response");
-      throw new Error("No valid categories extracted");
-    }
-
-    logger.info(`LLM categorization successful: ${byCategory.size} categories`);
-    return byCategory;
-    } catch (error) {
-    logger.warn("LLM categorization failed, falling back to tag-based grouping", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    const byCategory = new Map<string, ItemDigest[]>();
-    for (const digest of digests) {
-      const cat = digest.topicTags[0]?.replace(/_|-/g, " ") || "Other";
-      if (!byCategory.has(cat)) byCategory.set(cat, []);
-      byCategory.get(cat)!.push(digest);
-    }
-    return byCategory;
-  }
-}
+   const byCategory = new Map<string, ItemDigest[]>();
+   
+   // Category label mapping for display
+   const categoryLabels: Record<string, string> = {
+     newsletters: "Newsletters",
+     podcasts: "Podcasts",
+     tech_articles: "Tech Articles",
+     ai_news: "AI News",
+     product_news: "Product News",
+     community: "Community",
+     research: "Research",
+   };
+   
+   for (const digest of digests) {
+     const displayLabel = categoryLabels[digest.category] || digest.category;
+     
+     if (!byCategory.has(displayLabel)) {
+       byCategory.set(displayLabel, []);
+     }
+     byCategory.get(displayLabel)!.push(digest);
+   }
+   
+   return byCategory;
+ }
 
 /**
  * Generate newsletter directly from ItemDigest data (better quality)
@@ -643,34 +508,41 @@ function generateNewsletterFallback(
     }
 
     const client = new OpenAI({ apiKey });
+    
+    // Use more items for richer context
+    const itemCount = Math.min(15, digests.length);
     const itemSummaries = digests
-      .slice(0, 10) // Use top 10 for summary context
-      .map(d => `- ${d.title} (${d.sourceTitle}): ${d.whyItMatters}`)
+      .slice(0, itemCount)
+      .map(d => `- **${d.title}** (${d.sourceTitle}): ${d.whyItMatters}${d.keyBullets.length > 0 ? ` Key point: ${d.keyBullets[0]}` : ""}`)
       .join("\n");
 
     try {
       logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
       
       const response = await client.chat.completions.create({
-        model: "gpt-5.2-chat-latest",
-        max_completion_tokens: 400,
+        model: "gpt-4o",
+        max_completion_tokens: 600, // Increased from 400
         messages: [
           {
             role: "user",
-            content: `Write a 200-300 word executive summary for a ${themes.length > 0 ? "focused" : "general"} code intelligence digest.
+            content: `Write a substantive 300-400 word executive summary for a code intelligence digest covering ${itemCount} curated items.
 
-Topics: ${themes.join(", ") || "code search, agents, IR, devtools"}
+  **Featured Topics:** ${themes.join(", ") || "code search, agents, IR, devtools"}
 
-Key items featured:
-${itemSummaries}
+  **Key Items Featured:**
+  ${itemSummaries}
 
-Write a substantive, insightful summary that:
-1. Identifies the core trends and patterns across these items
-2. Explains WHY these trends matter to engineering leaders
-3. Highlights surprising insights or important shifts
-4. Avoids generic boilerplate
+  **Requirements:**
+  1. Open with 2-3 sentence hook identifying the most important trend or insight
+  2. Organize around 3-4 major themes or patterns across these items
+  3. For each theme: explain WHAT is happening, provide specific examples, and explain WHY it matters to engineering leaders
+  4. Include at least one surprising insight or important shift in the space
+  5. Cite specific items/sources where relevant (e.g., "As seen in: [source name]")
+  6. Close with forward-looking statement about where this is heading
+  7. Use concrete, analytical language—avoid generic boilerplate
+  8. Target audience: senior engineers and engineering leaders evaluating tools and approaches
 
-Be specific, concrete, and analytical.`,
+  Write in paragraph form, substantive and detailed.`,
           },
         ],
       });
@@ -688,10 +560,47 @@ Be specific, concrete, and analytical.`,
    * Fallback summary template
    */
   function buildExecutiveSummaryFallback(digests: ItemDigest[], themes: string[]): string {
-    const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
-    const topThemes = themes.slice(0, 3).map(t => t.replace(/-/g, " "));
+    const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 4);
+    const topThemes = themes.slice(0, 4).map(t => t.replace(/-/g, " "));
     
-    return `This digest synthesizes ${digests.length} curated items on ${topThemes.join(", ")}. Featured sources: ${topSources.join(", ")}. Key insights: the community is advancing context management, semantic search, agent orchestration, and evaluation frameworks—with practical focus on production-scale tooling and benchmarking.`;
+    // Extract the ACTUAL insights from digests (not template boilerplate)
+    const topItems = digests.slice(0, 8);
+    
+    // Build sections based on actual content
+    const insights: string[] = [];
+    
+    // Extract unique "why it matters" insights
+    for (const item of topItems) {
+      if (item.whyItMatters && item.whyItMatters.length > 20) {
+        insights.push(item.whyItMatters);
+      }
+    }
+    
+    // Build summary with actual insights
+    let summary = `This ${digests.length}-item digest explores **${topThemes.join(", ")}**, highlighting key developments reshaping developer productivity and tooling.\n\n`;
+    
+    // Add unique insights from top items (avoid repeating)
+    const uniqueInsights = Array.from(new Set(insights.map(i => i.split(".")[0].trim()))).slice(0, 3);
+    summary += `**Key Developments:** ${uniqueInsights.join(". ")}. `;
+    
+    // Add theme analysis based on frequency
+    const themeFreq = new Map<string, number>();
+    for (const digest of digests) {
+      for (const tag of digest.topicTags) {
+        themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
+      }
+    }
+    const topicMentions = Array.from(themeFreq.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([tag, count]) => `${tag} (${count} items)`)
+      .join(", ");
+    
+    summary += `\n\n**Focus Areas:** ${topicMentions}. `;
+    summary += `\n\n**Featured Sources:** ${topSources.join(", ")}. Insights span production infrastructure, emerging research, and practical tooling focused on improving engineering velocity and codebase intelligence. `;
+    summary += `Notable trend: increasing emphasis on context management, evaluation frameworks, and agent reliability for production systems.`;
+    
+    return summary;
   }
 
   /**

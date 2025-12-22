@@ -23,7 +23,7 @@ export default function DigestSummary({
           </p>
         </div>
         <div className="text-right">
-          <div className="text-3xl font-bold text-blue-400">{itemCount}</div>
+          <div className="text-3xl font-bold text-black">{itemCount}</div>
           <p className="text-sm text-muted">items</p>
         </div>
       </div>

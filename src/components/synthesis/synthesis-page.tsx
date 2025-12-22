@@ -196,17 +196,17 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
       {/* Error Alert */}
       {error && (
-        <div className="bg-red-900/30 border border-red-700 rounded-lg p-4">
-          <p className="text-sm font-semibold text-red-200">Error</p>
-          <p className="text-sm text-red-100 mt-1">{error}</p>
+        <div className="bg-red-50 border border-red-300 rounded-lg p-4">
+          <p className="text-sm font-semibold text-red-900">Error</p>
+          <p className="text-sm text-red-800 mt-1">{error}</p>
         </div>
       )}
 
       {/* Success Alert */}
       {result && !isLoading && (
-        <div className="bg-green-900/30 border border-green-700 rounded-lg p-4">
-          <p className="text-sm font-semibold text-green-200">Success</p>
-          <p className="text-sm text-green-100 mt-1">
+        <div className="bg-gray-100 border border-green-300 rounded-lg p-4">
+          <p className="text-sm font-semibold text-green-900">Success</p>
+          <p className="text-sm text-green-800 mt-1">
             {type === "newsletter" ? "Newsletter" : "Podcast"} generated successfully!
           </p>
         </div>
@@ -221,7 +221,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
           </div>
           <div className="w-full bg-surface-border rounded-full h-2 overflow-hidden">
             <div
-              className="bg-blue-600 h-full rounded-full transition-all duration-300"
+              className="bg-black h-full rounded-full transition-all duration-300"
               style={{ width: `${loadingProgress}%` }}
             />
           </div>
