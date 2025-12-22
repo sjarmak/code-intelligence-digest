@@ -700,8 +700,8 @@ Be specific, concrete, and analytical.`,
       for (const item of items) {
          // Only create a link if the URL is valid (not Inoreader, not empty)
          const urlValid = isValidUrl(item.url);
-         if (!urlValid && categoryName === "Newsletters") {
-           logger.warn(`[URL_DEBUG] Invalid URL for newsletter item "${item.title.substring(0, 40)}...": "${item.url}"`);
+         if (!urlValid) {
+           logger.warn(`[URL_MISSING] ${categoryName} item without valid URL: title="${item.title.substring(0, 50)}...", url="${item.url}", source="${item.sourceTitle}"`);
          }
          const titleMD = urlValid
            ? `**[${item.title}](${item.url})**`

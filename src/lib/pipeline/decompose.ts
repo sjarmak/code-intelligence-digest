@@ -22,6 +22,7 @@ export function isNewsletterSource(sourceTitle: string): boolean {
  * - Link text followed by description (markdown-style)
  * - HTML links with surrounding text
  * - Numbered list items
+ * - Title-then-URL patterns (newsletter articles without explicit links)
  */
 function extractArticlesFromHtml(html: string): Array<{
   title: string;
@@ -64,6 +65,14 @@ function extractArticlesFromHtml(html: string): Array<{
         seen.add(url);
       }
     }
+  }
+
+  // Helper: Find URLs that appear within a reasonable distance of a title
+  // This handles newsletter formats where title and URL are separate
+  function findUrlNearby(startIndex: number, maxDistance: number = 500): string | null {
+    const searchText = cleanHtml.substring(startIndex, startIndex + maxDistance);
+    const urlMatch = searchText.match(/https?:\/\/[^\s<>"'\)]+/);
+    return urlMatch ? urlMatch[0] : null;
   }
 
   // Pattern 2: HTML anchor tags <a href="...">Title</a>
@@ -115,31 +124,55 @@ function extractArticlesFromHtml(html: string): Array<{
       }
     }
 
-    if (title && url && !seen.has(url)) {
-      // Skip certain URLs (but allow decoded URLs from tracking redirects)
-      // Also skip Substack internal pages (subscribe, app-link, comments, reactions)
-      // Note: URLs may have &amp; encoded as HTML entities
-      // Note: Substack URLs can be *.substack.com (e.g., thesequence.substack.com)
-      const normalizedUrl = url.replace(/&amp;/g, "&");
-      const isSubstackUrl = normalizedUrl.includes(".substack.com/") ||
-                           normalizedUrl.includes("substack.com/") ||
-                           normalizedUrl.includes("substackcdn.com/");
-      const isSubstackInternal = isSubstackUrl && (
-        normalizedUrl.includes("/subscribe") ||
-        normalizedUrl.includes("/app-link/") ||
-        normalizedUrl.includes("submitLike=") ||
-        normalizedUrl.includes("comments=true") ||
-        normalizedUrl.includes("action=share") ||
-        normalizedUrl.includes("action=restack") ||
-        normalizedUrl.includes("/action/disable_email") ||
-        normalizedUrl.includes("redirect=app-store") ||
-        normalizedUrl.includes("open.substack.com/") ||
-        normalizedUrl.includes("eotrx.substackcdn.com/")
-      );
+    // Check URL validity even if title is empty (for Substack post URLs)
+    const normalizedUrl = url.replace(/&amp;/g, "&");
 
-      // Skip undecoded Substack redirect URLs (they should have been decoded above)
-      const isUndecodedSubstackRedirect = url.includes("substack.com/redirect/");
+    // Check if it's a Substack URL
+    const isSubstackDomain = normalizedUrl.includes(".substack.com/") ||
+                             normalizedUrl.includes("substack.com/") ||
+                             normalizedUrl.includes("substackcdn.com/");
 
+    // Substack post URLs (like /p/article-slug) are VALID and should be kept
+    // But NOT if they're action URLs (restack, app redirects, etc.)
+    const isSubstackPost = isSubstackDomain &&
+                           normalizedUrl.includes("/p/") &&
+                           !normalizedUrl.includes("open.substack.com/") &&
+                           !normalizedUrl.includes("action=restack") &&
+                           !normalizedUrl.includes("action=share") &&
+                           !normalizedUrl.includes("redirect=app-store");
+
+    // These are internal Substack pages that should be filtered
+    const isSubstackInternal = isSubstackDomain && !isSubstackPost && (
+      normalizedUrl.includes("/subscribe") ||
+      normalizedUrl.includes("/app-link/") ||
+      normalizedUrl.includes("submitLike=") ||
+      normalizedUrl.includes("comments=true") ||
+      normalizedUrl.includes("action=share") ||
+      normalizedUrl.includes("action=restack") ||
+      normalizedUrl.includes("/action/disable_email") ||
+      normalizedUrl.includes("redirect=app-store") ||
+      normalizedUrl.includes("open.substack.com/") ||
+      normalizedUrl.includes("eotrx.substackcdn.com/") ||
+      normalizedUrl.includes("substackcdn.com/open")
+    );
+
+    // Skip undecoded Substack redirect URLs (they should have been decoded above)
+    const isUndecodedSubstackRedirect = url.includes("substack.com/redirect/");
+
+    // For Substack posts without title, extract title from URL slug
+    let effectiveTitle = title;
+    if (isSubstackPost && (!title || title.length < 3)) {
+      // Extract slug from URL like .../p/the-sequence-radar-775-last-week
+      const slugMatch = normalizedUrl.match(/\/p\/([^?#]+)/);
+      if (slugMatch) {
+        // Convert slug to title: the-sequence-radar-775 -> The Sequence Radar 775
+        effectiveTitle = slugMatch[1]
+          .replace(/-/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase());
+      }
+    }
+
+    if (effectiveTitle && url && !seen.has(url)) {
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
@@ -148,9 +181,9 @@ function extractArticlesFromHtml(html: string): Array<{
         !isUndecodedSubstackRedirect
       ) {
         articles.push({
-          title: title.trim(),
+          title: effectiveTitle.trim(),
           url: url.trim(),
-          snippet: title.trim(),
+          snippet: effectiveTitle.trim(),
         });
         seen.add(url);
       }
@@ -165,14 +198,20 @@ function extractArticlesFromHtml(html: string): Array<{
     if (title && url && !seen.has(url)) {
       // Skip Substack redirect/internal URLs (already handled above)
       const normalizedUrl = url.replace(/&amp;/g, "&");
-      const isSubstackUrl = (
-        normalizedUrl.includes("substack.com/") ||
-        normalizedUrl.includes("substackcdn.com/")
-      ) && (
+      const isSubstackDomain = normalizedUrl.includes("substack.com/") ||
+                                normalizedUrl.includes("substackcdn.com/");
+      const isSubstackPost = isSubstackDomain &&
+                              normalizedUrl.includes("/p/") &&
+                              !normalizedUrl.includes("open.substack.com/") &&
+                              !normalizedUrl.includes("action=restack") &&
+                              !normalizedUrl.includes("action=share") &&
+                              !normalizedUrl.includes("redirect=app-store");
+      const isSubstackInternal = isSubstackDomain && !isSubstackPost && (
         normalizedUrl.includes("/redirect/") ||
         normalizedUrl.includes("/app-link/") ||
         normalizedUrl.includes("/subscribe") ||
-        normalizedUrl.includes("eotrx.substackcdn.com/")
+        normalizedUrl.includes("substackcdn.com/open") ||
+        normalizedUrl.includes("open.substack.com/")
       );
 
       // Skip certain URLs and very long titles (likely not real)
@@ -180,9 +219,8 @@ function extractArticlesFromHtml(html: string): Array<{
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
         !url.includes("tracking.tldrnewsletter") &&
-        !url.includes("substackcdn.com") &&
         !url.startsWith("javascript:") &&
-        !isSubstackUrl &&
+        !isSubstackInternal &&
         title.length < 200
       ) {
         articles.push({
@@ -195,8 +233,44 @@ function extractArticlesFromHtml(html: string): Array<{
     }
   }
 
+  // Pattern 4: Newsletter headers with titles like "Title — Source" followed by description
+  // and then a URL somewhere nearby in the content
+  // Example: "My LLM coding workflow going into 2026 — Elevate\nDescription text\nhttps://example.com"
+  const headerPattern = /^([^\n—\-]{10,150})\s+(?:—|-)\s+([A-Za-z\s]+?)(?:\n|$)/gm;
+  while ((match = headerPattern.exec(cleanHtml)) !== null) {
+    const [fullMatch, titleText] = match;
+    if (!titleText || titleText.length < 5) continue;
+    
+    const title = titleText.trim();
+    
+    // Skip if we've already found this title with a URL
+    if (seen.has(title)) continue;
+    
+    // Look for a URL near this header (within next 500 chars)
+    const matchIndex = match.index! + fullMatch.length;
+    const nearbyUrl = findUrlNearby(matchIndex, 500);
+    
+    if (nearbyUrl && !seen.has(nearbyUrl)) {
+      // Validate the URL
+      const normalizedUrl = nearbyUrl.replace(/&amp;/g, "&");
+      if (
+        !normalizedUrl.includes("inoreader.com") &&
+        !normalizedUrl.includes("google.com/reader") &&
+        !normalizedUrl.startsWith("javascript:") &&
+        !normalizedUrl.includes("tracking.tldrnewsletter")
+      ) {
+        articles.push({
+          title: title.trim(),
+          url: normalizedUrl.trim(),
+          snippet: title.trim(),
+        });
+        seen.add(nearbyUrl);
+      }
+    }
+  }
+
   return articles;
-}
+  }
 
 /**
  * Create a RankedItem for a single article extracted from a newsletter

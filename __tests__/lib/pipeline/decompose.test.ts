@@ -272,5 +272,25 @@ describe("decomposeNewsletterItems", () => {
     // Should have no duplicate URLs
     expect(uniqueUrls.size).toBe(urls.length);
   });
+
+  it("should extract titles with nearby URLs (newsletter header pattern)", () => {
+    const html = `
+My LLM coding workflow going into 2026 — Elevate
+Highlights practical evolution of coding agents and workflows, relevant to AI-assisted software engineering.
+https://elevate.example.com/lvm-workflow
+
+Modern VMs 🧱, System Observability 🔍 — TLDR
+Infrastructure improvements for coding agents.
+https://tldr.example.com/modern-vms
+    `;
+    const item = createMockRankedItem("Elevate", html);
+    const result = decomposeNewsletterItem(item);
+
+    expect(result.length).toBeGreaterThanOrEqual(1);
+    // Should extract URLs even without explicit HTML links
+    const urls = result.map(r => r.url).filter(u => u && u.includes("example.com"));
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.some(u => u.includes("elevate.example.com"))).toBe(true);
+  });
 });
 
