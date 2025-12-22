@@ -444,7 +444,18 @@ async function generateNewsletterFromDigestData(
   const categorizedContent = Array.from(byCategory.entries())
     .map(([catName, categoryDigests]) => {
       const itemsList = categoryDigests
-        .map(d => `- **[${d.title}](${d.url})** — *${d.sourceTitle}*\n  ${d.whyItMatters}`)
+        .map(d => {
+          // Build attribution line: sourceTitle + author + originalSource
+          const attributions: string[] = [];
+          if (d.sourceTitle) attributions.push(d.sourceTitle);
+          if (d.author) attributions.push(`by ${d.author}`);
+          if (d.originalSource && d.originalSource !== d.sourceTitle?.toLowerCase()) {
+            attributions.push(`on ${d.originalSource}`);
+          }
+          const attribution = attributions.join(" · ");
+          
+          return `- **[${d.title}](${d.url})** — *${attribution}*\n  ${d.whyItMatters}`;
+        })
         .join("\n");
       return `## ${catName}\n\n${itemsList}`;
     })
