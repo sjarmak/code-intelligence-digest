@@ -8,6 +8,7 @@ import { RankedItem, Category } from "../model";
 import { PromptProfile } from "./promptProfile";
 import { ItemDigest } from "./extract";
 import { logger } from "../logger";
+import { reviewNewsletter } from "./reviewNewsletter";
 
 export interface NewsletterContent {
   summary: string;
@@ -353,11 +354,25 @@ async function generateNewsletterFromDigestData(
   // Build HTML from markdown
   const html = buildNewsletterHTML(markdown, summaryText);
 
+  // Review newsletter for quality issues
+  const review = await reviewNewsletter(markdown, digests);
+  if (!review.passed) {
+    logger.warn("Newsletter review found issues", {
+      issueCount: review.issues.length,
+      issues: review.issues.slice(0, 3), // Log first 3 issues
+      llmFeedback: review.llmFeedback,
+    });
+  } else {
+    logger.info("Newsletter passed quality review");
+  }
+
   logger.info("Newsletter synthesis complete", {
     summaryLength: summaryText.length,
     markdownLength: markdown.length,
     categoriesCount: byCategory.size,
     itemsCount: digests.length,
+    reviewPassed: review.passed,
+    reviewIssueCount: review.issues.length,
   });
 
   return {
