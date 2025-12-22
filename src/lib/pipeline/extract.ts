@@ -22,9 +22,89 @@ export interface ItemDigest {
   whyItMatters: string; // Relevance to coding/agents/IR
   sourceCredibility: "high" | "medium" | "low";
   userRelevanceScore: number; // 0-10 based on user prompt match
+  
+  // Enriched metadata (extracted from actual article page)
+  author?: string; // Article author (Substack, Medium, dev.to, etc.)
+  publishDate?: string; // Article publication date (ISO 8601)
+  originalSource?: string; // Original source domain (e.g., "substack.com", "medium.com")
 }
 
 const CHUNK_SIZE = 2000; // Characters per chunk
+
+/**
+ * Metadata extracted from article page
+ */
+interface PageMetadata {
+  author?: string;
+  publishDate?: string;
+  originalSource?: string; // Domain of the article (not the newsletter)
+}
+
+/**
+ * Synchronously extract metadata from article URL (no I/O)
+ * Looks for: author from URL patterns, and original source domain
+ */
+function extractMetadataSync(url: string): PageMetadata {
+  if (!url || !url.startsWith("http")) {
+    return {};
+  }
+
+  try {
+    // Extract domain for originalSource
+    const urlObj = new URL(url);
+    const domain = urlObj.hostname.replace("www.", "");
+    
+    // For Substack, extract author from URL pattern (e.g., "alice.substack.com")
+    if (domain.includes("substack.com")) {
+      const match = url.match(/https:\/\/([^.]+)\.substack\.com/);
+      if (match) {
+        return {
+          author: match[1],
+          originalSource: "substack.com",
+        };
+      }
+    }
+    
+    // For Medium, try to extract author from URL pattern (e.g., "@authorname")
+    if (domain.includes("medium.com")) {
+      const match = url.match(/medium\.com\/@([^/]+)/);
+      if (match) {
+        return {
+          author: match[1],
+          originalSource: "medium.com",
+        };
+      }
+      return {
+        originalSource: "medium.com",
+      };
+    }
+    
+    // For dev.to
+    if (domain.includes("dev.to")) {
+      return {
+        originalSource: "dev.to",
+      };
+    }
+
+    // Generic: just return the domain
+    return {
+      originalSource: domain,
+    };
+  } catch (error) {
+    logger.warn(`Failed to extract metadata from URL: ${url}`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {};
+  }
+}
+
+/**
+ * Asynchronously fetch and extract metadata from article URL
+ * (Currently just calls sync version, but prepared for future API calls)
+ */
+async function fetchArticleMetadata(url: string): Promise<PageMetadata> {
+  return extractMetadataSync(url);
+}
 
 /**
  * Split long text into overlapping chunks
@@ -197,6 +277,9 @@ Return ONLY valid JSON, no markdown.`,
     // Email newsletters like TLDR contain links to actual articles - we should preserve those
     const digestUrl = item.url;
 
+    // Fetch enriched metadata from the article URL (author, original source, etc.)
+    const metadata = await fetchArticleMetadata(digestUrl);
+
     return {
       id: item.id,
       title: item.title,
@@ -210,6 +293,11 @@ Return ONLY valid JSON, no markdown.`,
       whyItMatters: extracted.whyItMatters || "",
       sourceCredibility: extracted.sourceCredibility || "medium",
       userRelevanceScore: Math.min(10, Math.max(0, extracted.userRelevanceScore || 5)),
+      
+      // Enriched metadata from article page
+      author: metadata.author,
+      publishDate: metadata.publishDate,
+      originalSource: metadata.originalSource,
     };
   } catch (error) {
    const errorMsg = error instanceof Error ? error.message : String(error);
@@ -290,6 +378,9 @@ function generateFallbackDigest(item: RankedItem, _userPrompt: string): ItemDige
   // Email newsletters like TLDR contain links to actual articles - we should preserve those
   const digestUrl = item.url;
 
+  // Try to extract metadata for fallback case too
+  const metadataSync = extractMetadataSync(digestUrl);
+
   return {
     id: item.id,
     title: item.title,
@@ -305,5 +396,10 @@ function generateFallbackDigest(item: RankedItem, _userPrompt: string): ItemDige
     whyItMatters,
     sourceCredibility: "medium",
     userRelevanceScore: Math.round(item.finalScore * 10),
+    
+    // Enriched metadata (sync version for fallback)
+    author: metadataSync.author,
+    publishDate: metadataSync.publishDate,
+    originalSource: metadataSync.originalSource,
   };
 }
