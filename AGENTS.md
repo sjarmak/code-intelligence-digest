@@ -691,6 +691,22 @@ When Inoreader items lack canonical/alternate URLs:
 
 **Implementation:** `src/lib/pipeline/normalize.ts` → `extractUrlFromHtml()` function
 
+### Newsletter Decomposition
+
+Email newsletters are decomposed into individual articles before digest extraction. This prevents newsletter "wrapper" links (subscription, unsubscribe, etc.) from dominating the digest display.
+
+**Critical pattern:** The `NEWSLETTER_SOURCES` list in `decompose.ts` must include ALL newsletter sources, not just the most common ones. Missing sources won't be decomposed and will show Inoreader wrapper URLs in the final digest.
+
+**Known sources:** TLDR, Byte Byte Go, Pointer, Substack, Elevate, Architecture Notes, Leadership in Tech, Programming Digest, System Design
+
+**Implementation details:**
+- `src/lib/pipeline/decompose.ts` → `decomposeNewsletterItem()`: extracts articles from HTML
+- `extractArticlesFromHtml()` handles multiple link patterns: markdown `[title](url)`, HTML anchors, raw URLs, header patterns
+- URL tracking: extracts actual article URLs from TLDR tracking redirects and Substack redirect chains
+- Decomposed items inherit fullText from parent (contains all newsletter HTML) for LLM extraction
+
+**Location:** `src/lib/pipeline/decompose.ts` → `NEWSLETTER_SOURCES` array and decomposition functions
+
 ### Newsletter Categorization
 
 Newsletters are grouped by **resource category** (research, community, newsletters, tech_articles, ai_news, product_news, podcasts):
