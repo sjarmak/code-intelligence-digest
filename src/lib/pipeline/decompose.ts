@@ -10,6 +10,46 @@ import { logger } from "../logger";
 const NEWSLETTER_SOURCES = ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"];
 
 /**
+ * URLs to exclude from newsletter decomposition
+ * These are collection pages, meta links, and aggregators that don't contain single article content
+ */
+const BAD_URL_PATTERNS = [
+  // Newsletter collection/digest pages (with or without trailing slash/params)
+  /\/newsletters?(?:[/?#]|$)/i,
+  /\/issues?(?:[/?#]|$)/i,
+  /\/archive(?:[/?#]|$)/i,
+  
+  // Meta/admin pages (advertise, privacy, unsubscribe, media kit, etc.)
+  /\/(advertise|sponsor|advertising|partnership)(?:[/?#]|$)/i,
+  /\/(privacy|terms|policies|legal|disclaimer)(?:[/?#]|$)/i,
+  /\/(unsubscribe|preferences|settings|manage)(?:[/?#]|$)/i,
+  /\/(media-kit|press|about|contact)(?:[/?#]|$)/i,
+  /\/(feeds?|rss|subscribe|signup)(?:[/?#]|$)/i,
+  
+  // Social aggregators (Reddit, etc.) that aren't article links
+  /reddit\.com\/(r|u)\/[^\/]+(?:[/?#]|$)/, // Reddit subreddits/users (not /comments or specific post)
+  
+  // Digest collection domains - exclude any path containing "digest"
+  // These are newsletter index pages, not individual articles
+  /(csharpdigest|leadershipintech|reactdigest|programming[?_-]?digest|newsletter[?_-]?digest|tech[?_-]?digest)\.com/i,
+  
+  // Any domain with "digest" in it that doesn't have article-like path structure
+  /\w+digest\.\w+\/(?![\w-]+\/\d+|[\w-]+$|p\/|post\/|article\/|story\/)/i,
+];
+
+/**
+ * Check if URL should be excluded from decomposition
+ */
+function shouldExcludeUrl(url: string): boolean {
+  for (const pattern of BAD_URL_PATTERNS) {
+    if (pattern.test(url)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Check if item is from a known email newsletter source
  */
 export function isNewsletterSource(sourceTitle: string): boolean {
@@ -55,7 +95,8 @@ function extractArticlesFromHtml(html: string): Array<{
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
-        !url.startsWith("javascript:")
+        !url.startsWith("javascript:") &&
+        !shouldExcludeUrl(url)
       ) {
         articles.push({
           title: title.trim(),
@@ -178,7 +219,8 @@ function extractArticlesFromHtml(html: string): Array<{
         !url.includes("google.com/reader") &&
         !url.startsWith("javascript:") &&
         !isSubstackInternal &&
-        !isUndecodedSubstackRedirect
+        !isUndecodedSubstackRedirect &&
+        !shouldExcludeUrl(url)
       ) {
         articles.push({
           title: effectiveTitle.trim(),
@@ -221,7 +263,8 @@ function extractArticlesFromHtml(html: string): Array<{
         !url.includes("tracking.tldrnewsletter") &&
         !url.startsWith("javascript:") &&
         !isSubstackInternal &&
-        title.length < 200
+        title.length < 200 &&
+        !shouldExcludeUrl(url)
       ) {
         articles.push({
           title: title.trim(),
@@ -257,7 +300,8 @@ function extractArticlesFromHtml(html: string): Array<{
         !normalizedUrl.includes("inoreader.com") &&
         !normalizedUrl.includes("google.com/reader") &&
         !normalizedUrl.startsWith("javascript:") &&
-        !normalizedUrl.includes("tracking.tldrnewsletter")
+        !normalizedUrl.includes("tracking.tldrnewsletter") &&
+        !shouldExcludeUrl(normalizedUrl)
       ) {
         articles.push({
           title: title.trim(),

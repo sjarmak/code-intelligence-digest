@@ -244,28 +244,28 @@ export async function extractItemDigest(
       messages: [
         {
           role: "user",
-          content: `Extract structured digest from this article/resource.
+          content: `Extract structured digest from this article/resource. Avoid corporate/AI language. Be direct and specific.
 
-Title: "${item.title}"
-Source: ${item.sourceTitle}
-Categories: ${item.category}
-User Focus: ${userPrompt || "General code intelligence"}
-
-Content:
-${processedText}
-
-${processedText.length < 300 ? "Note: Content is sparse. Infer insights from the title and available text." : ""}
-
-Return JSON with:
-- topicTags: [list of 3-5 relevant tags like "code-search", "agents", "benchmarks"]
-- gist: 1-2 sentence summary capturing the essence (max 120 chars). If content is sparse, use title context.
-- keyBullets: [2-5 key points inferred from title/content, each max 100 chars. If sparse, focus on what the title suggests.]
-- namedEntities: [important names/projects/orgs mentioned, inferred if needed]
-- whyItMatters: 1-2 sentence explanation of relevance to coding/agents/IR (max 150 chars)
-- sourceCredibility: "high" (academic/official), "medium" (established), "low" (casual)
-- userRelevanceScore: 0-10 based on match with user focus (${userPrompt || "general code topics"})
-
-Return ONLY valid JSON, no markdown.`,
+    Title: "${item.title}"
+    Source: ${item.sourceTitle}
+    Categories: ${item.category}
+    User Focus: ${userPrompt || "Code search, context management for coding agents, information retrieval, developer productivity tools"}
+    
+    Content:
+    ${processedText}
+    
+    ${processedText.length < 300 ? "Note: Content is sparse. Infer insights from the title and available text." : ""}
+    
+    Return JSON with:
+    - topicTags: [3-5 specific tags, avoid generic terms like "emerging" or "landscape". Use concrete terms like "caching", "indexing", "ranking", "agents"]
+    - gist: 1-2 sentence summary of WHAT is described (max 120 chars). Use active voice. Not "this highlights" but "the paper shows" or "the tool does X".
+    - keyBullets: [2-5 concrete points from the actual content. Specific numbers, examples, or techniques mentioned. Avoid "it's important" or "this matters".]
+    - namedEntities: [actual names, projects, companies, papers mentioned]
+    - whyItMatters: 1-2 sentences explaining concrete relevance. Avoid filler words like "shapes," "fosters," "underscores." Say what problem it solves or approach it takes.
+    - sourceCredibility: "high" (peer-reviewed/official), "medium" (established pub), "low" (casual blog)
+    - userRelevanceScore: 0-10 based on direct relevance to code search, context for agents, IR, or productivity (not generic "innovation")
+    
+    Return ONLY valid JSON, no markdown. Gist and keyBullets must be drawn from actual content, not templates.`,
         },
       ],
     });

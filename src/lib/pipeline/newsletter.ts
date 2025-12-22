@@ -517,35 +517,47 @@ function generateNewsletterFallback(
       .join("\n");
 
     try {
-      logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
-      
-      const response = await client.chat.completions.create({
-        model: "gpt-4o",
-        max_completion_tokens: 600, // Increased from 400
-        messages: [
-          {
-            role: "user",
-            content: `Write a substantive 300-400 word executive summary for a code intelligence digest covering ${itemCount} curated items.
+       logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
+       
+       const response = await client.chat.completions.create({
+         model: "gpt-5.2",
+         max_completion_tokens: 600,
+         messages: [
+           {
+             role: "user",
+             content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
 
-  **Featured Topics:** ${themes.join(", ") || "code search, agents, IR, devtools"}
+    **Featured Topics:** ${themes.join(", ") || "code search, context management, agents, information retrieval, developer productivity"}
 
-  **Key Items Featured:**
-  ${itemSummaries}
+    **Key Items Featured:**
+    ${itemSummaries}
 
-  **Requirements:**
-  1. Open with 2-3 sentence hook identifying the most important trend or insight
-  2. Organize around 3-4 major themes or patterns across these items
-  3. For each theme: explain WHAT is happening, provide specific examples, and explain WHY it matters to engineering leaders
-  4. Include at least one surprising insight or important shift in the space
-  5. Cite specific items/sources where relevant (e.g., "As seen in: [source name]")
-  6. Close with forward-looking statement about where this is heading
-  7. Use concrete, analytical language—avoid generic boilerplate
-  8. Target audience: senior engineers and engineering leaders evaluating tools and approaches
+    **Target Audience:** Sourcegraph engineering and leadership evaluating code search, coding agents, information retrieval, and developer productivity.
 
-  Write in paragraph form, substantive and detailed.`,
-          },
-        ],
-      });
+    **What NOT to do:**
+    - Avoid: "highlights," "underscores," "shapes," "fosters," "landscape," "emerging," "approaches," "methodologies"
+    - Avoid treating trends as active agents. Say "Google's approach" not "this trend showcases"
+    - Avoid vague corporate language. Say what actually happened/was built/was proven
+    - No bullet-point lists
+    - No AI-style verbose preamble
+
+    **What to do:**
+    1. Open with the single most important finding or shift. Be specific (e.g., "LLM-based code search is scaling to 100M+ LOC" not "code search is advancing")
+    2. Organize around 3-4 concrete developments:
+      - Specific company/project approach (what they built, how it works)
+      - What problem it solves or challenge it addresses
+      - Performance numbers or real-world results if available
+      - Competitive/strategic implication for code search/agents/IR
+    3. Cite specific items and sources. Use authors' names and actual findings
+    4. For competitive insights: mention specific companies and concrete product capabilities
+    5. Close with the practical implication: what does this mean teams should evaluate or explore
+
+    **Tone:** Like an engineering memo or analyst report. Direct, evidence-based, no speculation.
+
+    Write substantive paragraphs. Ground every claim in the actual items provided.`,
+           },
+         ],
+       });
 
       const summary = response.choices[0].message.content || buildExecutiveSummaryFallback(digests, themes);
       logger.info(`LLM summary generated: ${summary.length} chars`);
@@ -557,48 +569,51 @@ function generateNewsletterFallback(
   }
 
   /**
-   * Fallback summary template
+   * Fallback summary template (avoids AI-like language)
    */
   function buildExecutiveSummaryFallback(digests: ItemDigest[], themes: string[]): string {
     const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 4);
-    const topThemes = themes.slice(0, 4).map(t => t.replace(/-/g, " "));
+    const topThemes = themes.slice(0, 4);
     
-    // Extract the ACTUAL insights from digests (not template boilerplate)
+    // Extract concrete insights from actual content, not templates
     const topItems = digests.slice(0, 8);
+    const keyPoints: string[] = [];
     
-    // Build sections based on actual content
-    const insights: string[] = [];
-    
-    // Extract unique "why it matters" insights
+    // Get actual content from keyBullets (more specific than whyItMatters)
     for (const item of topItems) {
-      if (item.whyItMatters && item.whyItMatters.length > 20) {
-        insights.push(item.whyItMatters);
+      if (item.keyBullets && item.keyBullets.length > 0) {
+        keyPoints.push(`${item.title}: ${item.keyBullets[0]}`);
       }
     }
     
-    // Build summary with actual insights
-    let summary = `This ${digests.length}-item digest explores **${topThemes.join(", ")}**, highlighting key developments reshaping developer productivity and tooling.\n\n`;
+    // Build summary from actual content
+    let summary = `This ${digests.length}-item digest covers ${topThemes.join(", ")}. `;
+    summary += `Key content from ${topSources.slice(0, 2).join(", ")}.\n\n`;
     
-    // Add unique insights from top items (avoid repeating)
-    const uniqueInsights = Array.from(new Set(insights.map(i => i.split(".")[0].trim()))).slice(0, 3);
-    summary += `**Key Developments:** ${uniqueInsights.join(". ")}. `;
+    // Use actual findings instead of boilerplate
+    const uniquePoints = Array.from(new Set(keyPoints.map(p => p.split(":")[1]?.trim() || p))).slice(0, 3);
+    if (uniquePoints.length > 0) {
+      summary += `Specific findings: ${uniquePoints.join(". ")}.\n\n`;
+    }
     
-    // Add theme analysis based on frequency
+    // Concrete theme mention (not "landscape" or "emerging")
     const themeFreq = new Map<string, number>();
     for (const digest of digests) {
       for (const tag of digest.topicTags) {
         themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
       }
     }
-    const topicMentions = Array.from(themeFreq.entries())
+    const frequentThemes = Array.from(themeFreq.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
-      .map(([tag, count]) => `${tag} (${count} items)`)
+      .map(([tag]) => tag)
       .join(", ");
     
-    summary += `\n\n**Focus Areas:** ${topicMentions}. `;
-    summary += `\n\n**Featured Sources:** ${topSources.join(", ")}. Insights span production infrastructure, emerging research, and practical tooling focused on improving engineering velocity and codebase intelligence. `;
-    summary += `Notable trend: increasing emphasis on context management, evaluation frameworks, and agent reliability for production systems.`;
+    if (frequentThemes) {
+      summary += `Recurring topics: ${frequentThemes}.\n\n`;
+    }
+    
+    summary += `Sources: ${topSources.join(", ")}. Content spans research, tooling, and team experiences in code search, context management, and agent-based development.`;
     
     return summary;
   }

@@ -53,7 +53,7 @@ export function SynthesisForm({
   const [period, setPeriod] = useState<"week" | "month">("week");
   const [limit, setLimit] = useState(50);
   const [prompt, setPrompt] = useState(
-    "focus on code search, information retrieval or RAG or context management for coding agents, software engineering with coding agents, and benchmarks"
+    "Pick the top most relevant articles in each category that would be useful for the Sourcegraph engineering team and leadership to understand the current landscape in tech and competitive products for: code search innovation, augmenting coding agents with enhanced context and information retrieval, and developer productivity using AI tools."
   );
   const [voiceStyle, setVoiceStyle] = useState<"conversational" | "technical" | "executive">(
     "conversational"
