@@ -47,68 +47,77 @@ function computeTermPresenceScore(
 
 /**
  * Re-rank items based on prompt profile
- * Applies soft boost for prompt-relevant items without overriding baseline ranking
+ * Makes USER PROMPT the PRIMARY signal: items matching user's explicit focus get massive boost,
+ * items not matching get penalized, items contradicting get filtered.
  */
 export function rerankWithPrompt(
-  items: RankedItem[],
-  profile: PromptProfile
-): RankedItem[] {
-  if (!profile || profile.focusTopics.length === 0) {
-    return items;
-  }
+   items: RankedItem[],
+   profile: PromptProfile
+ ): RankedItem[] {
+   if (!profile || profile.focusTopics.length === 0) {
+     return items;
+   }
 
-  logger.info(
-    `Re-ranking ${items.length} items based on prompt topics: ${profile.focusTopics.join(", ")}`
-  );
+   logger.info(
+     `Re-ranking ${items.length} items based on prompt topics: ${profile.focusTopics.join(", ")}`
+   );
 
-  const reranked = items.map((item) => {
-    // Compute match scores
-    const tagMatchScore = computeTagMatchScore(item.llmScore.tags, profile.focusTopics);
-    const termPresenceScore = computeTermPresenceScore(
-      item.title,
-      item.summary,
-      item.fullText,
-      profile.focusTopics
-    );
+   const reranked = items.map((item) => {
+     // Compute match scores
+     const tagMatchScore = computeTagMatchScore(item.llmScore.tags, profile.focusTopics);
+     const termPresenceScore = computeTermPresenceScore(
+       item.title,
+       item.summary,
+       item.fullText,
+       profile.focusTopics
+     );
 
-    // Apply aggressive re-rank formula to actually favor prompt-relevant items
-    // Prompt alignment is primary signal; baseline score is floor
-    const promptAlignmentScore = 
-      Math.min(1.0, tagMatchScore) * 0.5 +
-      Math.min(1.0, termPresenceScore) * 0.5;
+     // User prompt alignment is the PRIMARY signal
+     const promptAlignmentScore = 
+       Math.min(1.0, tagMatchScore) * 0.5 +
+       Math.min(1.0, termPresenceScore) * 0.5;
 
-    // Boost items that match prompt topics significantly
-    // For well-matched items (alignment > 0.4), boost by 1.5-2.5x
-    // For somewhat-matched items (alignment > 0.2), boost by 1.2-1.5x
-    // For non-matched items, preserve baseline
-    let boostFactor = 1.0;
-    if (promptAlignmentScore > 0.4) {
-      boostFactor = 1.5 + (promptAlignmentScore * 1.0); // 1.5-2.5x boost
-    } else if (promptAlignmentScore > 0.2) {
-      boostFactor = 1.2 + (promptAlignmentScore * 1.5); // 1.2-1.5x boost
-    }
+     // AGGRESSIVE re-ranking: user prompt focus topics drive final ranking
+     // - Well-matched items (alignment > 0.5): 4-6x boost (dominates ranking)
+     // - Somewhat-matched items (alignment 0.3-0.5): 2.5-4x boost
+     // - Weakly-matched items (alignment 0.1-0.3): 1.5-2.5x boost
+     // - Non-matched items (alignment <= 0.1): 0.3x penalty (pushed down significantly)
+     let boostFactor = 1.0;
+     if (promptAlignmentScore > 0.5) {
+       // Strong alignment: 4-6x boost
+       boostFactor = 4.0 + (promptAlignmentScore * 4.0); // 4.0-6.0x
+     } else if (promptAlignmentScore > 0.3) {
+       // Moderate alignment: 2.5-4x boost
+       boostFactor = 2.5 + (promptAlignmentScore * 4.0); // 2.5-4.0x
+     } else if (promptAlignmentScore > 0.1) {
+       // Weak alignment: 1.5-2.5x boost
+       boostFactor = 1.5 + (promptAlignmentScore * 5.0); // 1.5-2.5x
+     } else {
+       // No alignment: penalize by 70% (keep for diversity but deprioritize heavily)
+       boostFactor = 0.3;
+     }
 
-    const adjustedScore = item.finalScore * boostFactor;
+     const adjustedScore = item.finalScore * boostFactor;
 
-    logger.debug(
-      `Item "${item.title}": baseline=${item.finalScore.toFixed(3)}, ` +
-      `tagMatch=${tagMatchScore.toFixed(2)}, termMatch=${termPresenceScore.toFixed(2)}, ` +
-      `alignment=${promptAlignmentScore.toFixed(2)}, boost=${boostFactor.toFixed(2)}x, ` +
-      `adjusted=${adjustedScore.toFixed(3)}`
-    );
+     logger.debug(
+       `Item "${item.title}": baseline=${item.finalScore.toFixed(3)}, ` +
+       `tagMatch=${tagMatchScore.toFixed(2)}, termMatch=${termPresenceScore.toFixed(2)}, ` +
+       `alignment=${promptAlignmentScore.toFixed(2)}, boost=${boostFactor.toFixed(2)}x, ` +
+       `adjusted=${adjustedScore.toFixed(3)}`
+     );
 
-    return {
-      ...item,
-      finalScore: adjustedScore,
-      reasoning: `${item.reasoning} [PROMPT-RERANK: alignment=${promptAlignmentScore.toFixed(2)}, boost=${boostFactor.toFixed(2)}x]`,
-    };
-  });
+     return {
+       ...item,
+       finalScore: adjustedScore,
+       reasoning: `${item.reasoning} [PROMPT-RERANK: alignment=${promptAlignmentScore.toFixed(2)}, boost=${boostFactor.toFixed(2)}x]`,
+     };
+   });
 
-  // Re-sort by adjusted score
-  reranked.sort((a, b) => b.finalScore - a.finalScore);
+   // Re-sort by adjusted score
+   reranked.sort((a, b) => b.finalScore - a.finalScore);
 
-  return reranked;
-}
+   return reranked;
+ }
 
 /**
  * Filter items based on exclusion topics in profile

@@ -238,33 +238,60 @@ export async function generateNewsletterFromDigests(
 }
 
 /**
-  * Group digests by their resource category label (research, community, newsletters, etc.)
- */
+   * Group digests by their resource category label (research, community, newsletters, etc.)
+   * Returns ordered map: research > tech_articles > product_news > ai_news > other prioritized items
+  */
 function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[]> {
-   const byCategory = new Map<string, ItemDigest[]>();
-   
-   // Category label mapping for display
-   const categoryLabels: Record<string, string> = {
-     newsletters: "Newsletters",
-     podcasts: "Podcasts",
-     tech_articles: "Tech Articles",
-     ai_news: "AI News",
-     product_news: "Product News",
-     community: "Community",
-     research: "Research",
-   };
-   
-   for (const digest of digests) {
-     const displayLabel = categoryLabels[digest.category] || digest.category;
-     
-     if (!byCategory.has(displayLabel)) {
-       byCategory.set(displayLabel, []);
-     }
-     byCategory.get(displayLabel)!.push(digest);
-   }
-   
-   return byCategory;
- }
+    const byCategory = new Map<string, ItemDigest[]>();
+    
+    // Category label mapping for display
+    const categoryLabels: Record<string, string> = {
+      newsletters: "Newsletters",
+      podcasts: "Podcasts",
+      tech_articles: "Tech Articles",
+      ai_news: "AI News",
+      product_news: "Product News",
+      community: "Community",
+      research: "Research",
+    };
+    
+    // Define priority order (lower number = higher priority)
+    const categoryPriority: Record<string, number> = {
+      research: 1,
+      tech_articles: 2,
+      product_news: 3,
+      ai_news: 4,
+      community: 5,
+      newsletters: 6,
+      podcasts: 7,
+    };
+    
+    // Group by category first
+    const tempMap = new Map<string, ItemDigest[]>();
+    for (const digest of digests) {
+      const displayLabel = categoryLabels[digest.category] || digest.category;
+      
+      if (!tempMap.has(displayLabel)) {
+        tempMap.set(displayLabel, []);
+      }
+      tempMap.get(displayLabel)!.push(digest);
+    }
+    
+    // Sort entries by category priority and add to result map (which preserves insertion order)
+    const sortedEntries = Array.from(tempMap.entries()).sort((a, b) => {
+      const catKeyA = Object.entries(categoryLabels).find(([, v]) => v === a[0])?.[0] || a[0];
+      const catKeyB = Object.entries(categoryLabels).find(([, v]) => v === b[0])?.[0] || b[0];
+      const priorA = categoryPriority[catKeyA] ?? 99;
+      const priorB = categoryPriority[catKeyB] ?? 99;
+      return priorA - priorB;
+    });
+    
+    for (const [label, items] of sortedEntries) {
+      byCategory.set(label, items);
+    }
+    
+    return byCategory;
+  }
 
 /**
  * Generate newsletter directly from ItemDigest data (better quality)
@@ -292,19 +319,53 @@ async function generateNewsletterFromDigestData(
   }
 
   // Group items by resource category (research, community, newsletters, etc.)
-  const byCategory = groupByResourceCategory(digests);
+   const byCategory = groupByResourceCategory(digests);
 
-  // Extract themes for metadata
-  const themeFreq = new Map<string, number>();
-  for (const digest of digests) {
-    for (const tag of digest.topicTags) {
-      themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
-    }
-  }
-  const themes = Array.from(themeFreq.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([t]) => t);
+   // Extract themes for metadata, respecting user prompt guidance
+   const themeFreq = new Map<string, number>();
+   for (const digest of digests) {
+     for (const tag of digest.topicTags) {
+       themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
+     }
+   }
+   
+   // Parse user prompt to extract focus topics for theme boosting
+   let userPromptTopics: string[] = [];
+   if (userPrompt) {
+     // Extract known domain terms from prompt
+     const domainTerms = [
+       "code search",
+       "semantic search",
+       "context management",
+       "information retrieval",
+       "agentic workflows",
+       "agents",
+       "developer productivity",
+       "embeddings",
+       "rag",
+       "vector database",
+     ];
+     const lowerPrompt = userPrompt.toLowerCase();
+     userPromptTopics = domainTerms.filter(term => lowerPrompt.includes(term));
+   }
+   
+   // Boost themes that match user prompt topics
+   if (userPromptTopics.length > 0) {
+     for (const [theme, score] of themeFreq.entries()) {
+       const themeLower = theme.toLowerCase();
+       const isPromptTopic = userPromptTopics.some(
+         topic => themeLower.includes(topic) || topic.includes(themeLower)
+       );
+       if (isPromptTopic) {
+         themeFreq.set(theme, score * 2.5);
+       }
+     }
+   }
+   
+   const themes = Array.from(themeFreq.entries())
+     .sort((a, b) => b[1] - a[1])
+     .slice(0, 5)
+     .map(([t]) => t);
 
   // Build categorized digest text for LLM
   const categorizedContent = Array.from(byCategory.entries())
@@ -345,14 +406,28 @@ async function generateNewsletterFromDigestData(
     );
   }
 
-  // Review digests for quality issues BEFORE summary generation
-  const review = await reviewNewsletter("", digests);
-  const filteredDigests = digests.filter((d) => !review.digestsWithIssues.has(d.id));
+  // Filter by user relevance score BEFORE quality review
+  // Items with score < 3 are likely off-topic for the user's focus areas
+  const MIN_RELEVANCE_SCORE = 3;
+  const relevantDigests = digests.filter((d) => d.userRelevanceScore >= MIN_RELEVANCE_SCORE);
+
+  if (relevantDigests.length < digests.length) {
+    logger.info("Filtered low-relevance digests", {
+      totalDigests: digests.length,
+      relevantDigests: relevantDigests.length,
+      filtered: digests.length - relevantDigests.length,
+      minScore: MIN_RELEVANCE_SCORE,
+    });
+  }
+
+  // Review remaining digests for quality issues BEFORE summary generation
+  const review = await reviewNewsletter("", relevantDigests);
+  const filteredDigests = relevantDigests.filter((d) => !review.digestsWithIssues.has(d.id));
 
   if (review.issues.length > 0) {
     logger.warn("Filtering out low-quality digests", {
-      totalDigests: digests.length,
-      filtered: digests.length - filteredDigests.length,
+      totalDigests: relevantDigests.length,
+      filtered: relevantDigests.length - filteredDigests.length,
       issues: review.issues.slice(0, 3),
     });
   }

@@ -28,6 +28,12 @@ const BAD_URL_PATTERNS = [
   /\/privacy/i,
   /\/terms/i,
   /\/press/i,
+  // Reddit URLs - discussion threads, not primary sources
+  /reddit\.com\/r\//i,
+  /reddit\.com\/u\//i,
+  /reddit\.com\/user\//i,
+  // Google News redirect URLs (not actual articles)
+  /news\.google\.com\/rss\/articles\//i,
 ];
 
 const AI_LANGUAGE_WORDS = [

@@ -19,9 +19,9 @@ function getClient(): OpenAI | null {
 }
 
 /**
- * Extract common themes from items
+ * Extract common themes from items, respecting user prompt focus topics
  */
-export function extractThemes(items: RankedItem[]): Map<string, number> {
+export function extractThemes(items: RankedItem[], userPromptTopics?: string[]): Map<string, number> {
   const themes = new Map<string, number>();
 
   // Domain term weights (from AGENTS.md)
@@ -61,6 +61,23 @@ export function extractThemes(items: RankedItem[]): Map<string, number> {
     // Also count from LLM tags
     for (const tag of item.llmScore.tags) {
       themes.set(tag, (themes.get(tag) || 0) + 1);
+    }
+  }
+
+  // If user prompt topics provided, boost their weights significantly
+  // This ensures extracted themes reflect user's explicit guidance
+  if (userPromptTopics && userPromptTopics.length > 0) {
+    const lowerPromptTopics = userPromptTopics.map(t => t.toLowerCase());
+    for (const [theme, score] of themes.entries()) {
+      const themeLower = theme.toLowerCase();
+      // Check if theme matches any user prompt topic (substring match for robustness)
+      const isPromptTopic = lowerPromptTopics.some(
+        topic => themeLower.includes(topic) || topic.includes(themeLower)
+      );
+      if (isPromptTopic) {
+        // Boost by 2.5x to prioritize user-specified themes
+        themes.set(theme, score * 2.5);
+      }
     }
   }
 

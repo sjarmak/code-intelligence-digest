@@ -20,14 +20,15 @@ const BAD_URL_PATTERNS = [
   /\/archive(?:[/?#]|$)/i,
   
   // Meta/admin pages (advertise, privacy, unsubscribe, media kit, etc.)
-  /\/(advertise|sponsor|advertising|partnership)(?:[/?#]|$)/i,
+  /\/(advertise|sponsor|advertising|partnership|ad-?service|advert|commerci)(?:[/?#]|$)/i,
   /\/(privacy|terms|policies|legal|disclaimer)(?:[/?#]|$)/i,
-  /\/(unsubscribe|preferences|settings|manage)(?:[/?#]|$)/i,
-  /\/(media-kit|press|about|contact)(?:[/?#]|$)/i,
-  /\/(feeds?|rss|subscribe|signup)(?:[/?#]|$)/i,
+  /\/(unsubscribe|preferences|settings|manage|opt-?out)(?:[/?#]|$)/i,
+  /\/(media-kit|press|about|contact|info|help)(?:[/?#]|$)/i,
+  /\/(feeds?|rss|subscribe|signup|join|register|login|sign-?in)(?:[/?#]|$)/i,
   
-  // Social aggregators (Reddit, etc.) that aren't article links
-  /reddit\.com\/(r|u)\/[^\/]+(?:[/?#]|$)/, // Reddit subreddits/users (not /comments or specific post)
+  // Social aggregators - Reddit subreddits, user pages, and discussions (not external articles shared on Reddit)
+  /reddit\.com\/r\//i, // Any /r/subreddit/* (discussion threads, not external links)
+  /reddit\.com\/u\//i, // User profiles
   
   // Digest collection domains - exclude any path containing "digest"
   // These are newsletter index pages, not individual articles
@@ -35,6 +36,23 @@ const BAD_URL_PATTERNS = [
   
   // Any domain with "digest" in it that doesn't have article-like path structure
   /\w+digest\.\w+\/(?![\w-]+\/\d+|[\w-]+$|p\/|post\/|article\/|story\/)/i,
+  
+  // Common ad/marketing domains and redirect URLs
+  /linktrak\.io/i, // Analytics/tracking redirects
+  /click\.linksynergy\.com/i, // Affiliate redirects
+  /\.eventbrite\.com\/([\w-]+)?(?:[/?#]|$)/i, // Event pages without specific event ID
+  /meetup\.com\/[^\/]+\/(?!events?\/|members?\/)/i, // Meetup group pages, not specific events
+];
+
+/**
+ * Bad title patterns - articles with these titles should be excluded
+ */
+const BAD_TITLE_PATTERNS = [
+  /^advertise$/i,
+  /^sponsor$/i,
+  /^advertisement$/i,
+  /^promotional content$/i,
+  /^(subscribe|join|sign up)$/i,
 ];
 
 /**
@@ -43,6 +61,19 @@ const BAD_URL_PATTERNS = [
 function shouldExcludeUrl(url: string): boolean {
   for (const pattern of BAD_URL_PATTERNS) {
     if (pattern.test(url)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if title should be excluded (e.g., meta content, ads)
+ */
+function shouldExcludeTitle(title: string): boolean {
+  if (!title) return false;
+  for (const pattern of BAD_TITLE_PATTERNS) {
+    if (pattern.test(title.trim())) {
       return true;
     }
   }
@@ -91,17 +122,19 @@ function extractArticlesFromHtml(html: string): Array<{
     const [, title, url] = match;
 
     if (title && url && !seen.has(url)) {
-      // Skip certain URLs
+      const trimmedTitle = title.trim();
+      // Skip certain URLs and titles
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
         !url.startsWith("javascript:") &&
-        !shouldExcludeUrl(url)
+        !shouldExcludeUrl(url) &&
+        !shouldExcludeTitle(trimmedTitle)
       ) {
         articles.push({
-          title: title.trim(),
+          title: trimmedTitle,
           url: url.trim(),
-          snippet: title.trim(), // Will be enhanced below
+          snippet: trimmedTitle, // Will be enhanced below
         });
         seen.add(url);
       }
@@ -214,18 +247,20 @@ function extractArticlesFromHtml(html: string): Array<{
     }
 
     if (effectiveTitle && url && !seen.has(url)) {
+      const trimmedTitle = effectiveTitle.trim();
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
         !url.startsWith("javascript:") &&
         !isSubstackInternal &&
         !isUndecodedSubstackRedirect &&
-        !shouldExcludeUrl(url)
+        !shouldExcludeUrl(url) &&
+        !shouldExcludeTitle(trimmedTitle)
       ) {
         articles.push({
-          title: effectiveTitle.trim(),
+          title: trimmedTitle,
           url: url.trim(),
-          snippet: effectiveTitle.trim(),
+          snippet: trimmedTitle,
         });
         seen.add(url);
       }
@@ -256,6 +291,7 @@ function extractArticlesFromHtml(html: string): Array<{
         normalizedUrl.includes("open.substack.com/")
       );
 
+      const trimmedTitle = title.trim();
       // Skip certain URLs and very long titles (likely not real)
       if (
         !url.includes("inoreader.com") &&
@@ -263,13 +299,14 @@ function extractArticlesFromHtml(html: string): Array<{
         !url.includes("tracking.tldrnewsletter") &&
         !url.startsWith("javascript:") &&
         !isSubstackInternal &&
-        title.length < 200 &&
-        !shouldExcludeUrl(url)
+        trimmedTitle.length < 200 &&
+        !shouldExcludeUrl(url) &&
+        !shouldExcludeTitle(trimmedTitle)
       ) {
         articles.push({
-          title: title.trim(),
+          title: trimmedTitle,
           url: url.trim(),
-          snippet: title.trim(),
+          snippet: trimmedTitle,
         });
         seen.add(url);
       }
