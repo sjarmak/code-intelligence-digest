@@ -166,7 +166,7 @@ ${chunk}`,
 function isEmailNewsletterSource(sourceTitle: string): boolean {
   // Only known email newsletters should have no link
   // Don't include ALL Inoreader URLs - only the actual newsletters
-  return ["TLDR", "Byte Byte Go", "Pointer", "Substack"].some(
+  return ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(
     name => sourceTitle.includes(name)
   );
 }
@@ -276,6 +276,11 @@ Return ONLY valid JSON, no markdown.`,
     // Keep the URL from item (may have been extracted from HTML content)
     // Email newsletters like TLDR contain links to actual articles - we should preserve those
     const digestUrl = item.url;
+    
+    // Debug: log URLs for newsletter items
+    if (["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(n => item.sourceTitle.includes(n))) {
+      logger.info(`[EXTRACT_DIGEST] Item ${item.id} URL: ${digestUrl}`);
+    }
 
     // Fetch enriched metadata from the article URL (author, original source, etc.)
     const metadata = await fetchArticleMetadata(digestUrl);
@@ -336,11 +341,16 @@ export async function extractBatchDigests(
   }
 
   // Debug: Log ALL newsletter item URLs before and after decomposition
-  const newsletterItems = items.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate"].some(n => i.sourceTitle.includes(n)));
-  const decomposedNewsletters = decomposedItems.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate"].some(n => i.sourceTitle.includes(n)));
+  const newsletterItems = items.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(n => i.sourceTitle.includes(n)));
+  const decomposedNewsletters = decomposedItems.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(n => i.sourceTitle.includes(n)));
   if (newsletterItems.length > 0) {
     logger.info(`[URL_DEBUG] Original newsletter items (${newsletterItems.length}): ${newsletterItems.map(i => `${i.title.substring(0, 30)}... -> ${i.url}`).join(" | ")}`);
     logger.info(`[URL_DEBUG] Decomposed newsletter items (${decomposedNewsletters.length}): ${decomposedNewsletters.slice(0, 5).map(i => `${i.title.substring(0, 30)}... -> ${i.url}`).join(" | ")}`);
+    // Detailed debug for first decomposed item
+    if (decomposedNewsletters.length > 0) {
+      const first = decomposedNewsletters[0];
+      logger.info(`[EXTRACT_DEBUG] First decomposed item: id=${first.id}, url=${first.url}, has fullText=${!!(first.fullText)}, fullText length=${first.fullText?.length || 0}`);
+    }
   }
 
   const digests = await Promise.all(
