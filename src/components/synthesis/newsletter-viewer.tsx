@@ -6,6 +6,35 @@
 
 import React, { useState } from "react";
 
+/**
+ * Parse markdown formatting in summary text
+ */
+function parseMarkdownText(text: string): React.ReactNode {
+  if (!text) return null;
+  
+  // Split by ** to handle bold sections
+  // Match ** followed by anything (non-greedy) followed by **
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  
+  return (
+    <>
+      {parts.map((part, idx) => {
+        // Check if this part is bold markdown
+        if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+          const boldText = part.slice(2, -2);
+          return (
+            <strong key={idx} style={{ fontWeight: 600, color: "inherit" }}>
+              {boldText}
+            </strong>
+          );
+        }
+        // Return regular text (including empty strings)
+        return part ? <span key={idx}>{part}</span> : null;
+      })}
+    </>
+  );
+}
+
 interface NewsletterViewerProps {
   id: string;
   title: string;
@@ -43,6 +72,11 @@ export function NewsletterViewer({
   generationMetadata,
 }: NewsletterViewerProps) {
   const [activeTab, setActiveTab] = useState<"rendered" | "markdown" | "metadata">("rendered");
+  const [generatedDate, setGeneratedDate] = useState("");
+
+  React.useEffect(() => {
+    setGeneratedDate(new Date(generatedAt).toLocaleString());
+  }, [generatedAt]);
 
   const handleCopyMarkdown = () => {
     navigator.clipboard.writeText(markdown);
@@ -130,8 +164,6 @@ export function NewsletterViewer({
     }
   };
 
-  const generatedDate = new Date(generatedAt).toLocaleString();
-
   return (
     <div className="space-y-4">
       {/* Header Card */}
@@ -172,10 +204,10 @@ export function NewsletterViewer({
         </div>
 
         {/* Summary */}
-        <div className="bg-blue-900/30 border border-blue-700 rounded p-3 mt-4">
-          <p className="text-xs font-semibold text-blue-400 mb-2">Executive Summary</p>
-          <p className="text-sm text-blue-300 leading-relaxed">{summary}</p>
-        </div>
+         <div className="bg-blue-900/30 border border-blue-700 rounded p-3 mt-4">
+           <p className="text-xs font-semibold text-blue-400 mb-2">Executive Summary</p>
+           <p className="text-sm text-blue-300 leading-relaxed">{parseMarkdownText(summary)}</p>
+         </div>
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-2 pt-2">
@@ -231,7 +263,7 @@ export function NewsletterViewer({
         <div className="p-6">
           {activeTab === "rendered" && (
             <div
-              className="prose prose-sm max-w-none"
+              className="prose prose-sm max-w-none prose-a:text-blue-400 prose-a:hover:text-blue-300 prose-a:underline prose-a:hover:underline"
               dangerouslySetInnerHTML={{ __html: html }}
             />
           )}

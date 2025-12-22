@@ -113,13 +113,14 @@ export async function extractItemDigest(
   item: RankedItem,
   userPrompt: string = ""
 ): Promise<ItemDigest> {
-  const client = new OpenAI();
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    logger.warn("OPENAI_API_KEY not set, using fallback digest");
+    logger.warn(`OPENAI_API_KEY not set for item "${item.title}", using fallback digest (URL: ${item.url})`);
     return generateFallbackDigest(item, userPrompt);
   }
+
+  const client = new OpenAI({ apiKey });
 
   try {
     // For email newsletters/Inoreader URLs, use summary directly (it's the actual content)
@@ -230,20 +231,32 @@ export async function extractBatchDigests(
   items: RankedItem[],
   userPrompt: string = ""
 ): Promise<ItemDigest[]> {
-  logger.info(`Extracting digests for ${items.length} items`);
+  logger.info(`[EXTRACT_START] Extracting digests for ${items.length} items, userPrompt="${userPrompt}"`);
 
   // First pass: decompose newsletters into constituent articles
+  logger.info(`[BEFORE_DECOMPOSE] About to decompose ${items.length} items`);
   const decomposedItems = decomposeNewsletterItems(items);
+  logger.info(`[AFTER_DECOMPOSE] Got ${decomposedItems.length} items after decomposition`);
   logger.info(
     `After decomposition: ${decomposedItems.length} items ` +
     `(${decomposedItems.length - items.length > 0 ? "+" : ""}${decomposedItems.length - items.length} from newsletters)`
   );
+  
+  // Log sample of decomposed items
+  if (decomposedItems.length > items.length) {
+    logger.info(`Decomposition produced extra items. Sample URLs: ${decomposedItems.slice(0, 3).map(i => i.url).join(", ")}`);
+  }
 
   const digests = await Promise.all(
     decomposedItems.map((item) => extractItemDigest(item, userPrompt))
   );
 
   logger.info(`Extracted ${digests.length} digests`);
+  
+  // Log sample digest URLs
+  const digestUrls = digests.slice(0, 5).map(d => ({ title: d.title.substring(0, 40), url: d.url }));
+  logger.info(`Sample digest URLs: ${JSON.stringify(digestUrls)}`);
+  
   return digests;
 }
 

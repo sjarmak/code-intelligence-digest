@@ -40,6 +40,15 @@ function truncateForLLM(text: string | undefined, maxChars: number): string {
 }
 
 /**
+ * Check if URL is valid (not Inoreader, not empty, http/https)
+ */
+function isValidUrl(url: string): boolean {
+  if (!url || typeof url !== "string") return false;
+  if (url.includes("inoreader.com") || url.includes("google.com/reader")) return false;
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
+/**
  * Build synthesis context from item digests (Pass 2)
  */
 function buildDigestContext(digests: ItemDigest[]): string {
@@ -228,8 +237,52 @@ export async function generateNewsletterFromDigests(
 }
 
 /**
+ * Extract key topics from user prompt
+ */
+function extractPromptTopics(userPrompt: string): string[] {
+  if (!userPrompt) return [];
+  
+  // Split by common delimiters and filter meaningful tokens
+  const keywords = userPrompt
+    .toLowerCase()
+    .split(/[,;:\s]+/)
+    .filter(w => w.length > 3 && !["and", "the", "for", "with", "about", "your"].includes(w));
+  
+  return keywords.slice(0, 5); // Top 5 topics
+}
+
+/**
  * Categorize items using LLM based on user prompt
  */
+/**
+ * Group digests by their resource category label (research, community, newsletters, etc.)
+ */
+function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[]> {
+  const byCategory = new Map<string, ItemDigest[]>();
+  
+  // Category label mapping for display
+  const categoryLabels: Record<string, string> = {
+    newsletters: "Newsletters",
+    podcasts: "Podcasts",
+    tech_articles: "Tech Articles",
+    ai_news: "AI News",
+    product_news: "Product News",
+    community: "Community",
+    research: "Research",
+  };
+  
+  for (const digest of digests) {
+    const displayLabel = categoryLabels[digest.category] || digest.category;
+    
+    if (!byCategory.has(displayLabel)) {
+      byCategory.set(displayLabel, []);
+    }
+    byCategory.get(displayLabel)!.push(digest);
+  }
+  
+  return byCategory;
+}
+
 async function categorizItemsWithLLM(
   digests: ItemDigest[],
   userPrompt: string
@@ -248,8 +301,17 @@ async function categorizItemsWithLLM(
     return byCategory;
   }
 
+  // Extract key topics from user prompt for focused categorization
+  const promptTopics = extractPromptTopics(userPrompt);
+
   try {
     const itemsList = digests.map((d, idx) => `${idx + 1}. "${d.title}" - ${d.whyItMatters}`).join("\n");
+
+    const focusInstructions = promptTopics.length > 0
+      ? `CRITICAL: Create categories that directly align with user focus: ${promptTopics.join(", ")}\n` +
+        `Examples of good categories for this focus:\n` +
+        promptTopics.slice(0, 3).map(t => `- "${t.charAt(0).toUpperCase() + t.slice(1)} & Related Topics"`).join("\n") + "\n"
+      : "";
 
     const response = await client.chat.completions.create({
       model: "gpt-5.2-chat-latest",
@@ -261,12 +323,14 @@ async function categorizItemsWithLLM(
           content: `Categorize these ${digests.length} items into 4-8 thematic groups.
 
     User focus: ${userPrompt}
+    ${focusInstructions}
 
     Items:
     ${itemsList}
 
     Return JSON with categories array (each has: name, items: [1,2,3...]).
     Create 4-8 distinct categories. Distribute items across categories.
+    Prioritize categories that match user focus topics.
 
     Return ONLY valid JSON.`,
         },
@@ -347,8 +411,16 @@ async function generateNewsletterFromDigestData(
   const apiKey = process.env.OPENAI_API_KEY;
   const client = new OpenAI({ apiKey });
 
-  // Categorize items using LLM
-  const byCategory = await categorizItemsWithLLM(digests, userPrompt);
+  // Log items with missing/invalid URLs for transparency
+  const itemsWithoutUrl = digests.filter(d => !isValidUrl(d.url));
+  if (itemsWithoutUrl.length > 0) {
+    logger.warn(`${itemsWithoutUrl.length} items without valid URLs will appear without links`, {
+      titles: itemsWithoutUrl.map(d => d.title),
+    });
+  }
+
+  // Group items by resource category (research, community, newsletters, etc.)
+  const byCategory = groupByResourceCategory(digests);
 
   // Extract themes for metadata
   const themeFreq = new Map<string, number>();
@@ -388,8 +460,8 @@ async function generateNewsletterFromDigestData(
     );
   }
 
-  // Build summary from digests
-  const summaryText = buildExecutiveSummary(digests, themes);
+  // Build summary from digests (async LLM-based)
+  const summaryText = await buildExecutiveSummary(digests, themes);
 
   // Build markdown directly from categorized digests (don't use LLM)
   const markdown = buildNewsletterMarkdown(byCategory, periodLabel);
@@ -543,13 +615,64 @@ function generateNewsletterFallback(
   }
 
   /**
-   * Build executive summary from digests
+   * Build executive summary from digests using LLM
    */
-  function buildExecutiveSummary(digests: ItemDigest[], themes: string[]): string {
+  async function buildExecutiveSummary(digests: ItemDigest[], themes: string[]): Promise<string> {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return buildExecutiveSummaryFallback(digests, themes);
+    }
+
+    const client = new OpenAI({ apiKey });
+    const itemSummaries = digests
+      .slice(0, 10) // Use top 10 for summary context
+      .map(d => `- ${d.title} (${d.sourceTitle}): ${d.whyItMatters}`)
+      .join("\n");
+
+    try {
+      logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
+      
+      const response = await client.chat.completions.create({
+        model: "gpt-5.2-chat-latest",
+        max_completion_tokens: 400,
+        messages: [
+          {
+            role: "user",
+            content: `Write a 200-300 word executive summary for a ${themes.length > 0 ? "focused" : "general"} code intelligence digest.
+
+Topics: ${themes.join(", ") || "code search, agents, IR, devtools"}
+
+Key items featured:
+${itemSummaries}
+
+Write a substantive, insightful summary that:
+1. Identifies the core trends and patterns across these items
+2. Explains WHY these trends matter to engineering leaders
+3. Highlights surprising insights or important shifts
+4. Avoids generic boilerplate
+
+Be specific, concrete, and analytical.`,
+          },
+        ],
+      });
+
+      const summary = response.choices[0].message.content || buildExecutiveSummaryFallback(digests, themes);
+      logger.info(`LLM summary generated: ${summary.length} chars`);
+      return summary;
+    } catch (e) {
+      logger.warn("Failed to generate LLM summary, using fallback", { error: e instanceof Error ? e.message : String(e) });
+      return buildExecutiveSummaryFallback(digests, themes);
+    }
+  }
+
+  /**
+   * Fallback summary template
+   */
+  function buildExecutiveSummaryFallback(digests: ItemDigest[], themes: string[]): string {
     const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
     const topThemes = themes.slice(0, 3).map(t => t.replace(/-/g, " "));
     
-    return `This week's code intelligence digest synthesizes ${digests.length} curated items across code search, information retrieval, agentic workflows, and developer tooling. Key themes emerging: ${topThemes.join(", ")}. Featured sources: ${topSources.join(", ")}. The sector is advancing context management, RAG architectures, agent orchestration, and semantic search—with growing emphasis on evaluation frameworks, benchmarking, and production-ready tooling.`;
+    return `This digest synthesizes ${digests.length} curated items on ${topThemes.join(", ")}. Featured sources: ${topSources.join(", ")}. Key insights: the community is advancing context management, semantic search, agent orchestration, and evaluation frameworks—with practical focus on production-scale tooling and benchmarking.`;
   }
 
   /**
@@ -567,9 +690,13 @@ function generateNewsletterFallback(
       markdown += `## ${categoryName}\n\n`;
       
       for (const item of items) {
-        markdown += `- **[${item.title}](${item.url})** — *${item.sourceTitle}*\n`;
-        markdown += `  ${item.whyItMatters}\n\n`;
-      }
+         // Only create a link if the URL is valid (not Inoreader, not empty)
+         const titleMD = isValidUrl(item.url)
+           ? `**[${item.title}](${item.url})**`
+           : `**${item.title}**`;
+         markdown += `- ${titleMD} — *${item.sourceTitle}*\n`;
+         markdown += `  ${item.whyItMatters}\n\n`;
+       }
     }
 
     return markdown;
@@ -586,7 +713,7 @@ function generateNewsletterFallback(
     html = html.replace(/^## (.*?)$/gm, '<h2 style="color: #0066cc; border-bottom: 1px solid #333; padding-bottom: 0.5rem; margin-top: 1.5rem; margin-bottom: 1rem;">$1</h2>');
     
     // Convert links BEFORE bold/italic (so we don't accidentally format link text)
-    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" style="color: #0066cc; text-decoration: none;">$1</a>');
+    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" style="color: #0066cc; text-decoration: none; cursor: pointer;" target="_blank" rel="noopener noreferrer">$1</a>');
     
     // Convert bold and italic
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600;">$1</strong>');
