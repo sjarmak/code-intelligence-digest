@@ -334,6 +334,29 @@ export async function extractItemDigest(
     }
 
 /**
+ * Check if URL is from Reddit (discussion threads, not primary sources)
+ */
+function isRedditUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  return /reddit\.com\/(r|u|user)\//i.test(url);
+}
+
+/**
+ * Check if URL is a Google News redirect (not a real article URL)
+ */
+function isGoogleNewsRedirect(url: string | undefined): boolean {
+  if (!url) return false;
+  return /news\.google\.com\/rss\/articles\//i.test(url);
+}
+
+/**
+ * Check if item URL should be excluded from digest extraction
+ */
+function shouldExcludeItem(item: RankedItem): boolean {
+  return isRedditUrl(item.url) || isGoogleNewsRedirect(item.url);
+}
+
+/**
  * Extract digests from multiple items in parallel
  * Automatically decomposes email newsletter items into constituent articles
  */
@@ -343,9 +366,15 @@ export async function extractBatchDigests(
 ): Promise<ItemDigest[]> {
   logger.info(`[EXTRACT_START] Extracting digests for ${items.length} items, userPrompt="${userPrompt}"`);
 
+  // Filter out non-article URLs before processing (Reddit, Google News redirects)
+  const validItems = items.filter(item => !shouldExcludeItem(item));
+  if (validItems.length < items.length) {
+    logger.info(`Filtered out ${items.length - validItems.length} non-article items before extraction (Reddit, Google News redirects)`);
+  }
+
   // First pass: decompose newsletters into constituent articles
-  logger.info(`[BEFORE_DECOMPOSE] About to decompose ${items.length} items`);
-  const decomposedItems = decomposeNewsletterItems(items);
+  logger.info(`[BEFORE_DECOMPOSE] About to decompose ${validItems.length} items`);
+  const decomposedItems = decomposeNewsletterItems(validItems);
   logger.info(`[AFTER_DECOMPOSE] Got ${decomposedItems.length} items after decomposition`);
   logger.info(
     `After decomposition: ${decomposedItems.length} items ` +

@@ -53,7 +53,7 @@ export function SynthesisForm({
   const [period, setPeriod] = useState<"week" | "month">("week");
   const [limit, setLimit] = useState(50);
   const [prompt, setPrompt] = useState(
-    "Pick the top most relevant articles in each category that would be useful for the Sourcegraph engineering team and leadership to understand the current landscape in tech and competitive products for: code search innovation, augmenting coding agents with enhanced context and information retrieval, and developer productivity using AI tools."
+    "Focus on code search, coding agents, context management for agents, information retrieval for code, and developer productivity with AI tools. Prioritize research papers, technical articles, and product announcements that demonstrate actual progress in these areas. Filter out benchmarking studies that don't address practical developer needs."
   );
   const [voiceStyle, setVoiceStyle] = useState<"conversational" | "technical" | "executive">(
     "conversational"

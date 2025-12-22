@@ -7,6 +7,37 @@
 import { logger } from "../logger";
 
 /**
+ * URL patterns that should be excluded from search results
+ */
+const BAD_SEARCH_URL_PATTERNS = [
+  /reddit\.com\/r\//i,
+  /reddit\.com\/u\//i,
+  /reddit\.com\/user\//i,
+  /news\.google\.com\/rss\//i,
+  /inoreader\.com/i,
+  /google\.com\/reader/i,
+  /\/advertis(e|ing)/i,
+  /\/sponsor/i,
+  /\/unsubscribe/i,
+  /\/subscribe(?![a-z])/i, // subscribe but not substack
+  /\/privacy/i,
+  /\/terms/i,
+];
+
+/**
+ * Check if a URL should be excluded from search results
+ */
+function isExcludedSearchUrl(url: string): boolean {
+  if (!url) return true;
+  for (const pattern of BAD_SEARCH_URL_PATTERNS) {
+    if (pattern.test(url)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Call Parallel web search API (free/public)
  * Based on Amp's implementation: https://github.com/sourcegraph/amp/blob/main/server/src/routes/api/internal/web-search.ts
  */
@@ -210,12 +241,16 @@ async function searchViaWeb(title: string, source?: string, _context?: string): 
     // Try Parallel web search
     const results = await parallelWebSearch(objective, searchQueries.length > 0 ? searchQueries : undefined);
     if (results && results.length > 0) {
-      const firstResult = results[0];
-      logger.info(`Found URL via Parallel web search: "${title.substring(0, 50)}..." -> ${firstResult.url}`);
-      return firstResult.url;
+      // Filter out bad URLs and return first valid result
+      const validResult = results.find(r => !isExcludedSearchUrl(r.url));
+      if (validResult) {
+        logger.info(`Found URL via Parallel web search: "${title.substring(0, 50)}..." -> ${validResult.url}`);
+        return validResult.url;
+      }
+      logger.debug(`All ${results.length} web search results were excluded (bad URLs)`);
     }
-    
-    logger.debug(`No results from Parallel web search for: "${objective}"`);
+
+    logger.debug(`No valid results from Parallel web search for: "${objective}"`);
     
   } catch (e) {
     logger.debug("Web search failed", {
@@ -229,27 +264,48 @@ async function searchViaWeb(title: string, source?: string, _context?: string): 
 /**
  * Extract URL from article text if present
  * Looks for URLs in content snippets or full text
+ * Iterates through all URLs to find first valid one
  */
 export function extractUrlFromContent(content: string | undefined): string | null {
   if (!content) {
     return null;
   }
 
-  // Match common URL patterns
-  const urlMatch = content.match(/https?:\/\/[^\s<>"'\)]+/);
-  if (urlMatch) {
-    const url = urlMatch[0];
-    
-    // Filter out common unwanted URLs
-    if (
-      !url.includes("inoreader.com") &&
-      !url.includes("google.com/reader") &&
-      !url.includes("tracking.") &&
-      !url.includes("/unsubscribe")
-    ) {
+  // Match ALL URL patterns in content
+  const urlRegex = /https?:\/\/[^\s<>"'\)]+/g;
+  const allUrls = content.match(urlRegex);
+
+  if (!allUrls || allUrls.length === 0) {
+    return null;
+  }
+
+  // Filter out common unwanted URLs
+  const badUrlPatterns = [
+    /inoreader\.com/i,
+    /google\.com\/reader/i,
+    /news\.google\.com\/rss\//i,
+    /tracking\./i,
+    /\/unsubscribe/i,
+    /reddit\.com\/r\//i, // Reddit discussion threads
+    /reddit\.com\/u\//i, // Reddit user profiles
+    /reddit\.com\/user\//i,
+    /\/advertise/i,
+    /\/sponsor/i,
+    /\/media-kit/i,
+    /\/privacy/i,
+    /\/terms/i,
+    /substack\.com\/redirect\//i, // Unresolved redirects
+    /substackcdn\.com/i, // CDN assets, not articles
+  ];
+
+  // Find first URL that isn't blacklisted
+  for (const url of allUrls) {
+    const isBlacklisted = badUrlPatterns.some(pattern => pattern.test(url));
+    if (!isBlacklisted) {
       return url;
     }
   }
 
+  logger.debug(`All ${allUrls.length} URLs in content were blacklisted`);
   return null;
 }

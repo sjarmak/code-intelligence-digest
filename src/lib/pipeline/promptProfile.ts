@@ -28,7 +28,8 @@ function getClient(): OpenAI | null {
 
 /**
  * Build a prompt profile from user input
- * Tries LLM extraction first, falls back to deterministic parsing
+ * Uses deterministic extraction to properly break down domain terms
+ * (LLM extraction was producing full phrases as single tokens, breaking re-ranking)
  */
 export async function buildPromptProfile(prompt: string): Promise<PromptProfile | null> {
   if (!prompt || prompt.trim().length === 0) {
@@ -37,44 +38,12 @@ export async function buildPromptProfile(prompt: string): Promise<PromptProfile 
 
   logger.info(`Building prompt profile from: "${prompt.substring(0, 100)}..."`);
 
-  const client = getClient();
-  if (client) {
-    try {
-      const response = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        max_completion_tokens: 300,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "user",
-            content: `Parse this user prompt about a code intelligence digest into structured JSON. Extract:
-- audience: "senior engineers", "tech leads", "everyone", or null
-- intent: "summary", "focus", "deep-dive", or null
-- focusTopics: array of 1-5 topic strings (e.g., "code search", "agents", "context management")
-- formatHints: array of format preferences (e.g., "actionable", "strategic", "detailed")
-- voiceStyle: "conversational", "technical", "executive", or null
-- excludeTopics: array of topics to avoid (if user says "avoid X")
-
-User prompt: "${prompt}"
-
-Return only valid JSON with these exact keys.`,
-          },
-        ],
-      });
-
-      const content = response.choices[0].message.content;
-      if (content) {
-        const parsed = JSON.parse(content);
-        logger.info(`Parsed prompt profile: ${JSON.stringify(parsed)}`);
-        return sanitizeProfile(parsed);
-      }
-    } catch (error) {
-      logger.warn("Failed to parse prompt with LLM, falling back to deterministic extraction", { error });
-    }
-  }
-
-  // Deterministic fallback
-  return extractProfileDeterministic(prompt);
+  // Use deterministic extraction - it properly breaks domain terms into individual keywords
+  // LLM was producing full phrases like "code search innovation" as single tokens
+  // which broke re-ranking because items rarely have those exact phrases in tags
+  const profile = extractProfileDeterministic(prompt);
+  logger.info(`Extracted prompt profile: ${JSON.stringify(profile)}`);
+  return profile;
 }
 
 /**
@@ -126,27 +95,35 @@ function extractProfileDeterministic(prompt: string): PromptProfile {
   }
 
   // Extract focus topics from known domain terms
+  // NOTE: Order matters - check longer phrases first to avoid partial matches
   const domainTerms = [
-    "code search",
-    "semantic search",
-    "agents",
-    "agentic",
+    "agentic workflows",
+    "information retrieval",
+    "developer productivity",
+    "vector database",
     "context management",
     "context window",
-    "embeddings",
-    "RAG",
-    "vector",
+    "code search",
+    "semantic search",
+    "ai tools",
+    "ai coding",
     "code review",
-    "testing",
+    "devtools",
+    "embeddings",
     "refactoring",
     "monorepo",
     "enterprise",
     "infrastructure",
-    "devtools",
+    "testing",
+    "vector database",
     "productivity",
-    "ai coding",
-    "llm",
     "research",
+    "agents",
+    "agentic",
+    "vector",
+    "rag",
+    "RAG",
+    "llm",
   ];
 
   for (const term of domainTerms) {
