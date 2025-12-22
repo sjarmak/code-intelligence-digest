@@ -172,19 +172,7 @@ function isEmailNewsletterSource(sourceTitle: string): boolean {
   );
 }
 
-/**
- * Check if source is a newsletter with original content (not just link aggregation)
- */
-function isNewsletterOnlyContent(sourceTitle: string): boolean {
-  const newsletterOnlyContent = [
-    "Elevate",
-    "System Design",
-    "Architecture Notes",
-    "Leadership in Tech",
-    "Programming Digest",
-  ];
-  return newsletterOnlyContent.some(n => sourceTitle.includes(n));
-}
+
 
 /**
  * Strip HTML tags from text
@@ -212,7 +200,7 @@ export async function extractItemDigest(
 
   if (!apiKey) {
     logger.warn(`OPENAI_API_KEY not set for item "${item.title}", using fallback digest (URL: ${item.url})`);
-    return generateFallbackDigest(item, userPrompt);
+    return await generateFallbackDigest(item, userPrompt);
   }
 
   const client = new OpenAI({ apiKey });
@@ -288,13 +276,11 @@ Return ONLY valid JSON, no markdown.`,
 
     const extracted = JSON.parse(content);
 
-    // Keep the URL from item (may have been extracted from HTML content)
-    // Email newsletters like TLDR contain links to actual articles - we should preserve those
+    // All newsletter articles are published elsewhere
+    // If URL is missing or invalid, try to find it via web search
     let digestUrl = item.url;
     
-    // If URL is missing or invalid, try to find it via web search
-    // But keep Inoreader URLs for newsletter-only content (Elevate, System Design, etc.)
-    if (!digestUrl || (digestUrl.includes("inoreader.com") && !isNewsletterOnlyContent(item.sourceTitle))) {
+    if (!digestUrl || digestUrl.includes("inoreader.com")) {
       logger.debug(`Attempting to find URL for article: "${item.title}"`);
       const foundUrl = await findArticleUrl(item.title, item.sourceTitle, item.summary || item.fullText);
       if (foundUrl) {
@@ -303,10 +289,7 @@ Return ONLY valid JSON, no markdown.`,
       }
     }
     
-    // Debug: log URLs for newsletter items
-    if (["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(n => item.sourceTitle.includes(n))) {
-      logger.info(`[EXTRACT_DIGEST] Item ${item.id} URL: ${digestUrl}`);
-    }
+
 
     // Fetch enriched metadata from the article URL (author, original source, etc.)
     const metadata = await fetchArticleMetadata(digestUrl);
@@ -331,14 +314,14 @@ Return ONLY valid JSON, no markdown.`,
       originalSource: metadata.originalSource,
     };
   } catch (error) {
-   const errorMsg = error instanceof Error ? error.message : String(error);
-   const errorStack = error instanceof Error ? error.stack : undefined;
-   logger.warn(`Extraction failed for "${item.title}"`, {
-     error: errorMsg,
-     stack: errorStack,
-     itemId: item.id,
-   });
-   return generateFallbackDigest(item, userPrompt);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    logger.warn(`Extraction failed for "${item.title}"`, {
+      error: errorMsg,
+      stack: errorStack,
+      itemId: item.id,
+    });
+    return await generateFallbackDigest(item, userPrompt);
   }
 }
 
@@ -399,7 +382,7 @@ export async function extractBatchDigests(
 /**
  * Fallback digest when extraction fails or API unavailable
  */
-function generateFallbackDigest(item: RankedItem, _userPrompt: string): ItemDigest {
+async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Promise<ItemDigest> {
   const tags = item.llmScore.tags.slice(0, 5);
   const rawContent = item.summary || item.contentSnippet || "No summary available";
   
@@ -414,16 +397,23 @@ function generateFallbackDigest(item: RankedItem, _userPrompt: string): ItemDige
     whyItMatters += "...";
   }
 
-  // Keep the URL from item (may have been extracted from HTML content)
-  // Email newsletters like TLDR contain links to actual articles - we should preserve those
+  // All newsletter articles are published elsewhere
+  // Try to find the real article URL
   let digestUrl = item.url;
 
-  // If URL is missing or looks like Inoreader wrapper, try to extract from content
+  // Try to find real article URL via search if missing or Inoreader
   if (!digestUrl || digestUrl.includes("inoreader.com")) {
     const contentUrl = extractUrlFromContent(item.summary || item.fullText);
     if (contentUrl) {
       digestUrl = contentUrl;
       logger.debug(`Extracted URL from content: "${item.title}" -> ${digestUrl}`);
+    } else {
+      // Still missing? Try web search
+      const foundUrl = await findArticleUrl(item.title, item.sourceTitle, item.summary || item.fullText);
+      if (foundUrl) {
+        digestUrl = foundUrl;
+        logger.info(`Found URL via fallback search: "${item.title}" -> ${digestUrl}`);
+      }
     }
   }
 
