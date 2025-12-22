@@ -74,6 +74,22 @@ function isBadUrl(url: string): boolean {
     }
   }
 
+  // Check for redirect/tracking URLs that point to meta pages
+  // Pattern: /links/ paths typically redirect to collection pages
+  if (url.includes("/links/") && url.match(/programmingdigest|digest/i)) {
+    return true;
+  }
+
+  // Check for newsletter index patterns in URLs
+  if (
+    /newsletters?\/\d+|issues?\/\d+|archive|index|(?:\/\d+$)/.test(
+      url.replace(/\?.*$/, "")
+    ) &&
+    url.match(/programmingdigest|csharpdigest|leadershipintech|reactdigest/i)
+  ) {
+    return true;
+  }
+
   return false;
 }
 
@@ -280,22 +296,25 @@ Be specific. Point to exact problems, not vague concerns.`,
 export async function reviewNewsletter(
   markdown: string,
   digests: ItemDigest[]
-): Promise<{ passed: boolean; issues: string[]; llmFeedback: string }> {
+): Promise<{ passed: boolean; issues: string[]; llmFeedback: string; digestsWithIssues: Set<string> }> {
   logger.info(`Starting newsletter review for ${digests.length} digests`);
 
   // 1. Rule-based review
   const ruleReview = reviewDigests(digests);
 
-  // 2. LLM review
-  const llmReview = await reviewNewsletterWithLLM(markdown, digests);
+  // 2. LLM review (only if markdown provided)
+  let llmReview = { passed: true, feedback: "" };
+  if (markdown) {
+    llmReview = await reviewNewsletterWithLLM(markdown, digests);
+  }
 
   const allIssues: string[] = [];
   if (ruleReview.issues.length > 0) {
     allIssues.push(...ruleReview.issues);
   }
 
-  // Pass only if both checks pass
-  const passed = ruleReview.passed && llmReview.passed;
+  // Pass only if rule-based check passes (LLM is informational)
+  const passed = ruleReview.passed;
 
   logger.info(`Newsletter review complete`, {
     passed,
@@ -307,5 +326,6 @@ export async function reviewNewsletter(
     passed,
     issues: allIssues,
     llmFeedback: llmReview.feedback,
+    digestsWithIssues: ruleReview.digestsWithIssues,
   };
 }

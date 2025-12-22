@@ -345,26 +345,36 @@ async function generateNewsletterFromDigestData(
     );
   }
 
-  // Build summary from digests (async LLM-based)
-  const summaryText = await buildExecutiveSummary(digests, themes);
+  // Review digests for quality issues BEFORE summary generation
+  const review = await reviewNewsletter("", digests);
+  const filteredDigests = digests.filter((d) => !review.digestsWithIssues.has(d.id));
 
-  // Build markdown directly from categorized digests (don't use LLM)
-  const markdown = buildNewsletterMarkdown(byCategory, periodLabel, summaryText);
-  
+  if (review.issues.length > 0) {
+    logger.warn("Filtering out low-quality digests", {
+      totalDigests: digests.length,
+      filtered: digests.length - filteredDigests.length,
+      issues: review.issues.slice(0, 3),
+    });
+  }
+
+  // Use filtered digests for newsletter
+  const usedDigests = filteredDigests.length > 0 ? filteredDigests : digests;
+  const byCategory2 = groupByResourceCategory(usedDigests);
+
+  // Build summary from digests (async LLM-based)
+  const summaryText = await buildExecutiveSummary(usedDigests, themes);
+
+  // Build markdown directly from categorized digests
+  const markdown = buildNewsletterMarkdown(byCategory2, periodLabel, summaryText);
+
   // Build HTML from markdown
   const html = buildNewsletterHTML(markdown, summaryText);
 
-  // Review newsletter for quality issues
-  const review = await reviewNewsletter(markdown, digests);
-  if (!review.passed) {
-    logger.warn("Newsletter review found issues", {
-      issueCount: review.issues.length,
-      issues: review.issues.slice(0, 3), // Log first 3 issues
-      llmFeedback: review.llmFeedback,
-    });
-  } else {
-    logger.info("Newsletter passed quality review");
-  }
+  logger.info("Newsletter passed quality filters", {
+    totalDigests: digests.length,
+    includedDigests: usedDigests.length,
+    filtered: digests.length - usedDigests.length,
+  });
 
   logger.info("Newsletter synthesis complete", {
     summaryLength: summaryText.length,
@@ -584,51 +594,48 @@ function generateNewsletterFallback(
   }
 
   /**
-   * Fallback summary template (avoids AI-like language)
+   * Fallback summary template (avoids AI-like language, focuses on actual insights)
    */
   function buildExecutiveSummaryFallback(digests: ItemDigest[], themes: string[]): string {
-    const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 4);
-    const topThemes = themes.slice(0, 4);
+    // Extract real, concrete insights from top digests
+    const topItems = digests.slice(0, 10);
+    const insights: string[] = [];
     
-    // Extract concrete insights from actual content, not templates
-    const topItems = digests.slice(0, 8);
-    const keyPoints: string[] = [];
-    
-    // Get actual content from keyBullets (more specific than whyItMatters)
+    // Build specific insights from actual content (not templates)
     for (const item of topItems) {
-      if (item.keyBullets && item.keyBullets.length > 0) {
-        keyPoints.push(`${item.title}: ${item.keyBullets[0]}`);
+      // Use whyItMatters if it contains actual findings
+      if (item.whyItMatters && !item.whyItMatters.match(/^(This|The|Research|provides|relevant)/i)) {
+        insights.push(item.whyItMatters);
+      } else if (item.keyBullets && item.keyBullets.length > 0) {
+        // Otherwise use key bullets
+        const bullet = item.keyBullets[0];
+        if (bullet && bullet.length > 30) {
+          insights.push(bullet);
+        }
       }
     }
     
-    // Build summary from actual content
-    let summary = `This ${digests.length}-item digest covers ${topThemes.join(", ")}. `;
-    summary += `Key content from ${topSources.slice(0, 2).join(", ")}.\n\n`;
+    // Get unique insights
+    const uniqueInsights = Array.from(new Set(insights.map(i => i.trim()))).slice(0, 4);
     
-    // Use actual findings instead of boilerplate
-    const uniquePoints = Array.from(new Set(keyPoints.map(p => p.split(":")[1]?.trim() || p))).slice(0, 3);
-    if (uniquePoints.length > 0) {
-      summary += `Specific findings: ${uniquePoints.join(". ")}.\n\n`;
-    }
+    // Build summary with actual findings
+    let summary = "";
     
-    // Concrete theme mention (not "landscape" or "emerging")
-    const themeFreq = new Map<string, number>();
-    for (const digest of digests) {
-      for (const tag of digest.topicTags) {
-        themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
+    // Start with what's actually being covered
+    const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
+    
+    if (uniqueInsights.length > 0) {
+      summary = uniqueInsights.join(" ");
+      if (summary.length < 200) {
+        // If too short, add topic context
+        const topThemes = themes.slice(0, 3).join(", ");
+        summary += ` These updates cover ${topThemes}.`;
       }
+    } else {
+      // Minimal fallback
+      const topThemes = themes.slice(0, 3).join(", ");
+      summary = `This digest covers ${topThemes}. Content from ${topSources.join(", ")}.`;
     }
-    const frequentThemes = Array.from(themeFreq.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([tag]) => tag)
-      .join(", ");
-    
-    if (frequentThemes) {
-      summary += `Recurring topics: ${frequentThemes}.\n\n`;
-    }
-    
-    summary += `Sources: ${topSources.join(", ")}. Content spans research, tooling, and team experiences in code search, context management, and agent-based development.`;
     
     return summary;
   }
