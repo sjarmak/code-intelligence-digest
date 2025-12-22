@@ -7,12 +7,14 @@
 import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
+import { decomposeNewsletterItems } from "./decompose";
 
 export interface ItemDigest {
   id: string;
   title: string;
   url: string;
   sourceTitle: string;
+  category: string; // Resource category: research, community, newsletters, etc.
   topicTags: string[];
   gist: string; // 1-2 sentence summary
   keyBullets: string[]; // 3-5 key points
@@ -79,6 +81,31 @@ ${chunk}`,
 }
 
 /**
+ * Check if source is an email newsletter (content is embedded, not linked)
+ */
+function isEmailNewsletterSource(sourceTitle: string): boolean {
+  // Only known email newsletters should have no link
+  // Don't include ALL Inoreader URLs - only the actual newsletters
+  return ["TLDR", "Byte Byte Go", "Pointer", "Substack"].some(
+    name => sourceTitle.includes(name)
+  );
+}
+
+/**
+ * Strip HTML tags from text
+ */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Extract digest from item with full text
  * Handles chunking for long articles automatically
  */
@@ -95,8 +122,14 @@ export async function extractItemDigest(
   }
 
   try {
-    // Determine if text is long and needs chunking
-    const fullText = item.fullText || item.summary || item.contentSnippet || "";
+    // For email newsletters/Inoreader URLs, use summary directly (it's the actual content)
+    let fullText = item.fullText || item.summary || item.contentSnippet || "";
+    
+    if (isEmailNewsletterSource(item.sourceTitle) && item.summary) {
+      logger.info(`Using embedded content for email newsletter: "${item.title}"`);
+      fullText = stripHtml(item.summary);
+    }
+
     const chunks = chunkText(fullText);
 
     let processedText = fullText;
@@ -136,12 +169,14 @@ User Focus: ${userPrompt || "General code intelligence"}
 Content:
 ${processedText}
 
+${processedText.length < 300 ? "Note: Content is sparse. Infer insights from the title and available text." : ""}
+
 Return JSON with:
 - topicTags: [list of 3-5 relevant tags like "code-search", "agents", "benchmarks"]
-- gist: 1-2 sentence summary (max 100 chars)
-- keyBullets: [3-5 key points, each max 100 chars]
-- namedEntities: [important names/projects/orgs mentioned]
-- whyItMatters: 1-2 sentence explanation of relevance (max 150 chars)
+- gist: 1-2 sentence summary capturing the essence (max 120 chars). If content is sparse, use title context.
+- keyBullets: [2-5 key points inferred from title/content, each max 100 chars. If sparse, focus on what the title suggests.]
+- namedEntities: [important names/projects/orgs mentioned, inferred if needed]
+- whyItMatters: 1-2 sentence explanation of relevance to coding/agents/IR (max 150 chars)
 - sourceCredibility: "high" (academic/official), "medium" (established), "low" (casual)
 - userRelevanceScore: 0-10 based on match with user focus (${userPrompt || "general code topics"})
 
@@ -157,11 +192,16 @@ Return ONLY valid JSON, no markdown.`,
 
     const extracted = JSON.parse(content);
 
+    // Keep the URL from item (may have been extracted from HTML content)
+    // Email newsletters like TLDR contain links to actual articles - we should preserve those
+    const digestUrl = item.url;
+
     return {
       id: item.id,
       title: item.title,
-      url: item.url,
+      url: digestUrl,
       sourceTitle: item.sourceTitle,
+      category: item.category,
       topicTags: Array.isArray(extracted.topicTags) ? extracted.topicTags : [],
       gist: extracted.gist || "",
       keyBullets: Array.isArray(extracted.keyBullets) ? extracted.keyBullets : [],
@@ -184,6 +224,7 @@ Return ONLY valid JSON, no markdown.`,
 
 /**
  * Extract digests from multiple items in parallel
+ * Automatically decomposes email newsletter items into constituent articles
  */
 export async function extractBatchDigests(
   items: RankedItem[],
@@ -191,8 +232,15 @@ export async function extractBatchDigests(
 ): Promise<ItemDigest[]> {
   logger.info(`Extracting digests for ${items.length} items`);
 
+  // First pass: decompose newsletters into constituent articles
+  const decomposedItems = decomposeNewsletterItems(items);
+  logger.info(
+    `After decomposition: ${decomposedItems.length} items ` +
+    `(${decomposedItems.length - items.length > 0 ? "+" : ""}${decomposedItems.length - items.length} from newsletters)`
+  );
+
   const digests = await Promise.all(
-    items.map((item) => extractItemDigest(item, userPrompt))
+    decomposedItems.map((item) => extractItemDigest(item, userPrompt))
   );
 
   logger.info(`Extracted ${digests.length} digests`);
@@ -202,20 +250,38 @@ export async function extractBatchDigests(
 /**
  * Fallback digest when extraction fails or API unavailable
  */
-function generateFallbackDigest(item: RankedItem, userPrompt: string): ItemDigest {
+function generateFallbackDigest(item: RankedItem, _userPrompt: string): ItemDigest {
   const tags = item.llmScore.tags.slice(0, 5);
-  const bullet = item.summary || item.contentSnippet || "No summary available";
+  const rawContent = item.summary || item.contentSnippet || "No summary available";
+  
+  // Strip HTML if needed
+  const cleanContent = rawContent.includes("<") ? stripHtml(rawContent) : rawContent;
+  
+  // Generate more informative whyItMatters from actual content
+  let whyItMatters = cleanContent.substring(0, 150).trim();
+  if (whyItMatters.length < 50) {
+    whyItMatters = `From ${item.sourceTitle}. Topics: ${tags.join(", ")}`;
+  } else if (!whyItMatters.endsWith(".")) {
+    whyItMatters += "...";
+  }
+
+  // Keep the URL from item (may have been extracted from HTML content)
+  // Email newsletters like TLDR contain links to actual articles - we should preserve those
+  const digestUrl = item.url;
 
   return {
     id: item.id,
     title: item.title,
-    url: item.url,
+    url: digestUrl,
     sourceTitle: item.sourceTitle,
+    category: item.category,
     topicTags: tags,
-    gist: bullet.substring(0, 100),
-    keyBullets: [bullet.substring(0, 150)],
+    gist: cleanContent.substring(0, 100).trim(),
+    keyBullets: cleanContent.length > 150 
+      ? [cleanContent.substring(0, 150).trim() + "..."] 
+      : [cleanContent.trim()],
     namedEntities: [],
-    whyItMatters: `Relevant to ${userPrompt || "code intelligence"}.`,
+    whyItMatters,
     sourceCredibility: "medium",
     userRelevanceScore: Math.round(item.finalScore * 10),
   };
