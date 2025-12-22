@@ -9,6 +9,7 @@ import { RankedItem } from "../model";
 import { logger } from "../logger";
 import { decomposeNewsletterItems } from "./decompose";
 import { findArticleUrl, extractUrlFromContent } from "../search/url-finder";
+import { saveExtractedUrl } from "../db/items";
 
 export interface ItemDigest {
   id: string;
@@ -294,6 +295,13 @@ Return ONLY valid JSON, no markdown.`,
     // Fetch enriched metadata from the article URL (author, original source, etc.)
     const metadata = await fetchArticleMetadata(digestUrl);
 
+    // Save extracted URL if it was discovered (different from original)
+    if (digestUrl !== item.url && (digestUrl.startsWith("http://") || digestUrl.startsWith("https://"))) {
+      await saveExtractedUrl(item.id, digestUrl).catch(err => {
+        logger.warn(`Failed to save extracted URL for ${item.id}`, { error: err });
+      });
+    }
+
     return {
       id: item.id,
       title: item.title,
@@ -313,7 +321,7 @@ Return ONLY valid JSON, no markdown.`,
       publishDate: metadata.publishDate,
       originalSource: metadata.originalSource,
     };
-  } catch (error) {
+    } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
     logger.warn(`Extraction failed for "${item.title}"`, {
@@ -322,8 +330,8 @@ Return ONLY valid JSON, no markdown.`,
       itemId: item.id,
     });
     return await generateFallbackDigest(item, userPrompt);
-  }
-}
+    }
+    }
 
 /**
  * Extract digests from multiple items in parallel
@@ -420,6 +428,13 @@ async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Pr
   // Try to extract metadata for fallback case too
   const metadataSync = extractMetadataSync(digestUrl);
 
+  // Save extracted URL if it was discovered (different from original)
+  if (digestUrl !== item.url && (digestUrl.startsWith("http://") || digestUrl.startsWith("https://"))) {
+    await saveExtractedUrl(item.id, digestUrl).catch(err => {
+      logger.warn(`Failed to save extracted URL for ${item.id}`, { error: err });
+    });
+  }
+
   return {
     id: item.id,
     title: item.title,
@@ -441,4 +456,4 @@ async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Pr
     publishDate: metadataSync.publishDate,
     originalSource: metadataSync.originalSource,
   };
-}
+  }

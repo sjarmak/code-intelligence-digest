@@ -188,6 +188,15 @@ export async function initializeDatabase() {
       // Column may already exist, ignore error
     }
 
+    // Add extracted_url column to items for persisting discovered article URLs
+    try {
+      sqlite.exec(`
+        ALTER TABLE items ADD COLUMN extracted_url TEXT;
+      `);
+    } catch {
+      // Column may already exist, ignore error
+    }
+
     // Create generated_podcast_audio table for audio rendering
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS generated_podcast_audio (

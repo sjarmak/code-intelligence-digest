@@ -35,6 +35,16 @@ function parseMarkdownText(text: string): React.ReactNode {
   );
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  newsletters: "Newsletters",
+  podcasts: "Podcasts",
+  tech_articles: "Tech Articles",
+  ai_news: "AI News",
+  product_news: "Product News",
+  community: "Community",
+  research: "Research",
+};
+
 interface NewsletterViewerProps {
   id: string;
   title: string;
@@ -166,72 +176,56 @@ export function NewsletterViewer({
 
   return (
     <div className="space-y-4">
-      {/* Header Card */}
-      <div className="bg-surface rounded-lg border border-surface-border shadow-sm p-6 space-y-4">
+      {/* Header Card - Light, Simple */}
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 space-y-4">
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-white">{title}</h2>
-            <p className="text-sm text-muted mt-1">{generatedDate}</p>
+            <h1 className="text-3xl font-bold text-gray-900">{title}</h1>
+            <p className="text-sm text-gray-500 mt-1">{generatedDate}</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-blue-400">{itemsIncluded}</p>
-            <p className="text-xs text-muted">items included</p>
+            <p className="text-3xl font-bold text-gray-900">{itemsIncluded}</p>
+            <p className="text-xs text-gray-500">items included</p>
           </div>
         </div>
 
-        {/* Categories and Stats */}
-        <div className="grid grid-cols-2 gap-4 pt-4 border-t border-surface-border">
-          <div>
-            <p className="text-xs font-semibold text-muted uppercase">Categories</p>
-            <div className="flex flex-wrap gap-1 mt-2">
-              {categories.map((cat) => (
-                <span key={cat} className="inline-block px-2 py-1 bg-blue-900/30 text-blue-400 text-xs rounded border border-blue-700">
-                  {cat}
-                </span>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-semibold text-muted uppercase">Themes</p>
-            <div className="flex flex-wrap gap-1 mt-2">
-              {themes.slice(0, 3).map((theme) => (
-                <span key={theme} className="inline-block px-2 py-1 bg-purple-900/30 text-purple-400 text-xs rounded border border-purple-700">
-                  #{theme.replace(/_|-/g, "-")}
-                </span>
-              ))}
-            </div>
-          </div>
+        {/* Categories Pills */}
+        <div className="flex flex-wrap gap-2">
+          {categories.map((cat) => (
+            <span key={cat} className="inline-block px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full border border-gray-200">
+              {CATEGORY_LABELS[cat] || cat}
+            </span>
+          ))}
         </div>
 
         {/* Summary */}
-         <div className="bg-blue-900/30 border border-blue-700 rounded p-3 mt-4">
-           <p className="text-xs font-semibold text-blue-400 mb-2">Executive Summary</p>
-           <p className="text-sm text-blue-300 leading-relaxed">{parseMarkdownText(summary)}</p>
-         </div>
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <p className="text-sm leading-relaxed text-gray-700">{parseMarkdownText(summary)}</p>
+        </div>
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap gap-2 pt-2">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={handleCopyMarkdown}
-            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-black text-foreground font-medium"
+            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors"
           >
             Copy Markdown
           </button>
           <button
             onClick={handleDownloadMarkdown}
-            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-black text-foreground font-medium"
+            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors"
           >
             Download MD
           </button>
           <button
             onClick={handleDownloadHTML}
-            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-black text-foreground font-medium"
+            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors"
           >
             Download HTML
           </button>
           <button
             onClick={handleDownloadPDF}
-            className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded text-white font-medium"
+            className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded-md text-white font-medium transition-colors"
           >
             📄 Download PDF
           </button>
@@ -239,22 +233,21 @@ export function NewsletterViewer({
       </div>
 
       {/* Content Card with Tabs */}
-      <div className="bg-surface rounded-lg border border-surface-border shadow-sm overflow-hidden">
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         {/* Tabs */}
-        <div className="border-b border-surface-border flex">
-          {(["rendered", "markdown", "metadata"] as const).map((tab) => (
+        <div className="border-b border-gray-200 flex">
+          {(["rendered", "markdown"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
-                  ? "border-blue-400 text-blue-400"
-                  : "border-transparent text-muted hover:text-foreground"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-600 hover:text-gray-900"
               }`}
             >
-              {tab === "rendered" && "Rendered"}
+              {tab === "rendered" && "Newsletter"}
               {tab === "markdown" && "Markdown"}
-              {tab === "metadata" && "Metadata"}
             </button>
           ))}
         </div>
@@ -263,48 +256,15 @@ export function NewsletterViewer({
         <div className="p-6">
           {activeTab === "rendered" && (
             <div
-              className="prose prose-sm max-w-none prose-a:text-blue-400 prose-a:hover:text-blue-300 prose-a:underline prose-a:hover:underline"
+              className="prose prose-sm max-w-none prose-a:text-blue-600 prose-a:hover:text-blue-700 prose-a:underline"
               dangerouslySetInnerHTML={{ __html: html }}
             />
           )}
 
           {activeTab === "markdown" && (
-            <pre className="bg-black p-4 rounded border border-surface-border overflow-x-auto text-sm text-foreground">
+            <pre className="bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto text-sm text-gray-700">
               {markdown}
             </pre>
-          )}
-
-          {activeTab === "metadata" && (
-            <div className="space-y-2 text-sm">
-              <p>
-                <strong>ID:</strong> <code className="bg-black px-2 py-1 rounded text-xs text-foreground">{id}</code>
-              </p>
-              <p>
-                <strong>Generated:</strong> {generatedDate}
-              </p>
-              <p>
-                <strong>Period:</strong> {period}
-              </p>
-              <p>
-                <strong>Model:</strong> {generationMetadata.modelUsed}
-              </p>
-              <p>
-                <strong>Tokens:</strong> {generationMetadata.tokensUsed}
-              </p>
-              <p>
-                <strong>Duration:</strong> {generationMetadata.duration}
-              </p>
-              <p>
-                <strong>Re-rank Applied:</strong> {generationMetadata.rerankApplied ? "Yes" : "No"}
-              </p>
-              {generationMetadata.promptUsed && (
-                <p>
-                  <strong>Prompt:</strong>
-                  <br />
-                  <span className="text-muted italic">{generationMetadata.promptUsed}</span>
-                </p>
-              )}
-            </div>
           )}
         </div>
       </div>

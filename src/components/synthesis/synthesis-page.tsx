@@ -76,6 +76,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SynthesisResult | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
 
   // Load from localStorage on mount (client-side only)
   React.useEffect(() => {
@@ -104,12 +105,21 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   const handleGenerate = async (params: SynthesisParams) => {
     setIsLoading(true);
     setError(null);
+    setLoadingProgress(0);
+
+    // Simulate progress updates while waiting
+    const progressInterval = setInterval(() => {
+      setLoadingProgress(prev => Math.min(prev + Math.random() * 15, 90));
+    }, 1000);
 
     try {
       const endpoint =
         type === "newsletter"
           ? "/api/newsletter/generate"
           : "/api/podcast/generate";
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min timeout
 
       const response = await fetch(endpoint, {
         method: "POST",
@@ -121,21 +131,42 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
           ...(params.prompt && { prompt: params.prompt }),
           ...(type === "podcast" && { voiceStyle: params.voiceStyle }),
         }),
+        signal: controller.signal,
       });
 
+      clearTimeout(timeoutId);
+      clearInterval(progressInterval);
+      setLoadingProgress(95);
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `API error: ${response.statusText}`);
+        let errorMessage = `API error: ${response.statusText}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {
+          // If response isn't JSON, use the status text
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+      setLoadingProgress(100);
       setResult(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error occurred";
+      clearInterval(progressInterval);
+      let message = "Unknown error occurred";
+      if (err instanceof Error) {
+        if (err.name === "AbortError") {
+          message = `Request timed out. ${type === "newsletter" ? "Newsletter" : "Podcast"} generation is taking too long. Try reducing the item limit or period.`;
+        } else {
+          message = err.message;
+        }
+      }
       setError(message);
       console.error("Generation error:", err);
     } finally {
       setIsLoading(false);
+      setLoadingProgress(0);
     }
   };
 
@@ -178,6 +209,22 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
           <p className="text-sm text-green-100 mt-1">
             {type === "newsletter" ? "Newsletter" : "Podcast"} generated successfully!
           </p>
+        </div>
+      )}
+
+      {/* Progress Bar */}
+      {isLoading && (
+        <div className="bg-surface rounded-lg border border-surface-border p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-foreground">Generating {type}...</p>
+            <p className="text-xs text-muted">{Math.round(loadingProgress)}%</p>
+          </div>
+          <div className="w-full bg-surface-border rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-blue-600 h-full rounded-full transition-all duration-300"
+              style={{ width: `${loadingProgress}%` }}
+            />
+          </div>
         </div>
       )}
 
