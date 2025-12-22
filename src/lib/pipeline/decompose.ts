@@ -80,7 +80,7 @@ function extractArticlesFromHtml(html: string): Array<{
     // Handles: https://tracking.tldrnewsletter.com/CL0/https:%2F%2Factual-url
     let url = rawUrl;
     
-    // For tracking URLs, extract the encoded destination
+    // For TLDR tracking URLs, extract the encoded destination
     if (rawUrl.includes("/CL0/")) {
       // Extract everything between /CL0/ and /1/ (version number)
       // The encoded URL contains %2F for slashes and %3A for colons
@@ -95,12 +95,57 @@ function extractArticlesFromHtml(html: string): Array<{
       }
     }
 
+    // For Substack redirect URLs (used by Elevate, Byte Byte Go, etc.)
+    // Format: https://substack.com/redirect/2/eyJlIjoiaHR0cHM6Ly...
+    // The base64 payload contains JSON with "e" field = destination URL
+    if (rawUrl.includes("substack.com/redirect/2/")) {
+      const base64Match = rawUrl.match(/substack\.com\/redirect\/2\/([A-Za-z0-9_-]+)/);
+      if (base64Match) {
+        try {
+          // Decode base64 (handle URL-safe base64: replace - with + and _ with /)
+          const base64 = base64Match[1].replace(/-/g, "+").replace(/_/g, "/");
+          const decoded = Buffer.from(base64, "base64").toString("utf-8");
+          const payload = JSON.parse(decoded);
+          if (payload.e && typeof payload.e === "string") {
+            url = payload.e;
+          }
+        } catch {
+          // Failed to decode, keep original URL
+        }
+      }
+    }
+
     if (title && url && !seen.has(url)) {
       // Skip certain URLs (but allow decoded URLs from tracking redirects)
+      // Also skip Substack internal pages (subscribe, app-link, comments, reactions)
+      // Note: URLs may have &amp; encoded as HTML entities
+      // Note: Substack URLs can be *.substack.com (e.g., thesequence.substack.com)
+      const normalizedUrl = url.replace(/&amp;/g, "&");
+      const isSubstackUrl = normalizedUrl.includes(".substack.com/") ||
+                           normalizedUrl.includes("substack.com/") ||
+                           normalizedUrl.includes("substackcdn.com/");
+      const isSubstackInternal = isSubstackUrl && (
+        normalizedUrl.includes("/subscribe") ||
+        normalizedUrl.includes("/app-link/") ||
+        normalizedUrl.includes("submitLike=") ||
+        normalizedUrl.includes("comments=true") ||
+        normalizedUrl.includes("action=share") ||
+        normalizedUrl.includes("action=restack") ||
+        normalizedUrl.includes("/action/disable_email") ||
+        normalizedUrl.includes("redirect=app-store") ||
+        normalizedUrl.includes("open.substack.com/") ||
+        normalizedUrl.includes("eotrx.substackcdn.com/")
+      );
+
+      // Skip undecoded Substack redirect URLs (they should have been decoded above)
+      const isUndecodedSubstackRedirect = url.includes("substack.com/redirect/");
+
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
-        !url.startsWith("javascript:")
+        !url.startsWith("javascript:") &&
+        !isSubstackInternal &&
+        !isUndecodedSubstackRedirect
       ) {
         articles.push({
           title: title.trim(),
@@ -118,12 +163,26 @@ function extractArticlesFromHtml(html: string): Array<{
     const [, , title, url] = match;
 
     if (title && url && !seen.has(url)) {
+      // Skip Substack redirect/internal URLs (already handled above)
+      const normalizedUrl = url.replace(/&amp;/g, "&");
+      const isSubstackUrl = (
+        normalizedUrl.includes("substack.com/") ||
+        normalizedUrl.includes("substackcdn.com/")
+      ) && (
+        normalizedUrl.includes("/redirect/") ||
+        normalizedUrl.includes("/app-link/") ||
+        normalizedUrl.includes("/subscribe") ||
+        normalizedUrl.includes("eotrx.substackcdn.com/")
+      );
+
       // Skip certain URLs and very long titles (likely not real)
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
         !url.includes("tracking.tldrnewsletter") &&
+        !url.includes("substackcdn.com") &&
         !url.startsWith("javascript:") &&
+        !isSubstackUrl &&
         title.length < 200
       ) {
         articles.push({
