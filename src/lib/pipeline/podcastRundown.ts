@@ -120,7 +120,7 @@ export async function generatePodcastRundown(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-pro",
+      model: "gpt-5.2-chat-latest",
       max_completion_tokens: 8000,
       response_format: { type: "json_object" },
       messages: [
