@@ -48,3 +48,6 @@ history/
 # temp files
 *.log
 *~
+
+# generated audio files
+.data/audio/
