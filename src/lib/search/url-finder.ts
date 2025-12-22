@@ -7,39 +7,52 @@
 import { logger } from "../logger";
 
 /**
- * Call Amp's web_search tool via direct fetch
- * Requires AMP_API_URL and AMP_API_TOKEN env vars
+ * Call Parallel web search API (free/public)
+ * Based on Amp's implementation: https://github.com/sourcegraph/amp/blob/main/server/src/routes/api/internal/web-search.ts
  */
-async function callAmpWebSearch(objective: string): Promise<Array<{ url: string; title: string }> | null> {
-  const ampUrl = process.env.AMP_API_URL;
-  const ampToken = process.env.AMP_API_TOKEN;
+async function parallelWebSearch(objective: string, searchQueries?: string[]): Promise<Array<{ url: string; title: string }> | null> {
+  const apiKey = process.env.PARALLEL_API_KEY;
   
-  if (!ampUrl || !ampToken) {
+  if (!apiKey) {
+    logger.debug("PARALLEL_API_KEY not set, skipping web search");
     return null;
   }
   
   try {
-    const response = await fetch(`${ampUrl}/api/web-search`, {
+    const request = {
+      objective,
+      search_queries: searchQueries,
+      processor: "base",
+      max_results: 5,
+    };
+    
+    const response = await fetch("https://api.parallel.ai/v1beta/search", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${ampToken}`,
         "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        objective,
-        max_results: 5,
-      }),
+      body: JSON.stringify(request),
     });
     
     if (!response.ok) {
-      logger.debug("Amp web search failed", { status: response.status });
+      const errorText = await response.text();
+      logger.debug("Parallel API error", { status: response.status, error: errorText });
       return null;
     }
     
-    const data = await response.json();
-    return data.results || null;
+    const data = await response.json() as {
+      results?: Array<{ url: string; title?: string; excerpts?: string[] }>;
+    };
+    
+    return (
+      data.results?.map((item) => ({
+        url: item.url,
+        title: item.title || "Untitled",
+      })) || null
+    );
   } catch (e) {
-    logger.debug("Failed to call Amp web search", {
+    logger.debug("Parallel web search failed", {
       error: e instanceof Error ? e.message : String(e),
     });
     return null;
@@ -175,34 +188,34 @@ async function searchViaSourcegraph(query: string): Promise<string | null> {
 }
 
 /**
- * Web search via Amp's web_search tool
+ * Web search via Parallel API
  * Tries to find the actual article URL by searching for the title
  */
 async function searchViaWeb(title: string, source?: string, _context?: string): Promise<string | null> {
   try {
-    // Build search query with source constraints
-    const searchTerms = [title.substring(0, 80)];
+    // Build search queries with source constraints
+    const searchQueries: string[] = [];
     
     if (source?.includes("Substack")) {
-      searchTerms.push("site:substack.com");
+      searchQueries.push("site:substack.com");
     } else if (source?.includes("Medium")) {
-      searchTerms.push("site:medium.com");
+      searchQueries.push("site:medium.com");
     } else if (source?.includes("dev.to")) {
-      searchTerms.push("site:dev.to");
+      searchQueries.push("site:dev.to");
     }
     
-    const query = searchTerms.join(" ");
-    logger.debug(`Searching via Amp web search: "${query}"`);
+    const objective = title.substring(0, 100);
+    logger.debug(`Searching via Parallel API: "${objective}"${searchQueries.length > 0 ? ` with filters: ${searchQueries.join(", ")}` : ""}`);
     
-    // Try Amp web search first
-    const results = await callAmpWebSearch(query);
+    // Try Parallel web search
+    const results = await parallelWebSearch(objective, searchQueries.length > 0 ? searchQueries : undefined);
     if (results && results.length > 0) {
       const firstResult = results[0];
-      logger.info(`Found URL via Amp web search: ${firstResult.url}`);
+      logger.info(`Found URL via Parallel web search: "${title.substring(0, 50)}..." -> ${firstResult.url}`);
       return firstResult.url;
     }
     
-    logger.debug(`No results from Amp web search for: "${query}"`);
+    logger.debug(`No results from Parallel web search for: "${objective}"`);
     
   } catch (e) {
     logger.debug("Web search failed", {
