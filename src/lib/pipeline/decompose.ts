@@ -67,15 +67,38 @@ function extractArticlesFromHtml(html: string): Array<{
   }
 
   // Pattern 2: HTML anchor tags <a href="...">Title</a>
-  const htmlLinkRegex = /<a\s+(?:[^>]*?\s+)?href=["']([^"']+)["'][^>]*>([^<]+)<\/a>/gi;
+  // Modified to handle nested tags like <strong>, <em>, etc.
+  const htmlLinkRegex = /<a\s+[^>]*?href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
   while ((match = htmlLinkRegex.exec(cleanHtml)) !== null) {
-    const [, url, title] = match;
+    const [, rawUrl, rawTitle] = match;
+    // Strip HTML tags from title
+    const title = rawTitle.replace(/<[^>]*>/g, "").trim();
+    
+    // Extract actual URL from tracking/redirect URLs
+    // Handles: https://tracking.tldrnewsletter.com/CL0/https:%2F%2Factual-url
+    let url = rawUrl;
+    
+    // For tracking URLs, extract the encoded destination
+    if (rawUrl.includes("/CL0/")) {
+      // Extract everything between /CL0/ and /1/ (version number)
+      // The encoded URL contains %2F for slashes and %3A for colons
+      const trackingMatch = rawUrl.match(/\/CL0\/(.+?)\/\d+\//);
+      if (trackingMatch) {
+        // Decode %2F to /, %3A to :, %3D to =, %3F to ?
+        url = trackingMatch[1]
+          .replace(/%2F/g, "/")
+          .replace(/%3A/g, ":")
+          .replace(/%3D/g, "=")
+          .replace(/%3F/g, "?");
+      }
+    }
 
     if (title && url && !seen.has(url)) {
-      // Skip certain URLs
+      // Skip certain URLs (but allow decoded URLs from tracking redirects)
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
+        !url.includes("tracking.tldrnewsletter") &&
         !url.startsWith("javascript:")
       ) {
         articles.push({
