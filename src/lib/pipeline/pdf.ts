@@ -41,39 +41,45 @@ export function generatePDFHTML(
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       line-height: 1.6;
-      color: #1a1a1a;
+      color: #2d3748;
       background: #ffffff;
     }
     
     .pdf-header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
       color: white;
-      padding: 40px 30px;
-      margin-bottom: 30px;
-      border-radius: 4px;
+      padding: 50px 40px;
+      margin-bottom: 40px;
+      border-radius: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     
     .pdf-header h1 {
-      font-size: 28px;
-      margin-bottom: 8px;
-      font-weight: 700;
+      font-size: 32px;
+      margin: 0 0 12px 0;
+      font-weight: 800;
+      letter-spacing: -0.5px;
     }
     
     .pdf-header .meta {
-      font-size: 13px;
+      font-size: 14px;
       opacity: 0.95;
       display: flex;
-      gap: 16px;
-      margin-top: 12px;
+      gap: 24px;
+      margin-top: 16px;
+      border-top: 1px solid rgba(255,255,255,0.2);
+      padding-top: 12px;
     }
     
     .pdf-header .meta-item {
       display: flex;
-      gap: 4px;
+      gap: 6px;
+      align-items: center;
     }
     
     .pdf-header .meta-label {
-      font-weight: 600;
+      font-weight: 700;
+      opacity: 0.9;
     }
     
     article {
@@ -83,106 +89,153 @@ export function generatePDFHTML(
     }
     
     h1 {
-      font-size: 24px;
-      margin: 24px 0 16px;
-      color: #1a1a1a;
-      font-weight: 700;
+      font-size: 28px;
+      margin: 28px 0 16px;
+      color: #1a202c;
+      font-weight: 800;
     }
     
     h2 {
-      font-size: 18px;
-      margin: 20px 0 12px;
-      color: #2d3748;
-      font-weight: 600;
-      border-bottom: 2px solid #e2e8f0;
+      font-size: 20px;
+      margin: 24px 0 14px;
+      color: #2563eb;
+      font-weight: 700;
+      border-bottom: 3px solid #2563eb;
       padding-bottom: 8px;
     }
     
     p {
-      margin: 12px 0;
-      color: #4a5568;
-      font-size: 14px;
+      margin: 14px 0;
+      color: #2d3748;
+      font-size: 15px;
+      line-height: 1.7;
     }
     
     section {
-      margin: 24px 0;
+      margin: 28px 0;
     }
     
     ul, ol {
-      margin: 12px 0 12px 24px;
-      color: #4a5568;
-      font-size: 14px;
+      margin: 14px 0 14px 32px;
+      color: #2d3748;
+      font-size: 15px;
     }
     
     li {
-      margin: 8px 0;
-      line-height: 1.6;
+      margin: 10px 0;
+      line-height: 1.7;
     }
     
     a {
-      color: #667eea;
-      text-decoration: none;
+      color: #2563eb;
+      text-decoration: underline;
       word-break: break-word;
     }
     
     a:hover {
-      text-decoration: underline;
+      color: #1e40af;
     }
     
     blockquote {
-      border-left: 4px solid #667eea;
-      padding: 12px 16px;
-      margin: 16px 0;
-      background: #f7fafc;
+      border-left: 4px solid #2563eb;
+      padding: 14px 18px;
+      margin: 18px 0;
+      background: #f0f9ff;
       font-style: italic;
-      color: #2d3748;
+      color: #1e40af;
       font-size: 14px;
+      line-height: 1.7;
     }
     
     .summary {
-      background: #f0f4ff;
-      border-left: 4px solid #667eea;
-      padding: 16px;
-      margin: 16px 0;
+      background: #f0f9ff;
+      border-left: 4px solid #2563eb;
+      padding: 18px;
+      margin: 18px 0;
       border-radius: 4px;
-      font-size: 14px;
-      color: #2d3748;
-      line-height: 1.7;
+      font-size: 15px;
+      color: #1e3a8a;
+      line-height: 1.8;
     }
     
     .themes {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin: 16px 0;
+      gap: 10px;
+      margin: 18px 0;
     }
     
     .theme-tag {
       display: inline-block;
-      background: #edf2f7;
-      color: #2d3748;
-      padding: 4px 12px;
-      border-radius: 16px;
-      font-size: 12px;
-      font-weight: 500;
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
     }
     
     .pdf-footer {
       text-align: center;
-      color: #718096;
+      color: #64748b;
       font-size: 12px;
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px solid #e2e8f0;
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid #cbd5e1;
+    }
+    
+    /* Prevent url() from printing */
+    a {
+      text-decoration: none;
+    }
+    
+    a::after {
+      content: none !important;
     }
     
     @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      
       body {
         background: white;
+        margin: 0;
+        padding: 0;
+      }
+      
+      @page {
+        margin: 0.5in;
+        size: letter;
+      }
+      
+      /* Disable browser default headers/footers */
+      @page {
+        @top-left {
+          content: none !important;
+        }
+        @top-center {
+          content: none !important;
+        }
+        @top-right {
+          content: none !important;
+        }
+        @bottom-left {
+          content: none !important;
+        }
+        @bottom-center {
+          content: none !important;
+        }
+        @bottom-right {
+          content: none !important;
+        }
       }
       
       .pdf-header {
         page-break-after: avoid;
+        margin-top: 0;
+        padding-top: 0;
       }
       
       h2 {
@@ -192,35 +245,57 @@ export function generatePDFHTML(
       li {
         page-break-inside: avoid;
       }
+      
+      article {
+        max-width: 100%;
+        margin: 0;
+        padding: 0;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="pdf-header">
-    <h1>Code Intelligence Digest</h1>
-    <div class="meta">
-      <div class="meta-item">
-        <span class="meta-label">Period:</span>
-        <span>${periodLabel}</span>
-      </div>
-      <div class="meta-item">
-        <span class="meta-label">Categories:</span>
-        <span>${categoryLabel}</span>
-      </div>
-      <div class="meta-item">
-        <span class="meta-label">Generated:</span>
-        <span>${dateStr}</span>
-      </div>
-    </div>
-  </div>
+   <div class="pdf-header">
+     <h1>Code Intelligence Digest</h1>
+     <div class="meta">
+       <div class="meta-item">
+         <span class="meta-label">Period:</span>
+         <span>${periodLabel}</span>
+       </div>
+       <div class="meta-item">
+         <span class="meta-label">Categories:</span>
+         <span>${categoryLabel}</span>
+       </div>
+       <div class="meta-item">
+         <span class="meta-label">Generated:</span>
+         <span>${dateStr}</span>
+       </div>
+     </div>
+   </div>
   
   ${newsletterHTML}
   
   <div class="pdf-footer">
-    <p>Code Intelligence Digest • Powered by AI-driven curation</p>
-  </div>
-</body>
-</html>`;
+     <p>Code Intelligence Digest • Powered by AI-driven curation</p>
+   </div>
+   
+   <script>
+     // Auto-trigger print dialog with proper settings
+     window.addEventListener('load', function() {
+       // Delay slightly to let page render first
+       setTimeout(function() {
+         // For Chrome/Edge: settings are passed via window.print()
+         // Note: Users may need to manually disable "Headers and footers" in print dialog
+         console.log('PDF is ready. To print:');
+         console.log('1. Click the Print button (or Cmd+P / Ctrl+P)');
+         console.log('2. In Print Settings, disable "Headers and footers"');
+         console.log('3. Set margins to "Minimal" or "0.5 inches"');
+         console.log('4. Click Print or Save as PDF');
+       }, 500);
+     });
+   </script>
+  </body>
+  </html>`;
 }
 
 /**

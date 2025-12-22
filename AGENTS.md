@@ -659,6 +659,45 @@ Output to the user:
 - Status of tests/lint/build.
 - Prompt for next session.
 
+## Newsletter Generation Best Practices
+
+### Executive Summary LLM Approach
+
+The executive summary generation uses an optimized prompt pattern that significantly improves quality:
+
+**Key techniques:**
+1. **Sparse content handling**: When content is sparse, instruct the model to infer insights from title and available text
+2. **Confidence calibration**: Use explicit instructions like "If content is sparse, use title context" 
+3. **Focus areas**: For digests with themes, include theme-based guidance to make summaries more insightful
+4. **Substantive synthesis**: Rather than generic overviews, ask the model to synthesize trends, connect items across categories, and explain strategic importance
+
+**Implementation location:** `src/lib/pipeline/newsletter.ts` → `buildExecutiveSummary()` function
+
+**Pattern to replicate for other summarization tasks:**
+```typescript
+// When content availability varies:
+"${contentLength < threshold ? "Note: Content is sparse. Infer from title and context." : ""}"
+
+// Always ask for synthesis with business value
+"Write a 200-300 word executive summary that... synthesizes trends, connects items across categories, and explains strategic importance"
+```
+
+### URL Extraction Improvements
+
+When Inoreader items lack canonical/alternate URLs:
+1. Extract from HTML content in summary (fallback in `normalizeItem`)
+2. Skip Inoreader-specific URLs and javascript: links
+3. For known email newsletters (TLDR, Substack, Pointer), intentionally suppress URLs as content is embedded
+
+**Implementation:** `src/lib/pipeline/normalize.ts` → `extractUrlFromHtml()` function
+
+### Newsletter Categorization
+
+Newsletters are grouped by **resource category** (research, community, newsletters, tech_articles, ai_news, product_news, podcasts):
+- Group by actual `FeedItem.category` field
+- Map to display labels: "research" → "Research", etc.
+- Location: `src/lib/pipeline/newsletter.ts` → `groupByResourceCategory()` function
+
 ## Agent Best Practices
 
 ### General Rules

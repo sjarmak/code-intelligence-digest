@@ -57,6 +57,11 @@ export function PodcastViewer({
   generationMetadata,
 }: PodcastViewerProps) {
   const [activeTab, setActiveTab] = useState<"segments" | "transcript" | "shownotes" | "metadata">("segments");
+  const [generatedDate, setGeneratedDate] = useState("");
+
+  React.useEffect(() => {
+    setGeneratedDate(new Date(generatedAt).toLocaleString());
+  }, [generatedAt]);
 
   const handleCopyTranscript = () => {
     navigator.clipboard.writeText(transcript);
@@ -82,8 +87,6 @@ export function PodcastViewer({
     element.click();
     document.body.removeChild(element);
   };
-
-  const generatedDate = new Date(generatedAt).toLocaleString();
 
   return (
     <div className="space-y-4">

@@ -68,8 +68,10 @@ function extractArticlesFromHtml(html: string): Array<{
 
   // Pattern 2: HTML anchor tags <a href="...">Title</a>
   // Modified to handle nested tags like <strong>, <em>, etc.
+  // First normalize newlines in href attributes to handle multiline attributes
+  const normalizedHtml = cleanHtml.replace(/href=["']([^"'][\s\S]*?)["']/g, 'href="$1"').replace(/\n/g, '');
   const htmlLinkRegex = /<a\s+[^>]*?href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
-  while ((match = htmlLinkRegex.exec(cleanHtml)) !== null) {
+  while ((match = htmlLinkRegex.exec(normalizedHtml)) !== null) {
     const [, rawUrl, rawTitle] = match;
     // Strip HTML tags from title
     const title = rawTitle.replace(/<[^>]*>/g, "").trim();
@@ -98,7 +100,6 @@ function extractArticlesFromHtml(html: string): Array<{
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
-        !url.includes("tracking.tldrnewsletter") &&
         !url.startsWith("javascript:")
       ) {
         articles.push({
@@ -121,6 +122,7 @@ function extractArticlesFromHtml(html: string): Array<{
       if (
         !url.includes("inoreader.com") &&
         !url.includes("google.com/reader") &&
+        !url.includes("tracking.tldrnewsletter") &&
         !url.startsWith("javascript:") &&
         title.length < 200
       ) {
@@ -204,7 +206,7 @@ export function decomposeNewsletterItem(item: RankedItem): RankedItem[] {
   const articles = extractArticlesFromHtml(htmlContent);
   
   if (articles.length === 0) {
-    logger.warn(`No articles extracted from newsletter: "${item.title}"`);
+    logger.warn(`No articles extracted from newsletter: "${item.title}" (${htmlContent.length} chars of content)`);
     return [item]; // Fallback: return original item
   }
 

@@ -75,6 +75,31 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SynthesisResult | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Load from localStorage on mount (client-side only)
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`synthesis-result-${type}`);
+      if (saved) {
+        setResult(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.warn("Failed to load from localStorage:", e);
+    }
+    setIsHydrated(true);
+  }, [type]);
+
+  // Persist result to localStorage on change (client-side only)
+  React.useEffect(() => {
+    if (isHydrated && result) {
+      try {
+        localStorage.setItem(`synthesis-result-${type}`, JSON.stringify(result));
+      } catch (e) {
+        console.warn("Failed to save to localStorage:", e);
+      }
+    }
+  }, [result, type, isHydrated]);
 
   const handleGenerate = async (params: SynthesisParams) => {
     setIsLoading(true);

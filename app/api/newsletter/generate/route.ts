@@ -148,7 +148,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     logger.info(`Retrieved ${mergedItems.length} candidate items from all categories`);
 
-    // Step 3: Parse prompt and re-rank if needed
+    // Step 3: Filter out oversized content FIRST (before selection)
+    // Articles >50KB are likely newsletters, podcasts, or spam; skip them
+    const maxContentLength = 50000; // 50KB threshold
+    const beforeSizeFilter = mergedItems.length;
+    mergedItems = mergedItems.filter((item) => {
+      const contentLength = (item.fullText || item.summary || item.contentSnippet || "").length;
+      if (contentLength > maxContentLength) {
+        logger.info(`Filtering out oversized article: "${item.title}" (${contentLength} chars)`);
+        return false;
+      }
+      return true;
+    });
+    logger.info(`Size filter: ${beforeSizeFilter} → ${mergedItems.length} items (removed ${beforeSizeFilter - mergedItems.length} oversized)`);
+
+    // Step 4: Parse prompt and re-rank if needed
     let profile: PromptProfile | null = null;
     let rerankApplied = false;
 
@@ -164,43 +178,24 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       }
     }
 
-    // Step 4: Diversity selection with limit
+    // Step 5: Diversity selection with limit
     const maxPerSource = req.period === "week" ? 2 : 3;
     const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, req.limit);
-    let selectedItems = selection.items;
+    const selectedItems = selection.items;
 
     logger.info(`Selected ${selectedItems.length} items (requested limit: ${req.limit}) with diversity constraints`);
-
-    // Filter out extremely long articles to avoid token limits in extraction
-    // Articles >50KB are likely newsletters, podcasts, or spam; skip them
-    const maxContentLength = 50000; // 50KB threshold
-    const beforeFilter = selectedItems.length;
-    selectedItems = selectedItems.filter((item) => {
-      const contentLength = (item.fullText || item.summary || item.contentSnippet || "").length;
-      if (contentLength > maxContentLength) {
-        logger.info(`Filtering out oversized article: "${item.title}" (${contentLength} chars)`);
-        return false;
-      }
-      return true;
-    });
-    logger.info(`Filtered items: ${beforeFilter} → ${selectedItems.length} (removed ${beforeFilter - selectedItems.length} oversized articles)`);
-
-    // If we filtered too many, replenish from ranked items
-    if (selectedItems.length < Math.ceil(req.limit * 0.7)) {
-      const additionalNeeded = req.limit - selectedItems.length;
-      const selectedIds = new Set(selectedItems.map(i => i.id));
-      const candidates = mergedItems.filter(
-        item => !selectedIds.has(item.id) && (item.fullText || item.summary || item.contentSnippet || "").length <= maxContentLength
-      );
-      selectedItems.push(...candidates.slice(0, additionalNeeded));
-      logger.info(`Replenished selection: added ${Math.min(additionalNeeded, candidates.length)} more items`);
+    
+    // Log newsletter items being selected
+    const selectedNewsletters = selectedItems.filter(item => item.sourceTitle.includes("TLDR") || item.sourceTitle.includes("Byte Byte Go") || item.sourceTitle.includes("Elevate") || item.sourceTitle.includes("Pointer"));
+    if (selectedNewsletters.length > 0) {
+      logger.info(`Selected ${selectedNewsletters.length} newsletter items: ${selectedNewsletters.slice(0, 3).map(i => i.title).join(", ")}`);
     }
 
-    // Step 5: Extract item digests (Pass 1)
+    // Step 6: Extract item digests (Pass 1)
     const digests = await extractBatchDigests(selectedItems, req.prompt || "");
     logger.info(`Extracted ${digests.length} item digests`);
 
-    // Step 6: Synthesize newsletter from digests (Pass 2)
+    // Step 7: Synthesize newsletter from digests (Pass 2)
     const { summary, themes, markdown, html } = await generateNewsletterFromDigests(
       digests,
       req.period,
