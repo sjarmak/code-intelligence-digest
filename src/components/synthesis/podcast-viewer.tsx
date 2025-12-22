@@ -145,7 +145,7 @@ export function PodcastViewer({
       <div className="bg-surface rounded-lg border border-surface-border shadow-sm p-6 space-y-4">
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-white">{title}</h2>
+            <h2 className="text-2xl font-bold text-black">{title}</h2>
             <p className="text-sm text-muted mt-1">{generatedDate}</p>
           </div>
           <div className="text-right">
@@ -284,7 +284,7 @@ export function PodcastViewer({
                   <div key={idx} className="border border-surface-border rounded-lg p-4 space-y-3">
                     <div className="flex items-start justify-between">
                       <div>
-                        <h3 className="font-semibold text-white">{segment.title}</h3>
+                        <h3 className="font-semibold text-black">{segment.title}</h3>
                         <p className="text-xs text-muted mt-1">
                           {segment.startTime} – {segment.endTime}
                         </p>
@@ -330,13 +330,13 @@ export function PodcastViewer({
           )}
 
           {activeTab === "transcript" && (
-            <pre className="bg-black p-4 rounded border border-surface-border overflow-x-auto text-sm text-foreground max-h-[600px] overflow-y-auto">
+            <pre className="bg-white p-4 rounded border border-surface-border overflow-x-auto text-sm text-black max-h-[600px] overflow-y-auto">
               {transcript}
             </pre>
           )}
 
           {activeTab === "shownotes" && (
-            <pre className="bg-black p-4 rounded border border-surface-border overflow-x-auto text-sm text-foreground max-h-[600px] overflow-y-auto font-sans">
+            <pre className="bg-white p-4 rounded border border-surface-border overflow-x-auto text-sm text-black max-h-[600px] overflow-y-auto font-sans">
               {showNotes}
             </pre>
           )}
@@ -387,9 +387,9 @@ export function PodcastViewer({
           )}
 
           {activeTab === "metadata" && (
-            <div className="space-y-2 text-sm text-foreground">
+            <div className="space-y-2 text-sm text-black">
               <p>
-                <strong>ID:</strong> <code className="bg-black px-2 py-1 rounded text-xs border border-surface-border">{id}</code>
+                <strong>ID:</strong> <code className="bg-gray-100 px-2 py-1 rounded text-xs border border-gray-300 text-black">{id}</code>
               </p>
               <p>
                 <strong>Generated:</strong> {generatedDate}
