@@ -133,7 +133,7 @@ export async function generateNewsletterContent(
   if (client) {
     try {
       const response = await client.chat.completions.create({
-        model: "gpt-5.2",
+        model: "gpt-5.2-chat-latest",
         max_completion_tokens: 4000,
         reasoning_effort: "high",
         response_format: { type: "json_object" },
@@ -620,7 +620,7 @@ function generateNewsletterFallback(
        logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
        
        const response = await client.chat.completions.create({
-         model: "gpt-5.2",
+         model: "gpt-5.2-chat-latest",
          max_completion_tokens: 600,
          messages: [
            {

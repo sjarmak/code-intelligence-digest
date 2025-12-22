@@ -81,7 +81,7 @@ export async function verifyPodcastScript(
     const digestContext = formatDigestsForVerification(digests);
 
     const response = await client.chat.completions.create({
-      model: "gpt-5.2",
+      model: "gpt-5.2-chat-latest",
       max_completion_tokens: 6000,
       response_format: { type: "json_object" },
       messages: [

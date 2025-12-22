@@ -4,7 +4,15 @@
 
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
+
+interface AudioState {
+  isLoading: boolean;
+  audioUrl: string | null;
+  error: string | null;
+  provider: string;
+  voice: string;
+}
 
 interface PodcastSegment {
   title: string;
@@ -56,12 +64,55 @@ export function PodcastViewer({
   showNotes,
   generationMetadata,
 }: PodcastViewerProps) {
-  const [activeTab, setActiveTab] = useState<"segments" | "transcript" | "shownotes" | "metadata">("segments");
+  const [activeTab, setActiveTab] = useState<"segments" | "transcript" | "shownotes" | "metadata" | "audio">("segments");
   const [generatedDate, setGeneratedDate] = useState("");
+  const [audioState, setAudioState] = useState<AudioState>({
+    isLoading: false,
+    audioUrl: null,
+    error: null,
+    provider: "openai",
+    voice: "alloy",
+  });
 
   React.useEffect(() => {
     setGeneratedDate(new Date(generatedAt).toLocaleString());
   }, [generatedAt]);
+
+  const handleRenderAudio = useCallback(async () => {
+    setAudioState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      const response = await fetch("/api/podcast/render-audio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript,
+          provider: audioState.provider,
+          voice: audioState.voice,
+          format: "mp3",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to render audio: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setAudioState(prev => ({
+        ...prev,
+        isLoading: false,
+        audioUrl: data.audioUrl,
+      }));
+      setActiveTab("audio");
+    } catch (error) {
+      setAudioState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : "Failed to render audio",
+      }));
+    }
+  }, [transcript, audioState.provider, audioState.voice]);
 
   const handleCopyTranscript = () => {
     navigator.clipboard.writeText(transcript);
@@ -151,6 +202,51 @@ export function PodcastViewer({
           >
             Show Notes
           </button>
+          <button
+            onClick={handleRenderAudio}
+            disabled={audioState.isLoading}
+            className="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {audioState.isLoading ? "Rendering Audio..." : audioState.audioUrl ? "Re-render Audio" : "Render Audio"}
+          </button>
+        </div>
+
+        {/* Audio Error */}
+        {audioState.error && (
+          <div className="bg-red-50 border border-red-300 rounded-lg p-3 text-red-700 text-sm">
+            {audioState.error}
+          </div>
+        )}
+
+        {/* Audio Settings */}
+        <div className="flex gap-4 pt-2 border-t border-surface-border">
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted">Provider:</label>
+            <select
+              value={audioState.provider}
+              onChange={(e) => setAudioState(prev => ({ ...prev, provider: e.target.value }))}
+              className="text-xs px-2 py-1 border border-surface-border rounded bg-surface text-foreground"
+            >
+              <option value="openai">OpenAI TTS</option>
+              <option value="elevenlabs">ElevenLabs</option>
+              <option value="nemo">NVIDIA Nemo</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted">Voice:</label>
+            <select
+              value={audioState.voice}
+              onChange={(e) => setAudioState(prev => ({ ...prev, voice: e.target.value }))}
+              className="text-xs px-2 py-1 border border-surface-border rounded bg-surface text-foreground"
+            >
+              <option value="alloy">Alloy</option>
+              <option value="echo">Echo</option>
+              <option value="fable">Fable</option>
+              <option value="onyx">Onyx</option>
+              <option value="nova">Nova</option>
+              <option value="shimmer">Shimmer</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -158,7 +254,7 @@ export function PodcastViewer({
       <div className="bg-surface rounded-lg border border-surface-border shadow-sm overflow-hidden">
         {/* Tabs */}
         <div className="border-b border-surface-border flex overflow-x-auto">
-          {(["segments", "transcript", "shownotes", "metadata"] as const).map((tab) => (
+          {(["segments", "transcript", "shownotes", "audio", "metadata"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -171,6 +267,7 @@ export function PodcastViewer({
               {tab === "segments" && "Segments"}
               {tab === "transcript" && "Transcript"}
               {tab === "shownotes" && "Show Notes"}
+              {tab === "audio" && (audioState.audioUrl ? "🔊 Audio" : "Audio")}
               {tab === "metadata" && "Metadata"}
             </button>
           ))}
@@ -195,7 +292,7 @@ export function PodcastViewer({
                     </div>
 
                     {/* Highlights */}
-                    {segment.highlights.length > 0 && (
+                    {segment.highlights && segment.highlights.length > 0 && (
                       <div className="space-y-2">
                         <p className="text-xs font-semibold text-foreground">Key Points</p>
                         <ul className="text-sm text-foreground space-y-1 list-disc list-inside">
@@ -207,7 +304,7 @@ export function PodcastViewer({
                     )}
 
                     {/* Referenced Items */}
-                    {segment.itemsReferenced.length > 0 && (
+                    {segment.itemsReferenced && segment.itemsReferenced.length > 0 && (
                       <div className="space-y-2">
                         <p className="text-xs font-semibold text-foreground">References</p>
                         <div className="space-y-1">
@@ -242,6 +339,51 @@ export function PodcastViewer({
             <pre className="bg-black p-4 rounded border border-surface-border overflow-x-auto text-sm text-foreground max-h-[600px] overflow-y-auto font-sans">
               {showNotes}
             </pre>
+          )}
+
+          {activeTab === "audio" && (
+            <div className="space-y-4">
+              {audioState.audioUrl ? (
+                <div className="space-y-4">
+                  <div className="bg-gray-100 rounded-lg p-4 border border-gray-300">
+                    <p className="text-sm text-gray-600 mb-3">Audio rendered successfully. Click play to listen:</p>
+                    <audio controls className="w-full" src={audioState.audioUrl}>
+                      Your browser does not support the audio element.
+                    </audio>
+                  </div>
+                  <div className="flex gap-2">
+                    <a
+                      href={audioState.audioUrl}
+                      download={`${id}-audio.mp3`}
+                      className="px-3 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors"
+                    >
+                      Download MP3
+                    </a>
+                    <button
+                      onClick={handleRenderAudio}
+                      disabled={audioState.isLoading}
+                      className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-surface text-foreground font-medium transition-colors"
+                    >
+                      {audioState.isLoading ? "Rendering..." : "Re-render with Different Settings"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-muted mb-4">No audio generated yet.</p>
+                  <p className="text-sm text-muted mb-4">
+                    Select your preferred provider and voice settings above, then click &quot;Render Audio&quot; to generate the audio file.
+                  </p>
+                  <button
+                    onClick={handleRenderAudio}
+                    disabled={audioState.isLoading}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors disabled:opacity-50"
+                  >
+                    {audioState.isLoading ? "Rendering Audio..." : "Render Audio"}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
           {activeTab === "metadata" && (

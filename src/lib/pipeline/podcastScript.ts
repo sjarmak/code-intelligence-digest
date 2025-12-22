@@ -124,7 +124,7 @@ export async function generatePodcastScript(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-pro",
+      model: "gpt-5.2-chat-latest",
       max_completion_tokens: 5000,
       temperature: 0.7,
       messages: [
