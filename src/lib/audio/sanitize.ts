@@ -24,6 +24,21 @@ const CUE_PATTERNS = [
   /\[LAUGHTER\]/gi,
   /\[silence[^\]]*\]/gi,
   /\[\s*[A-Z\s]*\s*MUSIC\s*\]/gi,
+  /\[NEEDS SUPPORT\]/gi,
+];
+
+/**
+ * Patterns to strip from transcript before TTS
+ */
+const MARKUP_PATTERNS = [
+  /^##\s*.+$/gm, // Markdown headers like "## Segment Name"
+  /^\*\*[A-Z]+:\*\*/gm, // Speaker labels like "**HOST:**"
+  /\*\*([^*]+)\*\*/g, // Bold text - keep content
+  /\[[\d:]+\]\s*/g, // Timestamps like "[00:00]" or "[01:30]"
+  /\(\d+s\)/g, // Duration markers like "(10s)"
+  /\(≈\d+s\)/g, // Approximate duration like "(≈125s)"
+  /^---+$/gm, // Segment separators
+  /\n{3,}/g, // Multiple newlines
 ];
 
 /**
@@ -37,36 +52,54 @@ export function sanitizeTranscriptForTts(
 ): string {
   const {
     stripCues = true,
-    keepSpeakerLabels = true,
-    stripAllMarkup = false,
+    keepSpeakerLabels = false, // Default to false - TTS doesn't need "HOST:" labels
+    stripAllMarkup = true, // Default to true - strip all formatting for clean TTS
   } = options;
 
   let result = transcript;
 
-  // Strip all cues
+  // Strip all audio cues
   if (stripCues) {
     for (const pattern of CUE_PATTERNS) {
       result = result.replace(pattern, "");
     }
   }
 
-  // Remove extra whitespace created by cue removal
-  result = result.replace(/\n\s*\n/g, "\n");
-  result = result.replace(/\s{2,}/g, " ");
-
-  // Optionally strip all markup (e.g., timestamps, speaker markers)
+  // Strip markdown and formatting
   if (stripAllMarkup) {
-    // Remove [anything in brackets]
-    result = result.replace(/\[.*?\]/g, "");
-    // Remove (anything in parens) except inline parentheticals that look natural
-    result = result.replace(/\([A-Z]{2,}[^\)]*\)/g, "");
+    // Remove markdown headers (## Segment Name)
+    result = result.replace(/^##\s*.+$/gm, "");
+
+    // Remove speaker labels like "**HOST:**" or "**COHOST:**"
+    result = result.replace(/\*\*[A-Z]+:\*\*\s*/g, "");
+
+    // Remove bold markers but keep content
+    result = result.replace(/\*\*([^*]+)\*\*/g, "$1");
+
+    // Remove timestamps like "[00:00]" "[01:30]" "[09:50]"
+    result = result.replace(/\[[\d:]+\]\s*/g, "");
+
+    // Remove duration markers like "(10s)" or "(≈125s)"
+    result = result.replace(/\(≈?\d+s\)/g, "");
+
+    // Remove segment separators
+    result = result.replace(/^---+$/gm, "");
+
+    // Remove segment name lines like "Segment 1 — Topic Name"
+    result = result.replace(/^Segment \d+\s*[—–-]\s*.+$/gm, "");
   }
 
-  // Normalize speaker labels if kept
-  if (keepSpeakerLabels) {
-    // Ensure consistent format: "Speaker:" on its own line
-    result = result.replace(/^\s*([A-Za-z\s]+):\s*/gm, "$1: ");
+  // Optionally keep speaker labels for reference (but TTS will read them)
+  if (!keepSpeakerLabels) {
+    // Remove any remaining speaker patterns
+    result = result.replace(/^[A-Z]+:\s*/gm, "");
   }
+
+  // Clean up whitespace
+  result = result.replace(/\n{3,}/g, "\n\n"); // Max 2 newlines
+  result = result.replace(/^\s+$/gm, ""); // Empty lines with spaces
+  result = result.replace(/\n\s*\n\s*\n/g, "\n\n"); // Normalize paragraph breaks
+  result = result.replace(/\s{2,}/g, " "); // Multiple spaces to single
 
   // Final cleanup
   result = result.trim();
