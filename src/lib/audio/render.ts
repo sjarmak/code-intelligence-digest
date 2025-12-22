@@ -4,11 +4,19 @@
  */
 
 import { AudioProvider, RenderAudioRequest, RenderAudioResult, TtsProvider } from "./types";
-import { sanitizeTranscriptForTts, computeTranscriptHash } from "./sanitize";
+import { sanitizeTranscriptForTts, computeTranscriptHash, parseTranscriptBySpeaker, hasMultipleSpeakers, SpeakerTurn } from "./sanitize";
 import { createOpenAIProvider } from "./providers/openaiTts";
 import { createElevenLabsProvider } from "./providers/elevenlabsTts";
 import { createNemoProvider } from "./providers/nemoTts";
 import { logger } from "../logger";
+
+/**
+ * Voice configuration for multi-voice rendering
+ */
+export interface MultiVoiceConfig {
+  hostVoice: string;
+  cohostVoice: string;
+}
 
 /**
  * Get provider instance by name
@@ -237,4 +245,142 @@ export function computeCacheKey(
 ): string {
   const sanitized = sanitizeTranscriptForTts(transcript);
   return computeTranscriptHash(transcript, sanitized, provider, voice, format);
+}
+
+/**
+ * Default voice pairs for multi-voice rendering
+ * HOST gets a deeper/more authoritative voice, COHOST gets a lighter voice
+ */
+export const DEFAULT_VOICE_PAIRS: Record<AudioProvider, MultiVoiceConfig> = {
+  openai: { hostVoice: "onyx", cohostVoice: "nova" },
+  elevenlabs: { hostVoice: "adam", cohostVoice: "rachel" },
+  nemo: { hostVoice: "default", cohostVoice: "default" },
+};
+
+/**
+ * Render a single speaker turn with chunking support
+ */
+async function renderSpeakerTurn(
+  turn: SpeakerTurn,
+  provider: AudioProvider,
+  voice: string,
+  format: "mp3" | "wav",
+  ttsProvider: TtsProvider
+): Promise<Buffer> {
+  const text = turn.text;
+
+  // Chunk if needed
+  if (text.length > MAX_CHUNK_SIZE) {
+    const chunks = chunkText(text, MAX_CHUNK_SIZE);
+    const audioBuffers: Buffer[] = [];
+
+    for (const chunk of chunks) {
+      const result = await ttsProvider.render({
+        transcript: chunk,
+        provider,
+        format,
+        voice,
+      });
+      audioBuffers.push(result.bytes);
+    }
+
+    return stitchAudioBuffers(audioBuffers);
+  }
+
+  const result = await ttsProvider.render({
+    transcript: text,
+    provider,
+    format,
+    voice,
+  });
+
+  return result.bytes;
+}
+
+/**
+ * Render transcript with multiple voices for HOST and COHOST
+ * Parses transcript by speaker, renders each turn with appropriate voice,
+ * and stitches the audio together
+ */
+export async function renderMultiVoiceAudio(
+  transcript: string,
+  provider: AudioProvider,
+  voiceConfig?: MultiVoiceConfig,
+  format: "mp3" | "wav" = "mp3"
+): Promise<RenderAudioResult> {
+  if (!transcript || transcript.trim().length === 0) {
+    throw new Error("Transcript cannot be empty");
+  }
+
+  // Check if transcript has multiple speakers
+  if (!hasMultipleSpeakers(transcript)) {
+    logger.info("Transcript has single speaker, using standard rendering");
+    return renderAudio(transcript, provider, voiceConfig?.hostVoice, format);
+  }
+
+  // Parse transcript into speaker turns
+  const turns = parseTranscriptBySpeaker(transcript);
+
+  if (turns.length === 0) {
+    throw new Error("No speakable content found in transcript");
+  }
+
+  // Use default voice pair for provider if not specified
+  const voices = voiceConfig || DEFAULT_VOICE_PAIRS[provider];
+
+  logger.info("Starting multi-voice render", {
+    provider,
+    hostVoice: voices.hostVoice,
+    cohostVoice: voices.cohostVoice,
+    turnCount: turns.length,
+    hostTurns: turns.filter((t) => t.speaker === "HOST").length,
+    cohostTurns: turns.filter((t) => t.speaker === "COHOST").length,
+  });
+
+  const startTime = Date.now();
+  const ttsProvider = getProvider(provider);
+  const audioBuffers: Buffer[] = [];
+  let totalDuration = 0;
+
+  try {
+    for (let i = 0; i < turns.length; i++) {
+      const turn = turns[i];
+      const voice = turn.speaker === "HOST" ? voices.hostVoice : voices.cohostVoice;
+
+      logger.info(`Rendering turn ${i + 1}/${turns.length}`, {
+        speaker: turn.speaker,
+        voice,
+        textLength: turn.text.length,
+      });
+
+      const buffer = await renderSpeakerTurn(turn, provider, voice, format, ttsProvider);
+      audioBuffers.push(buffer);
+
+      // Estimate duration (150 wpm)
+      const wordCount = turn.text.split(/\s+/).length;
+      totalDuration += Math.ceil((wordCount / 150) * 60);
+    }
+
+    const stitchedAudio = stitchAudioBuffers(audioBuffers);
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+    logger.info("Multi-voice render completed", {
+      provider: ttsProvider.getName(),
+      turns: turns.length,
+      bytes: stitchedAudio.length,
+      duration: totalDuration,
+      elapsed: `${elapsed}s`,
+    });
+
+    return {
+      bytes: stitchedAudio,
+      durationSeconds: totalDuration,
+    };
+  } catch (error) {
+    logger.error("Multi-voice render failed", {
+      provider: ttsProvider.getName(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }

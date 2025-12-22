@@ -25,6 +25,13 @@ const CUE_PATTERNS = [
   /\[silence[^\]]*\]/gi,
   /\[\s*[A-Z\s]*\s*MUSIC\s*\]/gi,
   /\[NEEDS SUPPORT\]/gi,
+  // Segment structure markers
+  /cold open:?\s*/gi,
+  /lightning round:?\s*/gi,
+  /quick hits:?\s*/gi,
+  /intro segment:?\s*/gi,
+  /outro:?\s*/gi,
+  /main segment:?\s*/gi,
 ];
 
 /**
@@ -158,4 +165,107 @@ export function formatDuration(seconds: number): string {
     return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
   return `${minutes}:${secs.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Speaker turn for multi-voice rendering
+ */
+export interface SpeakerTurn {
+  speaker: "HOST" | "COHOST";
+  text: string;
+}
+
+/**
+ * Parse transcript into speaker turns for multi-voice rendering
+ * Handles formats like:
+ * - **HOST:** text
+ * - **COHOST:** text
+ * - HOST: text
+ * - COHOST: text
+ */
+export function parseTranscriptBySpeaker(transcript: string): SpeakerTurn[] {
+  const turns: SpeakerTurn[] = [];
+
+  // First, sanitize non-spoken elements but KEEP speaker labels
+  let sanitized = transcript;
+
+  // Strip audio cues
+  for (const pattern of CUE_PATTERNS) {
+    sanitized = sanitized.replace(pattern, "");
+  }
+
+  // Strip markdown headers
+  sanitized = sanitized.replace(/^##\s*.+$/gm, "");
+
+  // Strip timestamps
+  sanitized = sanitized.replace(/\[[\d:]+\]\s*/g, "");
+
+  // Strip duration markers
+  sanitized = sanitized.replace(/\(≈?\d+s\)/g, "");
+
+  // Strip segment separators
+  sanitized = sanitized.replace(/^---+$/gm, "");
+
+  // Strip segment name lines
+  sanitized = sanitized.replace(/^Segment \d+\s*[—–-]\s*.+$/gm, "");
+
+  // Now split by speaker labels
+  // Pattern matches both **HOST:** and HOST: formats
+  const speakerPattern = /\*?\*?(HOST|COHOST):?\*?\*?\s*/gi;
+
+  const parts = sanitized.split(speakerPattern);
+
+  let currentSpeaker: "HOST" | "COHOST" = "HOST";
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim();
+    if (!part) continue;
+
+    // Check if this part is a speaker label
+    const upperPart = part.toUpperCase();
+    if (upperPart === "HOST" || upperPart === "COHOST") {
+      currentSpeaker = upperPart as "HOST" | "COHOST";
+      continue;
+    }
+
+    // This is actual spoken text
+    // Clean up any remaining bold markers
+    const cleanText = part
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/^\s+$/gm, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    if (cleanText.length > 0) {
+      // If same speaker as last turn, merge
+      if (turns.length > 0 && turns[turns.length - 1].speaker === currentSpeaker) {
+        turns[turns.length - 1].text += " " + cleanText;
+      } else {
+        turns.push({
+          speaker: currentSpeaker,
+          text: cleanText,
+        });
+      }
+    }
+  }
+
+  // If no speaker labels found, treat entire transcript as HOST
+  if (turns.length === 0 && sanitized.trim().length > 0) {
+    turns.push({
+      speaker: "HOST",
+      text: sanitizeTranscriptForTts(transcript),
+    });
+  }
+
+  return turns;
+}
+
+/**
+ * Check if transcript has multiple speakers
+ */
+export function hasMultipleSpeakers(transcript: string): boolean {
+  const hasHost = /\*?\*?HOST:?\*?\*?/i.test(transcript);
+  const hasCohost = /\*?\*?COHOST:?\*?\*?/i.test(transcript);
+  return hasHost && hasCohost;
 }
