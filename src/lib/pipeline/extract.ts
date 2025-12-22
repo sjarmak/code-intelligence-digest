@@ -242,9 +242,17 @@ export async function extractBatchDigests(
     `(${decomposedItems.length - items.length > 0 ? "+" : ""}${decomposedItems.length - items.length} from newsletters)`
   );
   
-  // Log sample of decomposed items
+  // Log decomposition results in detail
   if (decomposedItems.length > items.length) {
     logger.info(`Decomposition produced extra items. Sample URLs: ${decomposedItems.slice(0, 3).map(i => i.url).join(", ")}`);
+  }
+
+  // Debug: Log ALL newsletter item URLs before and after decomposition
+  const newsletterItems = items.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate"].some(n => i.sourceTitle.includes(n)));
+  const decomposedNewsletters = decomposedItems.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate"].some(n => i.sourceTitle.includes(n)));
+  if (newsletterItems.length > 0) {
+    logger.info(`[URL_DEBUG] Original newsletter items (${newsletterItems.length}): ${newsletterItems.map(i => `${i.title.substring(0, 30)}... -> ${i.url}`).join(" | ")}`);
+    logger.info(`[URL_DEBUG] Decomposed newsletter items (${decomposedNewsletters.length}): ${decomposedNewsletters.slice(0, 5).map(i => `${i.title.substring(0, 30)}... -> ${i.url}`).join(" | ")}`);
   }
 
   const digests = await Promise.all(
