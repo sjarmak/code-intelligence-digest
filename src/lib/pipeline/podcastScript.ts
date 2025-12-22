@@ -11,6 +11,17 @@ import { PodcastRundown } from "./podcastRundown";
 import { PromptProfile } from "./promptProfile";
 import { logger } from "../logger";
 
+/**
+ * Check if URL is valid for podcast script (not Inoreader, not Reddit, not Google News redirect)
+ */
+function isValidScriptUrl(url: string): boolean {
+  if (!url || typeof url !== "string") return false;
+  if (url.includes("inoreader.com") || url.includes("google.com/reader")) return false;
+  if (url.includes("reddit.com/r/") || url.includes("reddit.com/u/")) return false;
+  if (url.includes("news.google.com/rss/")) return false;
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
 export interface PodcastScript {
   transcript: string; // Full markdown script with timestamps
   segments: Array<{
@@ -84,7 +95,13 @@ export async function generatePodcastScript(
   profile: PromptProfile | null,
   _voiceStyle: string = "conversational"
 ): Promise<PodcastScript> {
-  if (digests.length === 0) {
+  // Filter digests with invalid URLs before processing
+  const validDigests = digests.filter(d => isValidScriptUrl(d.url));
+  if (validDigests.length < digests.length) {
+    logger.info(`Filtered out ${digests.length - validDigests.length} digests with invalid URLs before script generation`);
+  }
+
+  if (validDigests.length === 0) {
     return {
       transcript: "[INTRO MUSIC]\n\nHOST: No items available this week.\n\n[OUTRO MUSIC]",
       segments: [],
@@ -93,16 +110,16 @@ export async function generatePodcastScript(
   }
 
   logger.info(
-    `Generating podcast script for ${digests.length} digests, period=${period}`
+    `Generating podcast script for ${validDigests.length} digests, period=${period}`
   );
 
-  const digestContext = formatDigestsForScript(digests);
+  const digestContext = formatDigestsForScript(validDigests);
   // periodLabel and categoryLabels are embedded in the prompt below
 
   const client = getClient();
   if (!client) {
     logger.warn("OPENAI_API_KEY not set, using fallback script");
-    return generateFallbackScript(digests, rundown, _voiceStyle);
+    return generateFallbackScript(validDigests, rundown, _voiceStyle);
   }
 
   try {
@@ -206,7 +223,7 @@ Write the complete script in markdown. No JSON, no preamble, no explanations.`,
     };
   } catch (error) {
     logger.warn("LLM script generation failed, using fallback", { error });
-    return generateFallbackScript(digests, rundown, _voiceStyle);
+    return generateFallbackScript(validDigests, rundown, _voiceStyle);
   }
 }
 
