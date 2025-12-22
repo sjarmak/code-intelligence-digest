@@ -584,13 +584,20 @@ function generateNewsletterFallback(
          ],
        });
 
-      const summary = response.choices[0].message.content || buildExecutiveSummaryFallback(digests, themes);
-      logger.info(`LLM summary generated: ${summary.length} chars`);
-      return summary;
-    } catch (e) {
-      logger.warn("Failed to generate LLM summary, using fallback", { error: e instanceof Error ? e.message : String(e) });
+      const content = response.choices[0].message.content;
+      if (!content || content.trim().length === 0) {
+        logger.warn("LLM returned empty response, using fallback");
+        return buildExecutiveSummaryFallback(digests, themes);
+      }
+      logger.info(`LLM summary generated: ${content.length} chars`);
+      return content;
+      } catch (e) {
+      logger.warn("Failed to generate LLM summary, using fallback", { 
+        error: e instanceof Error ? e.message : String(e),
+        stack: e instanceof Error ? e.stack : undefined
+      });
       return buildExecutiveSummaryFallback(digests, themes);
-    }
+      }
   }
 
   /**
