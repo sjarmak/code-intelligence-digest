@@ -7,6 +7,46 @@
 import { logger } from "../logger";
 
 /**
+ * Call Amp's web_search tool via direct fetch
+ * Requires AMP_API_URL and AMP_API_TOKEN env vars
+ */
+async function callAmpWebSearch(objective: string): Promise<Array<{ url: string; title: string }> | null> {
+  const ampUrl = process.env.AMP_API_URL;
+  const ampToken = process.env.AMP_API_TOKEN;
+  
+  if (!ampUrl || !ampToken) {
+    return null;
+  }
+  
+  try {
+    const response = await fetch(`${ampUrl}/api/web-search`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${ampToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        objective,
+        max_results: 5,
+      }),
+    });
+    
+    if (!response.ok) {
+      logger.debug("Amp web search failed", { status: response.status });
+      return null;
+    }
+    
+    const data = await response.json();
+    return data.results || null;
+  } catch (e) {
+    logger.debug("Failed to call Amp web search", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return null;
+  }
+}
+
+/**
  * Search for an article URL given title and context
  * Uses Sourcegraph deep search or fallback web search
  */
@@ -135,15 +175,14 @@ async function searchViaSourcegraph(query: string): Promise<string | null> {
 }
 
 /**
- * Simple web search fallback via Google
+ * Web search via Amp's web_search tool
  * Tries to find the actual article URL by searching for the title
  */
 async function searchViaWeb(title: string, source?: string, _context?: string): Promise<string | null> {
   try {
-    // Build search query
+    // Build search query with source constraints
     const searchTerms = [title.substring(0, 80)];
     
-    // Add source constraint for better results
     if (source?.includes("Substack")) {
       searchTerms.push("site:substack.com");
     } else if (source?.includes("Medium")) {
@@ -153,22 +192,20 @@ async function searchViaWeb(title: string, source?: string, _context?: string): 
     }
     
     const query = searchTerms.join(" ");
-    logger.debug(`Searching for: "${query}"`);
+    logger.debug(`Searching via Amp web search: "${query}"`);
     
-    // Use a simple Google search URL pattern
-    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=5`;
+    // Try Amp web search first
+    const results = await callAmpWebSearch(query);
+    if (results && results.length > 0) {
+      const firstResult = results[0];
+      logger.info(`Found URL via Amp web search: ${firstResult.url}`);
+      return firstResult.url;
+    }
     
-    // In a real implementation, you would:
-    // 1. Fetch the search results page
-    // 2. Parse the HTML to extract first result link
-    // 3. Return that URL
-    
-    // For now, return null - this needs integration with actual search API
-    // or web scraping (which we don't have in this environment)
-    logger.debug(`Would perform web search at: ${searchUrl}`);
+    logger.debug(`No results from Amp web search for: "${query}"`);
     
   } catch (e) {
-    logger.debug("Search construction failed", {
+    logger.debug("Web search failed", {
       error: e instanceof Error ? e.message : String(e),
     });
   }
