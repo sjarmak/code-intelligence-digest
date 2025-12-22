@@ -50,6 +50,16 @@ interface PodcastViewerProps {
   };
 }
 
+/**
+ * Format category name from slug to human-readable
+ */
+function formatCategoryName(slug: string): string {
+  return slug
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 export function PodcastViewer({
   id,
   title,
@@ -158,15 +168,15 @@ export function PodcastViewer({
         <div className="grid grid-cols-3 gap-4 pt-4 border-t border-surface-border">
           <div className="bg-gray-100 rounded p-3 border border-gray-400">
             <p className="text-xs text-gray-700 font-semibold">Period</p>
-            <p className="text-lg font-bold text-gray-500">{period}</p>
+            <p className="text-lg font-bold text-black">{period}</p>
           </div>
-          <div className="bg-gray-100 rounded p-3 border border-gray-300">
+          <div className="bg-gray-100 rounded p-3 border border-gray-400">
             <p className="text-xs text-gray-700 font-semibold">Items</p>
-            <p className="text-lg font-bold text-gray-600">{itemsIncluded}</p>
+            <p className="text-lg font-bold text-black">{itemsIncluded}</p>
           </div>
-          <div className="bg-gray-100 rounded p-3 border border-green-300">
-            <p className="text-xs text-green-700 font-semibold">Voice</p>
-            <p className="text-lg font-bold text-green-800 capitalize">{generationMetadata.voiceStyle}</p>
+          <div className="bg-gray-100 rounded p-3 border border-gray-400">
+            <p className="text-xs text-gray-700 font-semibold">Voice</p>
+            <p className="text-lg font-bold text-black capitalize">{generationMetadata.voiceStyle}</p>
           </div>
         </div>
 
@@ -176,7 +186,7 @@ export function PodcastViewer({
           <div className="flex flex-wrap gap-2">
             {categories.map((cat) => (
               <span key={cat} className="inline-block px-2 py-1 bg-gray-50 text-gray-600 text-xs rounded border border-gray-400">
-                {cat}
+                {formatCategoryName(cat)}
               </span>
             ))}
           </div>

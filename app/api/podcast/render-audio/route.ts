@@ -18,8 +18,9 @@ import {
   computeTranscriptHash,
   formatDuration,
   estimateDurationFromTranscript,
+  hasMultipleSpeakers,
 } from "@/src/lib/audio/sanitize";
-import { renderAudio } from "@/src/lib/audio/render";
+import { renderAudio, renderMultiVoiceAudio, DEFAULT_VOICE_PAIRS, MultiVoiceConfig } from "@/src/lib/audio/render";
 import { getPodcastAudioByHash, savePodcastAudio } from "@/src/lib/db/podcast-audio";
 import { getLocalStorage } from "@/src/lib/storage/local";
 import { logger } from "@/src/lib/logger";
@@ -36,6 +37,9 @@ interface ValidatedRequest {
   format: AudioFormat;
   voice: string;
   segmentsMode: "single" | "per-segment";
+  multiVoice: boolean;
+  hostVoice?: string;
+  cohostVoice?: string;
 }
 
 function validateRequest(body: unknown): { valid: boolean; error?: string; data?: ValidatedRequest } {
@@ -96,6 +100,11 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     };
   }
 
+  // Multi-voice option (default true for conversational podcasts)
+  const multiVoice = req.multiVoice !== false;
+  const hostVoice = req.hostVoice as string | undefined;
+  const cohostVoice = req.cohostVoice as string | undefined;
+
   return {
     valid: true,
     data: {
@@ -104,6 +113,9 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
       format: format as AudioFormat,
       voice,
       segmentsMode,
+      multiVoice,
+      hostVoice,
+      cohostVoice,
     },
   };
 }
@@ -123,12 +135,27 @@ export async function POST(
 
     const req = validation.data!;
 
+    // Check if transcript has multiple speakers for multi-voice
+    const hasMultiple = hasMultipleSpeakers(req.transcript);
+    const useMultiVoice = req.multiVoice && hasMultiple;
+
+    // Build voice config for multi-voice
+    const voiceConfig: MultiVoiceConfig | undefined = useMultiVoice
+      ? {
+          hostVoice: req.hostVoice || DEFAULT_VOICE_PAIRS[req.provider].hostVoice,
+          cohostVoice: req.cohostVoice || DEFAULT_VOICE_PAIRS[req.provider].cohostVoice,
+        }
+      : undefined;
+
     logger.info("Render audio request", {
       provider: req.provider,
       format: req.format,
       voice: req.voice,
       segmentsMode: req.segmentsMode,
       transcriptLength: req.transcript.length,
+      multiVoice: useMultiVoice,
+      hostVoice: voiceConfig?.hostVoice,
+      cohostVoice: voiceConfig?.cohostVoice,
     });
 
     // Step 1: Sanitize transcript
@@ -141,12 +168,15 @@ export async function POST(
       );
     }
 
-    // Step 2: Compute hash for caching
+    // Step 2: Compute hash for caching (include multi-voice config in hash)
+    const voiceKey = useMultiVoice
+      ? `${voiceConfig!.hostVoice}+${voiceConfig!.cohostVoice}`
+      : req.voice;
     const transcriptHash = computeTranscriptHash(
       req.transcript,
       sanitized,
       req.provider,
-      req.voice,
+      voiceKey,
       req.format
     );
 
@@ -194,13 +224,25 @@ export async function POST(
       );
 
       const renderPromise = (async () => {
-        const result = await renderAudio(
-          sanitized,
-          req.provider,
-          req.voice,
-          req.format
-        );
-        return result;
+        if (useMultiVoice) {
+          // Multi-voice render: use original transcript (not sanitized) for speaker parsing
+          const result = await renderMultiVoiceAudio(
+            req.transcript,
+            req.provider,
+            voiceConfig,
+            req.format
+          );
+          return result;
+        } else {
+          // Single-voice render: use sanitized transcript
+          const result = await renderAudio(
+            sanitized,
+            req.provider,
+            req.voice,
+            req.format
+          );
+          return result;
+        }
       })();
 
       const result = await Promise.race([renderPromise, timeoutPromise]);
@@ -235,7 +277,7 @@ export async function POST(
       id: audioId,
       transcriptHash,
       provider: req.provider,
-      voice: req.voice,
+      voice: voiceKey,
       format: req.format,
       duration,
       durationSeconds,
@@ -259,7 +301,7 @@ export async function POST(
       generatedAt: new Date().toISOString(),
       provider: req.provider,
       format: req.format,
-      voice: req.voice,
+      voice: voiceKey,
       duration,
       audioUrl,
       generationMetadata: {
@@ -267,6 +309,7 @@ export async function POST(
         bytes: fileBytes,
         transcriptHash,
         cached: false,
+        multiVoice: useMultiVoice,
       },
     };
 

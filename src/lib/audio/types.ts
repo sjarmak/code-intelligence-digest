@@ -59,6 +59,7 @@ export interface RenderAudioEndpointResponse {
     bytes: number;
     transcriptHash: string;
     cached: boolean;
+    multiVoice?: boolean;
   };
 }
 
