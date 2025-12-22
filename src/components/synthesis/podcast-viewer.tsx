@@ -98,24 +98,24 @@ export function PodcastViewer({
             <p className="text-sm text-muted mt-1">{generatedDate}</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-blue-400">{duration}</p>
+            <p className="text-2xl font-bold text-black">{duration}</p>
             <p className="text-xs text-muted">Episode Duration</p>
           </div>
         </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-3 gap-4 pt-4 border-t border-surface-border">
-          <div className="bg-blue-900/30 rounded p-3 border border-blue-700">
-            <p className="text-xs text-blue-300 font-semibold">Period</p>
-            <p className="text-lg font-bold text-blue-100">{period}</p>
+          <div className="bg-gray-100 rounded p-3 border border-gray-400">
+            <p className="text-xs text-gray-700 font-semibold">Period</p>
+            <p className="text-lg font-bold text-gray-500">{period}</p>
           </div>
-          <div className="bg-purple-900/30 rounded p-3 border border-purple-700">
-            <p className="text-xs text-purple-300 font-semibold">Items</p>
-            <p className="text-lg font-bold text-purple-100">{itemsIncluded}</p>
+          <div className="bg-gray-100 rounded p-3 border border-gray-300">
+            <p className="text-xs text-gray-700 font-semibold">Items</p>
+            <p className="text-lg font-bold text-gray-600">{itemsIncluded}</p>
           </div>
-          <div className="bg-green-900/30 rounded p-3 border border-green-700">
-            <p className="text-xs text-green-300 font-semibold">Voice</p>
-            <p className="text-lg font-bold text-green-100 capitalize">{generationMetadata.voiceStyle}</p>
+          <div className="bg-gray-100 rounded p-3 border border-green-300">
+            <p className="text-xs text-green-700 font-semibold">Voice</p>
+            <p className="text-lg font-bold text-green-800 capitalize">{generationMetadata.voiceStyle}</p>
           </div>
         </div>
 
@@ -124,7 +124,7 @@ export function PodcastViewer({
           <p className="text-xs font-semibold text-muted uppercase mb-2">Categories</p>
           <div className="flex flex-wrap gap-2">
             {categories.map((cat) => (
-              <span key={cat} className="inline-block px-2 py-1 bg-blue-900/40 text-blue-200 text-xs rounded border border-blue-700">
+              <span key={cat} className="inline-block px-2 py-1 bg-gray-50 text-gray-600 text-xs rounded border border-gray-400">
                 {cat}
               </span>
             ))}
@@ -164,7 +164,7 @@ export function PodcastViewer({
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                 activeTab === tab
-                  ? "border-blue-400 text-blue-400"
+                  ? "border-blue-400 text-black"
                   : "border-transparent text-muted hover:text-foreground"
               }`}
             >
@@ -217,7 +217,7 @@ export function PodcastViewer({
                               href={item.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block text-sm text-blue-400 hover:underline"
+                              className="block text-sm text-black hover:underline"
                             >
                               {item.title}
                               <span className="text-muted text-xs ml-2">({item.sourceTitle})</span>

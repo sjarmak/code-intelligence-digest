@@ -111,7 +111,7 @@ export function SynthesisForm({
                     checked={selectedCategories.includes(category)}
                     onChange={() => handleCategoryToggle(category)}
                     disabled={isLoading}
-                    className="rounded border-surface-border text-blue-600 focus:ring-blue-500 bg-surface"
+                    className="rounded border-surface-border text-blue-600 focus:ring-black bg-surface"
                   />
                   <label
                     htmlFor={category}
@@ -137,7 +137,7 @@ export function SynthesisForm({
                   checked={period === "week"}
                   onChange={(e) => setPeriod(e.target.value as "week" | "month")}
                   disabled={isLoading}
-                  className="text-blue-600 focus:ring-blue-500"
+                  className="text-blue-600 focus:ring-black"
                 />
                 <label htmlFor="week" className="ml-2 text-sm text-foreground cursor-pointer">
                   This Week (7 days)
@@ -152,7 +152,7 @@ export function SynthesisForm({
                   checked={period === "month"}
                   onChange={(e) => setPeriod(e.target.value as "week" | "month")}
                   disabled={isLoading}
-                  className="text-blue-600 focus:ring-blue-500"
+                  className="text-blue-600 focus:ring-black"
                 />
                 <label htmlFor="month" className="ml-2 text-sm text-foreground cursor-pointer">
                   This Month (30 days)
@@ -174,7 +174,7 @@ export function SynthesisForm({
               value={limit}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLimit(Math.max(1, Math.min(50, parseInt(e.target.value) || 15)))}
               disabled={isLoading}
-              className="block w-20 px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-surface text-white"
+              className="block w-20 px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-white"
             />
             <p className="text-xs text-muted mt-1">Max items to retrieve (1-50)</p>
           </div>
@@ -190,7 +190,7 @@ export function SynthesisForm({
                 value={voiceStyle}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setVoiceStyle(e.target.value as "conversational" | "technical" | "executive")}
                 disabled={isLoading}
-                className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 bg-surface text-white"
+                className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-white"
               >
                 <option value="conversational">Conversational</option>
                 <option value="technical">Technical</option>
@@ -215,7 +215,7 @@ export function SynthesisForm({
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrompt(e.target.value)}
               disabled={isLoading}
               rows={4}
-              className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none bg-surface text-white placeholder-muted"
+              className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black resize-none bg-surface text-white placeholder-muted"
             />
             <p className="text-xs text-muted mt-1">
               Leave empty for a comprehensive {type === "newsletter" ? "digest" : "episode"}
@@ -226,7 +226,7 @@ export function SynthesisForm({
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium rounded-md text-sm transition-colors"
+            className="w-full py-2 px-4 bg-black hover:bg-gray-800 disabled:bg-gray-400 text-white font-medium rounded-md text-sm transition-colors"
           >
             {isLoading ? (
               <>

@@ -117,16 +117,16 @@ export const PapersQA = forwardRef<
 
       {/* Selected Library */}
       {selectedLibrary && (
-        <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3 space-y-2">
-          <p className="text-xs font-semibold text-blue-300">Selected Library</p>
-          <div className="flex items-center justify-between bg-blue-900/40 border border-blue-500/50 rounded px-3 py-2">
+        <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-700">Selected Library</p>
+          <div className="flex items-center justify-between bg-gray-50 border border-gray-400/50 rounded px-3 py-2">
             <div>
-              <p className="text-sm font-medium text-blue-200">{selectedLibrary.name}</p>
-              <p className="text-xs text-blue-300">{selectedLibrary.numPapers} papers</p>
+              <p className="text-sm font-medium text-gray-600">{selectedLibrary.name}</p>
+              <p className="text-xs text-gray-700">{selectedLibrary.numPapers} papers</p>
             </div>
             <button
               onClick={() => setSelectedLibrary(null)}
-              className="hover:text-blue-100"
+              className="hover:text-gray-500"
               title="Remove library"
             >
               <X className="w-4 h-4" />
@@ -137,18 +137,18 @@ export const PapersQA = forwardRef<
 
       {/* Selected Papers */}
       {selectedPapers.length > 0 && !selectedLibrary && (
-        <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3 space-y-2">
-          <p className="text-xs font-semibold text-blue-300">Selected Papers ({selectedPapers.length})</p>
+        <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-700">Selected Papers ({selectedPapers.length})</p>
           <div className="flex flex-wrap gap-2">
             {selectedPapers.map((paper) => (
               <div
                 key={paper.bibcode}
-                className="flex items-center gap-2 bg-blue-900/40 border border-blue-500/50 rounded px-2 py-1 text-xs text-blue-200"
+                className="flex items-center gap-2 bg-gray-50 border border-gray-400/50 rounded px-2 py-1 text-xs text-gray-600"
               >
                 <span className="font-mono">{paper.bibcode}</span>
                 <button
                   onClick={() => setSelectedPapers(selectedPapers.filter(p => p.bibcode !== paper.bibcode))}
-                  className="hover:text-blue-100"
+                  className="hover:text-gray-500"
                   title="Remove paper"
                 >
                   <X className="w-3 h-3" />
@@ -158,7 +158,7 @@ export const PapersQA = forwardRef<
           </div>
           <button
             onClick={() => setSelectedPapers([])}
-            className="text-xs text-blue-300 hover:text-blue-200 underline"
+            className="text-xs text-gray-700 hover:text-gray-600 underline"
           >
             Clear all
           </button>
@@ -173,13 +173,13 @@ export const PapersQA = forwardRef<
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !loading && handleAsk()}
           placeholder="Ask a question about papers..."
-          className="flex-1 px-4 py-2 rounded-lg bg-surface-border/30 border border-surface-border text-foreground placeholder:text-muted focus:outline-none focus:border-blue-500"
+          className="flex-1 px-4 py-2 rounded-lg bg-surface-border/30 border border-surface-border text-foreground placeholder:text-muted focus:outline-none focus:border-gray-400"
           disabled={loading}
         />
         <button
           onClick={handleAsk}
           disabled={loading || !question.trim()}
-          className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-surface-border disabled:text-muted disabled:cursor-not-allowed text-white font-medium transition-colors flex items-center gap-2"
+          className="px-4 py-2 rounded-lg bg-black hover:bg-gray-800 disabled:bg-surface-border disabled:text-muted disabled:cursor-not-allowed text-white font-medium transition-colors flex items-center gap-2"
         >
           <Send className="w-4 h-4" />
           Ask
@@ -188,7 +188,7 @@ export const PapersQA = forwardRef<
 
       {/* Error */}
       {error && (
-        <div className="border border-red-900/50 bg-red-900/20 rounded-lg p-4 text-red-200 text-sm">
+        <div className="border border-red-300/50 bg-red-50 rounded-lg p-4 text-red-900 text-sm">
           {error}
         </div>
       )}
@@ -196,8 +196,8 @@ export const PapersQA = forwardRef<
       {/* Response */}
       {response && (
         <div className="space-y-4">
-          <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4 space-y-3">
-            <h3 className="font-semibold text-blue-200">Answer</h3>
+          <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-4 space-y-3">
+            <h3 className="font-semibold text-gray-600">Answer</h3>
             <p className="text-sm text-muted leading-relaxed whitespace-pre-wrap">
               {response.answer}
             </p>
@@ -209,7 +209,7 @@ export const PapersQA = forwardRef<
           {/* Cited Papers */}
           {response.citedPapers && response.citedPapers.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-sm font-semibold text-green-300">Papers Cited in Answer</h4>
+              <h4 className="text-sm font-semibold text-green-700">Papers Cited in Answer</h4>
               <div className="space-y-2">
                 {response.citedPapers.map((paper) => (
                   <a
@@ -217,13 +217,13 @@ export const PapersQA = forwardRef<
                     href={paper.adsUrl || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-start gap-3 p-3 rounded-lg border border-green-500/30 hover:border-green-500/70 hover:bg-green-500/10 transition-colors group"
+                    className="flex items-start gap-3 p-3 rounded-lg border border-gray-300 hover:border-green-500/70 hover:bg-green-500/10 transition-colors group"
                   >
-                    <span className="text-xs font-semibold text-green-400 bg-green-500/20 rounded px-2 py-1 flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-semibold text-green-700 bg-green-500/20 rounded px-2 py-1 flex-shrink-0 mt-0.5">
                       [{paper.index}]
                     </span>
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm text-green-300 group-hover:text-green-200 line-clamp-2 block">
+                      <span className="text-sm text-green-700 group-hover:text-green-900 line-clamp-2 block">
                         {paper.title || 'No title available'}
                       </span>
                       {paper.authors && (
@@ -249,13 +249,13 @@ export const PapersQA = forwardRef<
                     href={paper.adsUrl || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-start gap-3 p-3 rounded-lg border border-surface-border hover:border-blue-500/50 hover:bg-surface-border/20 transition-colors group"
+                    className="flex items-start gap-3 p-3 rounded-lg border border-surface-border hover:border-gray-400/50 hover:bg-surface-border/20 transition-colors group"
                   >
                     <span className="text-xs text-muted font-mono flex-shrink-0 mt-0.5">
                       {paper.bibcode}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm text-blue-300 group-hover:text-blue-200 line-clamp-2 block">
+                      <span className="text-sm text-gray-700 group-hover:text-gray-600 line-clamp-2 block">
                         {paper.title || 'No title available'}
                       </span>
                       {paper.authors && (
@@ -275,7 +275,7 @@ export const PapersQA = forwardRef<
       {/* Loading */}
       {loading && (
         <div className="flex items-center gap-2 justify-center py-4">
-          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500" />
+          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
           <span className="text-sm text-muted">Searching papers and generating answer...</span>
         </div>
       )}

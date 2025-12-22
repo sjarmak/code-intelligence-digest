@@ -225,7 +225,7 @@ export function NewsletterViewer({
           </button>
           <button
             onClick={handleDownloadPDF}
-            className="px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 rounded-md text-white font-medium transition-colors"
+            className="px-3 py-2 text-sm bg-black hover:bg-gray-800 rounded-md text-white font-medium transition-colors"
           >
             📄 Download PDF
           </button>

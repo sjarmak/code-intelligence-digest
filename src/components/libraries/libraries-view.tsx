@@ -142,16 +142,16 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="border border-red-900/50 bg-red-900/20 rounded-lg p-4">
-        <p className="text-red-200">Error: {error}</p>
-        <p className="text-sm text-red-300 mt-2">
+      <div className="border border-red-300/50 bg-red-50 rounded-lg p-4">
+        <p className="text-red-900">Error: {error}</p>
+        <p className="text-sm text-red-800 mt-2">
           Make sure ADS_API_TOKEN is configured in your .env.local
         </p>
       </div>
@@ -176,7 +176,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                   className="flex items-center gap-3 flex-1 text-left"
                 >
                   {isExpanded ? (
-                    <ChevronDown className="w-5 h-5 text-blue-400 flex-shrink-0" />
+                    <ChevronDown className="w-5 h-5 text-black flex-shrink-0" />
                   ) : (
                     <ChevronRight className="w-5 h-5 text-muted flex-shrink-0" />
                   )}
@@ -191,7 +191,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                   <button
                     onClick={() => onSelectLibraryForQA?.({ id: lib.id, name: lib.name, numPapers: lib.numPapers })}
                     title="Use all papers from this library for Q&A"
-                    className="text-xs px-2 py-1 rounded bg-blue-900/20 text-blue-300 hover:bg-blue-900/40 transition-colors whitespace-nowrap flex items-center gap-1"
+                    className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap flex items-center gap-1"
                   >
                     <BookOpen className="w-3 h-3" />
                     Use Library
@@ -211,7 +211,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                         items.map((item) => (
                           <div
                             key={item.bibcode}
-                            className="border border-surface-border rounded-lg overflow-hidden bg-surface hover:border-blue-500/50 transition-colors"
+                            className="border border-surface-border rounded-lg overflow-hidden bg-surface hover:border-gray-400/50 transition-colors"
                           >
                             <div className="p-4 pb-3">
                               <div className="flex items-start justify-between gap-4">
@@ -221,7 +221,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                       href={item.arxivUrl || item.adsUrl || '#'}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="text-base font-semibold line-clamp-2 text-blue-400 hover:text-blue-300 transition-colors"
+                                      className="text-base font-semibold line-clamp-2 text-black hover:text-gray-700 transition-colors"
                                     >
                                       {item.title}
                                     </a>
@@ -230,7 +230,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                       href={item.arxivUrl || item.adsUrl || '#'}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="text-base font-semibold line-clamp-2 text-blue-400 hover:text-blue-300 transition-colors font-mono"
+                                      className="text-base font-semibold line-clamp-2 text-black hover:text-gray-700 transition-colors font-mono"
                                     >
                                       {item.bibcode}
                                     </a>
@@ -245,7 +245,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                           href={item.arxivUrl}
                                           target="_blank"
                                           rel="noopener noreferrer"
-                                          className="text-xs px-2 py-0.5 rounded bg-red-900/20 text-red-300 hover:bg-red-900/40 transition-colors"
+                                          className="text-xs px-2 py-0.5 rounded bg-red-50 text-red-800 hover:bg-red-900/40 transition-colors"
                                           title="Open on arXiv"
                                         >
                                           arXiv
@@ -256,7 +256,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                           href={item.adsUrl}
                                           target="_blank"
                                           rel="noopener noreferrer"
-                                          className="text-xs px-2 py-0.5 rounded bg-blue-900/20 text-blue-300 hover:bg-blue-900/40 transition-colors"
+                                          className="text-xs px-2 py-0.5 rounded bg-gray-50 text-gray-700 hover:bg-gray-50 transition-colors"
                                           title="Open on ADS"
                                         >
                                           ADS
@@ -275,7 +275,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                     <button
                                       onClick={() => onAddPaperToQA?.({ bibcode: item.bibcode, title: item.title })}
                                       title="Add to Q&A context"
-                                      className="text-xs px-2 py-1 rounded bg-green-900/20 text-green-300 hover:bg-green-900/40 transition-colors whitespace-nowrap"
+                                      className="text-xs px-2 py-1 rounded bg-green-50 text-green-700 hover:bg-green-900/40 transition-colors whitespace-nowrap"
                                     >
                                       <Plus className="w-3 h-3 inline mr-1" />
                                       Add
@@ -283,7 +283,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                     <button
                                       onClick={() => generateSummary(item.bibcode)}
                                       disabled={processingBibcode === item.bibcode}
-                                      className="text-xs px-2 py-1 rounded bg-purple-900/20 text-purple-300 hover:bg-purple-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                                      className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-purple-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                                     >
                                       {processingBibcode === item.bibcode ? 'Summarizing...' : 'Summarize'}
                                     </button>
@@ -332,7 +332,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                     </>
                   ) : (
                     <div className="flex justify-center py-4">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500" />
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
                     </div>
                   )}
                 </div>

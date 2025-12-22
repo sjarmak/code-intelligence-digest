@@ -77,7 +77,7 @@ export default function DigestPage() {
                 onClick={() => setPeriod('day')}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                   period === 'day'
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-black text-white'
                     : 'bg-surface border border-surface-border text-muted hover:text-foreground'
                 }`}
               >
@@ -87,7 +87,7 @@ export default function DigestPage() {
                 onClick={() => setPeriod('week')}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                   period === 'week'
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-black text-white'
                     : 'bg-surface border border-surface-border text-muted hover:text-foreground'
                 }`}
               >
@@ -97,7 +97,7 @@ export default function DigestPage() {
                 onClick={() => setPeriod('month')}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                   period === 'month'
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-black text-white'
                     : 'bg-surface border border-surface-border text-muted hover:text-foreground'
                 }`}
               >
@@ -117,7 +117,7 @@ export default function DigestPage() {
         )}
 
         {error && (
-          <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-4 text-red-200">
+          <div className="bg-red-50 border border-red-300/50 rounded-lg p-4 text-red-900">
             {error}
           </div>
         )}

@@ -102,8 +102,8 @@ export default function SourcesPanel({ adminToken }: SourcesPanelProps) {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-900 bg-red-900/20 p-3">
-          <p className="text-sm text-red-400">Error: {error}</p>
+        <div className="rounded-lg border border-red-300 bg-red-50 p-3">
+          <p className="text-sm text-red-900">Error: {error}</p>
         </div>
       )}
 
@@ -114,7 +114,7 @@ export default function SourcesPanel({ adminToken }: SourcesPanelProps) {
             onClick={() => setFilterCategory('all')}
             className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
               filterCategory === 'all'
-                ? 'bg-blue-600 text-white'
+                ? 'bg-black text-white'
                 : 'bg-surface border border-surface-border text-muted hover:text-foreground'
             }`}
           >
@@ -128,7 +128,7 @@ export default function SourcesPanel({ adminToken }: SourcesPanelProps) {
                 onClick={() => setFilterCategory(cat)}
                 className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
                   filterCategory === cat
-                    ? 'bg-blue-600 text-white'
+                    ? 'bg-black text-white'
                     : 'bg-surface border border-surface-border text-muted hover:text-foreground'
                 }`}
               >

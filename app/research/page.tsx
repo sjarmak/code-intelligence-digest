@@ -21,7 +21,7 @@ export default function ResearchPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-white text-black">
       {/* Header */}
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
