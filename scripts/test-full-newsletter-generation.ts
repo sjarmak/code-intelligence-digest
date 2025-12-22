@@ -12,7 +12,7 @@ import { extractBatchDigests } from "../src/lib/pipeline/extract";
 import { generateNewsletterFromDigests } from "../src/lib/pipeline/newsletter";
 import { buildPromptProfile } from "../src/lib/pipeline/promptProfile";
 import { rerankWithPrompt, filterByExclusions } from "../src/lib/pipeline/promptRerank";
-import { Category, RankedItem } from "../src/lib/model";
+import { Category, FeedItem, RankedItem } from "../src/lib/model";
 import { logger } from "../src/lib/logger";
 
 const USER_PROMPT = "focus on code search, information retrieval or RAG or context management for coding agents, software engineering with coding agents, and developer productivity with AI";
@@ -41,7 +41,7 @@ async function testFullPipeline() {
   try {
     // Step 1: Load items
     console.log("📥 Step 1: Loading items...");
-    const allItems: (typeof RankedItem)[] = [];
+    const allItems: FeedItem[] = [];
     const loadStats = new Map<string, number>();
 
     for (const category of CATEGORIES) {
