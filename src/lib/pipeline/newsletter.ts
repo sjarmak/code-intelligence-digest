@@ -409,7 +409,7 @@ async function generateNewsletterFromDigestData(
   userPrompt: string
 ): Promise<NewsletterContent> {
   const apiKey = process.env.OPENAI_API_KEY;
-  const client = new OpenAI({ apiKey });
+  // Note: OpenAI client created later if apiKey exists
 
   // Log items with missing/invalid URLs for transparency
   const itemsWithoutUrl = digests.filter(d => !isValidUrl(d.url));
@@ -417,6 +417,12 @@ async function generateNewsletterFromDigestData(
     logger.warn(`${itemsWithoutUrl.length} items without valid URLs will appear without links`, {
       titles: itemsWithoutUrl.map(d => d.title),
     });
+  }
+
+  // Debug: Log digest URLs for newsletters category
+  const newsletterDigests = digests.filter(d => d.category === "newsletters");
+  if (newsletterDigests.length > 0) {
+    logger.info(`[URL_DEBUG] Newsletter digests (${newsletterDigests.length}): ${newsletterDigests.slice(0, 5).map(d => `${d.title.substring(0, 30)}... -> ${d.url}`).join(" | ")}`);
   }
 
   // Group items by resource category (research, community, newsletters, etc.)
@@ -450,7 +456,9 @@ async function generateNewsletterFromDigestData(
     return generateNewsletterFallback(
       digests.map(d => ({
         title: d.title,
+        url: d.url, // CRITICAL: preserve URL from digest
         sourceTitle: d.sourceTitle,
+        category: d.category,
         summary: d.gist,
         contentSnippet: d.keyBullets.join(" "),
         llmScore: { tags: d.topicTags, relevance: d.userRelevanceScore, usefulness: 0 },
@@ -691,7 +699,11 @@ Be specific, concrete, and analytical.`,
       
       for (const item of items) {
          // Only create a link if the URL is valid (not Inoreader, not empty)
-         const titleMD = isValidUrl(item.url)
+         const urlValid = isValidUrl(item.url);
+         if (!urlValid && categoryName === "Newsletters") {
+           logger.warn(`[URL_DEBUG] Invalid URL for newsletter item "${item.title.substring(0, 40)}...": "${item.url}"`);
+         }
+         const titleMD = urlValid
            ? `**[${item.title}](${item.url})**`
            : `**${item.title}**`;
          markdown += `- ${titleMD} — *${item.sourceTitle}*\n`;
