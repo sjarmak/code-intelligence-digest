@@ -126,7 +126,7 @@ export async function generatePodcastScript(
     const response = await client.chat.completions.create({
       model: "gpt-5.2-chat-latest",
       max_completion_tokens: 5000,
-      temperature: 0.7,
+      // Note: gpt-5.2-chat-latest only supports temperature=1 (default)
       messages: [
         {
           role: "user",
@@ -273,39 +273,60 @@ function generateFallbackScript(
   rundown: PodcastRundown,
   _voiceStyle: string
 ): PodcastScript {
+  // Segment intro phrases to vary the script
+  const segmentIntros = [
+    "Let's kick things off with",
+    "Moving on to",
+    "Next up,",
+    "Now let's look at",
+  ];
+
   let script = "[INTRO MUSIC]\n\n";
   script += `**HOST:** Welcome to this week's code intelligence digest. I'm your host.\n\n`;
   script += `**COHOST:** And I'm your co-host. Today we're covering ${digests.length} stories on code search, agents, and developer tools.\n\n`;
 
-  let cumulativeSeconds = 40;
+  for (let i = 0; i < rundown.segments.length; i++) {
+    const segment = rundown.segments[i];
+    const intro = segmentIntros[i % segmentIntros.length];
 
-  for (const segment of rundown.segments) {
-    script += `## [${formatTime(cumulativeSeconds)}] ${segment.name}\n\n`;
+    script += `## ${segment.name}\n\n`;
 
-    script += `**HOST:** Let's start with this. ${segment.key_points_to_say.slice(0, 2).join(" Also, ")}\n\n`;
+    script += `**HOST:** ${intro} ${segment.name.toLowerCase()}. ${segment.key_points_to_say.slice(0, 2).join(" ")}\n\n`;
 
     if (segment.nuance_or_uncertainty.length > 0) {
-      script += `**COHOST:** That said, there's some uncertainty here: ${segment.nuance_or_uncertainty[0]}\n\n`;
+      script += `**COHOST:** That said, ${segment.nuance_or_uncertainty[0]}\n\n`;
     }
 
     script += `[PAUSE]\n\n`;
-
-    cumulativeSeconds += segment.time_seconds;
   }
 
   script += `**HOST:** That's all for this week. Thanks for listening. Check the show notes for all links.\n\n`;
   script += `[OUTRO MUSIC]`;
 
-  const segments = rundown.segments.map((s, idx) => ({
-    title: s.name,
-    startTime: formatTime(idx === 0 ? 40 : 40 + rundown.segments.slice(0, idx).reduce((sum, x) => sum + x.time_seconds, 0)),
-    endTime: formatTime(40 + rundown.segments.slice(0, idx + 1).reduce((sum, x) => sum + x.time_seconds, 0)),
-    duration: s.time_seconds,
-  }));
+  // Calculate actual duration from word count (150 wpm)
+  const actualWordCount = script.split(/\s+/).length;
+  const actualDurationSeconds = estimateDuration(actualWordCount);
+
+  // Build segments with proportional timing based on actual duration
+  const totalPlannedSeconds = rundown.segments.reduce((sum, s) => sum + s.time_seconds, 0);
+  let cumulativeActualSeconds = 30; // Intro
+
+  const segments = rundown.segments.map((s) => {
+    const proportion = s.time_seconds / totalPlannedSeconds;
+    const segmentDuration = Math.round((actualDurationSeconds - 60) * proportion); // Subtract intro/outro
+    const startTime = formatTime(cumulativeActualSeconds);
+    cumulativeActualSeconds += segmentDuration;
+    return {
+      title: s.name,
+      startTime,
+      endTime: formatTime(cumulativeActualSeconds),
+      duration: segmentDuration,
+    };
+  });
 
   return {
     transcript: script,
     segments,
-    estimatedDuration: formatTime(40 + rundown.total_time_seconds),
+    estimatedDuration: formatTime(actualDurationSeconds),
   };
 }
