@@ -282,13 +282,26 @@ function createArticleItem(
   articleIndex: number,
   totalArticles: number
 ): RankedItem {
+  // If article URL is missing/invalid, try to extract one from full text nearby
+  let finalUrl = article.url;
+  
+  if (!finalUrl || finalUrl.length === 0 || finalUrl.includes("inoreader.com")) {
+    // Try to find any URL in the base item's full text that might be the article
+    const htmlContent = baseItem.fullText || baseItem.summary || "";
+    const urlMatch = htmlContent.match(/https?:\/\/[^\s<>"'\)]+/);
+    if (urlMatch && !urlMatch[0].includes("inoreader.com") && !urlMatch[0].includes("tracking.tldrnewsletter")) {
+      finalUrl = urlMatch[0];
+      logger.info(`Extracted fallback URL for article "${article.title}": ${finalUrl}`);
+    }
+  }
+  
   return {
     // Keep base item properties but with article-specific data
     id: `${baseItem.id}-article-${articleIndex}`,
     streamId: baseItem.streamId,
     sourceTitle: baseItem.sourceTitle, // Keep original source (TLDR, etc.)
     title: article.title,
-    url: article.url,
+    url: finalUrl,
     author: baseItem.author,
     publishedAt: baseItem.publishedAt,
     
