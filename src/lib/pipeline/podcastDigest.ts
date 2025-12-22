@@ -8,6 +8,38 @@ import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
 
+/**
+ * Check if URL is from Reddit (discussion threads, not primary sources)
+ */
+function isRedditUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  return /reddit\.com\/(r|u|user)\//i.test(url);
+}
+
+/**
+ * Check if URL is a Google News redirect (not a real article URL)
+ */
+function isGoogleNewsRedirect(url: string | undefined): boolean {
+  if (!url) return false;
+  return /news\.google\.com\/rss\/articles\//i.test(url);
+}
+
+/**
+ * Check if item URL should be excluded from podcast extraction
+ */
+function shouldExcludeItem(item: RankedItem): boolean {
+  return isRedditUrl(item.url) || isGoogleNewsRedirect(item.url);
+}
+
+/**
+ * Check if URL is valid (not Inoreader, not empty, http/https)
+ */
+function isValidUrl(url: string): boolean {
+  if (!url || typeof url !== "string") return false;
+  if (url.includes("inoreader.com") || url.includes("google.com/reader")) return false;
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
 export interface PodcastItemDigest {
   id: string;
   title: string;
@@ -197,7 +229,13 @@ Return ONLY valid JSON.`,
 }
 
 /**
+ * Minimum relevance score for podcast items (0-10)
+ */
+const MIN_RELEVANCE_SCORE = 3;
+
+/**
  * Extract digests from multiple items in parallel
+ * Filters out Reddit, Google News redirects, and low-relevance items
  */
 export async function extractPodcastBatchDigests(
   items: RankedItem[],
@@ -205,12 +243,156 @@ export async function extractPodcastBatchDigests(
 ): Promise<PodcastItemDigest[]> {
   logger.info(`Extracting podcast digests for ${items.length} items`);
 
+  // Filter out non-article URLs before processing (Reddit, Google News redirects)
+  const validItems = items.filter(item => !shouldExcludeItem(item));
+  if (validItems.length < items.length) {
+    logger.info(`Filtered out ${items.length - validItems.length} non-article items before podcast extraction (Reddit, Google News redirects)`);
+  }
+
+  // Filter items with invalid URLs
+  const itemsWithValidUrls = validItems.filter(item => isValidUrl(item.url));
+  if (itemsWithValidUrls.length < validItems.length) {
+    logger.info(`Filtered out ${validItems.length - itemsWithValidUrls.length} items with invalid URLs`);
+  }
+
   const digests = await Promise.all(
-    items.map((item) => extractPodcastItemDigest(item, userPrompt))
+    itemsWithValidUrls.map((item) => extractPodcastItemDigest(item, userPrompt))
   );
 
-  logger.info(`Extracted ${digests.length} podcast digests`);
-  return digests;
+  // Filter by relevance score after extraction
+  const relevantDigests = digests.filter(d => (d.relevance_to_focus ?? 5) >= MIN_RELEVANCE_SCORE);
+  if (relevantDigests.length < digests.length) {
+    logger.info(`Filtered out ${digests.length - relevantDigests.length} low-relevance podcast digests (score < ${MIN_RELEVANCE_SCORE})`);
+  }
+
+  logger.info(`Extracted ${relevantDigests.length} podcast digests (from ${items.length} original items)`);
+  return relevantDigests;
+}
+
+/**
+ * Bad URL patterns for podcast digests
+ */
+const BAD_PODCAST_URL_PATTERNS = [
+  /reddit\.com\/r\//i,
+  /reddit\.com\/u\//i,
+  /news\.google\.com\/rss\//i,
+  /inoreader\.com/i,
+  /\/advertis(e|ing)/i,
+  /\/sponsor/i,
+  /\/unsubscribe/i,
+  /\/subscribe(?![a-z])/i,
+];
+
+/**
+ * AI-style words to flag in podcast content
+ */
+const AI_LANGUAGE_WORDS = [
+  "highlights",
+  "underscores",
+  "shapes",
+  "fosters",
+  "emerging",
+  "landscape",
+  "leveraging",
+  "harnessing",
+  "delve",
+  "showcase",
+];
+
+/**
+ * Check if URL is bad for podcasts
+ */
+function isBadPodcastUrl(url: string): boolean {
+  if (!url) return true;
+  for (const pattern of BAD_PODCAST_URL_PATTERNS) {
+    if (pattern.test(url)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check if text contains AI-like language patterns
+ */
+function hasAILanguage(text: string): boolean {
+  const lowerText = text.toLowerCase();
+  return AI_LANGUAGE_WORDS.some(word => lowerText.includes(word));
+}
+
+/**
+ * Review podcast digest for quality issues
+ */
+export interface PodcastDigestReviewResult {
+  passed: boolean;
+  issues: string[];
+  digestsWithIssues: Set<string>;
+}
+
+/**
+ * Review podcast digests for quality issues
+ * Filters out bad URLs, AI language, and low-quality content
+ */
+export function reviewPodcastDigests(digests: PodcastItemDigest[]): PodcastDigestReviewResult {
+  const issues: string[] = [];
+  const digestsWithIssues = new Set<string>();
+
+  for (const digest of digests) {
+    const digestIssues: string[] = [];
+
+    // 1. Check URL
+    if (isBadPodcastUrl(digest.url)) {
+      digestIssues.push(`Bad URL: ${digest.url}`);
+    }
+
+    // 2. Check gist for AI language
+    if (hasAILanguage(digest.one_sentence_gist)) {
+      digestIssues.push("Gist contains AI-style language");
+    }
+
+    // 3. Check takeaway for AI language
+    if (hasAILanguage(digest.one_line_takeaway)) {
+      digestIssues.push("Takeaway contains AI-style language");
+    }
+
+    // 4. Check soundbite lines for AI language
+    if (digest.soundbite_lines.some(line => hasAILanguage(line))) {
+      digestIssues.push("Soundbite contains AI-style language");
+    }
+
+    // 5. Check for low relevance
+    if ((digest.relevance_to_focus ?? 5) < 3) {
+      digestIssues.push(`Low relevance score: ${digest.relevance_to_focus}`);
+    }
+
+    if (digestIssues.length > 0) {
+      digestsWithIssues.add(digest.id);
+      issues.push(`${digest.title}: ${digestIssues.join(" | ")}`);
+    }
+  }
+
+  return {
+    passed: digestsWithIssues.size === 0,
+    issues,
+    digestsWithIssues,
+  };
+}
+
+/**
+ * Filter podcast digests by quality review
+ */
+export function filterPodcastDigestsByQuality(digests: PodcastItemDigest[]): PodcastItemDigest[] {
+  const review = reviewPodcastDigests(digests);
+
+  if (review.issues.length > 0) {
+    logger.warn("Filtering out low-quality podcast digests", {
+      totalDigests: digests.length,
+      filtered: review.digestsWithIssues.size,
+      issues: review.issues.slice(0, 3),
+    });
+  }
+
+  return digests.filter(d => !review.digestsWithIssues.has(d.id));
 }
 
 /**

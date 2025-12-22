@@ -6,9 +6,20 @@
 
 import OpenAI from "openai";
 import { Category } from "../model";
-import { PodcastItemDigest } from "./podcastDigest";
+import { PodcastItemDigest, filterPodcastDigestsByQuality } from "./podcastDigest";
 import { PromptProfile } from "./promptProfile";
 import { logger } from "../logger";
+
+/**
+ * Check if URL is valid for podcast (not Inoreader, not empty, http/https)
+ */
+function isValidPodcastUrl(url: string): boolean {
+  if (!url || typeof url !== "string") return false;
+  if (url.includes("inoreader.com") || url.includes("google.com/reader")) return false;
+  if (url.includes("reddit.com/r/") || url.includes("reddit.com/u/")) return false;
+  if (url.includes("news.google.com/rss/")) return false;
+  return url.startsWith("http://") || url.startsWith("https://");
+}
 
 export interface PodcastSegment {
   name: string;
@@ -80,22 +91,31 @@ export async function generatePodcastRundown(
   _categories: Category[],
   profile: PromptProfile | null
 ): Promise<PodcastRundown> {
-  if (digests.length === 0) {
+  // Filter digests with invalid URLs before processing
+  const validDigests = digests.filter(d => isValidPodcastUrl(d.url));
+  if (validDigests.length < digests.length) {
+    logger.info(`Filtered out ${digests.length - validDigests.length} digests with invalid URLs before rundown generation`);
+  }
+
+  // Apply quality review filter
+  const qualityDigests = filterPodcastDigestsByQuality(validDigests);
+
+  if (qualityDigests.length === 0) {
     return generateFallbackRundown([], period, []);
   }
 
   logger.info(
-    `Generating podcast rundown for ${digests.length} digests, period=${period}, categories=${_categories.join(",")}`
+    `Generating podcast rundown for ${qualityDigests.length} digests, period=${period}, categories=${_categories.join(",")}`
   );
 
-  const digestContext = formatDigestsForRundown(digests);
+  const digestContext = formatDigestsForRundown(qualityDigests);
   const periodLabel = period === "week" ? "weekly" : "monthly";
   const categoryLabels = _categories.join(", ");
 
   const client = getClient();
   if (!client) {
     logger.warn("OPENAI_API_KEY not set, using fallback rundown");
-    return generateFallbackRundown(digests, period, _categories);
+    return generateFallbackRundown(qualityDigests, period, _categories);
   }
 
   try {
