@@ -353,15 +353,19 @@ export async function extractBatchDigests(
     }
   }
 
+  // Log decomposed item URLs BEFORE extraction
+  const decomposedItemUrls = decomposedItems.slice(0, 5).map(i => ({ id: i.id.substring(0, 40), title: i.title.substring(0, 40), url: i.url }));
+  logger.info(`[BEFORE_EXTRACT] Decomposed item URLs: ${JSON.stringify(decomposedItemUrls)}`);
+
   const digests = await Promise.all(
     decomposedItems.map((item) => extractItemDigest(item, userPrompt))
   );
 
   logger.info(`Extracted ${digests.length} digests`);
   
-  // Log sample digest URLs
-  const digestUrls = digests.slice(0, 5).map(d => ({ title: d.title.substring(0, 40), url: d.url }));
-  logger.info(`Sample digest URLs: ${JSON.stringify(digestUrls)}`);
+  // Log sample digest URLs AFTER extraction
+  const digestUrls = digests.slice(0, 5).map(d => ({ id: d.id.substring(0, 40), title: d.title.substring(0, 40), url: d.url }));
+  logger.info(`[AFTER_EXTRACT] Sample digest URLs: ${JSON.stringify(digestUrls)}`);
   
   return digests;
 }
