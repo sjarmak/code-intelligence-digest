@@ -7,7 +7,7 @@
 import { RankedItem } from "../model";
 import { logger } from "../logger";
 
-const NEWSLETTER_SOURCES = ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate"];
+const NEWSLETTER_SOURCES = ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"];
 
 /**
  * Check if item is from a known email newsletter source
@@ -372,10 +372,15 @@ export function decomposeNewsletterItem(item: RankedItem): RankedItem[] {
 
   // Multiple articles: create separate items for each
   logger.info(`Decomposing ${item.sourceTitle} into ${articles.length} articles`);
+  logger.info(`[DECOMPOSE_DEBUG] Article URLs extracted: ${articles.slice(0, 3).map(a => a.url).join(" | ")}`);
   
-  return articles.map((article, idx) =>
+  const decomposed = articles.map((article, idx) =>
     createArticleItem(item, article, idx + 1, articles.length)
   );
+  
+  logger.info(`[DECOMPOSE_DEBUG] Decomposed item URLs: ${decomposed.slice(0, 3).map(d => d.url).join(" | ")}`);
+  
+  return decomposed;
 }
 
 /**
