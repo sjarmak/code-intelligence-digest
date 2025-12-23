@@ -54,9 +54,13 @@ interface PodcastViewerProps {
  * Format category name from slug to human-readable
  */
 function formatCategoryName(slug: string): string {
+  const specialCases: Record<string, string> = {
+    'ai': 'AI',
+  };
+
   return slug
     .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .map(word => specialCases[word.toLowerCase()] || word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }
 

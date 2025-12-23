@@ -177,17 +177,29 @@ export async function runDailySync(): Promise<{
       );
 
       // Fetch batch (items newer than last sync)
-      // Note: xt parameter with unix timestamp excludes read items BEFORE that time
+      // Uses `ot` parameter (older than) to only return items newer than syncSinceTimestamp
+      // This significantly reduces API calls by filtering on server-side
       const response = await client.getStreamContents(allItemsStreamId, {
         n: 1000,
         continuation,
-        xt: `user/${userId}/state/com.google/read/unix:${syncSinceTimestamp}`, // Exclude read items older than sync threshold
+        ot: syncSinceTimestamp, // Only fetch items newer than this timestamp
       });
 
       callsUsed++;
 
       if (!response.items || response.items.length === 0) {
-        logger.info('[DAILY-SYNC] No more items to fetch');
+        logger.info('[DAILY-SYNC] No more items to fetch (empty response)');
+        hasMoreItems = false;
+        break;
+      }
+
+      // Early termination: if we're seeing items older than our threshold,
+      // there are no more new items to fetch. Stop pagination early.
+      const oldestItemTimestamp = Math.min(...response.items.map(item => item.published || 0));
+      if (oldestItemTimestamp <= syncSinceTimestamp) {
+        logger.debug(
+          `[DAILY-SYNC] Oldest item in batch is older than sync threshold, stopping pagination early`
+        );
         hasMoreItems = false;
         break;
       }

@@ -9,7 +9,8 @@ import { logger } from "../logger";
 export interface FetchStreamOptions {
   n?: number;
   continuation?: string;
-  xt?: string;
+  xt?: string;  // Exclude tag (e.g., read items)
+  ot?: number;  // "Older than" - only fetch items newer than this Unix timestamp
 }
 
 export class InoreaderClient {
@@ -96,6 +97,7 @@ export class InoreaderClient {
     if (options.n) params.append("n", options.n.toString());
     if (options.continuation) params.append("c", options.continuation);
     if (options.xt) params.append("xt", options.xt);
+    if (options.ot) params.append("ot", options.ot.toString());
 
     const url = `https://www.inoreader.com/reader/api/0/stream/contents/${encodedStreamId}?${params.toString()}`;
 
