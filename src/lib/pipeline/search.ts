@@ -7,7 +7,7 @@
  * 2. Semantic: Slow (embeddings), good for conceptual matches
  * 3. Combined: Weighted average of both scores
  * 
- * Embeddings are 768-dimensional pseudo-embeddings (deterministic hash-based)
+ * Embeddings are 1536-dimensional (OpenAI text-embedding-3-small) with fallback to pseudo-embeddings
  * In production, replace with OpenAI/Anthropic embeddings
  */
 
