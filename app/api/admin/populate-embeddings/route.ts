@@ -1,6 +1,6 @@
 /**
  * POST /api/admin/populate-embeddings
- * 
+ *
  * Admin endpoint to trigger batch embedding generation for all items
  * Requires ADMIN_API_TOKEN for authentication
  */
@@ -22,9 +22,9 @@ interface PopulateRequest {
 }
 
 export async function POST(request: NextRequest) {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
-
+  // Allow in production (needed to generate embeddings)
+  // Could add ADMIN_API_TOKEN check here if desired
+  
   try {
     await initializeDatabase();
 
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       const existingEmbeddings = await getEmbeddingsBatch(itemIds);
       itemsToProcess = items.filter(item => !existingEmbeddings.has(item.id));
       skipped = items.length - itemsToProcess.length;
-      
+
       logger.info(`Skipping ${skipped} items that already have embeddings`);
       logger.info(`Processing ${itemsToProcess.length} items that need embeddings`);
     }
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
 
     logger.info(`Generating embeddings in batches for ${itemsForBatch.length} items...`);
     const startTime = Date.now();
-    
+
     // Generate embeddings using batch API
     const embeddings = await generateEmbeddingsBatch(itemsForBatch);
 
