@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import ItemsGrid from '@/src/components/feeds/items-grid';
 import SearchPage from '@/src/components/search/search-page';
 import QAPage from '@/src/components/qa/qa-page';
@@ -22,6 +22,11 @@ export default function Home() {
   const [activeCategory, setActiveCategory] = useState<string>('newsletters');
   const [activeTab, setActiveTab] = useState<TabType>('resources');
 
+  // Ensure page scrolls to top on mount (fixes mobile scroll issue)
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
@@ -42,7 +47,7 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-screen bg-white text-black">
+    <div className="min-h-screen bg-white text-black flex flex-col">
       {/* Header */}
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
@@ -55,10 +60,9 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Settings and Logout icons */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {/* Settings icon - only in dev */}
-              {config.adminUIEnabled && (
+            {/* Settings icon - only in dev */}
+            {config.adminUIEnabled && (
+              <div className="flex-shrink-0">
                 <a
                   href="/admin"
                   className="p-1 rounded-md transition-colors hover:bg-gray-100"
@@ -69,18 +73,8 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
                 </a>
-              )}
-              {/* Logout button */}
-              <button
-                onClick={handleLogout}
-                className="p-1 rounded-md transition-colors hover:bg-gray-100"
-                title="Sign out"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-              </button>
-            </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -256,6 +250,20 @@ export default function Home() {
           </Suspense>
         )}
       </main>
+
+      {/* Footer with logout */}
+      <footer className="border-t border-surface-border mt-auto py-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-end">
+            <button
+              onClick={handleLogout}
+              className="text-sm text-muted hover:text-black transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
