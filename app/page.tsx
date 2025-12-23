@@ -61,66 +61,89 @@ export default function Home() {
       {/* Main Tabs */}
       <div className="border-b border-surface-border bg-surface sticky top-20 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center">
-            <nav className="flex overflow-x-auto gap-6" role="tablist">
-              <button
-                  onClick={() => setActiveTab('resources')}
-                  className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                    activeTab === 'resources'
-                      ? 'border-black text-black'
-                      : 'border-transparent text-gray-600 hover:text-black'
-                  }`}
-                  role="tab"
-                  aria-selected={activeTab === 'resources'}
-                >
-                  Resources
-                </button>
-               <button
-                 onClick={() => setActiveTab('search')}
-                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                   activeTab === 'search'
-                     ? 'border-black text-black'
-                     : 'border-transparent text-gray-600 hover:text-black'
-                 }`}
-                 role="tab"
-                 aria-selected={activeTab === 'search'}
-               >
-                 Search
-               </button>
-               <button
-                 onClick={() => setActiveTab('ask')}
-                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                   activeTab === 'ask'
-                     ? 'border-black text-black'
-                     : 'border-transparent text-gray-600 hover:text-black'
-                 }`}
-                 role="tab"
-                 aria-selected={activeTab === 'ask'}
-               >
-                 Ask
-               </button>
-               <a
-                 href="/research"
-                 className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
-               >
-                 Libraries
-               </a>
-               <a
-                 href="/synthesis/newsletter"
-                 className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
-               >
-                 Newsletter Generator
-               </a>
-               <a
-                 href="/synthesis/podcast"
-                 className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
-               >
-                 Podcast Generator
-               </a>
-             </nav>
+          <nav className="flex overflow-x-auto gap-6" role="tablist">
+            <button
+                onClick={() => setActiveTab('resources')}
+                className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                  activeTab === 'resources'
+                    ? 'border-black text-black'
+                    : 'border-transparent text-gray-600 hover:text-black'
+                }`}
+                role="tab"
+                aria-selected={activeTab === 'resources'}
+              >
+                Resources
+              </button>
+             <button
+               onClick={() => setActiveTab('search')}
+               className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 activeTab === 'search'
+                   ? 'border-black text-black'
+                   : 'border-transparent text-gray-600 hover:text-black'
+               }`}
+               role="tab"
+               aria-selected={activeTab === 'search'}
+             >
+               Search
+             </button>
+             <button
+               onClick={() => setActiveTab('ask')}
+               className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 activeTab === 'ask'
+                   ? 'border-black text-black'
+                   : 'border-transparent text-gray-600 hover:text-black'
+               }`}
+               role="tab"
+               aria-selected={activeTab === 'ask'}
+             >
+               Ask
+             </button>
+             <a
+               href="/research"
+               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+             >
+               Libraries
+             </a>
+             <a
+               href="/synthesis/newsletter"
+               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+             >
+               Newsletter Generator
+             </a>
+             <a
+               href="/synthesis/podcast"
+               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+             >
+               Podcast Generator
+             </a>
+           </nav>
+        </div>
+      </div>
 
-            {/* Period buttons - only show when resources tab active */}
-            {activeTab === 'resources' && (
+      {/* Category Tabs (only show for resources tab) */}
+      {activeTab === 'resources' && (
+        <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center">
+              <nav className="flex overflow-x-auto gap-2" role="tablist">
+                {categories.map((cat) => (
+                  <button
+                     key={cat.id}
+                     onClick={() => setActiveCategory(cat.id)}
+                     className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                       activeCategory === cat.id
+                         ? 'border-black text-black'
+                         : 'border-transparent text-gray-600 hover:text-black'
+                     }`}
+                     role="tab"
+                     aria-selected={activeCategory === cat.id}
+                   >
+                     {cat.label}
+                   </button>
+                 ))}
+               </nav>
+
+              {/* Period buttons on the right */}
               <div className="flex gap-2 ml-auto">
                 <button
                    onClick={() => setPeriod('day')}
@@ -163,35 +186,10 @@ export default function Home() {
                    All-time
                 </button>
               </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Category Tabs (only show for resources tab) */}
-      {activeTab === 'resources' && (
-        <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <nav className="flex overflow-x-auto gap-2" role="tablist">
-              {categories.map((cat) => (
-                <button
-                   key={cat.id}
-                   onClick={() => setActiveCategory(cat.id)}
-                   className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                     activeCategory === cat.id
-                       ? 'border-black text-black'
-                       : 'border-transparent text-gray-600 hover:text-black'
-                   }`}
-                   role="tab"
-                   aria-selected={activeCategory === cat.id}
-                 >
-                   {cat.label}
-                 </button>
-              ))}
-            </nav>
-          </div>
-        </div>
-      )}
+            </div>
+           </div>
+         </div>
+       )}
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
