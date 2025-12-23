@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ItemRelevanceBadge, { ItemRelevanceRating } from '@/src/components/tuning/item-relevance-badge';
 import { useAdminSettings } from '@/src/hooks/useAdminSettings';
 
@@ -60,6 +60,29 @@ function getCategoryColor(category: string): string {
 export default function ItemCard({ item, rank }: ItemCardProps) {
   const { settings, loading } = useAdminSettings();
   const [currentRating, setCurrentRating] = useState<ItemRelevanceRating>(null);
+  const [isStarred, setIsStarred] = useState(false);
+
+  // Load stored rating and starred status on mount
+  useEffect(() => {
+    const loadMetadata = async () => {
+      try {
+        const response = await fetch(`/api/admin/item-relevance?itemId=${encodeURIComponent(item.id)}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.rating !== undefined) {
+            setCurrentRating(data.rating);
+          }
+          if (data.starred !== undefined) {
+            setIsStarred(data.starred);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading item metadata:', error);
+      }
+    };
+
+    loadMetadata();
+  }, [item.id]);
 
   const handleRateItem = async (
     itemId: string,
@@ -113,44 +136,49 @@ export default function ItemCard({ item, rank }: ItemCardProps) {
              >
                {item.title}
              </a>
-             {!loading && settings.enableItemRelevanceTuning && (
-               <ItemRelevanceBadge
-                 itemId={item.id}
-                 currentRating={currentRating}
-                 onRatingChange={handleRateItem}
-                 starred={false}
-                 readOnly={false}
-               />
-             )}
           </div>
 
-          {/* Metadata line: source, tags, date */}
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted mb-2">
-            <span className="font-medium text-gray-700">{item.sourceTitle}</span>
-            <span>•</span>
+          {/* Metadata line: source, tags, date, and rating button */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted mb-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-gray-700">{item.sourceTitle}</span>
+              <span>•</span>
 
-            {/* Tags */}
-            {item.llmScore.tags.length > 0 && (
-              <>
-                <div className="flex gap-1">
-                  {item.llmScore.tags.slice(0, 2).map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-block px-1.5 py-0.5 bg-surface border border-surface-border rounded text-gray-600"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                  {item.llmScore.tags.length > 2 && (
-                    <span className="text-gray-500">+{item.llmScore.tags.length - 2}</span>
-                  )}
-                </div>
-                <span>•</span>
-              </>
+              {/* Tags */}
+              {item.llmScore.tags.length > 0 && (
+                <>
+                  <div className="flex gap-1">
+                    {item.llmScore.tags.slice(0, 2).map((tag) => (
+                      <span
+                        key={tag}
+                        className="inline-block px-1.5 py-0.5 bg-surface border border-surface-border rounded text-gray-600"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                    {item.llmScore.tags.length > 2 && (
+                      <span className="text-gray-500">+{item.llmScore.tags.length - 2}</span>
+                    )}
+                  </div>
+                  <span>•</span>
+                </>
+              )}
+
+              {/* Date */}
+              <span>{formatDate(item.publishedAt)}</span>
+            </div>
+
+            {/* Rating button - right aligned */}
+            {!loading && settings.enableItemRelevanceTuning && (
+              <ItemRelevanceBadge
+                itemId={item.id}
+                currentRating={currentRating}
+                onRatingChange={handleRateItem}
+                starred={isStarred}
+                onStarChange={(starred) => setIsStarred(starred)}
+                readOnly={false}
+              />
             )}
-
-            {/* Date */}
-            <span>{formatDate(item.publishedAt)}</span>
           </div>
 
           {/* Category badge */}

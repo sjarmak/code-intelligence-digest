@@ -16,13 +16,13 @@ export async function saveItemRelevance(
   try {
     const sqlite = getSqlite();
 
-    const id = `relevance_${itemId}_${Date.now()}`;
-
+    // Use item_id as the unique identifier for replacement
+    // This ensures updates actually replace existing records
     sqlite.prepare(`
       INSERT OR REPLACE INTO item_relevance
       (id, item_id, relevance_rating, notes, rated_at, updated_at)
       VALUES (?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
-    `).run(id, itemId, rating, notes || null);
+    `).run(itemId, itemId, rating, notes || null);
 
     logger.debug(`Saved relevance rating for item ${itemId}: ${rating}`);
   } catch (error) {
@@ -114,4 +114,52 @@ export function isItemRelevanceTuningEnabled(): boolean {
  */
 export function setItemRelevanceTuningEnabled(enabled: boolean): void {
   setAdminSetting('enable_item_relevance_tuning', enabled ? 'true' : 'false');
+}
+
+/**
+ * Star or unstar an item
+ */
+export async function starItem(itemId: string, starred: boolean = true): Promise<void> {
+  try {
+    const sqlite = getSqlite();
+
+    if (starred) {
+      // Insert into starred_items table
+      sqlite.prepare(`
+        INSERT OR IGNORE INTO starred_items
+        (id, item_id, inoreader_item_id, starred_at, created_at, updated_at)
+        VALUES (?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'), strftime('%s', 'now'))
+      `).run(itemId, itemId, itemId);
+
+      logger.debug(`Starred item ${itemId}`);
+    } else {
+      // Remove from starred_items table
+      sqlite.prepare(`
+        DELETE FROM starred_items WHERE item_id = ?
+      `).run(itemId);
+
+      logger.debug(`Unstarred item ${itemId}`);
+    }
+  } catch (error) {
+    logger.error(`Failed to update starred status for item ${itemId}`, error);
+    throw error;
+  }
+}
+
+/**
+ * Check if an item is starred
+ */
+export async function isItemStarred(itemId: string): Promise<boolean> {
+  try {
+    const sqlite = getSqlite();
+
+    const row = sqlite
+      .prepare(`SELECT id FROM starred_items WHERE item_id = ? LIMIT 1`)
+      .get(itemId) as { id: string } | undefined;
+
+    return !!row;
+  } catch (error) {
+    logger.error(`Failed to check if item is starred ${itemId}`, error);
+    return false;
+  }
 }

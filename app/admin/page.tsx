@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
 import { SyncDialog } from '@/src/components/admin/sync-dialog';
 import SettingsPanel from '@/src/components/admin/settings-panel';
 
@@ -15,11 +17,20 @@ export default function AdminPage() {
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-3xl font-bold">Relevance Tuning</h1>
-              <p className="text-muted mt-2">
-                Manage source relevance scores and curate starred items
-              </p>
+            <div className="flex items-start gap-4">
+              <Link
+                href="/"
+                className="mt-1 p-1.5 rounded-md text-gray-600 hover:text-black hover:bg-gray-100 transition-colors"
+                title="Back to main"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </Link>
+              <div>
+                <h1 className="text-3xl font-bold">Relevance Tuning</h1>
+                <p className="text-muted mt-2">
+                  Manage source relevance scores and curate starred items
+                </p>
+              </div>
             </div>
             <SyncDialog />
           </div>

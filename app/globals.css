@@ -34,15 +34,6 @@ a {
   color: inherit;
 }
 
-/* Navigation links should be grey like buttons */
-nav a {
-  color: #999999;
-}
-
-nav a:hover {
-  color: #000000;
-}
-
 .card {
   background: var(--surface);
   border: 1px solid var(--surface-border);
