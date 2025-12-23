@@ -90,9 +90,19 @@ Guidelines:
           ],
         });
 
-        answer = response.choices[0].message.content || "Failed to generate answer";
+        const content = response.choices[0]?.message?.content;
+        if (!content || content.trim().length === 0) {
+          logger.warn("OpenAI API returned empty response, falling back to template synthesis");
+          answer = generateTemplateSynthesis(topItems);
+        } else {
+          answer = content.trim();
+        }
       } catch (error) {
-        logger.warn("Claude API call failed, falling back to template synthesis", { error });
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.warn("OpenAI API call failed, falling back to template synthesis", { 
+          error: errorMsg,
+          model: "gpt-4o-mini"
+        });
         answer = generateTemplateSynthesis(topItems);
       }
     } else {

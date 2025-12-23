@@ -46,16 +46,38 @@ export default function QAPage() {
       const response = await fetch(`/api/ask?${params.toString()}`);
 
       if (!response.ok) {
-        throw new Error('Failed to get answer');
+        // Try to get error message from response
+        let errorMessage = `Failed to get answer (${response.status})`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+          
+          // Handle rate limiting specifically
+          if (response.status === 429) {
+            errorMessage = errorData.error || 'Rate limit exceeded. Please try again later.';
+          }
+        } catch {
+          // If JSON parsing fails, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+      
+      // Check if response has an error field (even with 200 status)
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
       setResponse(data);
       setItemsSearched(0); // itemsSearched not in response, would need API update
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
       setResponse(null);
+      // Log to console for debugging
+      console.error('Ask question failed:', message);
     } finally {
       setIsLoading(false);
     }
