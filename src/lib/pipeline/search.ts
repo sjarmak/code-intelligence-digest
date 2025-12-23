@@ -1,12 +1,12 @@
 /**
  * Hybrid search pipeline
  * Combines BM25 keyword matching + semantic search (embeddings)
- * 
+ *
  * Hybrid approach:
  * 1. BM25: Fast, keyword-based, good for exact term matches
  * 2. Semantic: Slow (embeddings), good for conceptual matches
  * 3. Combined: Weighted average of both scores
- * 
+ *
  * Embeddings are 1536-dimensional (OpenAI text-embedding-3-small) with fallback to pseudo-embeddings
  * In production, replace with OpenAI/Anthropic embeddings
  */
@@ -390,7 +390,7 @@ function termBasedSearch(
 /**
  * Rerank items using hybrid approach: semantic + LLM scores
  * For items that already have scores (RankedItem), boost by semantic relevance
- * 
+ *
  * In search mode (high boostWeight), semantic similarity dominates.
  * In digest mode (low boostWeight), LLM+BM25 scores have more influence.
  */
@@ -401,12 +401,12 @@ export function rerankWithSemanticScore(
 ): RankedItem[] {
   const reranked = rankedItems.map((item) => {
     const semanticScore = semanticScores.get(item.id) ?? 0;
-    
+
     // Blend semantic score into final score
     // With weight=0.5: equal balance between semantic and existing scores
     // Higher weight means semantic match becomes more important (better for user queries)
-    const blendedScore = 
-      item.finalScore * (1 - boostWeight) + 
+    const blendedScore =
+      item.finalScore * (1 - boostWeight) +
       semanticScore * boostWeight;
 
     return {
@@ -418,6 +418,6 @@ export function rerankWithSemanticScore(
 
   // Re-sort by blended score
   reranked.sort((a, b) => b.finalScore - a.finalScore);
-  
+
   return reranked;
 }

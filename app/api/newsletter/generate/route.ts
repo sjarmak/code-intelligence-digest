@@ -103,6 +103,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
   const startTime = Date.now();
 
   try {
+    // Check rate limits
+    const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await enforceRateLimit(request, '/api/newsletter/generate');
+    if (rateLimitResponse) {
+      return rateLimitResponse as NextResponse<NewsletterResponse | { error: string }>;
+    }
+
     const body = await request.json();
     const validation = validateRequest(body);
 
@@ -112,6 +119,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     const req = validation.data!;
     const periodDays = req.period === "week" ? 7 : 30;
+
+    // Check request size limits
+    const itemCount = req.categories.length * 50; // Rough estimate
+    const sizeCheck = checkRequestSize('/api/newsletter/generate', itemCount);
+    if (!sizeCheck.allowed) {
+      return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
+    }
 
     logger.info(`Newsletter request: categories=${req.categories.join(",")}, period=${req.period}, prompt="${(req.prompt || "").substring(0, 50)}..."`);
 
@@ -229,6 +243,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     // Build response
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     const id = `nl-${uuid()}`;
+
+    // Record successful usage
+    await recordUsage(request, '/api/newsletter/generate');
 
     const response: NewsletterResponse = {
       id,
