@@ -179,6 +179,28 @@ export async function initializeDatabase() {
       );
     `);
 
+    // Create item_relevance table for user ratings on regular items (not just starred)
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS item_relevance (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL UNIQUE,
+        relevance_rating INTEGER,
+        notes TEXT,
+        rated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create admin_settings table for feature toggles
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS admin_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+    `);
+
     // Add source_relevance column to feeds if it doesn't exist
     try {
       sqlite.exec(`
@@ -228,6 +250,8 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_starred_items_item_id ON starred_items(item_id);
       CREATE INDEX IF NOT EXISTS idx_starred_items_inoreader_id ON starred_items(inoreader_item_id);
       CREATE INDEX IF NOT EXISTS idx_starred_items_rating ON starred_items(relevance_rating);
+      CREATE INDEX IF NOT EXISTS idx_item_relevance_item_id ON item_relevance(item_id);
+      CREATE INDEX IF NOT EXISTS idx_item_relevance_rating ON item_relevance(relevance_rating);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_hash ON generated_podcast_audio(transcript_hash);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
     `);

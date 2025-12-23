@@ -1,5 +1,9 @@
 'use client';
 
+import { useState } from 'react';
+import ItemRelevanceBadge, { ItemRelevanceRating } from '@/src/components/tuning/item-relevance-badge';
+import { useAdminSettings } from '@/src/hooks/useAdminSettings';
+
 interface LLMScore {
   relevance: number;
   usefulness: number;
@@ -54,6 +58,34 @@ function getCategoryColor(category: string): string {
 
 
 export default function ItemCard({ item, rank }: ItemCardProps) {
+  const { settings, loading } = useAdminSettings();
+  const [currentRating, setCurrentRating] = useState<ItemRelevanceRating>(null);
+
+  const handleRateItem = async (
+    itemId: string,
+    rating: ItemRelevanceRating,
+    notes?: string
+  ) => {
+    try {
+      const response = await fetch('/api/admin/item-relevance', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ itemId, rating, notes }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error ${response.status}`);
+      }
+
+      setCurrentRating(rating);
+    } catch (error) {
+      console.error('Error rating item:', error);
+      throw error;
+    }
+  };
+
   return (
     <div className="border border-surface-border rounded-lg p-4 hover:border-gray-400 hover:bg-surface/80 transition-all hover:shadow-md">
        {/* Main row with rank, score, and title */}
@@ -79,6 +111,15 @@ export default function ItemCard({ item, rank }: ItemCardProps) {
              >
                {item.title}
              </a>
+             {!loading && settings.enableItemRelevanceTuning && (
+               <ItemRelevanceBadge
+                 itemId={item.id}
+                 currentRating={currentRating}
+                 onRatingChange={handleRateItem}
+                 starred={false}
+                 readOnly={false}
+               />
+             )}
           </div>
 
           {/* Metadata line: source, tags, date */}

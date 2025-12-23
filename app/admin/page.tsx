@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { SyncDialog } from '@/src/components/admin/sync-dialog';
+import SettingsPanel from '@/src/components/admin/settings-panel';
 
-type AdminTab = 'sources' | 'starred';
+type AdminTab = 'sources' | 'starred' | 'settings';
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<AdminTab>('sources');
@@ -53,6 +54,18 @@ export default function AdminPage() {
             >
               Starred Items
             </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`px-1 py-4 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'settings'
+                  ? 'border-black text-black'
+                  : 'border-transparent text-gray-600 hover:text-black'
+              }`}
+              role="tab"
+              aria-selected={activeTab === 'settings'}
+            >
+              Settings
+            </button>
           </nav>
         </div>
       </div>
@@ -60,7 +73,9 @@ export default function AdminPage() {
       {/* Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="max-w-4xl">
-          <p className="text-muted">Admin panel</p>
+          {activeTab === 'settings' && <SettingsPanel />}
+          {activeTab === 'sources' && <p className="text-muted">Sources panel</p>}
+          {activeTab === 'starred' && <p className="text-muted">Starred items panel</p>}
         </div>
       </main>
     </div>
