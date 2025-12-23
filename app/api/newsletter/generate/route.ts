@@ -244,7 +244,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       themes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-5.2-instant (extraction) + gpt-5.2-pro (synthesis)",
+        modelUsed: "gpt-4o-mini (extraction + synthesis)",
         tokensUsed: Math.ceil(selectedItems.length * 300 + 3000), // Extraction + synthesis estimate
         duration: `${duration}s`,
         promptProfile: profile,

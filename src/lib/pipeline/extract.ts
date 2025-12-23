@@ -1,7 +1,7 @@
 /**
  * Item extraction and digest generation (Pass 1)
  * Converts raw items with full text into structured digests
- * Uses gpt-5.2-chat-latest with strict JSON schema
+ * Uses gpt-4o-mini with strict JSON schema
  */
 
 import OpenAI from "openai";
@@ -147,7 +147,7 @@ async function summarizeChunk(
   total: number
 ): Promise<string> {
   const response = await client.chat.completions.create({
-    model: "gpt-5.2-chat-latest",
+    model: "gpt-4o-mini",
     max_completion_tokens: 300,
     messages: [
       {
@@ -238,7 +238,7 @@ export async function extractItemDigest(
 
     // Extract digest from processed text
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 800,
       response_format: { type: "json_object" },
       messages: [

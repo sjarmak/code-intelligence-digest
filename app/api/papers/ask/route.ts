@@ -164,7 +164,7 @@ ${context}`;
 
     // Generate answer using GPT-4o
     const message = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini',
       max_tokens: 1500,
       messages,
     });

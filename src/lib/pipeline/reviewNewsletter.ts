@@ -240,7 +240,7 @@ export async function reviewNewsletterWithLLM(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 500,
       messages: [
         {

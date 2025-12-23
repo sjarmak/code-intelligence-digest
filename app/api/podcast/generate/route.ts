@@ -1,10 +1,10 @@
 /**
  * POST /api/podcast/generate
  * Generate a podcast episode from selected categories using four-stage pipeline
- * Stage A: Extract per-item digests (gpt-5.2-instant)
- * Stage B: Build rundown with editorial clustering (gpt-5.2-thinking)
- * Stage C: Write conversational script (gpt-5.2-pro)
- * Stage D: Verify against digests (gpt-5.2-thinking)
+ * Stage A: Extract per-item digests (gpt-4o-mini)
+ * Stage B: Build rundown with editorial clustering (gpt-4o-mini)
+ * Stage C: Write conversational script (gpt-4o-mini)
+ * Stage D: Verify against digests (gpt-4o-mini)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -265,12 +265,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
     // FOUR-STAGE PIPELINE:
 
     // Stage A: Extract per-item digests
-    logger.info("Stage A: Extracting per-item digests (gpt-5.2-instant)...");
+    logger.info("Stage A: Extracting per-item digests (gpt-4o-mini)...");
     const digests = await extractPodcastBatchDigests(selectedItems, req.prompt || "");
     logger.info(`Stage A complete: ${digests.length} digests extracted`);
 
     // Stage B: Build editorial rundown
-    logger.info("Stage B: Generating podcast rundown (gpt-5.2-thinking)...");
+    logger.info("Stage B: Generating podcast rundown (gpt-4o-mini)...");
     const rundown = await generatePodcastRundown(
       digests,
       req.period,
@@ -280,7 +280,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
     logger.info(`Stage B complete: ${rundown.segments.length} segments, ${rundown.total_time_seconds}s total`);
 
     // Stage C: Write conversational script
-    logger.info("Stage C: Writing podcast script (gpt-5.2-pro)...");
+    logger.info("Stage C: Writing podcast script (gpt-4o-mini)...");
     const { transcript, segments, estimatedDuration } = await generatePodcastScript(
       digests,
       rundown,
@@ -292,7 +292,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
     logger.info(`Stage C complete: ${transcript.split(/\s+/).length} words, ${estimatedDuration} duration`);
 
     // Stage D: Verify script
-    logger.info("Stage D: Verifying script accuracy (gpt-5.2-thinking)...");
+    logger.info("Stage D: Verifying script accuracy (gpt-4o-mini)...");
     const verificationResult = await verifyPodcastScript(transcript, digests);
     const verificationReport = generateVerificationReport(verificationResult);
     const errorCount = verificationResult.issues.filter((i) => i.severity === "error").length;
@@ -326,7 +326,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       showNotes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-5.2 (digest) + gpt-5.2-pro (rundown) + gpt-5.2-pro (script) + gpt-5.2 (fact-check)",
+        modelUsed: "gpt-4o-mini (all stages)",
         tokensUsed: Math.ceil(transcript.split(/\s+/).length * 1.3 + digests.length * 300 + 2000), // Estimate all stages
         voiceStyle: req.voiceStyle!,
         duration: `${duration}s`,
