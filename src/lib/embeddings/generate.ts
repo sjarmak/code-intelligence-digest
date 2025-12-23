@@ -31,7 +31,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     }
 
     const client = getOpenAIClient();
-    
+
     // Try OpenAI embeddings first
     if (client) {
       try {
@@ -113,26 +113,26 @@ export async function generateEmbeddingsBatch(
   items: Array<{ id: string; text: string }>
 ): Promise<Map<string, number[]>> {
   const embeddings = new Map<string, number[]>();
-  
+
   if (items.length === 0) {
     return embeddings;
   }
 
   const client = getOpenAIClient();
-  
+
   // Use OpenAI batch API if available
   if (client) {
     try {
       // OpenAI supports up to 2048 inputs per batch, but we'll use smaller batches for reliability
       const batchSize = 100; // Conservative batch size
-      
+
       for (let i = 0; i < items.length; i += batchSize) {
         const batch = items.slice(i, Math.min(i + batchSize, items.length));
-        
+
         try {
           // Prepare inputs (truncate to 8000 chars each)
           const inputs = batch.map(item => item.text.substring(0, 8000));
-          
+
           const response = await client.embeddings.create({
             model: "text-embedding-3-small",
             input: inputs,
@@ -148,14 +148,14 @@ export async function generateEmbeddingsBatch(
               embeddings.set(batch[j].id, Array(1536).fill(0));
             }
           }
-          
+
           logger.info(`Generated OpenAI embeddings: ${Math.min(i + batchSize, items.length)}/${items.length}`);
         } catch (error) {
           // If batch fails, fall back to individual requests
           logger.warn("Batch embedding failed, falling back to individual requests", {
             error: error instanceof Error ? error.message : String(error),
           });
-          
+
           for (const item of batch) {
             try {
               const embedding = await generateEmbedding(item.text);
@@ -167,7 +167,7 @@ export async function generateEmbeddingsBatch(
           }
         }
       }
-      
+
       return embeddings;
     } catch (error) {
       logger.warn("OpenAI batch embedding failed, using individual requests", {

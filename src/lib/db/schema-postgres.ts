@@ -179,6 +179,18 @@ CREATE TABLE IF NOT EXISTS generated_podcast_audio (
   generated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
+
+-- Usage quota table for rate limiting
+CREATE TABLE IF NOT EXISTS usage_quota (
+  key TEXT PRIMARY KEY,
+  endpoint TEXT NOT NULL,
+  client_ip TEXT NOT NULL,
+  window_type TEXT NOT NULL,
+  used INTEGER DEFAULT 0,
+  reset_at INTEGER NOT NULL,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
 `;
 
 /**
@@ -225,6 +237,10 @@ CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_aud
 -- HNSW index alternative (faster queries, slower builds)
 CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings 
   USING hnsw (embedding vector_cosine_ops);
+
+-- Usage quota indexes
+CREATE INDEX IF NOT EXISTS idx_usage_quota_endpoint ON usage_quota(endpoint, client_ip);
+CREATE INDEX IF NOT EXISTS idx_usage_quota_reset ON usage_quota(reset_at);
 `;
 
 /**

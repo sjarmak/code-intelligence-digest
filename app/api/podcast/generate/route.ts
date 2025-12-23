@@ -194,6 +194,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
   const startTime = Date.now();
 
   try {
+    // Check rate limits
+    const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await enforceRateLimit(request, '/api/podcast/generate');
+    if (rateLimitResponse) {
+      return rateLimitResponse as NextResponse<PodcastResponse | { error: string }>;
+    }
+
     const body = await request.json();
     const validation = validateRequest(body);
 
@@ -344,6 +351,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
         },
       },
     };
+
+    // Record successful usage
+    await recordUsage(request, '/api/podcast/generate');
 
     return NextResponse.json(response);
   } catch (error) {

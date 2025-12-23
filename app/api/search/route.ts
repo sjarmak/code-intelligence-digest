@@ -35,6 +35,13 @@ const VALID_CATEGORIES: Category[] = [
  */
 export async function GET(req: NextRequest) {
   try {
+    // Check rate limits
+    const rateLimitModule = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await rateLimitModule.enforceRateLimit(req, '/api/search');
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const { searchParams } = new URL(req.url);
 
     const query = searchParams.get("q");
@@ -137,6 +144,9 @@ export async function GET(req: NextRequest) {
 
     // Map periodDays back to period name for response
     const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
+    
+    // Record successful usage
+    await rateLimitModule.recordUsage(req, '/api/search');
     
     return NextResponse.json({
       query,

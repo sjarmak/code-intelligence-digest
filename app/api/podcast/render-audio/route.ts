@@ -126,6 +126,13 @@ export async function POST(
   const startTime = Date.now();
 
   try {
+    // Check rate limits
+    const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await enforceRateLimit(request, '/api/podcast/render-audio');
+    if (rateLimitResponse) {
+      return rateLimitResponse as NextResponse<RenderAudioEndpointResponse | { error: string }>;
+    }
+
     const body = await request.json();
     const validation = validateRequest(body);
 
@@ -134,6 +141,12 @@ export async function POST(
     }
 
     const req = validation.data!;
+
+    // Check request size limits (transcript length)
+    const sizeCheck = checkRequestSize('/api/podcast/render-audio', req.transcript.length);
+    if (!sizeCheck.allowed) {
+      return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
+    }
 
     // Check if transcript has multiple speakers for multi-voice
     const hasMultiple = hasMultipleSpeakers(req.transcript);
@@ -312,6 +325,9 @@ export async function POST(
         multiVoice: useMultiVoice,
       },
     };
+
+    // Record successful usage
+    await recordUsage(request, '/api/podcast/render-audio');
 
     return NextResponse.json(response);
   } catch (error) {

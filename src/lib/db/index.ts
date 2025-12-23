@@ -292,6 +292,20 @@ async function initializeSqliteSchema() {
       );
     `);
 
+    // Create usage_quota table for rate limiting
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS usage_quota (
+        key TEXT PRIMARY KEY,
+        endpoint TEXT NOT NULL,
+        client_ip TEXT NOT NULL,
+        window_type TEXT NOT NULL,
+        used INTEGER DEFAULT 0,
+        reset_at INTEGER NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+    `);
+
     // Create indexes for common queries
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);
@@ -308,6 +322,8 @@ async function initializeSqliteSchema() {
       CREATE INDEX IF NOT EXISTS idx_item_relevance_rating ON item_relevance(relevance_rating);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_hash ON generated_podcast_audio(transcript_hash);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
+      CREATE INDEX IF NOT EXISTS idx_usage_quota_endpoint ON usage_quota(endpoint, client_ip);
+      CREATE INDEX IF NOT EXISTS idx_usage_quota_reset ON usage_quota(reset_at);
     `);
 
     logger.info("SQLite schema initialized successfully");

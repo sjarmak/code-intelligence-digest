@@ -47,6 +47,13 @@ interface LLMAnswerResponse {
  */
 export async function GET(req: NextRequest) {
   try {
+    // Check rate limits
+    const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await enforceRateLimit(req, '/api/ask');
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const { searchParams } = new URL(req.url);
 
     const question = searchParams.get("question");
@@ -166,6 +173,9 @@ export async function GET(req: NextRequest) {
       period: periodName,
       generatedAt: answerResult.generatedAt,
     };
+
+    // Record successful usage
+    await recordUsage(req, '/api/ask');
 
     return NextResponse.json(response);
   } catch (error) {

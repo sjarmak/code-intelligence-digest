@@ -27,6 +27,13 @@ interface AskRequest {
 
 export async function POST(request: NextRequest) {
   try {
+    // Check rate limits
+    const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await enforceRateLimit(request, '/api/papers/ask');
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const {
       question,
       limit = 20,
@@ -236,6 +243,9 @@ ${context}`;
           };
         }),
     });
+
+    // Record successful usage
+    await recordUsage(request, '/api/papers/ask');
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error('Failed to answer question', { error: errorMsg });
