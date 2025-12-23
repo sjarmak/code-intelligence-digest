@@ -26,23 +26,23 @@ export default function LibrariesPage() {
        {/* Header */}
        <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-           <div className="flex items-start gap-4">
-             <Link
-               href="/"
-               className="flex-shrink-0 text-black hover:text-gray-700 transition-colors pt-1"
-               title="Back to home"
-             >
-               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-               </svg>
-             </Link>
-             <div>
-               <h1 className="text-3xl font-bold">Research Libraries</h1>
-               <p className="text-muted mt-2">
-                 Curated research papers from your ADS libraries with AI-powered analysis
-               </p>
-             </div>
-           </div>
+          <div className="space-y-4">
+            {/* Back Button */}
+            <div>
+              <Link
+                href="/"
+                className="inline-block px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
+              >
+                ← Back to Home
+              </Link>
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold">Research Libraries</h1>
+              <p className="text-muted mt-2">
+                Curated research papers from your ADS libraries with AI-powered analysis
+              </p>
+            </div>
+          </div>
          </div>
        </header>
 

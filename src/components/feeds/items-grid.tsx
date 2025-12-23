@@ -88,7 +88,7 @@ export default function ItemsGrid({ category, period }: ItemsGridProps) {
   }
 
   return (
-    <div className="space-y-3 max-w-4xl">
+    <div className="space-y-3 w-full">
       {items.map((item, index) => (
         <ItemCard key={item.id} item={item} rank={index + 1} />
       ))}

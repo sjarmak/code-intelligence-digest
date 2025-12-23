@@ -1,6 +1,6 @@
 /**
  * Database initialization and client
- * 
+ *
  * Supports both SQLite (development) and PostgreSQL (production).
  * Driver detection is automatic based on DATABASE_URL env var.
  */
@@ -66,10 +66,10 @@ async function initializePostgresSchema() {
   try {
     const client = await getDbClient();
     const schema = getPostgresSchema();
-    
+
     // Execute schema in segments (extensions, tables, indexes)
     await client.exec(schema);
-    
+
     // Add full_text column if it doesn't exist (for migration)
     try {
       await client.run(`
@@ -78,7 +78,7 @@ async function initializePostgresSchema() {
     } catch {
       // Column may already exist
     }
-    
+
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
     logger.error("Failed to initialize PostgreSQL schema", error);
@@ -180,7 +180,7 @@ async function initializeSqliteSchema() {
 
     // Create index for efficient lookups
     sqlite.exec(`
-      CREATE INDEX IF NOT EXISTS idx_embeddings_generated_at 
+      CREATE INDEX IF NOT EXISTS idx_embeddings_generated_at
       ON item_embeddings(generated_at);
     `);
 
@@ -341,11 +341,11 @@ async function initializeSqliteSchema() {
 export function getGlobalApiBudget(): { callsUsed: number; remaining: number; quotaLimit: number } {
   const sqlite = getSqlite();
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  
+
   const row = sqlite
     .prepare('SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?')
     .get(today) as { calls_used: number; quota_limit: number } | undefined;
-  
+
   if (!row) {
     // Initialize for today
     sqlite
@@ -353,7 +353,7 @@ export function getGlobalApiBudget(): { callsUsed: number; remaining: number; qu
       .run(today);
     return { callsUsed: 0, remaining: 100, quotaLimit: 100 };
   }
-  
+
   return {
     callsUsed: row.calls_used,
     remaining: row.quota_limit - row.calls_used,
@@ -364,17 +364,17 @@ export function getGlobalApiBudget(): { callsUsed: number; remaining: number; qu
 export function incrementGlobalApiCalls(count: number): { callsUsed: number; remaining: number } {
   const sqlite = getSqlite();
   const today = new Date().toISOString().split('T')[0];
-  
+
   sqlite
     .prepare(`
-      INSERT INTO global_api_budget (date, calls_used) 
+      INSERT INTO global_api_budget (date, calls_used)
       VALUES (?, ?)
-      ON CONFLICT(date) DO UPDATE SET 
+      ON CONFLICT(date) DO UPDATE SET
         calls_used = calls_used + ?,
         last_updated_at = strftime('%s', 'now')
     `)
     .run(today, count, count);
-  
+
   const budget = getGlobalApiBudget();
   return {
     callsUsed: budget.callsUsed,
@@ -399,7 +399,7 @@ export function setCachedUserId(userId: string): void {
   const sqlite = getSqlite();
   sqlite
     .prepare(`
-      INSERT OR REPLACE INTO user_cache (key, user_id) 
+      INSERT OR REPLACE INTO user_cache (key, user_id)
       VALUES (?, ?)
     `)
     .run('inoreader_user_id', userId);

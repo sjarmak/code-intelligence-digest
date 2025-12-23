@@ -49,7 +49,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [allLibraries, setAllLibraries] = useState<Library[]>([]);
-  const [expandedLibrary, setExpandedLibrary] = useState<string | null>('Benchmarks');
+  const [expandedLibrary, setExpandedLibrary] = useState<string | null>(null);
   const [libraryData, setLibraryData] = useState<Record<string, LibrariesResponse>>({});
   const [processingBibcode, setProcessingBibcode] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
@@ -128,8 +128,6 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       setLoading(true);
       try {
         await fetchAllLibraries();
-        // Fetch the default library
-        await fetchLibraryItems('Benchmarks');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {

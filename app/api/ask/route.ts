@@ -38,7 +38,7 @@ interface LLMAnswerResponse {
 
 /**
  * GET /api/ask?question=How+do+code+agents+handle+context?&category=research&period=week&limit=5
- * 
+ *
  * Query parameters:
  * - question (required): Question to answer
  * - category (optional): Restrict context to specific category

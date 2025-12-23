@@ -63,12 +63,12 @@ function getClientIP(request: NextRequest): string {
   if (forwarded) {
     return forwarded.split(',')[0].trim();
   }
-  
+
   const realIP = request.headers.get('x-real-ip');
   if (realIP) {
     return realIP;
   }
-  
+
   // Fallback to connection remote address (may not work in all environments)
   return 'unknown';
 }
@@ -83,21 +83,21 @@ async function getUsageRecord(
 ): Promise<UsageQuota> {
   const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
-  
+
   // Calculate window start time
   const windowMs = window === 'hour' ? 3600 * 1000 : 24 * 3600 * 1000;
   const windowStart = Math.floor((Date.now() / windowMs)) * windowMs;
   const resetAt = Math.floor((windowStart + windowMs) / 1000);
-  
+
   const key = `${endpoint}:${clientIP}:${window}:${windowStart}`;
-  
+
   if (driver === 'postgres') {
     const client = await getDbClient();
     const result = await client.query(
       `SELECT used FROM usage_quota WHERE key = $1`,
       [key]
     );
-    
+
     if (result.rows.length > 0) {
       return {
         endpoint,
@@ -107,7 +107,7 @@ async function getUsageRecord(
         resetAt,
       };
     }
-    
+
     // Initialize new record
     await client.run(
       `INSERT INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at)
@@ -115,7 +115,7 @@ async function getUsageRecord(
        ON CONFLICT (key) DO NOTHING`,
       [key, endpoint, clientIP, window, resetAt, now]
     );
-    
+
     return {
       endpoint,
       window,
@@ -129,7 +129,7 @@ async function getUsageRecord(
     const row = sqlite
       .prepare('SELECT used FROM usage_quota WHERE key = ?')
       .get(key) as { used: number } | undefined;
-    
+
     if (row) {
       return {
         endpoint,
@@ -139,14 +139,14 @@ async function getUsageRecord(
         resetAt,
       };
     }
-    
+
     // Initialize new record
     sqlite
       .prepare(
         'INSERT OR IGNORE INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)'
       )
       .run(key, endpoint, clientIP, window, resetAt, now);
-    
+
     return {
       endpoint,
       window,
@@ -167,13 +167,13 @@ async function incrementUsage(
 ): Promise<UsageQuota> {
   const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
-  
+
   const windowMs = window === 'hour' ? 3600 * 1000 : 24 * 3600 * 1000;
   const windowStart = Math.floor((Date.now() / windowMs)) * windowMs;
   const resetAt = Math.floor((windowStart + windowMs) / 1000);
-  
+
   const key = `${endpoint}:${clientIP}:${window}:${windowStart}`;
-  
+
   if (driver === 'postgres') {
     const client = await getDbClient();
     await client.run(
@@ -190,7 +190,7 @@ async function incrementUsage(
       )
       .run(key, endpoint, clientIP, window, resetAt, now);
   }
-  
+
   const quota = await getUsageRecord(endpoint, clientIP, window);
   return { ...quota, used: quota.used + 1 };
 }
@@ -205,7 +205,7 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
   const clientIP = getClientIP(request);
   const limits = RATE_LIMITS[endpoint];
-  
+
   if (!limits) {
     // No limits configured for this endpoint
     return {
@@ -214,13 +214,13 @@ export async function checkRateLimit(
       resetAt: Math.floor(Date.now() / 1000) + 3600,
     };
   }
-  
+
   // Check both hourly and daily limits
   const [hourlyQuota, dailyQuota] = await Promise.all([
     getUsageRecord(endpoint, clientIP, 'hour'),
     getUsageRecord(endpoint, clientIP, 'day'),
   ]);
-  
+
   // Check if either limit is exceeded
   if (hourlyQuota.used >= hourlyQuota.limit) {
     logger.warn(`Rate limit exceeded: ${endpoint} hourly limit (${hourlyQuota.used}/${hourlyQuota.limit})`, {
@@ -235,7 +235,7 @@ export async function checkRateLimit(
       error: `Hourly limit exceeded. You've used ${hourlyQuota.used}/${hourlyQuota.limit} requests. Try again after ${new Date(hourlyQuota.resetAt * 1000).toLocaleTimeString()}.`,
     };
   }
-  
+
   if (dailyQuota.used >= dailyQuota.limit) {
     logger.warn(`Rate limit exceeded: ${endpoint} daily limit (${dailyQuota.used}/${dailyQuota.limit})`, {
       endpoint,
@@ -249,7 +249,7 @@ export async function checkRateLimit(
       error: `Daily limit exceeded. You've used ${dailyQuota.used}/${dailyQuota.limit} requests. Resets at ${new Date(dailyQuota.resetAt * 1000).toLocaleString()}.`,
     };
   }
-  
+
   return {
     allowed: true,
     remaining: Math.min(hourlyQuota.limit - hourlyQuota.used, dailyQuota.limit - dailyQuota.used),
@@ -279,18 +279,18 @@ export function checkRequestSize(
   requestSize: number
 ): { allowed: boolean; error?: string } {
   const limits = RATE_LIMITS[endpoint];
-  
+
   if (!limits?.maxRequestSize) {
     return { allowed: true };
   }
-  
+
   if (requestSize > limits.maxRequestSize) {
     return {
       allowed: false,
       error: `Request size too large. Maximum allowed: ${limits.maxRequestSize}, received: ${requestSize}`,
     };
   }
-  
+
   return { allowed: true };
 }
 
@@ -303,7 +303,7 @@ export async function enforceRateLimit(
   endpoint: string
 ): Promise<NextResponse | null> {
   const result = await checkRateLimit(request, endpoint);
-  
+
   if (!result.allowed) {
     return NextResponse.json(
       {
@@ -323,7 +323,7 @@ export async function enforceRateLimit(
       }
     );
   }
-  
+
   return null;
 }
 

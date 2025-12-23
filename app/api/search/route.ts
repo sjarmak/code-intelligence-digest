@@ -22,7 +22,7 @@ const VALID_CATEGORIES: Category[] = [
 
 /**
  * GET /api/search?q=code+intelligence&category=research&period=week&limit=10&type=hybrid
- * 
+ *
  * Query parameters:
  * - q (required): Search query string
  * - category (optional): Restrict to specific category
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
       );
       // Map periodDays back to period name
       const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
-      
+
       return NextResponse.json({
         query,
         category: category || "all",
@@ -144,10 +144,10 @@ export async function GET(req: NextRequest) {
 
     // Map periodDays back to period name for response
     const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
-    
+
     // Record successful usage
     await rateLimitModule.recordUsage(req, '/api/search');
-    
+
     return NextResponse.json({
       query,
       category: category || "all",
