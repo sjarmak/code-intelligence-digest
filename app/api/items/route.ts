@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { loadItemsByCategory } from "@/src/lib/db/items";
+import { initializeDatabase } from "@/src/lib/db/index";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { Category } from "@/src/lib/model";
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get("category") as Category | null;
     const period = searchParams.get("period") || "week";
     const limitParam = searchParams.get("limit");
-    
+
     // Parse limit, clamp to [1, 50]
     let customLimit: number | undefined;
     if (limitParam) {
@@ -70,6 +71,9 @@ export async function GET(request: NextRequest) {
 
     logger.info(`API request: category=${category}, period=${period} (${periodDays}d)`);
 
+    // Initialize database (creates tables if needed)
+    await initializeDatabase();
+
     // Load items from database
     const items = await loadItemsByCategory(category, periodDays);
     logger.info(`Loaded ${items.length} items from database`);
@@ -82,16 +86,16 @@ export async function GET(request: NextRequest) {
     // Increased caps to allow ranking system to show quality results (not just diversity)
     const perSourceCaps = { day: 1, week: 4, month: 5, all: 6 };
     let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
-    
+
     // Increase per-source caps proportionally if custom limit is higher
     if (customLimit && customLimit > getCategoryConfig(category).maxItems) {
       const expansionRatio = customLimit / getCategoryConfig(category).maxItems;
       maxPerSource = Math.ceil(maxPerSource * expansionRatio);
     }
-    
+
     const selectionResult = selectWithDiversity(
-      rankedItems, 
-      category, 
+      rankedItems,
+      category,
       maxPerSource,
       customLimit // Pass custom limit to override category config
     );

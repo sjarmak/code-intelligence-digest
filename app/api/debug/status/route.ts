@@ -6,8 +6,13 @@ import { NextResponse } from "next/server";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { getSqlite } from "@/src/lib/db/index";
 import { logger } from "@/src/lib/logger";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 export async function GET() {
+  // Block in production
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     await initializeDatabase();
     const sqlite = getSqlite();

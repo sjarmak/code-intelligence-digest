@@ -5,8 +5,13 @@ import { getStreamsByCategory } from "@/src/config/feeds";
 import { normalizeItems } from "@/src/lib/pipeline/normalize";
 import { categorizeItems } from "@/src/lib/pipeline/categorize";
 import { logger } from "@/src/lib/logger";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 export async function GET(req: NextRequest) {
+  // Block in production
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const { searchParams } = new URL(req.url);
     const category = (searchParams.get("category") || "research") as Category;
