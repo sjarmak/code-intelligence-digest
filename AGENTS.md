@@ -40,10 +40,15 @@ npm install              # Install dependencies
 npm run typecheck        # Type-check
 npm run lint             # Lint
 npm test -- --run        # Tests (use --run flag!)
-npm run build            # Production build
+unset NODE_ENV && npm run build  # Production build (NODE_ENV must be unset!)
 ```
 
 **Critical:** Always use `npm test -- --run` to avoid Vitest watch mode hanging.
+
+**Build Warning:** If `NODE_ENV=development` is set in your shell, the build will fail with a `/_global-error` SSR error. Always unset NODE_ENV before building:
+```bash
+unset NODE_ENV && npm run build
+```
 
 ---
 

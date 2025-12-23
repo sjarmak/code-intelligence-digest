@@ -141,12 +141,36 @@ npm run typecheck
 # Lint
 npm run lint
 
-# Production build
-npm run build
+# Production build (NODE_ENV must be unset!)
+unset NODE_ENV && npm run build
 
 # Start production server
 npm start
 ```
+
+> **Note:** If `NODE_ENV=development` is set, the build will fail. Always unset it before building.
+
+### Deploy to Render
+
+This project includes a `render.yaml` Blueprint for one-click deployment to [Render](https://render.com):
+
+1. Fork/push to GitHub
+2. In Render Dashboard, click "New" → "Blueprint"
+3. Connect your repository
+4. Render will auto-detect `render.yaml` and create:
+   - Web Service (Next.js app)
+   - PostgreSQL database (production)
+5. Set required environment variables in Render:
+   - `INOREADER_CLIENT_ID`
+   - `INOREADER_CLIENT_SECRET`
+   - `INOREADER_REFRESH_TOKEN`
+   - `ADMIN_API_TOKEN` (required in production)
+   - `OPENAI_API_KEY` (optional, for LLM scoring)
+
+**Local Development:** Uses SQLite (`.data/digest.db`)  
+**Production:** Uses PostgreSQL (auto-configured by Render)
+
+See [history/docs/RENDER_DEPLOYMENT.md](history/docs/RENDER_DEPLOYMENT.md) for full deployment guide.
 
 ## Audio Rendering System (NEW - Jan 2025)
 
