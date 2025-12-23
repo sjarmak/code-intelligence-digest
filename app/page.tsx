@@ -45,18 +45,18 @@ export default function Home() {
     <div className="min-h-screen bg-white text-black">
       {/* Header */}
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex justify-between items-start">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
             {/* Title */}
-            <div>
-              <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
-              <p className="text-muted mt-2">
+            <div className="flex-1 min-w-0">
+              <h1 className="text-2xl sm:text-3xl font-bold">Code Intelligence Digest</h1>
+              <p className="text-muted mt-2 text-sm sm:text-base">
                 Daily, weekly, and monthly digests of code intelligence, tools, and AI agents
               </p>
             </div>
 
             {/* Settings and Logout icons */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-shrink-0">
               {/* Settings icon - only in dev */}
               {config.adminUIEnabled && (
                 <a
@@ -86,13 +86,13 @@ export default function Home() {
       </header>
 
       {/* Main Tabs */}
-      <div className="border-b border-surface-border bg-surface sticky top-20 z-10">
+      <div className="border-b border-surface-border bg-surface sticky top-[88px] sm:top-20 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center">
-            <nav className="flex overflow-x-auto gap-6" role="tablist">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-0 py-2 sm:py-0">
+            <nav className="flex overflow-x-auto gap-4 sm:gap-6 -mx-4 sm:mx-0 px-4 sm:px-0" role="tablist">
               <button
                   onClick={() => setActiveTab('resources')}
-                  className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                  className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                     activeTab === 'resources'
                       ? 'border-black text-black'
                       : 'border-transparent text-muted hover:text-black'
@@ -104,7 +104,7 @@ export default function Home() {
                 </button>
                <button
                  onClick={() => setActiveTab('search')}
-                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                    activeTab === 'search'
                      ? 'border-black text-black'
                      : 'border-transparent text-muted hover:text-black'
@@ -116,7 +116,7 @@ export default function Home() {
                </button>
                <button
                  onClick={() => setActiveTab('ask')}
-                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                    activeTab === 'ask'
                      ? 'border-black text-black'
                      : 'border-transparent text-muted hover:text-black'
@@ -129,12 +129,12 @@ export default function Home() {
              </nav>
 
              {/* Right-aligned buttons */}
-             <div className="flex gap-2 ml-auto">
+             <div className="flex flex-wrap gap-2 sm:ml-auto">
                {/* Starred button - only in dev */}
                {config.features.starred && (
                  <button
                    onClick={() => setActiveTab('starred')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                      activeTab === 'starred'
                        ? 'bg-black text-white border border-black'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -146,24 +146,24 @@ export default function Home() {
                )}
                <a
                  href="/libraries"
-                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                 className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
                  title="View ADS research libraries"
                >
                  Libraries
                </a>
                <a
                  href="/synthesis/newsletter"
-                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                 className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
                  title="Generate newsletters"
                >
-                 Newsletter Generator
+                 Newsletter
                </a>
                <a
                  href="/synthesis/podcast"
-                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                 className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
                  title="Generate podcast episodes"
                >
-                 Podcast Generator
+                 Podcast
                </a>
              </div>
            </div>
@@ -172,15 +172,15 @@ export default function Home() {
 
       {/* Category Tabs (only show for resources tab) */}
       {activeTab === 'resources' && (
-        <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
+        <div className="border-b border-surface-border bg-surface sticky top-[148px] sm:top-32 z-10">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center">
-              <nav className="flex overflow-x-auto gap-2" role="tablist">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 sm:gap-0 py-2 sm:py-0">
+              <nav className="flex overflow-x-auto gap-2 -mx-4 sm:mx-0 px-4 sm:px-0" role="tablist">
                 {categories.map((cat) => (
                    <button
                       key={cat.id}
                       onClick={() => setActiveCategory(cat.id)}
-                      className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                      className={`px-3 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                         activeCategory === cat.id
                           ? 'border-black text-black'
                           : 'border-transparent text-muted hover:text-black'
@@ -194,10 +194,10 @@ export default function Home() {
                </nav>
 
               {/* Period buttons on the right */}
-              <div className="flex gap-2 ml-auto">
+              <div className="flex flex-wrap gap-2 sm:ml-auto">
                 <button
                    onClick={() => setPeriod('day')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                      period === 'day'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -207,7 +207,7 @@ export default function Home() {
                 </button>
                 <button
                    onClick={() => setPeriod('week')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                      period === 'week'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -217,7 +217,7 @@ export default function Home() {
                 </button>
                 <button
                    onClick={() => setPeriod('month')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                      period === 'month'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -227,7 +227,7 @@ export default function Home() {
                 </button>
                 <button
                    onClick={() => setPeriod('all')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                      period === 'all'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
