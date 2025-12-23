@@ -1,6 +1,6 @@
 /**
  * Newsletter generation (Pass 2 - Synthesis)
- * Converts item digests into a polished newsletter using gpt-5.2-pro
+ * Converts item digests into a polished newsletter using gpt-4o-mini
  */
 
 import OpenAI from "openai";
@@ -133,7 +133,7 @@ export async function generateNewsletterContent(
   if (client) {
     try {
       const response = await client.chat.completions.create({
-        model: "gpt-5.2-chat-latest",
+        model: "gpt-4o-mini",
         max_completion_tokens: 4000,
         reasoning_effort: "high",
         response_format: { type: "json_object" },
@@ -181,14 +181,14 @@ Return only valid JSON.`,
       if (!content) {
         throw new Error("No content returned from LLM");
       }
-      
+
       try {
         const parsed = JSON.parse(content);
         summary = parsed.summary || "No summary generated.";
         themes = Array.isArray(parsed.themes) ? parsed.themes : [];
         markdown = parsed.markdown || "# Code Intelligence Digest\n\nNo content generated.";
         html = parsed.html || "<article><h1>Code Intelligence Digest</h1><p>No content generated.</p></article>";
-        
+
         if (!markdown || markdown === "# Code Intelligence Digest\n\nNo content generated.") {
           throw new Error("LLM returned empty markdown");
         }
@@ -243,7 +243,7 @@ export async function generateNewsletterFromDigests(
   */
 function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[]> {
     const byCategory = new Map<string, ItemDigest[]>();
-    
+
     // Category label mapping for display
     const categoryLabels: Record<string, string> = {
       newsletters: "Newsletters",
@@ -254,7 +254,7 @@ function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[
       community: "Community",
       research: "Research",
     };
-    
+
     // Define priority order (lower number = higher priority)
     const categoryPriority: Record<string, number> = {
       research: 1,
@@ -265,18 +265,18 @@ function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[
       newsletters: 6,
       podcasts: 7,
     };
-    
+
     // Group by category first
     const tempMap = new Map<string, ItemDigest[]>();
     for (const digest of digests) {
       const displayLabel = categoryLabels[digest.category] || digest.category;
-      
+
       if (!tempMap.has(displayLabel)) {
         tempMap.set(displayLabel, []);
       }
       tempMap.get(displayLabel)!.push(digest);
     }
-    
+
     // Sort entries by category priority and add to result map (which preserves insertion order)
     const sortedEntries = Array.from(tempMap.entries()).sort((a, b) => {
       const catKeyA = Object.entries(categoryLabels).find(([, v]) => v === a[0])?.[0] || a[0];
@@ -285,11 +285,11 @@ function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[
       const priorB = categoryPriority[catKeyB] ?? 99;
       return priorA - priorB;
     });
-    
+
     for (const [label, items] of sortedEntries) {
       byCategory.set(label, items);
     }
-    
+
     return byCategory;
   }
 
@@ -328,7 +328,7 @@ async function generateNewsletterFromDigestData(
        themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
      }
    }
-   
+
    // Parse user prompt to extract focus topics for theme boosting
    let userPromptTopics: string[] = [];
    if (userPrompt) {
@@ -348,7 +348,7 @@ async function generateNewsletterFromDigestData(
      const lowerPrompt = userPrompt.toLowerCase();
      userPromptTopics = domainTerms.filter(term => lowerPrompt.includes(term));
    }
-   
+
    // Boost themes that match user prompt topics
    if (userPromptTopics.length > 0) {
      for (const [theme, score] of themeFreq.entries()) {
@@ -361,7 +361,7 @@ async function generateNewsletterFromDigestData(
        }
      }
    }
-   
+
    const themes = Array.from(themeFreq.entries())
      .sort((a, b) => b[1] - a[1])
      .slice(0, 5)
@@ -380,7 +380,7 @@ async function generateNewsletterFromDigestData(
             attributions.push(`on ${d.originalSource}`);
           }
           const attribution = attributions.join(" · ");
-          
+
           return `- **[${d.title}](${d.url})** — *${attribution}*\n  ${d.whyItMatters}`;
         })
         .join("\n");
@@ -504,15 +504,15 @@ function generateNewsletterFallback(
   const title = `Code Intelligence Digest`;
   const subtitle = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update`;
   const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-  
+
   let markdown = `# ${title}\n`;
   markdown += `## ${subtitle}\n`;
   markdown += `**Published:** ${publishDate} | **Items:** ${items.length}\n\n`;
-  
+
   // Get top items for insightful summary
   const topItems = Array.from(items).sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 5);
   const topThemes = themes.slice(0, 4).map(t => t.replace(/-/g, " "));
-  
+
   // Build a more substantive executive summary
   const sourceScores = new Map<string, number>();
   for (const item of items) {
@@ -523,7 +523,7 @@ function generateNewsletterFallback(
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
     .map(([src]) => src);
-  
+
   markdown += `## Executive Summary\n\n`;
   markdown += `This ${periodLabel} digest features **${items.length} curated items** focused on code search, semantic IR, agentic workflows, and developer tooling. `;
   markdown += `Emerging themes: **${topThemes.join("**, **")}**. `;
@@ -535,15 +535,15 @@ function generateNewsletterFallback(
     if (!category || categoryItems.length === 0) continue;
     const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, " ");
     markdown += `## ${categoryLabel}\n\n`;
-    
+
     // Sort by score and take top items
     const topItems = categoryItems.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 7);
-    
+
     for (const item of topItems) {
       const score = Math.round((item.finalScore || 0) * 100);
       const desc = item.summary || item.contentSnippet || "No description available.";
       const firstLine = desc.split("\n")[0].substring(0, 250);
-      
+
       markdown += `**[${item.title}](${item.url})**\n`;
       markdown += `*${item.sourceTitle}*\n\n`;
       markdown += `${firstLine}${firstLine.length >= 250 ? "..." : ""}\n\n`;
@@ -608,7 +608,7 @@ function generateNewsletterFallback(
     }
 
     const client = new OpenAI({ apiKey });
-    
+
     // Use more items for richer context
     const itemCount = Math.min(15, digests.length);
     const itemSummaries = digests
@@ -618,9 +618,9 @@ function generateNewsletterFallback(
 
     try {
        logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
-       
+
        const response = await client.chat.completions.create({
-         model: "gpt-5.2-chat-latest",
+         model: "gpt-4o-mini",
          max_completion_tokens: 600,
          messages: [
            {
@@ -662,12 +662,12 @@ function generateNewsletterFallback(
       const content = response.choices[0].message.content;
       if (!content || content.trim().length === 0) {
         logger.warn("LLM returned empty response, using fallback", {
-          model: "gpt-5.2-chat-latest",
+          model: "gpt-4o-mini",
           responseId: response.id,
           finishReason: response.choices[0]?.finish_reason,
           usage: response.usage,
         });
-        // Try fallback to gpt-4o-mini if gpt-5.2 fails
+        // Try fallback to gpt-4o-mini if primary model fails
         try {
           logger.info("Attempting fallback to gpt-4o-mini");
           const fallbackResponse = await client.chat.completions.create({
@@ -703,10 +703,10 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
       return content;
       } catch (e) {
       const errorMsg = e instanceof Error ? e.message : String(e);
-      logger.warn("Failed to generate LLM summary, using fallback", { 
+      logger.warn("Failed to generate LLM summary, using fallback", {
         error: errorMsg,
         stack: e instanceof Error ? e.stack : undefined,
-        model: "gpt-5.2-chat-latest",
+        model: "gpt-4o-mini",
       });
       // If it's a model error, try fallback model
       if (errorMsg.includes("model") || errorMsg.includes("not found") || errorMsg.includes("invalid")) {
@@ -745,7 +745,7 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
     // Extract real, concrete insights from top digests
     const topItems = digests.slice(0, 10);
     const insights: string[] = [];
-    
+
     // Build specific insights from actual content (not templates)
     for (const item of topItems) {
       // Use whyItMatters if it contains actual findings
@@ -759,16 +759,16 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
         }
       }
     }
-    
+
     // Get unique insights
     const uniqueInsights = Array.from(new Set(insights.map(i => i.trim()))).slice(0, 4);
-    
+
     // Build summary with actual findings
     let summary = "";
-    
+
     // Start with what's actually being covered
     const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
-    
+
     if (uniqueInsights.length > 0) {
       summary = uniqueInsights.join(" ");
       if (summary.length < 200) {
@@ -781,7 +781,7 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
       const topThemes = themes.slice(0, 3).join(", ");
       summary = `This digest covers ${topThemes}. Content from ${topSources.join(", ")}.`;
     }
-    
+
     return summary;
   }
 
@@ -792,7 +792,7 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
     const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
     let markdown = `# Code Intelligence Digest\n\n`;
     markdown += `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Edition — ${publishDate}\n\n`;
-    
+
     if (summary) {
       markdown += `## Overview\n\n${summary}\n\n`;
     }
@@ -800,9 +800,9 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
     // Build each category section
     for (const [categoryName, items] of byCategory) {
       if (!categoryName || items.length === 0) continue;
-      
+
       markdown += `## ${categoryName}\n\n`;
-      
+
       for (const item of items) {
          // Only create a link if the URL is valid (not Inoreader, not empty)
          const urlValid = isValidUrl(item.url);
@@ -825,26 +825,26 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
    */
   function buildNewsletterHTML(markdown: string, summary?: string): string {
     let html = markdown;
-    
+
     // Convert markdown headers (before links, so we can detect them)
     html = html.replace(/^# (.*?)$/gm, '<h1 style="color: #1a1a1a; margin-bottom: 0.25rem; font-size: 2.5em; font-weight: 700;">$1</h1>');
     html = html.replace(/^## (.*?)$/gm, '<h2 style="color: #1a1a1a; margin-top: 2rem; margin-bottom: 0.75rem; font-size: 1.5em; font-weight: 600;">$1</h2>');
-    
+
     // Convert links BEFORE bold/italic (so we don't accidentally format link text)
     html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" style="color: #0066cc; text-decoration: none; font-weight: 500;" target="_blank" rel="noopener noreferrer">$1</a>');
-    
+
     // Convert bold and italic
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600; color: #1a1a1a;">$1</strong>');
     html = html.replace(/\*(.*?)\*/g, '<em style="font-style: italic; color: #555;">$1</em>');
-    
+
     // Convert list items: collapse consecutive lines starting with - into a list
     const lines = html.split('\n');
     const result: string[] = [];
     let inList = false;
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      
+
       if (line.match(/^- /)) {
         if (!inList) {
           result.push('<ul style="margin-left: 1.5rem; margin-bottom: 1.5rem; list-style: none; padding: 0;">');
@@ -858,7 +858,7 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
           result.push('</ul>');
           inList = false;
         }
-        
+
         // Handle paragraph breaks (empty lines)
         if (line.trim() === '') {
           // Skip empty lines; they'll be handled by CSS margins
@@ -871,11 +871,11 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
         }
       }
     }
-    
+
     if (inList) {
       result.push('</ul>');
     }
-    
+
     html = result.join('\n');
 
     return `<article style="font-family: system-ui, -apple-system, sans-serif; color: #333; background: #ffffff; padding: 3rem 2rem;">

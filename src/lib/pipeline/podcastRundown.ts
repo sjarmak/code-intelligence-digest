@@ -1,6 +1,6 @@
 /**
  * Stage B: Podcast rundown generation (editorial clustering)
- * Uses gpt-5.2-thinking to select stories, cluster by theme, decide order
+ * Uses gpt-4o-mini to select stories, cluster by theme, decide order
  * Produces segments with time budgets, transitions, and attribution plan
  */
 
@@ -120,7 +120,7 @@ export async function generatePodcastRundown(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 8000,
       response_format: { type: "json_object" },
       messages: [

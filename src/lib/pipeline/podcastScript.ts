@@ -1,6 +1,6 @@
 /**
  * Stage C: Podcast script generation
- * Uses gpt-5.2-pro to write conversational HOST + COHOST script
+ * Uses gpt-4o-mini to write conversational HOST + COHOST script
  * Facts-first tone, natural attribution, measured language
  */
 
@@ -124,9 +124,8 @@ export async function generatePodcastScript(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 5000,
-      // Note: gpt-5.2-chat-latest only supports temperature=1 (default)
       messages: [
         {
           role: "user",

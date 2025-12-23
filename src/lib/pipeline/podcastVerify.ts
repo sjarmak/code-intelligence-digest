@@ -1,6 +1,6 @@
 /**
  * Stage D: Podcast script verification
- * Final audit using gpt-5.2-thinking to flag unsupported claims,
+ * Final audit using gpt-4o-mini to flag unsupported claims,
  * check attributions, and soften overconfident language
  */
 
@@ -81,7 +81,7 @@ export async function verifyPodcastScript(
     const digestContext = formatDigestsForVerification(digests);
 
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 6000,
       response_format: { type: "json_object" },
       messages: [

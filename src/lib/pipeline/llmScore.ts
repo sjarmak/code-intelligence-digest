@@ -147,7 +147,7 @@ async function scoreItemsBatch(items: FeedItem[]): Promise<Record<string, LLMSco
     });
 
     const response = await getOpenAIClient().chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       max_completion_tokens: 4000,
       messages: [
         {

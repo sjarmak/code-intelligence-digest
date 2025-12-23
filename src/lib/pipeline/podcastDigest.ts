@@ -1,6 +1,6 @@
 /**
  * Stage A: Podcast digest extraction
- * Per-item extraction using gpt-5.2-chat-latest for structured podcast digests
+ * Per-item extraction using gpt-4o-mini for structured podcast digests
  * Reuses extract.ts patterns with podcast-specific schema
  */
 
@@ -98,7 +98,7 @@ async function summarizeChunk(
   total: number
 ): Promise<string> {
   const response = await client.chat.completions.create({
-    model: "gpt-5.2-chat-latest",
+    model: "gpt-4o-mini",
     max_completion_tokens: 250,
     messages: [
       {
@@ -154,7 +154,7 @@ export async function extractPodcastItemDigest(
 
     // Extract podcast digest from processed text
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 1000,
       response_format: { type: "json_object" },
       messages: [
