@@ -47,11 +47,17 @@ interface LLMAnswerResponse {
  */
 export async function GET(req: NextRequest) {
   try {
-    // Check rate limits
-    const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
-    const rateLimitResponse = await enforceRateLimit(req, '/api/ask');
-    if (rateLimitResponse) {
-      return rateLimitResponse;
+    // Check rate limits (gracefully handle if table doesn't exist)
+    let rateLimitResponse = null;
+    try {
+      const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
+      rateLimitResponse = await enforceRateLimit(req, '/api/ask');
+      if (rateLimitResponse) {
+        return rateLimitResponse;
+      }
+    } catch (rateLimitError) {
+      // If rate limiting fails (e.g., table doesn't exist), log but continue
+      logger.warn('[ASK] Rate limit check failed, continuing without rate limit', { error: rateLimitError });
     }
 
     const { searchParams } = new URL(req.url);
@@ -151,9 +157,14 @@ export async function GET(req: NextRequest) {
     }
 
     // Generate answer using retrieved items
-    const answerResult = await generateAnswer(question, rankedItems);
-
-    logger.info(`[ASK] Generated answer with ${rankedItems.length} source citations`);
+    let answerResult;
+    try {
+      answerResult = await generateAnswer(question, rankedItems);
+      logger.info(`[ASK] Generated answer with ${rankedItems.length} source citations`);
+    } catch (answerError) {
+      logger.error('[ASK] Failed to generate answer', { error: answerError });
+      throw new Error(`Failed to generate answer: ${answerError instanceof Error ? answerError.message : 'Unknown error'}`);
+    }
 
     // Map period back to string
     const periodName =
@@ -174,16 +185,30 @@ export async function GET(req: NextRequest) {
       generatedAt: answerResult.generatedAt,
     };
 
-    // Record successful usage
-    await recordUsage(req, '/api/ask');
+    // Record successful usage (gracefully handle errors)
+    try {
+      const { recordUsage } = await import('@/src/lib/rate-limit');
+      await recordUsage(req, '/api/ask');
+    } catch (usageError) {
+      logger.warn('[ASK] Failed to record usage', { error: usageError });
+      // Don't fail the request if usage tracking fails
+    }
 
     return NextResponse.json(response);
   } catch (error) {
-    logger.error("[ASK] Error in /api/ask", error);
+    const errorMessage = error instanceof Error ? error.message : "Failed to generate answer";
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    
+    logger.error("[ASK] Error in /api/ask", {
+      error: errorMessage,
+      stack: errorStack,
+    });
 
+    // Return more detailed error information
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Failed to generate answer",
+        error: errorMessage,
+        details: process.env.NODE_ENV === 'development' ? errorStack : undefined,
       },
       { status: 500 }
     );
