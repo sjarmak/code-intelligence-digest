@@ -24,7 +24,7 @@ interface PopulateRequest {
 export async function POST(request: NextRequest) {
   // Allow in production (needed to generate embeddings)
   // Could add ADMIN_API_TOKEN check here if desired
-  
+
   try {
     await initializeDatabase();
 

@@ -49,11 +49,11 @@ export async function retrieveRelevantItems(
     // Generate missing embeddings using batch API
     if (itemsNeedingEmbeddings.length > 0) {
       logger.info(`Generating ${itemsNeedingEmbeddings.length} missing embeddings`);
-      
+
       // Limit to prevent memory issues - if too many, only process a subset
       const MAX_EMBEDDINGS_PER_REQUEST = 500;
       const itemsToProcess = itemsNeedingEmbeddings.slice(0, MAX_EMBEDDINGS_PER_REQUEST);
-      
+
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
         logger.warn(
           `Too many missing embeddings (${itemsNeedingEmbeddings.length}). ` +
@@ -74,7 +74,7 @@ export async function retrieveRelevantItems(
 
       // Generate embeddings in batch
       const newEmbeddingsMap = await generateEmbeddingsBatch(itemsForBatch);
-      
+
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
@@ -103,7 +103,7 @@ export async function retrieveRelevantItems(
         await saveEmbeddingsBatch(newEmbeddings);
         logger.info(`Generated and saved ${newEmbeddings.length} embeddings`);
       }
-      
+
       // For remaining items (if we hit the limit), use zero vectors
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
         const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);

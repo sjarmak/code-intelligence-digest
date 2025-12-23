@@ -111,12 +111,12 @@ async function computeSemanticScores(
 
     // Generate missing embeddings using batch API
     const itemsNeedingEmbeddings = items.filter((item) => !cachedEmbeddings.has(item.id));
-    
+
     if (itemsNeedingEmbeddings.length > 0) {
       // Limit to prevent memory issues
       const MAX_EMBEDDINGS_PER_REQUEST = 500;
       const itemsToProcess = itemsNeedingEmbeddings.slice(0, MAX_EMBEDDINGS_PER_REQUEST);
-      
+
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
         logger.warn(
           `Too many missing embeddings (${itemsNeedingEmbeddings.length}). ` +
@@ -137,7 +137,7 @@ async function computeSemanticScores(
 
       // Generate embeddings in batch
       const newEmbeddingsMap = await generateEmbeddingsBatch(itemsForBatch);
-      
+
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
@@ -166,7 +166,7 @@ async function computeSemanticScores(
         await saveEmbeddingsBatch(newEmbeddings);
         logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
       }
-      
+
       // For remaining items (if we hit the limit), use zero vectors
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
         const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);
@@ -230,7 +230,7 @@ export async function semanticSearch(
       // Limit to prevent memory issues
       const MAX_EMBEDDINGS_PER_REQUEST = 500;
       const itemsToProcess = itemsNeedingEmbeddings.slice(0, MAX_EMBEDDINGS_PER_REQUEST);
-      
+
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
         logger.warn(
           `Too many missing embeddings (${itemsNeedingEmbeddings.length}). ` +
@@ -251,7 +251,7 @@ export async function semanticSearch(
 
       // Generate embeddings in batch
       const newEmbeddingsMap = await generateEmbeddingsBatch(itemsForBatch);
-      
+
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
@@ -280,7 +280,7 @@ export async function semanticSearch(
         await saveEmbeddingsBatch(newEmbeddings);
         logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
       }
-      
+
       // For remaining items (if we hit the limit), use zero vectors
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
         const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);
