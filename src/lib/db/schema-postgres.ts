@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS items (
   summary TEXT,
   content_snippet TEXT,
   full_text TEXT,
+  full_text_fetched_at INTEGER,
+  full_text_source TEXT,
   extracted_url TEXT,
   categories TEXT,
   category TEXT NOT NULL,

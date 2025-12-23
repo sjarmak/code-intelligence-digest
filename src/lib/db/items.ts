@@ -3,6 +3,7 @@
  */
 
 import { getSqlite } from "./index";
+import { getDbClient, detectDriver } from "./driver";
 import { FeedItem } from "../model";
 import type { Category } from "../model";
 import { logger } from "../logger";
@@ -12,33 +13,70 @@ import { logger } from "../logger";
  */
 export async function saveItems(items: FeedItem[]): Promise<void> {
   try {
-    const sqlite = getSqlite();
-
-    const stmt = sqlite.prepare(`
-      INSERT OR REPLACE INTO items 
-      (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-    `);
-
-    const insertMany = sqlite.transaction((items: FeedItem[]) => {
+    const driver = detectDriver();
+    
+    if (driver === 'postgres') {
+      const client = await getDbClient();
       for (const item of items) {
-        stmt.run(
+        await client.run(`
+          INSERT INTO items 
+          (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, EXTRACT(EPOCH FROM NOW())::INTEGER)
+          ON CONFLICT (id) DO UPDATE SET
+            stream_id = EXCLUDED.stream_id,
+            source_title = EXCLUDED.source_title,
+            title = EXCLUDED.title,
+            url = EXCLUDED.url,
+            author = EXCLUDED.author,
+            published_at = EXCLUDED.published_at,
+            summary = EXCLUDED.summary,
+            content_snippet = EXCLUDED.content_snippet,
+            categories = EXCLUDED.categories,
+            category = EXCLUDED.category,
+            updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
+        `, [
           item.id,
           item.streamId,
           item.sourceTitle,
           item.title,
           item.url,
           item.author || null,
-          Math.floor(item.publishedAt.getTime() / 1000), // Convert to Unix timestamp
+          Math.floor(item.publishedAt.getTime() / 1000),
           item.summary || null,
           item.contentSnippet || null,
           JSON.stringify(item.categories),
           item.category
-        );
+        ]);
       }
-    });
+    } else {
+      const sqlite = getSqlite();
 
-    insertMany(items);
+      const stmt = sqlite.prepare(`
+        INSERT OR REPLACE INTO items 
+        (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+      `);
+
+      const insertMany = sqlite.transaction((items: FeedItem[]) => {
+        for (const item of items) {
+          stmt.run(
+            item.id,
+            item.streamId,
+            item.sourceTitle,
+            item.title,
+            item.url,
+            item.author || null,
+            Math.floor(item.publishedAt.getTime() / 1000),
+            item.summary || null,
+            item.contentSnippet || null,
+            JSON.stringify(item.categories),
+            item.category
+          );
+        }
+      });
+
+      insertMany(items);
+    }
     logger.info(`Saved ${items.length} items to database`);
   } catch (error) {
     logger.error("Failed to save items to database", error);
@@ -54,19 +92,10 @@ export async function loadItemsByCategory(
   periodDays: number
 ): Promise<FeedItem[]> {
   try {
-    const sqlite = getSqlite();
-
+    const driver = detectDriver();
     const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
 
-    const rows = sqlite
-      .prepare(
-        `
-      SELECT * FROM items 
-      WHERE category = ? AND published_at >= ?
-      ORDER BY published_at DESC
-      `
-      )
-      .all(category, cutoffTime) as Array<{
+    let rows: Array<{
       id: string;
       stream_id: string;
       source_title: string;
@@ -82,9 +111,30 @@ export async function loadItemsByCategory(
       extracted_url: string | null;
     }>;
 
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+                summary, content_snippet, categories, category, full_text, extracted_url
+         FROM items 
+         WHERE category = $1 AND published_at >= $2
+         ORDER BY published_at DESC`,
+        [category, cutoffTime]
+      );
+      rows = result.rows as typeof rows;
+    } else {
+      const sqlite = getSqlite();
+      rows = sqlite
+        .prepare(
+          `SELECT * FROM items 
+           WHERE category = ? AND published_at >= ?
+           ORDER BY published_at DESC`
+        )
+        .all(category, cutoffTime) as typeof rows;
+    }
+
     const items: FeedItem[] = rows.map((row) => {
-      const category = row.category as Category;
-      // Use extracted_url if original URL is invalid (inoreader wrapper)
+      const cat = row.category as Category;
       const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
         ? row.url 
         : (row.extracted_url || row.url);
@@ -95,13 +145,13 @@ export async function loadItemsByCategory(
         title: row.title,
         url: finalUrl,
         author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000), // Convert from Unix timestamp
+        publishedAt: new Date(row.published_at * 1000),
         summary: row.summary || undefined,
         contentSnippet: row.content_snippet || undefined,
         categories: JSON.parse(row.categories),
-        category,
-        raw: {}, // Raw data not stored in DB
-        fullText: row.full_text || undefined, // Include full text for search
+        category: cat,
+        raw: {},
+        fullText: row.full_text || undefined,
       };
     });
 
@@ -120,11 +170,9 @@ export async function loadItemsByCategory(
  */
 export async function loadItem(itemId: string): Promise<FeedItem | null> {
   try {
-    const sqlite = getSqlite();
-
-    const row = sqlite
-      .prepare(`SELECT * FROM items WHERE id = ?`)
-      .get(itemId) as {
+    const driver = detectDriver();
+    
+    type ItemRow = {
       id: string;
       stream_id: string;
       source_title: string;
@@ -137,14 +185,31 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       categories: string;
       category: string;
       extracted_url: string | null;
-    } | undefined;
+    };
+
+    let row: ItemRow | undefined;
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+                summary, content_snippet, categories, category, extracted_url
+         FROM items WHERE id = $1`,
+        [itemId]
+      );
+      row = result.rows[0] as ItemRow | undefined;
+    } else {
+      const sqlite = getSqlite();
+      row = sqlite
+        .prepare(`SELECT * FROM items WHERE id = ?`)
+        .get(itemId) as ItemRow | undefined;
+    }
 
     if (!row) {
       return null;
     }
 
     const category = row.category as Category;
-    // Use extracted_url if original URL is invalid (inoreader wrapper)
     const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
       ? row.url 
       : (row.extracted_url || row.url);
@@ -173,10 +238,17 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
  */
 export async function getItemsCount(): Promise<number> {
   try {
-    const sqlite = getSqlite();
-
-    const result = sqlite.prepare(`SELECT COUNT(*) as count FROM items`).get() as { count: number } | undefined;
-    return result?.count ?? 0;
+    const driver = detectDriver();
+    
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(`SELECT COUNT(*) as count FROM items`);
+      return Number(result.rows[0]?.count ?? 0);
+    } else {
+      const sqlite = getSqlite();
+      const result = sqlite.prepare(`SELECT COUNT(*) as count FROM items`).get() as { count: number } | undefined;
+      return result?.count ?? 0;
+    }
   } catch (error) {
     logger.error("Failed to get items count", error);
     throw error;
@@ -188,12 +260,22 @@ export async function getItemsCount(): Promise<number> {
  */
 export async function getItemsCountByCategory(category: string): Promise<number> {
   try {
-    const sqlite = getSqlite();
-
-    const result = sqlite
-      .prepare(`SELECT COUNT(*) as count FROM items WHERE category = ?`)
-      .get(category) as { count: number } | undefined;
-    return result?.count ?? 0;
+    const driver = detectDriver();
+    
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT COUNT(*) as count FROM items WHERE category = $1`,
+        [category]
+      );
+      return Number(result.rows[0]?.count ?? 0);
+    } else {
+      const sqlite = getSqlite();
+      const result = sqlite
+        .prepare(`SELECT COUNT(*) as count FROM items WHERE category = ?`)
+        .get(category) as { count: number } | undefined;
+      return result?.count ?? 0;
+    }
   } catch (error) {
     logger.error(`Failed to get items count for category ${category}`, error);
     throw error;
