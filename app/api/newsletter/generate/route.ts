@@ -189,7 +189,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     const selectedItems = selection.items;
 
     logger.info(`Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${req.limit}) with diversity constraints`);
-    
+
     // Log newsletter items being selected
     const selectedNewsletters = selectedItems.filter(item => item.sourceTitle.includes("TLDR") || item.sourceTitle.includes("Byte Byte Go") || item.sourceTitle.includes("Elevate") || item.sourceTitle.includes("Pointer"));
     if (selectedNewsletters.length > 0) {
@@ -202,8 +202,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     // Filter out digests without valid URLs before synthesis
     const validDigests = digests.filter(digest => {
-      const hasValidUrl = digest.url && 
-                         (digest.url.startsWith("http://") || digest.url.startsWith("https://")) && 
+      const hasValidUrl = digest.url &&
+                         (digest.url.startsWith("http://") || digest.url.startsWith("https://")) &&
                          !digest.url.includes("inoreader.com");
       if (!hasValidUrl) {
         logger.warn(`Excluding digest without valid URL: "${digest.title}" (url: "${digest.url}" source: "${digest.sourceTitle}")`);
@@ -211,7 +211,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       return hasValidUrl;
     });
     logger.info(`URL filter: ${digests.length} → ${validDigests.length} digests (removed ${digests.length - validDigests.length} without valid URLs)`);
-    
+
     // Critical: Track count discrepancy
     if (validDigests.length !== selectedItems.length) {
       logger.warn(`Item count mismatch: selected ${selectedItems.length}, extracted ${digests.length}, valid ${validDigests.length}`);

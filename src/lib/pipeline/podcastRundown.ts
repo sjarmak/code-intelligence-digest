@@ -199,10 +199,10 @@ Return ONLY valid JSON.`,
     }
 
     const rundown = JSON.parse(content) as PodcastRundown;
-    
+
     // Validate and normalize
     const segments = (rundown.segments || []).slice(0, 4);
-    const totalTime = segments.reduce((sum, s) => sum + (s.time_seconds || 0), 0) + 
+    const totalTime = segments.reduce((sum, s) => sum + (s.time_seconds || 0), 0) +
                       ((rundown.lightning_round?.length || 0) > 0 ? 60 : 0) + 60; // Add lightning + intro/outro
 
     return {
@@ -229,7 +229,7 @@ function generateFallbackRundown(
   _categories: Category[]
 ): PodcastRundown {
   const periodLabel = period === "week" ? "weekly" : "monthly";
-  
+
   // Take top 4 digests
   const topDigests = digests.slice(0, 4);
 

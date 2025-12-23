@@ -63,7 +63,7 @@ export async function retrieveRelevantItems(
         } catch (error) {
           logger.warn(`Failed to generate embedding for item ${item.id}`, { error });
           // Use zero vector as fallback
-          cachedEmbeddings.set(item.id, Array(768).fill(0));
+          cachedEmbeddings.set(item.id, Array(1536).fill(0));
         }
       }
 

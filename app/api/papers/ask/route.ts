@@ -27,13 +27,13 @@ interface AskRequest {
 
 export async function POST(request: NextRequest) {
   try {
-    const { 
-      question, 
-      limit = 20, 
-      libraryId, 
-      selectedBibcodes, 
-      conversationHistory, 
-      papersContext 
+    const {
+      question,
+      limit = 20,
+      libraryId,
+      selectedBibcodes,
+      conversationHistory,
+      papersContext
     } = (await request.json()) as AskRequest;
     const openaiKey = process.env.OPENAI_API_KEY;
 
@@ -59,11 +59,11 @@ export async function POST(request: NextRequest) {
     }
 
     const isFollowUp = !!conversationHistory && conversationHistory.length > 0;
-    logger.info('Processing question', { 
-      question, 
-      hasSelectedPapers: !!selectedBibcodes?.length, 
+    logger.info('Processing question', {
+      question,
+      hasSelectedPapers: !!selectedBibcodes?.length,
       hasLibrary: !!libraryId,
-      isFollowUp 
+      isFollowUp
     });
 
     let papers: ADSPaperRecord[] = [];
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       logger.info('Using existing papers context for follow-up');
       context = papersContext;
       // Extract bibcodes from context for citation tracking
-      papers = selectedBibcodes?.length 
+      papers = selectedBibcodes?.length
         ? selectedBibcodes
             .map((bibcode: string) => getPaper(bibcode))
             .filter((p): p is ADSPaperRecord => p !== null)
@@ -192,7 +192,7 @@ ${context}`;
         .map((idx) => {
           const p = papers[idx];
           if (!p) return null;
-          
+
           let authorStr = 'Unknown';
           if (p.authors) {
             try {
@@ -239,7 +239,7 @@ ${context}`;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error('Failed to answer question', { error: errorMsg });
-    
+
     // Check for common OpenAI API errors
     if (errorMsg.includes('401') || errorMsg.includes('Incorrect API key')) {
       return NextResponse.json(
@@ -247,7 +247,7 @@ ${context}`;
         { status: 500 }
       );
     }
-    
+
     if (errorMsg.includes('429')) {
       return NextResponse.json(
         { error: 'OpenAI API rate limit exceeded. Please try again in a few moments.' },
