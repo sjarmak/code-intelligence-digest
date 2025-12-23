@@ -100,9 +100,11 @@ export default function ItemCard({ item, rank }: ItemCardProps) {
          {/* Score and title */}
          <div className="flex-1 min-w-0">
            <div className="flex items-baseline gap-2 mb-1">
-             <span className="text-sm font-semibold text-gray-700 bg-surface/50 px-2 py-1 rounded">
-               {item.finalScore.toFixed(2)}
-             </span>
+             {!loading && settings.enableItemRelevanceTuning && (
+               <span className="text-sm font-semibold text-gray-700 bg-surface/50 px-2 py-1 rounded">
+                 {item.finalScore.toFixed(2)}
+               </span>
+             )}
              <a
                href={item.url}
                target="_blank"

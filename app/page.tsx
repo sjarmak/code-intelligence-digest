@@ -101,18 +101,21 @@ export default function Home() {
              <a
                href="/research"
                className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+               title="View ADS research libraries"
              >
                Libraries
              </a>
              <a
                href="/synthesis/newsletter"
                className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+               title="Generate newsletters"
              >
                Newsletter Generator
              </a>
              <a
                href="/synthesis/podcast"
                className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+               title="Generate podcast episodes"
              >
                Podcast Generator
              </a>
