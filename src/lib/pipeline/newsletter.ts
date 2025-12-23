@@ -661,16 +661,79 @@ function generateNewsletterFallback(
 
       const content = response.choices[0].message.content;
       if (!content || content.trim().length === 0) {
-        logger.warn("LLM returned empty response, using fallback");
+        logger.warn("LLM returned empty response, using fallback", {
+          model: "gpt-5.2-chat-latest",
+          responseId: response.id,
+          finishReason: response.choices[0]?.finish_reason,
+          usage: response.usage,
+        });
+        // Try fallback to gpt-4o-mini if gpt-5.2 fails
+        try {
+          logger.info("Attempting fallback to gpt-4o-mini");
+          const fallbackResponse = await client.chat.completions.create({
+            model: "gpt-4o-mini",
+            max_completion_tokens: 600,
+            messages: [
+              {
+                role: "user",
+                content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
+
+**Featured Topics:** ${themes.join(", ") || "code search, context management, agents, information retrieval, developer productivity"}
+
+**Key Items Featured:**
+${itemSummaries}
+
+Write substantive paragraphs. Ground every claim in the actual items provided.`,
+              },
+            ],
+          });
+          const fallbackContent = fallbackResponse.choices[0].message.content;
+          if (fallbackContent && fallbackContent.trim().length > 0) {
+            logger.info(`Fallback model (gpt-4o-mini) generated summary: ${fallbackContent.length} chars`);
+            return fallbackContent;
+          }
+        } catch (fallbackError) {
+          logger.warn("Fallback model also failed", {
+            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          });
+        }
         return buildExecutiveSummaryFallback(digests, themes);
       }
       logger.info(`LLM summary generated: ${content.length} chars`);
       return content;
       } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
       logger.warn("Failed to generate LLM summary, using fallback", { 
-        error: e instanceof Error ? e.message : String(e),
-        stack: e instanceof Error ? e.stack : undefined
+        error: errorMsg,
+        stack: e instanceof Error ? e.stack : undefined,
+        model: "gpt-5.2-chat-latest",
       });
+      // If it's a model error, try fallback model
+      if (errorMsg.includes("model") || errorMsg.includes("not found") || errorMsg.includes("invalid")) {
+        try {
+          logger.info("Model error detected, attempting fallback to gpt-4o-mini");
+          const client = new OpenAI({ apiKey });
+          const fallbackResponse = await client.chat.completions.create({
+            model: "gpt-4o-mini",
+            max_completion_tokens: 600,
+            messages: [
+              {
+                role: "user",
+                content: `Write a 300-400 word executive summary for a code intelligence digest focusing on: ${themes.join(", ")}`,
+              },
+            ],
+          });
+          const fallbackContent = fallbackResponse.choices[0].message.content;
+          if (fallbackContent && fallbackContent.trim().length > 0) {
+            logger.info(`Fallback model (gpt-4o-mini) generated summary: ${fallbackContent.length} chars`);
+            return fallbackContent;
+          }
+        } catch (fallbackError) {
+          logger.warn("Fallback model also failed", {
+            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          });
+        }
+      }
       return buildExecutiveSummaryFallback(digests, themes);
       }
   }
