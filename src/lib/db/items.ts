@@ -293,36 +293,50 @@ export async function loadScoresForItems(
       return {};
     }
 
-    const sqlite = getSqlite();
-
-    // Get the OLDEST (real LLM) scores for each item, not the newest (heuristics)
-    const placeholders = itemIds.map(() => "?").join(",");
-    const rows = sqlite
-      .prepare(
-        `
-      SELECT item_id, llm_relevance, llm_usefulness, llm_tags
-      FROM item_scores
-      WHERE item_id IN (${placeholders})
-      ORDER BY scored_at ASC
-    `
-      )
-      .all(...itemIds) as Array<{
+    const driver = detectDriver();
+    
+    type ScoreRow = {
       item_id: string;
       llm_relevance: number;
       llm_usefulness: number;
       llm_tags: string | null;
-    }>;
+    };
+
+    let rows: ScoreRow[];
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+      const result = await client.query(
+        `SELECT item_id, llm_relevance, llm_usefulness, llm_tags
+         FROM item_scores
+         WHERE item_id IN (${placeholders})
+         ORDER BY scored_at ASC`,
+        itemIds
+      );
+      rows = result.rows as ScoreRow[];
+    } else {
+      const sqlite = getSqlite();
+      const placeholders = itemIds.map(() => "?").join(",");
+      rows = sqlite
+        .prepare(
+          `SELECT item_id, llm_relevance, llm_usefulness, llm_tags
+           FROM item_scores
+           WHERE item_id IN (${placeholders})
+           ORDER BY scored_at ASC`
+        )
+        .all(...itemIds) as ScoreRow[];
+    }
 
     const scores: Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[] }> = {};
     const seen = new Set<string>();
 
     for (const row of rows) {
-      // Only include the first (most recent) score for each item
       if (!seen.has(row.item_id)) {
         seen.add(row.item_id);
         scores[row.item_id] = {
-          llm_relevance: row.llm_relevance,
-          llm_usefulness: row.llm_usefulness,
+          llm_relevance: Number(row.llm_relevance),
+          llm_usefulness: Number(row.llm_usefulness),
           llm_tags: row.llm_tags ? JSON.parse(row.llm_tags) : [],
         };
       }
@@ -341,13 +355,20 @@ export async function loadScoresForItems(
  */
 export async function getLastPublishedTimestamp(): Promise<number | null> {
   try {
-    const sqlite = getSqlite();
-
-    const result = sqlite
-      .prepare(`SELECT MAX(published_at) as max_published FROM items`)
-      .get() as { max_published: number | null } | undefined;
-
-    return result?.max_published ?? null;
+    const driver = detectDriver();
+    
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(`SELECT MAX(published_at) as max_published FROM items`);
+      const val = result.rows[0]?.max_published;
+      return typeof val === 'number' ? val : null;
+    } else {
+      const sqlite = getSqlite();
+      const result = sqlite
+        .prepare(`SELECT MAX(published_at) as max_published FROM items`)
+        .get() as { max_published: number | null } | undefined;
+      return result?.max_published ?? null;
+    }
   } catch (error) {
     logger.warn("Failed to get last published timestamp", { error });
     return null;
