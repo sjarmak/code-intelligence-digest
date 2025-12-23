@@ -1,15 +1,33 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { SyncDialog } from '@/src/components/admin/sync-dialog';
 import SettingsPanel from '@/src/components/admin/settings-panel';
+import { useAppConfig } from '@/src/hooks/useAppConfig';
 
 type AdminTab = 'sources' | 'starred' | 'settings';
 
 export default function AdminPage() {
+  const { config, loading } = useAppConfig();
   const [activeTab, setActiveTab] = useState<AdminTab>('sources');
+
+  // Redirect to home if admin UI is disabled (production)
+  useEffect(() => {
+    if (!loading && !config.adminUIEnabled) {
+      window.location.href = '/';
+    }
+  }, [loading, config.adminUIEnabled]);
+
+  // Show nothing while checking config or if admin disabled
+  if (loading || !config.adminUIEnabled) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <p className="text-muted">Loading...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white text-black">

@@ -17,6 +17,20 @@ export function useAdminSettings() {
     const loadSettings = async () => {
       try {
         setLoading(true);
+        
+        // First check if admin UI is enabled (production check)
+        const configResponse = await fetch('/api/config');
+        if (configResponse.ok) {
+          const config = await configResponse.json();
+          if (!config.adminUIEnabled) {
+            // In production, always disable tuning
+            setSettings({ enableItemRelevanceTuning: false });
+            setLoading(false);
+            return;
+          }
+        }
+        
+        // In dev, fetch actual settings
         const response = await fetch('/api/admin/settings');
         if (!response.ok) {
           throw new Error('Failed to load settings');
