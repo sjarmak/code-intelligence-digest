@@ -27,14 +27,14 @@ export async function saveEmbeddingsBatch(
     if (driver === 'postgres') {
       // PostgreSQL: use vector type
       const client = await getDbClient();
-      
+
       for (const item of itemsToSave) {
         // Format vector as string for Postgres: "[0.1,0.2,...]"
         const vectorStr = `[${item.embedding.join(',')}]`;
         await client.run(
           `INSERT INTO item_embeddings (item_id, embedding, generated_at)
            VALUES ($1, $2::vector, EXTRACT(EPOCH FROM NOW())::INTEGER)
-           ON CONFLICT (item_id) DO UPDATE SET 
+           ON CONFLICT (item_id) DO UPDATE SET
              embedding = $2::vector,
              generated_at = EXTRACT(EPOCH FROM NOW())::INTEGER`,
           [item.itemId, vectorStr]
@@ -44,7 +44,7 @@ export async function saveEmbeddingsBatch(
       // SQLite: use BLOB
       const sqlite = getSqlite();
       const stmt = sqlite.prepare(`
-        INSERT OR REPLACE INTO item_embeddings 
+        INSERT OR REPLACE INTO item_embeddings
         (item_id, embedding, generated_at)
         VALUES (?, ?, strftime('%s', 'now'))
       `);
@@ -89,7 +89,7 @@ export async function getEmbeddingsBatch(itemIds: string[]): Promise<Map<string,
         FROM item_embeddings
         WHERE item_id IN (${placeholders})
       `;
-      
+
       const result = await client.query(sql, itemIds);
       for (const row of result.rows) {
         try {
@@ -98,7 +98,8 @@ export async function getEmbeddingsBatch(itemIds: string[]): Promise<Map<string,
           const vector = JSON.parse(vectorStr) as number[];
           embeddings.set(row.item_id as string, vector);
         } catch (e) {
-          logger.warn(`Failed to parse embedding for item ${row.item_id}`, e);
+          const errorMsg = e instanceof Error ? e.message : String(e);
+          logger.warn(`Failed to parse embedding for item ${row.item_id}`, { error: errorMsg });
         }
       }
     } else {
@@ -144,7 +145,7 @@ export async function getEmbeddingsBatch(itemIds: string[]): Promise<Map<string,
 export async function getEmbedding(itemId: string): Promise<number[] | null> {
   try {
     const driver = detectDriver();
-    
+
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(
@@ -263,7 +264,7 @@ export async function deleteEmbeddings(itemIds: string[]): Promise<void> {
 export async function getEmbeddingsCount(): Promise<number> {
   try {
     const driver = detectDriver();
-    
+
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query('SELECT COUNT(*) as count FROM item_embeddings');
