@@ -11,16 +11,14 @@ import { saveStarredItems } from "../../../../src/lib/db/starredItems";
 import { categorizeItems } from "../../../../src/lib/pipeline/categorize";
 import { logger } from "../../../../src/lib/logger";
 import { initializeDatabase } from "../../../../src/lib/db/index";
+import { requireAdminToken } from "../../../../src/lib/auth/guards";
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify auth (add your own auth check here if needed)
+    // Verify auth
     const authHeader = request.headers.get("authorization");
-    const adminToken = process.env.ADMIN_API_TOKEN;
-    
-    if (adminToken && authHeader !== `Bearer ${adminToken}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const authError = requireAdminToken(authHeader);
+    if (authError) return authError;
 
     await initializeDatabase();
 

@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { getFeeds } from "@/src/config/feeds";
 import { logger } from "@/src/lib/logger";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 export async function GET() {
+  // Block in production
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     logger.info("DEBUG: Fetching feeds...");
     const feeds = await getFeeds();
