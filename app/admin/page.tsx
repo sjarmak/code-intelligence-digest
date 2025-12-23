@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { SyncDialog } from '@/src/components/admin/sync-dialog';
 
 type AdminTab = 'sources' | 'starred';
 
@@ -12,11 +13,14 @@ export default function AdminPage() {
       {/* Header */}
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div>
-            <h1 className="text-3xl font-bold">Relevance Tuning</h1>
-            <p className="text-muted mt-2">
-              Manage source relevance scores and curate starred items
-            </p>
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-3xl font-bold">Relevance Tuning</h1>
+              <p className="text-muted mt-2">
+                Manage source relevance scores and curate starred items
+              </p>
+            </div>
+            <SyncDialog />
           </div>
         </div>
       </header>
