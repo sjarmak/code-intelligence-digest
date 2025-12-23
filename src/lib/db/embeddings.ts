@@ -29,8 +29,24 @@ export async function saveEmbeddingsBatch(
       const client = await getDbClient();
 
       for (const item of itemsToSave) {
+        // Validate and normalize dimensions
+        let embedding = item.embedding;
+        if (embedding.length !== 1536) {
+          if (embedding.length === 768) {
+            // Pad 768-dim embeddings to 1536
+            logger.warn(`Padding 768-dim embedding to 1536 for item ${item.itemId}`);
+            embedding = new Array(1536);
+            for (let i = 0; i < 1536; i++) {
+              embedding[i] = item.embedding[i % 768] * (i < 768 ? 1 : 0.5);
+            }
+          } else {
+            logger.error(`Invalid embedding dimension (${embedding.length}) for item ${item.itemId}, skipping`);
+            continue;
+          }
+        }
+        
         // Format vector as string for Postgres: "[0.1,0.2,...]"
-        const vectorStr = `[${item.embedding.join(',')}]`;
+        const vectorStr = `[${embedding.join(',')}]`;
         await client.run(
           `INSERT INTO item_embeddings (item_id, embedding, generated_at)
            VALUES ($1, $2::vector, EXTRACT(EPOCH FROM NOW())::INTEGER)
