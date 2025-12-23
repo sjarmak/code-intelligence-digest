@@ -166,6 +166,89 @@ export async function loadItemsByCategory(
 }
 
 /**
+ * Load all items from database (for batch processing)
+ */
+export async function loadAllItems(limit?: number): Promise<FeedItem[]> {
+  try {
+    const driver = detectDriver();
+    
+    let rows: Array<{
+      id: string;
+      stream_id: string;
+      source_title: string;
+      title: string;
+      url: string;
+      author: string | null;
+      published_at: number;
+      summary: string | null;
+      content_snippet: string | null;
+      categories: string;
+      category: string;
+      full_text: string | null;
+      extracted_url: string | null;
+    }>;
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const limitClause = limit ? `LIMIT ${limit}` : '';
+      const result = await client.query(
+        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+                summary, content_snippet, categories, category, full_text, extracted_url
+         FROM items 
+         ORDER BY published_at DESC
+         ${limitClause}`
+      );
+      rows = result.rows as typeof rows;
+    } else {
+      const sqlite = getSqlite();
+      if (limit) {
+        rows = sqlite
+          .prepare(
+            `SELECT * FROM items 
+             ORDER BY published_at DESC
+             LIMIT ?`
+          )
+          .all(limit) as typeof rows;
+      } else {
+        rows = sqlite
+          .prepare(
+            `SELECT * FROM items 
+             ORDER BY published_at DESC`
+          )
+          .all() as typeof rows;
+      }
+    }
+
+    const items: FeedItem[] = rows.map((row) => {
+      const cat = row.category as Category;
+      const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
+        ? row.url 
+        : (row.extracted_url || row.url);
+      return {
+        id: row.id,
+        streamId: row.stream_id,
+        sourceTitle: row.source_title,
+        title: row.title,
+        url: finalUrl,
+        author: row.author || undefined,
+        publishedAt: new Date(row.published_at * 1000),
+        summary: row.summary || undefined,
+        contentSnippet: row.content_snippet || undefined,
+        categories: JSON.parse(row.categories),
+        category: cat,
+        raw: {},
+        fullText: row.full_text || undefined,
+      };
+    });
+
+    return items;
+  } catch (error) {
+    logger.error('Failed to load all items', error);
+    throw error;
+  }
+}
+
+/**
  * Load a single item by ID
  */
 export async function loadItem(itemId: string): Promise<FeedItem | null> {
