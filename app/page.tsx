@@ -100,21 +100,24 @@ export default function Home() {
              </button>
              <a
                href="/research"
-               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap no-underline"
+               style={{ color: '#666666' }}
                title="View ADS research libraries"
              >
                Libraries
              </a>
              <a
                href="/synthesis/newsletter"
-               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap no-underline"
+               style={{ color: '#666666' }}
                title="Generate newsletters"
              >
                Newsletter Generator
              </a>
              <a
                href="/synthesis/podcast"
-               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap"
+               className="px-1 py-4 text-sm font-medium border-b-2 border-transparent text-gray-600 hover:text-black transition-colors whitespace-nowrap no-underline"
+               style={{ color: '#666666' }}
                title="Generate podcast episodes"
              >
                Podcast Generator
