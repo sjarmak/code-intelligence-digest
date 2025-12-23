@@ -89,7 +89,7 @@ export default function Home() {
                   className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                     activeTab === 'resources'
                       ? 'border-black text-black'
-                      : 'border-transparent text-muted hover:text-black'
+                      : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
                   }`}
                   role="tab"
                   aria-selected={activeTab === 'resources'}
@@ -101,7 +101,7 @@ export default function Home() {
                  className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                    activeTab === 'search'
                      ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black'
+                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
                  }`}
                  role="tab"
                  aria-selected={activeTab === 'search'}
@@ -113,7 +113,7 @@ export default function Home() {
                  className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                    activeTab === 'ask'
                      ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black'
+                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
                  }`}
                  role="tab"
                  aria-selected={activeTab === 'ask'}
@@ -177,7 +177,7 @@ export default function Home() {
                       className={`px-3 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                         activeCategory === cat.id
                           ? 'border-black text-black'
-                          : 'border-transparent text-muted hover:text-black'
+                          : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
                       }`}
                       role="tab"
                       aria-selected={activeCategory === cat.id}

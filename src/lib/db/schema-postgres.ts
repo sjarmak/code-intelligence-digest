@@ -1,6 +1,6 @@
 /**
  * PostgreSQL Schema Definitions
- * 
+ *
  * PostgreSQL-compatible schema with:
  * - pgvector for embeddings
  * - tsvector for full-text search
@@ -231,11 +231,11 @@ CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_aud
 
 -- Embeddings index for vector similarity search (IVFFlat for speed)
 -- Note: Run this after populating embeddings for better index quality
--- CREATE INDEX IF NOT EXISTS idx_embeddings_vector ON item_embeddings 
+-- CREATE INDEX IF NOT EXISTS idx_embeddings_vector ON item_embeddings
 --   USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- HNSW index alternative (faster queries, slower builds)
-CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings 
+CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings
   USING hnsw (embedding vector_cosine_ops);
 
 -- Usage quota indexes
