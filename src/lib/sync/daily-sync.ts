@@ -108,8 +108,12 @@ function clearSyncState(): void {
 /**
  * Run daily sync: fetch items newer than the last one in our database
  * This ensures we never miss items and uses minimal API calls
+ * 
+ * @param lookbackDays Optional: override default sync window. Use for bootstrap or catch-up.
+ *                     If provided, fetches items from the last N days instead of since last sync.
+ *                     Example: runDailySync({ lookbackDays: 7 }) fetches last 7 days.
  */
-export async function runDailySync(): Promise<{
+export async function runDailySync(options?: { lookbackDays?: number }): Promise<{
   success: boolean;
   itemsAdded: number;
   apiCallsUsed: number;
@@ -118,7 +122,14 @@ export async function runDailySync(): Promise<{
   paused: boolean;
   error?: string;
 }> {
-  logger.info('[DAILY-SYNC] Starting daily sync (fetch newer items)');
+  const lookbackDays = options?.lookbackDays;
+  const isCatchup = lookbackDays !== undefined;
+  
+  if (isCatchup) {
+    logger.info(`[DAILY-SYNC] Starting catch-up sync (fetch last ${lookbackDays} days)`);
+  } else {
+    logger.info('[DAILY-SYNC] Starting daily sync (fetch newer items)');
+  }
 
   const existingState = getSyncState();
   const resumed = existingState ? existingState.status === 'paused' : false;
@@ -146,18 +157,25 @@ export async function runDailySync(): Promise<{
     callsUsed++;
 
     // Determine sync time window
-    const lastPublished = await getLastPublishedTimestamp();
     let syncSinceTimestamp: number;
     let reason: string;
 
-    if (lastPublished) {
-      // Fetch items newer than the most recent one we have
-      syncSinceTimestamp = lastPublished;
-      reason = `since last item (${new Date(lastPublished * 1000).toISOString()})`;
+    if (isCatchup && lookbackDays) {
+      // Catch-up mode: fetch from N days ago regardless of database state
+      syncSinceTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
+      reason = `last ${lookbackDays} days (catch-up mode)`;
     } else {
-      // Database is empty: fallback to last 24 hours
-      syncSinceTimestamp = Math.floor((Date.now() - FALLBACK_HOURS_IF_EMPTY * 60 * 60 * 1000) / 1000);
-      reason = `last ${FALLBACK_HOURS_IF_EMPTY} hours (database empty)`;
+      // Normal mode: fetch items newer than what we already have
+      const lastPublished = await getLastPublishedTimestamp();
+      if (lastPublished) {
+        // Fetch items newer than the most recent one we have
+        syncSinceTimestamp = lastPublished;
+        reason = `since last item (${new Date(lastPublished * 1000).toISOString()})`;
+      } else {
+        // Database is empty: fallback to last 24 hours
+        syncSinceTimestamp = Math.floor((Date.now() - FALLBACK_HOURS_IF_EMPTY * 60 * 60 * 1000) / 1000);
+        reason = `last ${FALLBACK_HOURS_IF_EMPTY} hours (database empty)`;
+      }
     }
 
     const allItemsStreamId = `user/${userId}/state/com.google/all`;
@@ -193,16 +211,10 @@ export async function runDailySync(): Promise<{
         break;
       }
 
-      // Early termination: if we're seeing items older than our threshold,
-      // there are no more new items to fetch. Stop pagination early.
-      const oldestItemTimestamp = Math.min(...response.items.map(item => item.published || 0));
-      if (oldestItemTimestamp <= syncSinceTimestamp) {
-        logger.debug(
-          `[DAILY-SYNC] Oldest item in batch is older than sync threshold, stopping pagination early`
-        );
-        hasMoreItems = false;
-        break;
-      }
+      // Note: We cannot do early termination based on the oldest item in batch
+      // because Inoreader doesn't guarantee items are sorted chronologically.
+      // Items from Dec 2 can be mixed with items from Dec 23 in the same batch.
+      // Instead, we rely on the continuation token to determine if there are more items.
 
       logger.info(
         `[DAILY-SYNC] Batch ${batchNumber}: fetched ${response.items.length} items (${callsUsed} calls used)`
