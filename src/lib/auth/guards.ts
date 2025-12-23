@@ -27,32 +27,6 @@ export function blockInProduction(): NextResponse | null {
 }
 
 /**
- * Require ADMIN_API_TOKEN for protected routes
- * Returns error response if unauthorized, null if authorized
- */
-export function requireAdminToken(authHeader: string | null): NextResponse | null {
-  const adminToken = process.env.ADMIN_API_TOKEN;
-
-  // In production, token is required
-  if (isProduction() && !adminToken) {
-    return NextResponse.json(
-      { error: 'ADMIN_API_TOKEN not configured' },
-      { status: 500 }
-    );
-  }
-
-  // If token is set, validate it
-  if (adminToken && authHeader !== `Bearer ${adminToken}`) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
-  }
-
-  return null;
-}
-
-/**
  * Check if admin UI should be enabled
  * Controlled by ENABLE_ADMIN_UI env var (default: true in dev, false in prod)
  */

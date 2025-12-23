@@ -11,14 +11,13 @@ import { saveStarredItems } from "../../../../src/lib/db/starredItems";
 import { categorizeItems } from "../../../../src/lib/pipeline/categorize";
 import { logger } from "../../../../src/lib/logger";
 import { initializeDatabase } from "../../../../src/lib/db/index";
-import { requireAdminToken } from "../../../../src/lib/auth/guards";
+import { blockInProduction } from "../../../../src/lib/auth/guards";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
-    // Verify auth
-    const authHeader = request.headers.get("authorization");
-    const authError = requireAdminToken(authHeader);
-    if (authError) return authError;
 
     await initializeDatabase();
 
@@ -104,6 +103,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     await initializeDatabase();
 

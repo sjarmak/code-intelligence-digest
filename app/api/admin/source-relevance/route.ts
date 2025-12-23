@@ -14,6 +14,7 @@ import {
 import { logger } from "../../../../src/lib/logger";
 import { initializeDatabase } from "../../../../src/lib/db/index";
 import { z } from "zod";
+import { blockInProduction } from "../../../../src/lib/auth/guards";
 
 const SetRelevanceSchema = z.object({
   streamId: z.string(),
@@ -21,6 +22,9 @@ const SetRelevanceSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     await initializeDatabase();
 
@@ -47,15 +51,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
-    // Verify auth
-    const authHeader = request.headers.get("authorization");
-    const adminToken = process.env.ADMIN_API_TOKEN;
-
-    if (adminToken && authHeader !== `Bearer ${adminToken}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     await initializeDatabase();
 
     const body = await request.json();

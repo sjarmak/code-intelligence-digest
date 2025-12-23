@@ -12,8 +12,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { saveItemRelevance, getItemRelevance, starItem, isItemStarred } from '@/src/lib/db/item-relevance';
 import { logger } from '@/src/lib/logger';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const itemId = searchParams.get('itemId');
@@ -50,6 +54,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function PATCH(request: NextRequest): Promise<NextResponse> {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const body = await request.json() as {
       itemId: string;

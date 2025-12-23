@@ -18,6 +18,7 @@ import {
   syncCategoryOptimized,
   syncByLabel,
 } from '@/src/lib/sync/inoreader-sync-optimized';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 const VALID_CATEGORIES: Category[] = [
   'newsletters',
@@ -37,6 +38,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ slug: string[] }> }
 ) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const { searchParams } = new URL(req.url);
     const resolvedParams = await params;

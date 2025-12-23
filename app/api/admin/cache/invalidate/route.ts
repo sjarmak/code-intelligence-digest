@@ -7,12 +7,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { invalidateFeeds, invalidateCategoryItems } from "@/src/lib/db/cache";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 /**
  * POST /api/admin/cache/invalidate
  * Body: { "scope": "feeds" | "items", "category"?: string }
  */
 export async function POST(req: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const body = await req.json() as { scope?: string; category?: string };
     const { scope = "feeds", category } = body;

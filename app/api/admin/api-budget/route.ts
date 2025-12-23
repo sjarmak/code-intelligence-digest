@@ -7,8 +7,12 @@
 
 import { NextResponse } from 'next/server';
 import { initializeDatabase, getGlobalApiBudget } from '@/src/lib/db/index';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 export async function GET() {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     await initializeDatabase();
     

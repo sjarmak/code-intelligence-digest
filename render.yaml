@@ -22,8 +22,6 @@ services:
         sync: false
       - key: INOREADER_REFRESH_TOKEN
         sync: false
-      - key: ADMIN_API_TOKEN
-        generateValue: true
       - key: OPENAI_API_KEY
         sync: false
     healthCheckPath: /api/health

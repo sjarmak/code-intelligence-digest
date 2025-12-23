@@ -24,8 +24,12 @@ import { NextResponse } from 'next/server';
 import { logger } from '@/src/lib/logger';
 import { initializeDatabase } from '@/src/lib/db/index';
 import { runDailySync } from '@/src/lib/sync/daily-sync';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 export async function POST() {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     logger.info('[SYNC-DAILY-API] Received daily sync request');
 
