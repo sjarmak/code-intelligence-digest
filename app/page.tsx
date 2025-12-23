@@ -18,30 +18,6 @@ export default function Home() {
   const [period, setPeriod] = useState<Period>('week');
   const [activeCategory, setActiveCategory] = useState<string>('newsletters');
   const [activeTab, setActiveTab] = useState<TabType>('resources');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-
-  const handleSync = async () => {
-    setIsSyncing(true);
-    setSyncMessage(null);
-    try {
-      const response = await fetch('/api/admin/sync-48h', {
-        method: 'POST',
-      });
-
-      if (!response.ok) {
-        throw new Error(`Sync failed: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setSyncMessage(`✓ Synced ${data.itemsAdded} items (${data.apiCallsUsed} API calls)`);
-      setTimeout(() => setSyncMessage(null), 5000);
-    } catch (error) {
-      setSyncMessage(`✗ Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   const categories = [
     { id: 'newsletters', label: 'Newsletters' },
@@ -67,28 +43,20 @@ export default function Home() {
             </div>
             <div className="space-y-2">
               <div className="flex gap-2 flex-wrap items-start">
-                <button
-                   onClick={handleSync}
-                   disabled={isSyncing}
-                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-black hover:bg-gray-800 disabled:bg-gray-400 text-white"
-                   title="Sync today's content from Inoreader"
-                 >
-                   {isSyncing ? 'Syncing...' : '↻ Sync'}
-                 </button>
-                 <a
-                   href="/research"
-                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                   title="View ADS research libraries"
-                 >
-                   Libraries
-                 </a>
-                 <a
-                   href="/admin"
-                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                   title="Manage relevance tuning"
-                 >
-                   Tuning
-                 </a>
+                <a
+                  href="/research"
+                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                  title="View ADS research libraries"
+                >
+                  Libraries
+                </a>
+                <a
+                  href="/admin"
+                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                  title="Manage relevance tuning and content sync"
+                >
+                  Tuning
+                </a>
                 <button
                    onClick={() => setPeriod('day')}
                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -150,17 +118,6 @@ export default function Home() {
           </div>
         </div>
       </header>
-
-      {/* Sync Status Message */}
-      {syncMessage && (
-        <div className={`border-b px-4 py-2 text-sm font-medium text-center ${
-          syncMessage.startsWith('✓')
-            ? 'bg-green-100 border-green-300 text-green-900'
-            : 'bg-red-100 border-red-300 text-red-900'
-        }`}>
-          {syncMessage}
-        </div>
-      )}
 
       {/* Main Tabs */}
       <div className="border-b border-surface-border bg-surface sticky top-20 z-10">
