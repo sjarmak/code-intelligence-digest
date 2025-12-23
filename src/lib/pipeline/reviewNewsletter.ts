@@ -17,6 +17,7 @@ const BAD_URL_DOMAINS = [
   "reactdigest.com",
   "programmingdigest.net",
   "newsletter-digest",
+  "bonobopress.com",
 ];
 
 const BAD_URL_PATTERNS = [

@@ -8,6 +8,8 @@ export interface InoreaderStreamResponse {
   id: string;
   title: string;
   updated: number;
+  unreadcount?: number;  // Number of unread items in stream
+  totalcount?: number;   // Total number of items in stream
 }
 
 export interface InoreaderArticle {

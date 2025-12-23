@@ -163,13 +163,13 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     if (isCacheValid) {
       const dbFeeds = await loadAllFeeds();
       if (dbFeeds && dbFeeds.length > 0) {
-        logger.info(`Loaded ${dbFeeds.length} feeds from database cache`);
+        logger.info(`[FEEDS] Loaded ${dbFeeds.length} feeds from database cache (cost: 0 API calls)`);
         cachedFeeds = dbFeeds;
         return dbFeeds;
       }
     }
 
-    logger.info("Database cache expired or empty, fetching from Inoreader API...");
+    logger.info("[FEEDS] Database cache expired or empty, fetching from Inoreader API (cost: 1 API call)...");
     const client = createInoreaderClient();
     const subscriptionList = await client.getSubscriptions();
 
