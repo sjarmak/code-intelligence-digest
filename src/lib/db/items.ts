@@ -14,12 +14,12 @@ import { logger } from "../logger";
 export async function saveItems(items: FeedItem[]): Promise<void> {
   try {
     const driver = detectDriver();
-    
+
     if (driver === 'postgres') {
       const client = await getDbClient();
       for (const item of items) {
         await client.run(`
-          INSERT INTO items 
+          INSERT INTO items
           (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, EXTRACT(EPOCH FROM NOW())::INTEGER)
           ON CONFLICT (id) DO UPDATE SET
@@ -52,7 +52,7 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
       const sqlite = getSqlite();
 
       const stmt = sqlite.prepare(`
-        INSERT OR REPLACE INTO items 
+        INSERT OR REPLACE INTO items
         (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
       `);
@@ -114,9 +114,9 @@ export async function loadItemsByCategory(
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
-         FROM items 
+         FROM items
          WHERE category = $1 AND published_at >= $2
          ORDER BY published_at DESC`,
         [category, cutoffTime]
@@ -126,7 +126,7 @@ export async function loadItemsByCategory(
       const sqlite = getSqlite();
       rows = sqlite
         .prepare(
-          `SELECT * FROM items 
+          `SELECT * FROM items
            WHERE category = ? AND published_at >= ?
            ORDER BY published_at DESC`
         )
@@ -135,8 +135,8 @@ export async function loadItemsByCategory(
 
     const items: FeedItem[] = rows.map((row) => {
       const cat = row.category as Category;
-      const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
-        ? row.url 
+      const finalUrl = (row.url && !row.url.includes("inoreader.com"))
+        ? row.url
         : (row.extracted_url || row.url);
       return {
         id: row.id,
@@ -171,7 +171,7 @@ export async function loadItemsByCategory(
 export async function loadAllItems(limit?: number): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
-    
+
     let rows: Array<{
       id: string;
       stream_id: string;
@@ -192,9 +192,9 @@ export async function loadAllItems(limit?: number): Promise<FeedItem[]> {
       const client = await getDbClient();
       const limitClause = limit ? `LIMIT ${limit}` : '';
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
-         FROM items 
+         FROM items
          ORDER BY published_at DESC
          ${limitClause}`
       );
@@ -204,7 +204,7 @@ export async function loadAllItems(limit?: number): Promise<FeedItem[]> {
       if (limit) {
         rows = sqlite
           .prepare(
-            `SELECT * FROM items 
+            `SELECT * FROM items
              ORDER BY published_at DESC
              LIMIT ?`
           )
@@ -212,7 +212,7 @@ export async function loadAllItems(limit?: number): Promise<FeedItem[]> {
       } else {
         rows = sqlite
           .prepare(
-            `SELECT * FROM items 
+            `SELECT * FROM items
              ORDER BY published_at DESC`
           )
           .all() as typeof rows;
@@ -221,8 +221,8 @@ export async function loadAllItems(limit?: number): Promise<FeedItem[]> {
 
     const items: FeedItem[] = rows.map((row) => {
       const cat = row.category as Category;
-      const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
-        ? row.url 
+      const finalUrl = (row.url && !row.url.includes("inoreader.com"))
+        ? row.url
         : (row.extracted_url || row.url);
       return {
         id: row.id,
@@ -254,7 +254,7 @@ export async function loadAllItems(limit?: number): Promise<FeedItem[]> {
 export async function loadItem(itemId: string): Promise<FeedItem | null> {
   try {
     const driver = detectDriver();
-    
+
     type ItemRow = {
       id: string;
       stream_id: string;
@@ -275,7 +275,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
                 summary, content_snippet, categories, category, extracted_url
          FROM items WHERE id = $1`,
         [itemId]
@@ -293,8 +293,8 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
     }
 
     const category = row.category as Category;
-    const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
-      ? row.url 
+    const finalUrl = (row.url && !row.url.includes("inoreader.com"))
+      ? row.url
       : (row.extracted_url || row.url);
     return {
       id: row.id,
@@ -322,7 +322,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
 export async function getItemsCount(): Promise<number> {
   try {
     const driver = detectDriver();
-    
+
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(`SELECT COUNT(*) as count FROM items`);
@@ -344,7 +344,7 @@ export async function getItemsCount(): Promise<number> {
 export async function getItemsCountByCategory(category: string): Promise<number> {
   try {
     const driver = detectDriver();
-    
+
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(
@@ -377,7 +377,7 @@ export async function loadScoresForItems(
     }
 
     const driver = detectDriver();
-    
+
     type ScoreRow = {
       item_id: string;
       llm_relevance: number;
@@ -439,7 +439,7 @@ export async function loadScoresForItems(
 export async function getLastPublishedTimestamp(): Promise<number | null> {
   try {
     const driver = detectDriver();
-    
+
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(`SELECT MAX(published_at) as max_published FROM items`);
@@ -495,8 +495,8 @@ export async function saveFullText(
     const sqlite = getSqlite();
 
     sqlite.prepare(`
-      UPDATE items 
-      SET full_text = ?, 
+      UPDATE items
+      SET full_text = ?,
           full_text_fetched_at = strftime('%s', 'now'),
           full_text_source = ?,
           updated_at = strftime('%s', 'now')
@@ -558,7 +558,7 @@ export async function getFullTextCacheStats(): Promise<{
 
     const bySource = sqlite
       .prepare(
-        `SELECT full_text_source, COUNT(*) as count FROM items 
+        `SELECT full_text_source, COUNT(*) as count FROM items
          WHERE full_text IS NOT NULL GROUP BY full_text_source`
       )
       .all() as Array<{ full_text_source: string; count: number }>;
@@ -582,7 +582,7 @@ export async function saveExtractedUrl(itemId: string, extractedUrl: string): Pr
     const sqlite = getSqlite();
 
     sqlite.prepare(`
-      UPDATE items 
+      UPDATE items
       SET extracted_url = ?,
           updated_at = strftime('%s', 'now')
       WHERE id = ?
@@ -602,7 +602,7 @@ export async function saveExtractedUrls(urlMap: Record<string, string>): Promise
   try {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
-      UPDATE items 
+      UPDATE items
       SET extracted_url = ?,
           updated_at = strftime('%s', 'now')
       WHERE id = ?

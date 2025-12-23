@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 /**
  * Batch job to generate embeddings for all items in the database
- * 
+ *
  * Usage:
  *   npx tsx scripts/populate-embeddings.ts [options]
- * 
+ *
  * Options:
  *   --category <category>  Only process items in this category
  *   --limit <number>       Limit number of items to process (default: all)
@@ -54,7 +54,7 @@ async function populateEmbeddings(
     const existingEmbeddings = await getEmbeddingsBatch(itemIds);
     itemsToProcess = items.filter(item => !existingEmbeddings.has(item.id));
     stats.skipped = items.length - itemsToProcess.length;
-    
+
     logger.info(`Skipping ${stats.skipped} items that already have embeddings`);
     logger.info(`Processing ${itemsToProcess.length} items that need embeddings`);
   }
