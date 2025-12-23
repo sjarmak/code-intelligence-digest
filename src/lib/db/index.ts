@@ -1,16 +1,22 @@
 /**
  * Database initialization and client
+ * 
+ * Supports both SQLite (development) and PostgreSQL (production).
+ * Driver detection is automatic based on DATABASE_URL env var.
  */
 
 import Database from "better-sqlite3";
 import * as path from "path";
 import * as fs from "fs";
 import { logger } from "../logger";
+import { detectDriver, getDbClient, DatabaseDriver } from "./driver";
+import { getPostgresSchema } from "./schema-postgres";
 
 let sqlite: Database.Database | null = null;
+let initialized = false;
 
 /**
- * Get or create database connection
+ * Get or create SQLite database connection (development only)
  */
 export function getSqlite() {
   if (!sqlite) {
@@ -34,8 +40,56 @@ export function getSqlite() {
 
 /**
  * Initialize database schema (create tables if they don't exist)
+ * Automatically detects and uses the appropriate driver (SQLite or PostgreSQL)
  */
 export async function initializeDatabase() {
+  if (initialized) {
+    return;
+  }
+
+  const driver = detectDriver();
+  logger.info(`Initializing database with ${driver} driver`);
+
+  if (driver === 'postgres') {
+    await initializePostgresSchema();
+  } else {
+    await initializeSqliteSchema();
+  }
+
+  initialized = true;
+}
+
+/**
+ * Initialize PostgreSQL schema
+ */
+async function initializePostgresSchema() {
+  try {
+    const client = await getDbClient();
+    const schema = getPostgresSchema();
+    
+    // Execute schema in segments (extensions, tables, indexes)
+    await client.exec(schema);
+    
+    // Add full_text column if it doesn't exist (for migration)
+    try {
+      await client.run(`
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS full_text TEXT;
+      `);
+    } catch {
+      // Column may already exist
+    }
+    
+    logger.info("PostgreSQL schema initialized successfully");
+  } catch (error) {
+    logger.error("Failed to initialize PostgreSQL schema", error);
+    throw error;
+  }
+}
+
+/**
+ * Initialize SQLite schema (existing implementation)
+ */
+async function initializeSqliteSchema() {
   try {
     const sqlite = getSqlite();
 
@@ -256,9 +310,9 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
     `);
 
-    logger.info("Database schema initialized successfully");
+    logger.info("SQLite schema initialized successfully");
   } catch (error) {
-    logger.error("Failed to initialize database schema", error);
+    logger.error("Failed to initialize SQLite database schema", error);
     throw error;
   }
 }

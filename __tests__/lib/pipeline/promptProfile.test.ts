@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildPromptProfile } from "@/src/lib/pipeline/promptProfile";
+import { buildPromptProfile } from "../../../src/lib/pipeline/promptProfile";
 
 describe("promptProfile", () => {
   it("should return null for empty prompt", async () => {
