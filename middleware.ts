@@ -4,15 +4,20 @@ import type { NextRequest } from 'next/server';
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow access to login page and auth API routes
-  if (pathname === '/login' || pathname.startsWith('/api/auth/')) {
-    return NextResponse.next();
-  }
+      // Allow access to login page and auth API routes
+      if (pathname === '/login' || pathname.startsWith('/api/auth/')) {
+        return NextResponse.next();
+      }
 
-  // Allow access to health check endpoint
-  if (pathname === '/api/health') {
-    return NextResponse.next();
-  }
+      // Allow access to health check endpoint
+      if (pathname === '/api/health') {
+        return NextResponse.next();
+      }
+
+      // Allow access to populate-embeddings endpoint (one-time operation)
+      if (pathname === '/api/admin/populate-embeddings') {
+        return NextResponse.next();
+      }
 
   // Check for authentication cookie
   const authCookie = request.cookies.get('ui-auth');

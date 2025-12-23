@@ -44,7 +44,7 @@ export async function saveEmbeddingsBatch(
             continue;
           }
         }
-        
+
         // Format vector as string for Postgres: "[0.1,0.2,...]"
         const vectorStr = `[${embedding.join(',')}]`;
         await client.run(
