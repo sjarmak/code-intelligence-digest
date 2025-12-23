@@ -7,11 +7,15 @@ import { NextResponse } from "next/server";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { getAllCacheMetadata, isCacheExpired } from "@/src/lib/db/cache";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 /**
  * GET /api/admin/cache/status
  */
 export async function GET() {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     logger.info("[CACHE] Status check requested");
 

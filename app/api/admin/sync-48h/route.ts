@@ -26,6 +26,7 @@ import { categorizeItems } from '@/src/lib/pipeline/categorize';
 import { saveItems } from '@/src/lib/db/items';
 import { getSqlite } from '@/src/lib/db/index';
 import { Category } from '@/src/lib/model';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 const VALID_CATEGORIES: Category[] = [
   'newsletters',
@@ -38,6 +39,8 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 export async function POST() {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
   try {
     logger.info('[SYNC-48H-API] Received 48-hour sync request');
 

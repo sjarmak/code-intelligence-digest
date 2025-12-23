@@ -21,8 +21,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runDailySync } from '@/src/lib/sync/daily-sync';
 import { logger } from '@/src/lib/logger';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const searchParams = request.nextUrl.searchParams;
     const daysParam = searchParams.get('days');

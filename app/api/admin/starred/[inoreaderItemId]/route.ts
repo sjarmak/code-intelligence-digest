@@ -7,6 +7,7 @@ import { rateItem, RelevanceRating } from "../../../../../src/lib/db/starredItem
 import { logger } from "../../../../../src/lib/logger";
 import { initializeDatabase } from "../../../../../src/lib/db/index";
 import { z } from "zod";
+import { blockInProduction } from "../../../../../src/lib/auth/guards";
 
 const RateStarredSchema = z.object({
   rating: z.union([
@@ -23,6 +24,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ inoreaderItemId: string }> }
 ) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   const { inoreaderItemId } = await params;
   try {
     await initializeDatabase();

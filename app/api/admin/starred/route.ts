@@ -14,6 +14,7 @@ import {
 import { logger } from "../../../../src/lib/logger";
 import { initializeDatabase } from "../../../../src/lib/db/index";
 import { z } from "zod";
+import { blockInProduction } from "../../../../src/lib/auth/guards";
 
 const RateStarredSchema = z.object({
   rating: z.union([
@@ -27,6 +28,9 @@ const RateStarredSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     await initializeDatabase();
 
@@ -80,6 +84,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     await initializeDatabase();
 

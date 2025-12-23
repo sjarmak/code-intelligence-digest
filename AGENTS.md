@@ -7,16 +7,19 @@ Quick reference for agent-specific patterns, workflows, and best practices. Deta
 ## Critical Rules
 
 ### No Development Servers
+
 Never run `npm run dev` as an agent. Do not open ports or run background daemons.
 
 ### Root Directory is Sacred
 
 **What belongs in root (ONLY):**
+
 - `README.md`, `AGENTS.md`, `LICENSE`
 - Essential config: `package.json`, `tsconfig.json`, `next.config.ts`, `eslint.config.mjs`, `postcss.config.mjs`
 - Essential directories: `src/`, `app/`, `public/`, `scripts/`, `.beads/`
 
 **What NEVER goes in root:**
+
 - Guides & docs (TESTING.md, QUICK_REFERENCE.txt) → `history/`
 - Status/progress files (STATUS.md, PROGRESS.md, LANDING_PLANE.md) → `history/`
 - Planning docs (PLAN.md, DESIGN.md) → `history/`
@@ -24,6 +27,7 @@ Never run `npm run dev` as an agent. Do not open ports or run background daemons
 - JSON outputs/artifacts → `.data/` or `.cache/`
 
 **Check before committing:**
+
 ```bash
 ls -1 | grep -E "\.(md|txt)$" | grep -v -E "^(README|AGENTS|LICENSE)\.md$"
 # Should return nothing
@@ -46,6 +50,7 @@ unset NODE_ENV && npm run build  # Production build (NODE_ENV must be unset!)
 **Critical:** Always use `npm test -- --run` to avoid Vitest watch mode hanging.
 
 **Build Warning:** If `NODE_ENV=development` is set in your shell, the build will fail with a `/_global-error` SSR error. Always unset NODE_ENV before building:
+
 ```bash
 unset NODE_ENV && npm run build
 ```
@@ -55,6 +60,7 @@ unset NODE_ENV && npm run build
 ## Project Architecture
 
 ### High-Level Overview
+
 1. **Input**: Fetch items from Inoreader (streams, feeds)
 2. **Normalize**: Raw items → `FeedItem` model
 3. **Categorize**: Assign to 7 categories (newsletters, podcasts, tech_articles, ai_news, product_news, community, research)
@@ -63,6 +69,7 @@ unset NODE_ENV && npm run build
 6. **Deliver**: JSON API + shadcn React UI
 
 ### Core Files
+
 - `src/config/feeds.ts` - Inoreader stream → category mapping
 - `src/lib/pipeline/` - Normalize, categorize, score, rank, select
 - `app/api/items/route.ts` - Main `/api/items` endpoint
@@ -75,18 +82,22 @@ unset NODE_ENV && npm run build
 ## Scoring System (Hybrid: LLM + BM25 + Recency)
 
 ### Overview
+
 Every item receives a `finalScore` combining:
+
 - **LLM** (45%): Relevance & usefulness to devs (0-10 scale)
 - **BM25** (35%): Term matching against domain vocabulary (0-1 normalized)
 - **Recency** (15%): Exponential time decay (weekly half-life ≈ 3 days)
 - **Engagement** (5%): Community-only (Reddit upvotes/comments)
 
 ### Default Formula
+
 ```
 finalScore = (LLM_norm * 0.45) + (BM25_norm * 0.35) + (Recency * 0.15) + (Engagement * 0.05)
 ```
 
 ### Domain Terms (for BM25 queries)
+
 - Code Search (1.6x)
 - Information Retrieval (1.5x)
 - Context Management (1.5x)
@@ -105,6 +116,7 @@ finalScore = (LLM_norm * 0.45) + (BM25_norm * 0.35) + (Recency * 0.15) + (Engage
 **Use bd for ALL issue tracking. No markdown TODOs.**
 
 ### Quick Commands
+
 ```bash
 bd ready                                    # Find unblocked work
 bd update <id> --status in_progress         # Claim
@@ -113,6 +125,7 @@ bd create "Title" -t task -p 2              # Create new
 ```
 
 ### Priorities
+
 - P0: Critical (security, data loss)
 - P1: High (major features)
 - P2: Medium (default)
@@ -120,6 +133,7 @@ bd create "Title" -t task -p 2              # Create new
 - P4: Backlog
 
 ### Workflow
+
 1. `bd ready` → pick work
 2. `bd update <id> --status in_progress`
 3. Read requirement
@@ -130,6 +144,7 @@ bd create "Title" -t task -p 2              # Create new
 8. `bd close` only when tests prove completion
 
 ### Key Principles
+
 - Create specific tests for bead requirements
 - Use real implementations, not mocks
 - Only close when tests prove it works
@@ -142,6 +157,7 @@ bd create "Title" -t task -p 2              # Create new
 When ending a session:
 
 ### 1. Check In-Progress Beads
+
 ```bash
 bd list --json | jq '.[] | select(.status == "in_progress") | {id, title}'
 ```
@@ -149,11 +165,13 @@ bd list --json | jq '.[] | select(.status == "in_progress") | {id, title}'
 For each: verify test exists, runs, no regressions. Close only if ALL criteria met.
 
 ### 2. File Remaining Work
+
 ```bash
 bd create "Remaining task" -t task -p 2
 ```
 
 ### 3. Run Quality Gates
+
 ```bash
 npm test -- --run
 npm run lint
@@ -161,12 +179,14 @@ npm run build
 ```
 
 ### 4. Clean Root Directory
+
 ```bash
 ls -1 | grep -E "\.(md|txt|json|sh)$" | grep -v -E "^(README|AGENTS|LICENSE|package|tsconfig|next|eslint|postcss)"
 # Move any results to history/
 ```
 
 ### 5. Commit & Sync
+
 ```bash
 git add .
 git commit -m "Session close: <summary>"
@@ -174,6 +194,7 @@ git pull --rebase
 ```
 
 ### 6. Clean Git State
+
 ```bash
 git stash clear
 git remote prune origin
@@ -181,6 +202,7 @@ git status
 ```
 
 ### 7. Report to User
+
 - Closed/open beads with status
 - New issues filed
 - Test/lint/build results
@@ -191,19 +213,23 @@ git status
 ## Key Features & Quick Start
 
 ### Daily Sync
+
 ```bash
 bash scripts/run-sync.sh
 # or: curl -X POST http://localhost:3002/api/admin/sync-daily
 ```
 
 ### ADS Libraries Integration
+
 Requires: `ADS_API_TOKEN` in `.env.local`
+
 ```bash
 npx tsx scripts/test-ads-api.ts
 # Access via: http://localhost:3000/research
 ```
 
 ### Relevance Tuning
+
 ```bash
 # Sync starred items from Inoreader
 curl -X POST http://localhost:3002/api/admin/sync-starred \
@@ -225,20 +251,24 @@ curl -X POST http://localhost:3002/api/admin/source-relevance \
 If `.ace.json` or `logs/` indicate ACE is present:
 
 ### Before Work
+
 ```bash
 ace get bullets --sort-by helpful --limit 10
 ace status
 ```
 
 ### On Failure (build/test/lint)
+
 Capture trace with execution details.
 
 ### After Completing Task
+
 ```bash
 ace learn --beads <id> --min-confidence 0.8   # MANDATORY
 ```
 
 ### Apply Deltas
+
 ```bash
 ace apply
 ```
@@ -248,6 +278,7 @@ ace apply
 ## Advanced Topics
 
 **See `history/docs/` for:**
+
 - `DAILY_SYNC_USAGE.md` - Sync API details
 - `ADS_LIBRARIES_GUIDE.md` - ADS integration
 - `hybrid-scoring-system.md` - Scoring design & experiments
@@ -269,16 +300,19 @@ ace apply
 ## Error Handling & Logging
 
 ### HTTP Calls
+
 - Centralize in `src/lib/inoreader/client.ts` or `src/lib/http.ts`
 - Exponential backoff for transient errors (5xx, 429, network)
 - Max 3–5 retries with logging
 
 ### Structured Logging
+
 Use `src/lib/logger.ts`:
+
 ```ts
-logger.info("Event description", { metadata })
-logger.warn("Retry or degraded mode", { reason })
-logger.error("Hard failure", { error })
+logger.info("Event description", { metadata });
+logger.warn("Retry or degraded mode", { reason });
+logger.error("Hard failure", { error });
 ```
 
 Never surface raw stack traces to user-facing APIs.

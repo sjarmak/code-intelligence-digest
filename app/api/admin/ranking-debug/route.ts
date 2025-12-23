@@ -11,6 +11,7 @@ import { initializeDatabase } from "@/src/lib/db/index";
 import { loadItemsByCategory } from "@/src/lib/db/items";
 import { getItemLatestScores } from "@/src/lib/db/scores";
 import { rankCategory } from "@/src/lib/pipeline/rank";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 /**
  * Validate query parameters
@@ -47,6 +48,9 @@ function parseQueryParams(req: NextRequest) {
  * GET /api/admin/ranking-debug?category=research&period=week&limit=50
  */
 export async function GET(req: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const { category, periodDays, limit } = parseQueryParams(req);
 

@@ -7,11 +7,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { getDigestSelections, getSelectionStats } from "@/src/lib/db/selections";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 /**
  * GET /api/admin/analytics/selections?period=week&category=research
  */
 export async function GET(req: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const { searchParams } = new URL(req.url);
 

@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminSetting, setAdminSetting } from '@/src/lib/db/item-relevance';
 import { logger } from '@/src/lib/logger';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 interface SettingsResponse {
   enableItemRelevanceTuning: boolean;
@@ -15,6 +16,9 @@ interface SettingsResponse {
 }
 
 export async function GET(): Promise<NextResponse> {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const enableItemRelevanceTuning = getAdminSetting('enable_item_relevance_tuning') === 'true';
 
@@ -37,6 +41,9 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const body = await request.json() as Record<string, unknown>;
 

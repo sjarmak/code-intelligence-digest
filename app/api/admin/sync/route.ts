@@ -12,6 +12,7 @@ import { Category } from '@/src/lib/model';
 import { logger } from '@/src/lib/logger';
 import { initializeDatabase } from '@/src/lib/db/index';
 import { syncAllCategories, syncCategory } from '@/src/lib/sync/inoreader-sync';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 const VALID_CATEGORIES: Category[] = [
   'newsletters',
@@ -28,6 +29,9 @@ const VALID_CATEGORIES: Category[] = [
  * Sync all categories from Inoreader
  */
 export async function POST(req: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const { pathname } = new URL(req.url);
     const isAllSync = pathname.includes('/all');

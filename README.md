@@ -13,7 +13,7 @@ A focused application that aggregates content from Inoreader feeds and presents 
   - Product News
   - Community (Reddit, forums)
   - Research (academic papers)
-- **Hybrid Scoring Pipeline**: 
+- **Hybrid Scoring Pipeline**:
   - **LLM Evaluation**: Keyword-based heuristic scoring for relevance/usefulness
   - **BM25 Term Matching**: Domain-focused term relevance
   - **Recency**: Exponential decay with category-specific half-lives
@@ -88,6 +88,7 @@ cp .env.local.example .env.local
 ```
 
 Edit `.env.local`:
+
 ```env
 INOREADER_CLIENT_ID=your_client_id
 INOREADER_CLIENT_SECRET=your_client_secret
@@ -95,6 +96,7 @@ INOREADER_REFRESH_TOKEN=your_refresh_token
 ```
 
 **How to get these credentials:**
+
 1. Register your app: https://www.inoreader.com/oauth/accounts/login?redirect_url=/oauth/register
 2. You'll receive Client ID and Client Secret
 3. Use the OAuth2 flow to obtain a Refresh Token
@@ -103,15 +105,18 @@ INOREADER_REFRESH_TOKEN=your_refresh_token
 ### 3. Configure Feeds
 
 Edit `src/config/feeds.ts` with your Inoreader stream IDs. Stream IDs can be:
+
 - `feed/https://example.com/feed.xml` (RSS feeds)
 - `user/[user-id]/label/[label-name]` (labels/folders)
 
 To find your stream IDs:
+
 1. Use INOREADER_SUBSCRIPTIONS.md from research-agent (if available)
 2. Or call Inoreader API: `https://www.inoreader.com/reader/api/0/user-info` with your token
 3. Parse the subscription list to extract stream IDs
 
 Example configuration:
+
 ```typescript
 export const FEEDS: FeedConfig[] = [
   {
@@ -167,7 +172,7 @@ This project includes a `render.yaml` Blueprint for one-click deployment to [Ren
    - `ADMIN_API_TOKEN` (required in production)
    - `OPENAI_API_KEY` (optional, for LLM scoring)
 
-**Local Development:** Uses SQLite (`.data/digest.db`)  
+**Local Development:** Uses SQLite (`.data/digest.db`)
 **Production:** Uses PostgreSQL (auto-configured by Render)
 
 See [history/docs/RENDER_DEPLOYMENT.md](history/docs/RENDER_DEPLOYMENT.md) for full deployment guide.
@@ -181,6 +186,7 @@ Convert podcast transcripts to high-quality MP3/WAV audio files using multiple T
 - **NeMo TTS** - NVIDIA Riva endpoint
 
 **Features:**
+
 - Automatic transcript sanitization (removes `[INTRO]`, `[PAUSE]`, etc.)
 - Intelligent caching by transcript hash
 - Multi-provider abstraction (easy to add more)
@@ -188,6 +194,7 @@ Convert podcast transcripts to high-quality MP3/WAV audio files using multiple T
 - Full error handling with timeouts
 
 **Quick Start:**
+
 ```bash
 export OPENAI_API_KEY=sk-...
 
@@ -197,6 +204,7 @@ curl -X POST http://localhost:3002/api/podcast/render-audio \
 ```
 
 **Documentation:**
+
 - [Quick Reference](./AUDIO_QUICK_REFERENCE.md) - One-page cheat sheet
 - [Complete Guide](./AUDIO_RENDERING_GUIDE.md) - Full technical details
 - [Examples](./AUDIO_RENDERING_EXAMPLES.md) - Copy-paste examples
@@ -210,10 +218,12 @@ curl -X POST http://localhost:3002/api/podcast/render-audio \
 Fetch ranked items for a category and time period.
 
 **Query Parameters:**
+
 - `category` (required): One of `newsletters`, `podcasts`, `tech_articles`, `ai_news`, `product_news`, `community`, `research`
 - `period` (optional): `week` or `month` (default: `week`)
 
 **Response:**
+
 ```json
 {
   "items": [
@@ -250,12 +260,14 @@ Fetch ranked items for a category and time period.
 Each item is scored across multiple dimensions:
 
 1. **LLM Evaluation** (45% weight):
+
    - Keyword-based heuristic matching against domain terms
    - Relevance score (0–10)
    - Usefulness score (0–10)
    - Domain tags (code-search, agents, context, etc.)
 
 2. **BM25 Term Matching** (35% weight):
+
    - Category-specific query against document text
    - Normalized to [0, 1]
 
@@ -283,29 +295,30 @@ finalScore = (llm_norm * 0.45) + (bm25_norm * 0.35) + (recency * 0.20)
 
 The scoring system recognizes these domain concepts:
 
-| Domain | Weight | Examples |
-|--------|--------|----------|
-| **Code Search** | 1.6x | semantic search, indexing, symbols, cross-references |
-| **Information Retrieval** | 1.5x | embeddings, RAG, vector databases |
-| **Context Management** | 1.5x | context window, token budget, compression |
-| **Agentic Workflows** | 1.4x | agents, planning, tool use, orchestration |
-| **Enterprise Codebases** | 1.3x | monorepo, dependency, scale, legacy |
-| **Developer Tools** | 1.2x | IDE, debugging, refactoring, CI/CD |
-| **LLM Architecture** | 1.2x | transformers, fine-tuning, reasoning |
-| **SDLC Processes** | 1.0x | code review, testing, deployment |
+| Domain                    | Weight | Examples                                             |
+| ------------------------- | ------ | ---------------------------------------------------- |
+| **Code Search**           | 1.6x   | semantic search, indexing, symbols, cross-references |
+| **Information Retrieval** | 1.5x   | embeddings, RAG, vector databases                    |
+| **Context Management**    | 1.5x   | context window, token budget, compression            |
+| **Agentic Workflows**     | 1.4x   | agents, planning, tool use, orchestration            |
+| **Enterprise Codebases**  | 1.3x   | monorepo, dependency, scale, legacy                  |
+| **Developer Tools**       | 1.2x   | IDE, debugging, refactoring, CI/CD                   |
+| **LLM Architecture**      | 1.2x   | transformers, fine-tuning, reasoning                 |
+| **SDLC Processes**        | 1.0x   | code review, testing, deployment                     |
 
 ## Logging
 
 Structured logging is available via `src/lib/logger.ts`:
 
 ```typescript
-import { logger } from '@/lib/logger';
+import { logger } from "@/lib/logger";
 
-logger.info('Pipeline started', { category: 'newsletters' });
-logger.error('Failed to fetch', error);
+logger.info("Pipeline started", { category: "newsletters" });
+logger.error("Failed to fetch", error);
 ```
 
 Enable debug output:
+
 ```bash
 DEBUG=1 npm run dev
 ```
@@ -328,6 +341,7 @@ DEBUG=1 npm run dev
 ### Customize Scoring Per Category
 
 Edit `src/config/categories.ts`:
+
 - Adjust `query` string (BM25 terms)
 - Change `weights` (llm/bm25/recency proportions)
 - Modify `halfLifeDays` (recency decay)
@@ -336,6 +350,7 @@ Edit `src/config/categories.ts`:
 ### Integrate Claude API
 
 Replace heuristic scoring in `src/lib/pipeline/llmScore.ts`:
+
 - Implement `scoreWithClaudeAPI()` function
 - Call Claude to evaluate items in batch
 - Parse response into `LLMScoreResult`
@@ -343,16 +358,19 @@ Replace heuristic scoring in `src/lib/pipeline/llmScore.ts`:
 ## Troubleshooting
 
 ### No items returned from API
+
 1. Check `.env.local` has valid `INOREADER_CLIENT_ID`, `INOREADER_CLIENT_SECRET`, and `INOREADER_REFRESH_TOKEN`
 2. Verify feeds are configured in `src/config/feeds.ts`
 3. Check server logs: `npm run dev`
 
 ### Type errors during build
+
 ```bash
 npm run typecheck  # Run TypeScript compiler
 ```
 
 ### Styling issues
+
 - Verify Tailwind CSS is configured in `tailwind.config.ts`
 - Clear `.next` cache: `rm -rf .next`
 - Rebuild: `npm run build`

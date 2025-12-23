@@ -3,6 +3,7 @@ import { createInoreaderClient } from "@/src/lib/inoreader/client";
 import { logger } from "@/src/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 // Map folder names to categories
 const FOLDER_TO_CATEGORY: Record<string, string> = {
@@ -32,6 +33,9 @@ function mapFolderToCategory(folderPath: string): string {
 }
 
 export async function POST() {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     logger.info("Starting feed refresh...");
 

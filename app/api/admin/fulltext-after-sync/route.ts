@@ -15,6 +15,7 @@ import { loadItemsByCategory, saveFullText, getFullTextCacheStats } from '@/src/
 import { fetchFullText, fetchFullTextBatch } from '@/src/lib/pipeline/fulltext';
 import { getBibcodeMetadata } from '@/src/lib/ads/client';
 import type { Category } from '@/src/lib/model';
+import { blockInProduction } from '@/src/lib/auth/guards';
 
 interface PopulationStats {
   category: Category;
@@ -184,6 +185,9 @@ async function populateOtherCategories(
  * Populate full text for high-priority categories after sync
  */
 export async function POST(request: NextRequest) {
+  const blocked = blockInProduction();
+  if (blocked) return blocked;
+
   try {
     const body = (await request.json()) as { adsToken?: string; skipResearch?: boolean; skipWeb?: boolean } | null;
     const adsToken = body?.adsToken || process.env.ADS_API_TOKEN;
