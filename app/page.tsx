@@ -34,90 +34,94 @@ export default function Home() {
       {/* Header */}
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
-              <p className="text-muted mt-2">
-                Daily, weekly, and monthly digests of code intelligence, tools, and AI agents
-              </p>
+          <div className="flex flex-col gap-4">
+            {/* Title and settings icon */}
+            <div className="flex justify-between items-start">
+              <div>
+                <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
+                <p className="text-muted mt-2">
+                  Daily, weekly, and monthly digests of code intelligence, tools, and AI agents
+                </p>
+              </div>
+              <a
+                href="/admin"
+                className="p-2 rounded-md transition-colors hover:bg-gray-100"
+                title="Manage relevance tuning and content sync"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </a>
             </div>
-            <div className="space-y-2">
-              <div className="flex gap-2 flex-wrap items-start">
-                <a
-                  href="/research"
-                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                  title="View ADS research libraries"
-                >
-                  Libraries
-                </a>
-                <a
-                  href="/admin"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                  title="Manage relevance tuning and content sync"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  Settings
-                </a>
-                <button
-                   onClick={() => setPeriod('day')}
-                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'day'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
-                 >
-                   Daily
-                 </button>
-                 <button
-                   onClick={() => setPeriod('week')}
-                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'week'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
-                 >
-                   Weekly
-                 </button>
-                 <button
-                   onClick={() => setPeriod('month')}
-                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'month'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
-                 >
-                   Monthly
-                 </button>
-                 <button
-                   onClick={() => setPeriod('all')}
-                   className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'all'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
-                 >
-                   All-time
-                 </button>
-              </div>
-              <div className="flex gap-2 flex-wrap items-start">
-                <a
-                   href="/synthesis/podcast"
-                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                   title="Generate podcast episodes"
-                 >
-                   Podcast Generator
-                 </a>
-                 <a
-                   href="/synthesis/newsletter"
-                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                   title="Generate newsletters"
-                 >
-                   Newsletter Generator
-                 </a>
-              </div>
+
+            {/* Period buttons */}
+            <div className="flex gap-2 flex-wrap items-start">
+              <button
+                 onClick={() => setPeriod('day')}
+                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                   period === 'day'
+                     ? 'bg-black text-white'
+                     : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                 }`}
+              >
+                 Daily
+              </button>
+              <button
+                 onClick={() => setPeriod('week')}
+                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                   period === 'week'
+                     ? 'bg-black text-white'
+                     : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                 }`}
+              >
+                 Weekly
+              </button>
+              <button
+                 onClick={() => setPeriod('month')}
+                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                   period === 'month'
+                     ? 'bg-black text-white'
+                     : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                 }`}
+              >
+                 Monthly
+              </button>
+              <button
+                 onClick={() => setPeriod('all')}
+                 className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                   period === 'all'
+                     ? 'bg-black text-white'
+                     : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                 }`}
+              >
+                 All-time
+              </button>
+            </div>
+
+            {/* Tools and generators */}
+            <div className="flex gap-2 flex-wrap items-start">
+              <a
+                href="/research"
+                className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                title="View ADS research libraries"
+              >
+                Libraries
+              </a>
+              <a
+                href="/synthesis/newsletter"
+                className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                title="Generate newsletters"
+              >
+                Newsletter Generator
+              </a>
+              <a
+                 href="/synthesis/podcast"
+                 className="px-4 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                 title="Generate podcast episodes"
+               >
+                 Podcast Generator
+               </a>
             </div>
           </div>
         </div>
