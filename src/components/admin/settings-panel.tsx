@@ -152,7 +152,7 @@ export default function SettingsPanel() {
 
 function EmbeddingsPanel() {
   const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState<{ success: boolean; stats?: any; error?: string } | null>(null);
+  const [result, setResult] = useState<{ success: boolean; message?: string; stats?: any; error?: string } | null>(null);
 
   const handleGenerateEmbeddings = async () => {
     setGenerating(true);
@@ -201,8 +201,8 @@ function EmbeddingsPanel() {
 
       {result && (
         <div className={`mb-4 rounded-lg border p-3 ${
-          result.success 
-            ? 'border-green-300 bg-green-50' 
+          result.success
+            ? 'border-green-300 bg-green-50'
             : 'border-red-300 bg-red-50'
         }`}>
           {result.success ? (
