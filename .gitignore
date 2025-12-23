@@ -31,7 +31,12 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
+.env
+.env.local
+.env.*.local
+.env.production.local
+.env.development.local
+.env.test.local
 
 # vercel
 .vercel
@@ -51,3 +56,17 @@ history/
 
 # generated audio files
 .data/audio/
+
+# local database and cache
+.data/
+.cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# secrets
+secrets.json
+config.private.json
