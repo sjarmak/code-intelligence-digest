@@ -86,14 +86,36 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
 
 /**
  * Load items for a given category within a time window
+ * Supports both periodDays (relative to now) and custom date ranges
  */
 export async function loadItemsByCategory(
   category: string,
-  periodDays: number
+  periodDays: number,
+  options?: {
+    startDate?: Date; // Custom start date (inclusive)
+    endDate?: Date; // Custom end date (inclusive)
+  }
 ): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
-    const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+
+    // Calculate time bounds
+    let startTime: number;
+    let endTime: number;
+
+    if (options?.startDate && options?.endDate) {
+      // Custom date range
+      startTime = Math.floor(options.startDate.getTime() / 1000);
+      endTime = Math.floor(options.endDate.getTime() / 1000);
+      // Set end time to end of day (23:59:59)
+      const endOfDay = new Date(options.endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      endTime = Math.floor(endOfDay.getTime() / 1000);
+    } else {
+      // Relative period (backward compatible)
+      startTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+      endTime = Math.floor(Date.now() / 1000);
+    }
 
     let rows: Array<{
       id: string;
@@ -117,9 +139,9 @@ export async function loadItemsByCategory(
         `SELECT id, stream_id, source_title, title, url, author, published_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
          FROM items
-         WHERE category = $1 AND published_at >= $2
+         WHERE category = $1 AND published_at >= $2 AND published_at <= $3
          ORDER BY published_at DESC`,
-        [category, cutoffTime]
+        [category, startTime, endTime]
       );
       rows = result.rows as typeof rows;
     } else {
@@ -127,10 +149,10 @@ export async function loadItemsByCategory(
       rows = sqlite
         .prepare(
           `SELECT * FROM items
-           WHERE category = ? AND published_at >= ?
+           WHERE category = ? AND published_at >= ? AND published_at <= ?
            ORDER BY published_at DESC`
         )
-        .all(category, cutoffTime) as typeof rows;
+        .all(category, startTime, endTime) as typeof rows;
     }
 
     const items: FeedItem[] = rows.map((row) => {
@@ -361,6 +383,36 @@ export async function getItemsCountByCategory(category: string): Promise<number>
     }
   } catch (error) {
     logger.error(`Failed to get items count for category ${category}`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get the earliest published date from all items in the database
+ * Returns null if no items exist
+ */
+export async function getEarliestPublishedDate(): Promise<Date | null> {
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT MIN(published_at) as earliest FROM items`
+      );
+      const earliest = result.rows[0]?.earliest;
+      if (!earliest) return null;
+      return new Date(Number(earliest) * 1000);
+    } else {
+      const sqlite = getSqlite();
+      const result = sqlite
+        .prepare(`SELECT MIN(published_at) as earliest FROM items`)
+        .get() as { earliest: number | null } | undefined;
+      if (!result?.earliest) return null;
+      return new Date(result.earliest * 1000);
+    }
+  } catch (error) {
+    logger.error("Failed to get earliest published date", error);
     throw error;
   }
 }

@@ -90,7 +90,7 @@ function formatTime(seconds: number): string {
 export async function generatePodcastScript(
   digests: PodcastItemDigest[],
   rundown: PodcastRundown,
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   _categories: Category[],
   profile: PromptProfile | null,
   _voiceStyle: string = "conversational"

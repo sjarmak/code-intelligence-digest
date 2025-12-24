@@ -87,7 +87,7 @@ function formatDigestsForRundown(digests: PodcastItemDigest[]): string {
  */
 export async function generatePodcastRundown(
   digests: PodcastItemDigest[],
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   _categories: Category[],
   profile: PromptProfile | null
 ): Promise<PodcastRundown> {
@@ -109,7 +109,7 @@ export async function generatePodcastRundown(
   );
 
   const digestContext = formatDigestsForRundown(qualityDigests);
-  const periodLabel = period === "week" ? "weekly" : "monthly";
+  const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
   const categoryLabels = _categories.join(", ");
 
   const client = getClient();
@@ -225,10 +225,10 @@ Return ONLY valid JSON.`,
  */
 function generateFallbackRundown(
   digests: PodcastItemDigest[],
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   _categories: Category[]
 ): PodcastRundown {
-  const periodLabel = period === "week" ? "weekly" : "monthly";
+  const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
 
   // Take top 4 digests
   const topDigests = digests.slice(0, 4);
