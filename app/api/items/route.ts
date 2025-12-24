@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
@@ -121,7 +121,9 @@ export async function GET(request: NextRequest) {
     await initializeDatabase();
 
     // Load items from database
-    const items = await loadItemsByCategory(category, periodDays, loadOptions);
+    const items = loadOptions?.startDate && loadOptions?.endDate
+      ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
+      : await loadItemsByCategory(category, periodDays);
     logger.info(`Loaded ${items.length} items from database`);
 
     // Rank items
