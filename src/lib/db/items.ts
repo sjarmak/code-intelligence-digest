@@ -542,6 +542,38 @@ export async function getLastPublishedTimestamp(): Promise<number | null> {
 }
 
 /**
+ * Get the earliest published date from the database
+ * Returns a Date object or null if no items exist
+ */
+export async function getEarliestPublishedDate(): Promise<Date | null> {
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(`SELECT MIN(published_at) as min_published FROM items`);
+      const val = result.rows[0]?.min_published;
+      if (typeof val === 'number') {
+        return new Date(val * 1000);
+      }
+      return null;
+    } else {
+      const sqlite = getSqlite();
+      const result = sqlite
+        .prepare(`SELECT MIN(published_at) as min_published FROM items`)
+        .get() as { min_published: number | null } | undefined;
+      if (result?.min_published) {
+        return new Date(result.min_published * 1000);
+      }
+      return null;
+    }
+  } catch (error) {
+    logger.warn("Failed to get earliest published date", { error });
+    return null;
+  }
+}
+
+/**
  * Update cache metadata for items
  */
 export async function updateItemsCacheMetadata(periodDays: number, count: number): Promise<void> {
