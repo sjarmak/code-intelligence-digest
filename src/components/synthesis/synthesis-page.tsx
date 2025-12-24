@@ -131,8 +131,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
           ...(params.prompt && { prompt: params.prompt }),
           ...(type === "podcast" && { voiceStyle: params.voiceStyle }),
           ...(params.period === "custom" && params.customDateRange && {
-            startDate: params.customDateRange.startDate,
-            endDate: params.customDateRange.endDate,
+            customDateRange: params.customDateRange,
           }),
         }),
         signal: controller.signal,
