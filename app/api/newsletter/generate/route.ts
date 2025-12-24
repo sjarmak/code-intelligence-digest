@@ -111,27 +111,25 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   // Normalize prompt
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
 
-  // Extract customDateRange for type narrowing
-  // After validation above, if period is "custom", req.customDateRange is guaranteed to exist
-  const customDateRange: { startDate: string; endDate: string } | undefined =
-    period === "custom" && req.customDateRange && req.customDateRange.startDate && req.customDateRange.endDate
-      ? { startDate: req.customDateRange.startDate, endDate: req.customDateRange.endDate }
-      : undefined;
+  // Build return data - after validation, if period is "custom", req.customDateRange is guaranteed to exist
+  const data: NewsletterRequest = {
+    categories: categories as Category[],
+    period: period as "week" | "month" | "all" | "custom",
+    limit,
+    prompt,
+  };
+
+  // Add customDateRange if period is custom (already validated above)
+  if (period === "custom" && req.customDateRange) {
+    data.customDateRange = {
+      startDate: (req.customDateRange as { startDate: string; endDate: string }).startDate,
+      endDate: (req.customDateRange as { startDate: string; endDate: string }).endDate,
+    };
+  }
 
   return {
     valid: true,
-    data: {
-      categories: categories as Category[],
-      period: period as "week" | "month" | "all" | "custom",
-      ...(customDateRange ? {
-        customDateRange: {
-          startDate: customDateRange.startDate,
-          endDate: customDateRange.endDate,
-        },
-      } : {}),
-      limit,
-      prompt,
-    },
+    data,
   };
 }
 
