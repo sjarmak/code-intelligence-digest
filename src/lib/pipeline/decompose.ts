@@ -18,25 +18,25 @@ const BAD_URL_PATTERNS = [
   /\/newsletters?(?:[/?#]|$)/i,
   /\/issues?(?:[/?#]|$)/i,
   /\/archive(?:[/?#]|$)/i,
-  
+
   // Meta/admin pages (advertise, privacy, unsubscribe, media kit, etc.)
   /\/(advertise|sponsor|advertising|partnership|ad-?service|advert|commerci)(?:[/?#]|$)/i,
   /\/(privacy|terms|policies|legal|disclaimer)(?:[/?#]|$)/i,
   /\/(unsubscribe|preferences|settings|manage|opt-?out)(?:[/?#]|$)/i,
   /\/(media-kit|press|about|contact|info|help)(?:[/?#]|$)/i,
   /\/(feeds?|rss|subscribe|signup|join|register|login|sign-?in)(?:[/?#]|$)/i,
-  
+
   // Social aggregators - Reddit subreddits, user pages, and discussions (not external articles shared on Reddit)
   /reddit\.com\/r\//i, // Any /r/subreddit/* (discussion threads, not external links)
   /reddit\.com\/u\//i, // User profiles
-  
+
   // Digest collection domains - exclude any path containing "digest"
   // These are newsletter index pages, not individual articles
   /(csharpdigest|leadershipintech|reactdigest|programming[?_-]?digest|newsletter[?_-]?digest|tech[?_-]?digest)\.com/i,
-  
+
   // Any domain with "digest" in it that doesn't have article-like path structure
   /\w+digest\.\w+\/(?![\w-]+\/\d+|[\w-]+$|p\/|post\/|article\/|story\/)/i,
-  
+
   // Common ad/marketing domains and redirect URLs
   /linktrak\.io/i, // Analytics/tracking redirects
   /click\.linksynergy\.com/i, // Affiliate redirects
@@ -53,17 +53,99 @@ const BAD_TITLE_PATTERNS = [
   /^advertisement$/i,
   /^promotional content$/i,
   /^(subscribe|join|sign up)$/i,
+  // Subscription/promotional newsletter titles
+  /subscribe to .* (newsletter|publication)/i,
+  /^(the|subscribe|get) .* (in|for) \d{4}$/i, // e.g., "The Pragmatic Engineer in 2025"
+  /.* (in|for) \d{4}$/i, // Titles ending with year (often subscription promotions)
 ];
+
+/**
+ * Validate that URL is absolute and valid
+ */
+function isValidAbsoluteUrl(url: string): boolean {
+  if (!url || url.trim().length === 0) {
+    return false;
+  }
+
+  // Must start with http:// or https://
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return false;
+  }
+
+  // Basic URL validation
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Check if URL should be excluded from decomposition
  */
 function shouldExcludeUrl(url: string): boolean {
+  // First check if it's a valid absolute URL
+  if (!isValidAbsoluteUrl(url)) {
+    return true;
+  }
+
+  // Check against bad URL patterns
   for (const pattern of BAD_URL_PATTERNS) {
     if (pattern.test(url)) {
       return true;
     }
   }
+
+  // Additional check: filter subscription/signup pages more aggressively
+  // Check for subscription-related keywords in the URL path
+  const urlLower = url.toLowerCase();
+  const subscriptionKeywords = [
+    '/subscribe',
+    '/signup',
+    '/sign-up',
+    '/join',
+    '/register',
+    'subscribe?',
+    'signup?',
+    '?subscribe',
+    '?signup',
+    'utm_campaign=email-home', // Newsletter home pages
+    'utm_campaign=email-subscribe', // Subscription pages
+  ];
+
+  if (subscriptionKeywords.some(keyword => urlLower.includes(keyword))) {
+    return true;
+  }
+
+  // Filter Substack newsletter home pages (like newsletter.pragmaticengineer.com with no article path)
+  // These are subscription/landing pages, not articles
+  if (urlLower.includes('newsletter.') && urlLower.includes('.com')) {
+    // Check if it's a newsletter domain without an article path (no /p/, /post/, etc.)
+    const isNewsletterDomain = /newsletter\.\w+\.com/i.test(url);
+    const hasArticlePath = /\/(p|post|article|story|archive)\//i.test(url);
+    const isJustDomain = /newsletter\.\w+\.com\/?(\?|$)/i.test(url);
+
+    if (isNewsletterDomain && !hasArticlePath && isJustDomain) {
+      return true;
+    }
+
+    // Also filter newsletter domains with only query params (subscription pages)
+    if (isNewsletterDomain && !hasArticlePath && urlLower.includes('?')) {
+      return true;
+    }
+
+    // Filter subscription pages on newsletter domains
+    if (isNewsletterDomain && (urlLower.includes('/subscribe') || urlLower.includes('subscribe?'))) {
+      return true;
+    }
+  }
+
+  // Filter Substack user profile pages (like substack.com/@username)
+  if (/substack\.com\/@[\w-]+$/i.test(url) || /substack\.com\/@[\w-]+\/?$/i.test(url)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -120,23 +202,24 @@ function extractArticlesFromHtml(html: string): Array<{
 
   while ((match = markdownLinkRegex.exec(cleanHtml)) !== null) {
     const [, title, url] = match;
+    const trimmedUrl = url?.trim() || "";
 
-    if (title && url && !seen.has(url)) {
+    if (title && trimmedUrl && isValidAbsoluteUrl(trimmedUrl) && !seen.has(trimmedUrl)) {
       const trimmedTitle = title.trim();
       // Skip certain URLs and titles
       if (
-        !url.includes("inoreader.com") &&
-        !url.includes("google.com/reader") &&
-        !url.startsWith("javascript:") &&
-        !shouldExcludeUrl(url) &&
+        !trimmedUrl.includes("inoreader.com") &&
+        !trimmedUrl.includes("google.com/reader") &&
+        !trimmedUrl.startsWith("javascript:") &&
+        !shouldExcludeUrl(trimmedUrl) &&
         !shouldExcludeTitle(trimmedTitle)
       ) {
         articles.push({
           title: trimmedTitle,
-          url: url.trim(),
+          url: trimmedUrl,
           snippet: trimmedTitle, // Will be enhanced below
         });
-        seen.add(url);
+        seen.add(trimmedUrl);
       }
     }
   }
@@ -158,11 +241,11 @@ function extractArticlesFromHtml(html: string): Array<{
     const [, rawUrl, rawTitle] = match;
     // Strip HTML tags from title
     const title = rawTitle.replace(/<[^>]*>/g, "").trim();
-    
+
     // Extract actual URL from tracking/redirect URLs
     // Handles: https://tracking.tldrnewsletter.com/CL0/https:%2F%2Factual-url
     let url = rawUrl;
-    
+
     // For TLDR tracking URLs, extract the encoded destination
     if (rawUrl.includes("/CL0/")) {
       // Extract everything between /CL0/ and /1/ (version number)
@@ -170,11 +253,22 @@ function extractArticlesFromHtml(html: string): Array<{
       const trackingMatch = rawUrl.match(/\/CL0\/(.+?)\/\d+\//);
       if (trackingMatch) {
         // Decode %2F to /, %3A to :, %3D to =, %3F to ?
-        url = trackingMatch[1]
+        const decoded = trackingMatch[1]
           .replace(/%2F/g, "/")
           .replace(/%3A/g, ":")
           .replace(/%3D/g, "=")
           .replace(/%3F/g, "?");
+
+        // Validate decoded URL is absolute and valid
+        if (isValidAbsoluteUrl(decoded)) {
+          url = decoded;
+        } else {
+          // If decoding failed, skip this URL
+          continue;
+        }
+      } else {
+        // Pattern didn't match, skip this URL
+        continue;
       }
     }
 
@@ -189,12 +283,25 @@ function extractArticlesFromHtml(html: string): Array<{
           const base64 = base64Match[1].replace(/-/g, "+").replace(/_/g, "/");
           const decoded = Buffer.from(base64, "base64").toString("utf-8");
           const payload = JSON.parse(decoded);
-          if (payload.e && typeof payload.e === "string") {
-            url = payload.e;
+          if (payload.e && typeof payload.e === "string" && isValidAbsoluteUrl(payload.e)) {
+            const decodedUrl = payload.e;
+            // Check if decoded URL is a subscription page and skip if so
+            if (shouldExcludeUrl(decodedUrl)) {
+              logger.debug(`Filtered out decoded Substack subscription URL: ${decodedUrl}`);
+              continue;
+            }
+            url = decodedUrl;
+          } else {
+            // Invalid decoded URL, skip
+            continue;
           }
         } catch {
-          // Failed to decode, keep original URL
+          // Failed to decode, skip this URL
+          continue;
         }
+      } else {
+        // Pattern didn't match, skip
+        continue;
       }
     }
 
@@ -246,23 +353,26 @@ function extractArticlesFromHtml(html: string): Array<{
       }
     }
 
-    if (effectiveTitle && url && !seen.has(url)) {
+    // Validate URL before adding to articles
+    if (effectiveTitle && url && isValidAbsoluteUrl(url) && !seen.has(url)) {
       const trimmedTitle = effectiveTitle.trim();
+      const trimmedUrl = url.trim();
+
       if (
-        !url.includes("inoreader.com") &&
-        !url.includes("google.com/reader") &&
-        !url.startsWith("javascript:") &&
+        !trimmedUrl.includes("inoreader.com") &&
+        !trimmedUrl.includes("google.com/reader") &&
+        !trimmedUrl.startsWith("javascript:") &&
         !isSubstackInternal &&
         !isUndecodedSubstackRedirect &&
-        !shouldExcludeUrl(url) &&
+        !shouldExcludeUrl(trimmedUrl) &&
         !shouldExcludeTitle(trimmedTitle)
       ) {
         articles.push({
           title: trimmedTitle,
-          url: url.trim(),
+          url: trimmedUrl,
           snippet: trimmedTitle,
         });
-        seen.add(url);
+        seen.add(trimmedUrl);
       }
     }
   }
@@ -292,23 +402,27 @@ function extractArticlesFromHtml(html: string): Array<{
       );
 
       const trimmedTitle = title.trim();
+      const trimmedUrl = url.trim();
+
       // Skip certain URLs and very long titles (likely not real)
       if (
-        !url.includes("inoreader.com") &&
-        !url.includes("google.com/reader") &&
-        !url.includes("tracking.tldrnewsletter") &&
-        !url.startsWith("javascript:") &&
+        isValidAbsoluteUrl(trimmedUrl) &&
+        !trimmedUrl.includes("inoreader.com") &&
+        !trimmedUrl.includes("google.com/reader") &&
+        !trimmedUrl.includes("tracking.tldrnewsletter") &&
+        !trimmedUrl.startsWith("javascript:") &&
         !isSubstackInternal &&
         trimmedTitle.length < 200 &&
-        !shouldExcludeUrl(url) &&
-        !shouldExcludeTitle(trimmedTitle)
+        !shouldExcludeUrl(trimmedUrl) &&
+        !shouldExcludeTitle(trimmedTitle) &&
+        !seen.has(trimmedUrl)
       ) {
         articles.push({
           title: trimmedTitle,
-          url: url.trim(),
+          url: trimmedUrl,
           snippet: trimmedTitle,
         });
-        seen.add(url);
+        seen.add(trimmedUrl);
       }
     }
   }
@@ -320,19 +434,20 @@ function extractArticlesFromHtml(html: string): Array<{
   while ((match = headerPattern.exec(cleanHtml)) !== null) {
     const [fullMatch, titleText] = match;
     if (!titleText || titleText.length < 5) continue;
-    
+
     const title = titleText.trim();
-    
+
     // Skip if we've already found this title with a URL
     if (seen.has(title)) continue;
-    
+
     // Look for a URL near this header (within next 500 chars)
     const matchIndex = match.index! + fullMatch.length;
     const nearbyUrl = findUrlNearby(matchIndex, 500);
-    
-    if (nearbyUrl && !seen.has(nearbyUrl)) {
+
+    const normalizedUrl = nearbyUrl ? nearbyUrl.replace(/&amp;/g, "&").trim() : null;
+
+    if (normalizedUrl && isValidAbsoluteUrl(normalizedUrl) && !seen.has(normalizedUrl)) {
       // Validate the URL
-      const normalizedUrl = nearbyUrl.replace(/&amp;/g, "&");
       if (
         !normalizedUrl.includes("inoreader.com") &&
         !normalizedUrl.includes("google.com/reader") &&
@@ -342,10 +457,10 @@ function extractArticlesFromHtml(html: string): Array<{
       ) {
         articles.push({
           title: title.trim(),
-          url: normalizedUrl.trim(),
+          url: normalizedUrl,
           snippet: title.trim(),
         });
-        seen.add(nearbyUrl);
+        seen.add(normalizedUrl);
       }
     }
   }
@@ -363,19 +478,34 @@ function createArticleItem(
   articleIndex: number,
   totalArticles: number
 ): RankedItem {
-  // If article URL is missing/invalid, try to extract one from full text nearby
-  let finalUrl = article.url;
-  
-  if (!finalUrl || finalUrl.length === 0 || finalUrl.includes("inoreader.com")) {
+  // Validate article URL - must be absolute and valid
+  let finalUrl = article.url?.trim() || "";
+
+  // Validate URL is absolute (http/https) and valid
+  if (!isValidAbsoluteUrl(finalUrl) || finalUrl.includes("inoreader.com")) {
     // Try to find any URL in the base item's full text that might be the article
     const htmlContent = baseItem.fullText || baseItem.summary || "";
     const urlMatch = htmlContent.match(/https?:\/\/[^\s<>"'\)]+/);
-    if (urlMatch && !urlMatch[0].includes("inoreader.com") && !urlMatch[0].includes("tracking.tldrnewsletter")) {
-      finalUrl = urlMatch[0];
-      logger.info(`Extracted fallback URL for article "${article.title}": ${finalUrl}`);
+    if (urlMatch) {
+      const candidateUrl = urlMatch[0];
+      if (
+        isValidAbsoluteUrl(candidateUrl) &&
+        !candidateUrl.includes("inoreader.com") &&
+        !candidateUrl.includes("tracking.tldrnewsletter") &&
+        !shouldExcludeUrl(candidateUrl)
+      ) {
+        finalUrl = candidateUrl;
+        logger.info(`Extracted fallback URL for article "${article.title}": ${finalUrl}`);
+      }
     }
   }
-  
+
+  // If still no valid URL, use the base item's URL as last resort (but log warning)
+  if (!isValidAbsoluteUrl(finalUrl)) {
+    logger.warn(`No valid URL found for article "${article.title}", using base item URL: ${baseItem.url}`);
+    finalUrl = baseItem.url || "";
+  }
+
   return {
     // Keep base item properties but with article-specific data
     id: `${baseItem.id}-article-${articleIndex}`,
@@ -385,7 +515,7 @@ function createArticleItem(
     url: finalUrl,
     author: baseItem.author,
     publishedAt: baseItem.publishedAt,
-    
+
     // Use snippet as summary for the article
     summary: article.snippet,
     contentSnippet: article.snippet.substring(0, 500),
@@ -402,11 +532,11 @@ function createArticleItem(
     },
     recencyScore: baseItem.recencyScore,
     engagementScore: baseItem.engagementScore,
-    
+
     // Reduce final score slightly since we're splitting one newsletter into multiple items
     // This prevents newsletter items from dominating the digest
     finalScore: baseItem.finalScore * 0.90,
-    
+
     reasoning: `${baseItem.reasoning} [Decomposed from ${baseItem.sourceTitle} newsletter: article ${articleIndex}/${totalArticles}]`,
   };
 }
@@ -431,9 +561,16 @@ export function decomposeNewsletterItem(item: RankedItem): RankedItem[] {
 
   // Extract articles from HTML
   const articles = extractArticlesFromHtml(htmlContent);
-  
+
   if (articles.length === 0) {
     logger.warn(`No articles extracted from newsletter: "${item.title}" (${htmlContent.length} chars of content)`);
+
+    // Check if the original item itself should be excluded (subscription page, etc.)
+    if (shouldExcludeUrl(item.url) || shouldExcludeTitle(item.title)) {
+      logger.info(`Excluding newsletter item as subscription/promotional content: "${item.title}"`);
+      return []; // Return empty array to exclude this item
+    }
+
     return [item]; // Fallback: return original item
   }
 
@@ -454,13 +591,13 @@ export function decomposeNewsletterItem(item: RankedItem): RankedItem[] {
   // Multiple articles: create separate items for each
   logger.info(`Decomposing ${item.sourceTitle} into ${articles.length} articles`);
   logger.info(`[DECOMPOSE_DEBUG] Article URLs extracted: ${articles.slice(0, 3).map(a => a.url).join(" | ")}`);
-  
+
   const decomposed = articles.map((article, idx) =>
     createArticleItem(item, article, idx + 1, articles.length)
   );
-  
+
   logger.info(`[DECOMPOSE_DEBUG] Decomposed item URLs: ${decomposed.slice(0, 3).map(d => d.url).join(" | ")}`);
-  
+
   return decomposed;
 }
 
