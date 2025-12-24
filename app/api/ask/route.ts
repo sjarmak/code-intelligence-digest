@@ -198,7 +198,7 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Failed to generate answer";
     const errorStack = error instanceof Error ? error.stack : undefined;
-    
+
     logger.error("[ASK] Error in /api/ask", {
       error: errorMessage,
       stack: errorStack,

@@ -51,7 +51,7 @@ export default function QAPage() {
         try {
           const errorData = await response.json();
           errorMessage = errorData.error || errorData.message || errorMessage;
-          
+
           // Handle rate limiting specifically
           if (response.status === 429) {
             errorMessage = errorData.error || 'Rate limit exceeded. Please try again later.';
@@ -64,12 +64,12 @@ export default function QAPage() {
       }
 
       const data = await response.json();
-      
+
       // Check if response has an error field (even with 200 status)
       if (data.error) {
         throw new Error(data.error);
       }
-      
+
       setResponse(data);
       setItemsSearched(0); // itemsSearched not in response, would need API update
     } catch (err) {
