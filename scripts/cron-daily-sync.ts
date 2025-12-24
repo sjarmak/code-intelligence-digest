@@ -18,6 +18,12 @@
  *   - OPENAI_API_KEY (for embeddings)
  */
 
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+
+// Load .env.local for local development
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
+
 import { initializeDatabase } from '../src/lib/db/index';
 import { runDailySync } from '../src/lib/sync/daily-sync';
 import { loadItemsByCategory } from '../src/lib/db/items';
