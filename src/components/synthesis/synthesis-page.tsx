@@ -204,9 +204,9 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
       {/* Success Alert */}
       {result && !isLoading && (
-        <div className="bg-gray-100 border border-green-300 rounded-lg p-4">
-          <p className="text-sm font-semibold text-green-900">Success</p>
-          <p className="text-sm text-green-800 mt-1">
+        <div className="bg-gray-100 border border-black rounded-lg p-4">
+          <p className="text-sm font-semibold text-black">Success</p>
+          <p className="text-sm text-black mt-1">
             {type === "newsletter" ? "Newsletter" : "Podcast"} generated successfully!
           </p>
         </div>

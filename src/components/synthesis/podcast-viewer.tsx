@@ -219,7 +219,7 @@ export function PodcastViewer({
           <button
             onClick={handleRenderAudio}
             disabled={audioState.isLoading}
-            className="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-2 text-sm bg-black text-white rounded hover:bg-gray-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {audioState.isLoading ? "Rendering Audio..." : audioState.audioUrl ? "Re-render Audio" : "Render Audio"}
           </button>
@@ -274,7 +274,7 @@ export function PodcastViewer({
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                 activeTab === tab
-                  ? "border-blue-400 text-black"
+                  ? "border-black text-black"
                   : "border-transparent text-muted hover:text-foreground"
               }`}
             >
@@ -369,7 +369,7 @@ export function PodcastViewer({
                     <a
                       href={audioState.audioUrl}
                       download={`${id}-audio.mp3`}
-                      className="px-3 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors"
+                      className="px-3 py-2 text-sm bg-black text-white rounded hover:bg-gray-800 font-medium transition-colors"
                     >
                       Download MP3
                     </a>
@@ -391,7 +391,7 @@ export function PodcastViewer({
                   <button
                     onClick={handleRenderAudio}
                     disabled={audioState.isLoading}
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors disabled:opacity-50"
+                    className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 font-medium transition-colors disabled:opacity-50"
                   >
                     {audioState.isLoading ? "Rendering Audio..." : "Render Audio"}
                   </button>

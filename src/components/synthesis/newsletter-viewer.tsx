@@ -242,7 +242,7 @@ export function NewsletterViewer({
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
-                  ? "border-blue-600 text-blue-600"
+                  ? "border-black text-black"
                   : "border-transparent text-gray-600 hover:text-gray-900"
               }`}
             >
@@ -256,7 +256,7 @@ export function NewsletterViewer({
         <div className="p-6">
           {activeTab === "rendered" && (
             <div
-              className="prose prose-sm max-w-none prose-a:text-blue-600 prose-a:hover:text-blue-700 prose-a:underline"
+              className="prose prose-sm max-w-none prose-a:text-black prose-a:hover:text-gray-800 prose-a:underline"
               dangerouslySetInnerHTML={{ __html: html }}
             />
           )}
