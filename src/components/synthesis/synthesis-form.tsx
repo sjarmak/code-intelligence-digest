@@ -16,10 +16,14 @@ interface SynthesisFormProps {
 export interface SynthesisParams {
   type: "newsletter" | "podcast";
   categories: Category[];
-  period: "week" | "month";
+  period: "week" | "month" | "all" | "custom";
   limit: number;
   prompt?: string;
   voiceStyle?: "conversational" | "technical" | "executive";
+  customDateRange?: {
+    startDate: string; // ISO date string (YYYY-MM-DD)
+    endDate: string; // ISO date string (YYYY-MM-DD)
+  };
 }
 
 const ALLOWED_CATEGORIES: Category[] = [
@@ -50,7 +54,11 @@ export function SynthesisForm({
   const [selectedCategories, setSelectedCategories] = useState<Category[]>(
     ALLOWED_CATEGORIES
   );
-  const [period, setPeriod] = useState<"week" | "month">("week");
+  const [period, setPeriod] = useState<"week" | "month" | "all" | "custom">("week");
+  const [customDateRange, setCustomDateRange] = useState<{ startDate: string; endDate: string }>({
+    startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+    endDate: new Date().toISOString().split("T")[0],
+  });
   const [limit, setLimit] = useState(50);
   const [prompt, setPrompt] = useState(
     "Focus on code search, coding agents, context management for agents, information retrieval for code, and developer productivity with AI tools. Prioritize research papers, technical articles, and product announcements that demonstrate actual progress in these areas. Filter out benchmarking studies that don't address practical developer needs."
@@ -75,6 +83,24 @@ export function SynthesisForm({
       return;
     }
 
+    if (period === "custom") {
+      // Validate custom date range
+      if (!customDateRange.startDate || !customDateRange.endDate) {
+        alert("Please select both start and end dates for custom range");
+        return;
+      }
+      const start = new Date(customDateRange.startDate);
+      const end = new Date(customDateRange.endDate);
+      if (start > end) {
+        alert("Start date must be before end date");
+        return;
+      }
+      if (end > new Date()) {
+        alert("End date cannot be in the future");
+        return;
+      }
+    }
+
     await onGenerate({
       type,
       categories: selectedCategories,
@@ -82,6 +108,7 @@ export function SynthesisForm({
       limit,
       prompt: prompt || undefined,
       ...(type === "podcast" && { voiceStyle }),
+      ...(period === "custom" && { customDateRange }),
     });
   };
 
@@ -135,7 +162,7 @@ export function SynthesisForm({
                   name="period"
                   value="week"
                   checked={period === "week"}
-                  onChange={(e) => setPeriod(e.target.value as "week" | "month")}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "all" | "custom")}
                   disabled={isLoading}
                   className="accent-black focus:ring-black"
                 />
@@ -150,7 +177,7 @@ export function SynthesisForm({
                   name="period"
                   value="month"
                   checked={period === "month"}
-                  onChange={(e) => setPeriod(e.target.value as "week" | "month")}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "all" | "custom")}
                   disabled={isLoading}
                   className="accent-black focus:ring-black"
                 />
@@ -158,7 +185,69 @@ export function SynthesisForm({
                   This Month (30 days)
                 </label>
               </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="all"
+                  name="period"
+                  value="all"
+                  checked={period === "all"}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "all" | "custom")}
+                  disabled={isLoading}
+                  className="accent-black focus:ring-black"
+                />
+                <label htmlFor="all" className="ml-2 text-sm text-foreground cursor-pointer">
+                  All Time (90 days)
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="custom"
+                  name="period"
+                  value="custom"
+                  checked={period === "custom"}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "all" | "custom")}
+                  disabled={isLoading}
+                  className="accent-black focus:ring-black"
+                />
+                <label htmlFor="custom" className="ml-2 text-sm text-foreground cursor-pointer">
+                  Custom Range
+                </label>
+              </div>
             </div>
+            {period === "custom" && (
+              <div className="mt-3 space-y-3 pl-6 border-l-2 border-surface-border">
+                <div>
+                  <label htmlFor="startDate" className="block text-xs font-medium text-foreground mb-1">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    id="startDate"
+                    value={customDateRange.startDate}
+                    onChange={(e) => setCustomDateRange(prev => ({ ...prev, startDate: e.target.value }))}
+                    disabled={isLoading}
+                    max={new Date().toISOString().split("T")[0]}
+                    className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-black"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="endDate" className="block text-xs font-medium text-foreground mb-1">
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    id="endDate"
+                    value={customDateRange.endDate}
+                    onChange={(e) => setCustomDateRange(prev => ({ ...prev, endDate: e.target.value }))}
+                    disabled={isLoading}
+                    max={new Date().toISOString().split("T")[0]}
+                    className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-black"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Limit */}

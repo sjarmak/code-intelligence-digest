@@ -49,7 +49,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-white text-black flex flex-col">
       {/* Header */}
-      <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
+      <header className="border-b border-surface-border fixed top-0 left-0 right-0 z-20 bg-surface">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
             {/* Title */}
@@ -93,6 +93,9 @@ export default function Home() {
           </div>
         </div>
       </header>
+
+      {/* Spacer for fixed header */}
+      <div className="h-[88px] sm:h-20" aria-hidden="true"></div>
 
       {/* Main Tabs */}
       <div className="border-b border-surface-border bg-surface sticky top-[88px] sm:top-20 z-10">

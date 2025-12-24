@@ -166,6 +166,89 @@ export async function loadItemsByCategory(
 }
 
 /**
+ * Load items for a given category within a custom date range
+ */
+export async function loadItemsByCategoryWithDateRange(
+  category: string,
+  startDate: Date,
+  endDate: Date
+): Promise<FeedItem[]> {
+  try {
+    const driver = detectDriver();
+    const startTime = Math.floor(startDate.getTime() / 1000);
+    const endTime = Math.floor(endDate.getTime() / 1000);
+
+    let rows: Array<{
+      id: string;
+      stream_id: string;
+      source_title: string;
+      title: string;
+      url: string;
+      author: string | null;
+      published_at: number;
+      summary: string | null;
+      content_snippet: string | null;
+      categories: string;
+      category: string;
+      full_text: string | null;
+      extracted_url: string | null;
+    }>;
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
+                summary, content_snippet, categories, category, full_text, extracted_url
+         FROM items
+         WHERE category = $1 AND published_at >= $2 AND published_at <= $3
+         ORDER BY published_at DESC`,
+        [category, startTime, endTime]
+      );
+      rows = result.rows as typeof rows;
+    } else {
+      const sqlite = getSqlite();
+      rows = sqlite
+        .prepare(
+          `SELECT * FROM items
+           WHERE category = ? AND published_at >= ? AND published_at <= ?
+           ORDER BY published_at DESC`
+        )
+        .all(category, startTime, endTime) as typeof rows;
+    }
+
+    const items: FeedItem[] = rows.map((row) => {
+      const cat = row.category as Category;
+      const finalUrl = (row.url && !row.url.includes("inoreader.com"))
+        ? row.url
+        : (row.extracted_url || row.url);
+      return {
+        id: row.id,
+        streamId: row.stream_id,
+        sourceTitle: row.source_title,
+        title: row.title,
+        url: finalUrl,
+        author: row.author || undefined,
+        publishedAt: new Date(row.published_at * 1000),
+        summary: row.summary || undefined,
+        contentSnippet: row.content_snippet || undefined,
+        categories: JSON.parse(row.categories),
+        category: cat,
+        raw: {},
+        fullText: row.full_text || undefined,
+      };
+    });
+
+    return items;
+  } catch (error) {
+    logger.error(
+      `Failed to load items for category ${category} with date range ${startDate.toISOString()} to ${endDate.toISOString()}`,
+      error
+    );
+    throw error;
+  }
+}
+
+/**
  * Load all items from database (for batch processing)
  */
 export async function loadAllItems(limit?: number): Promise<FeedItem[]> {

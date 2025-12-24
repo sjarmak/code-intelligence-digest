@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
@@ -17,9 +17,13 @@ import { logger } from "@/src/lib/logger";
 
 interface NewsletterRequest {
   categories: string[];
-  period: "week" | "month";
+  period: "week" | "month" | "all" | "custom";
   limit: number;
   prompt?: string;
+  customDateRange?: {
+    startDate: string;
+    endDate: string;
+  };
 }
 
 interface NewsletterResponse {
@@ -75,8 +79,27 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
   // Validate period
   const period = req.period as string;
-  if (!["week", "month"].includes(period)) {
-    return { valid: false, error: 'period must be "week" or "month"' };
+  if (!["week", "month", "all", "custom"].includes(period)) {
+    return { valid: false, error: 'period must be "week", "month", "all", or "custom"' };
+  }
+
+  // Validate custom date range if period is custom
+  if (period === "custom") {
+    const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+    if (!customRange || !customRange.startDate || !customRange.endDate) {
+      return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
+    }
+    const startDate = new Date(customRange.startDate);
+    const endDate = new Date(customRange.endDate);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return { valid: false, error: "Invalid date format in customDateRange" };
+    }
+    if (startDate > endDate) {
+      return { valid: false, error: "startDate must be before endDate" };
+    }
+    if (endDate > new Date()) {
+      return { valid: false, error: "endDate cannot be in the future" };
+    }
   }
 
   // Validate limit
@@ -92,7 +115,13 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     valid: true,
     data: {
       categories: categories as Category[],
-      period: period as "week" | "month",
+      period: period as "week" | "month" | "all" | "custom",
+      ...(period === "custom" && req.customDateRange && {
+        customDateRange: {
+          startDate: req.customDateRange.startDate,
+          endDate: req.customDateRange.endDate,
+        },
+      }),
       limit,
       prompt,
     },
@@ -118,7 +147,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     }
 
     const req = validation.data!;
-    const periodDays = req.period === "week" ? 7 : 30;
+
+    // Calculate period days or use custom date range
+    let periodDays: number;
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (req.period === "custom" && req.customDateRange) {
+      startDate = new Date(req.customDateRange.startDate);
+      endDate = new Date(req.customDateRange.endDate);
+      // Calculate days for ranking purposes (use the range span)
+      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+    } else {
+      periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 90;
+    }
 
     // Check request size limits
     const itemCount = req.categories.length * 50; // Rough estimate
@@ -127,12 +169,17 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
     }
 
-    logger.info(`Newsletter request: categories=${req.categories.join(",")}, period=${req.period}, prompt="${(req.prompt || "").substring(0, 50)}..."`);
+    logger.info(`Newsletter request: categories=${req.categories.join(",")}, period=${req.period}, prompt="${(req.prompt || "").substring(0, 50)}..."${req.period === "custom" ? `, dateRange=${req.customDateRange?.startDate} to ${req.customDateRange?.endDate}` : ""}`);
 
     // Step 1: Retrieve candidates
     const allItems: FeedItem[] = [];
     for (const category of req.categories) {
-      const items = await loadItemsByCategory(category, periodDays);
+      let items: FeedItem[];
+      if (req.period === "custom" && startDate && endDate) {
+        items = await loadItemsByCategoryWithDateRange(category, startDate, endDate);
+      } else {
+        items = await loadItemsByCategory(category, periodDays);
+      }
       allItems.push(...items);
     }
 
