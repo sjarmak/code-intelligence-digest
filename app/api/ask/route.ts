@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { retrieveRelevantItems } from "@/src/lib/pipeline/retrieval";
 import { generateAnswer } from "@/src/lib/pipeline/answer";
 
@@ -139,12 +139,16 @@ export async function GET(req: NextRequest) {
 
     if (category) {
       // Use specific category for context
-      const categoryItems = await loadItemsByCategory(category, periodDays, loadOptions);
+      const categoryItems = loadOptions?.startDate && loadOptions?.endDate
+        ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
+        : await loadItemsByCategory(category, periodDays);
       contextItems = categoryItems || [];
     } else {
       // Use all categories for context
       for (const cat of VALID_CATEGORIES) {
-        const items = await loadItemsByCategory(cat, periodDays, loadOptions);
+        const items = loadOptions?.startDate && loadOptions?.endDate
+          ? await loadItemsByCategoryWithDateRange(cat, loadOptions.startDate, loadOptions.endDate)
+          : await loadItemsByCategory(cat, periodDays);
         if (items && items.length > 0) {
           contextItems.push(...items);
         }
