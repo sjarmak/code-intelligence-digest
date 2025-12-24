@@ -26,6 +26,31 @@ services:
         sync: false
     healthCheckPath: /api/health
 
+  - type: cron
+    name: daily-sync
+    runtime: node
+    region: oregon
+    schedule: "0 2 * * *"  # Run daily at 2 AM UTC
+    # Note: After deployment, manually trigger once from Render Dashboard ("Trigger Run" button)
+    # to run immediately, then it will continue on schedule
+    buildCommand: npm install
+    startCommand: npx tsx scripts/cron-daily-sync.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: code-intel-digest-db
+          property: connectionString
+      - key: INOREADER_CLIENT_ID
+        sync: false
+      - key: INOREADER_CLIENT_SECRET
+        sync: false
+      - key: INOREADER_REFRESH_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
 databases:
   - name: code-intel-digest-db
     region: oregon

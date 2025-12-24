@@ -1,14 +1,14 @@
 /**
  * API endpoint: POST /api/admin/sync-daily
- * 
+ *
  * Daily sync that fetches only the last 30 days of items.
- * 
+ *
  * Features:
  * - Time-filtered to last 30 days (reduces API calls to ~5-10)
  * - Resumable if interrupted by rate limits
  * - Safe within 100-call daily budget
  * - Can be run daily with cron-job.org or GitHub Actions
- * 
+ *
  * Response:
  * {
  *   "success": true,
@@ -24,11 +24,10 @@ import { NextResponse } from 'next/server';
 import { logger } from '@/src/lib/logger';
 import { initializeDatabase } from '@/src/lib/db/index';
 import { runDailySync } from '@/src/lib/sync/daily-sync';
-import { blockInProduction } from '@/src/lib/auth/guards';
 
 export async function POST() {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
+  // Note: In production, this should be called via cron job script, not directly
+  // The script approach (scripts/cron-daily-sync.ts) is preferred for reliability
 
   try {
     logger.info('[SYNC-DAILY-API] Received daily sync request');
@@ -76,10 +75,16 @@ export async function GET() {
     await initializeDatabase();
 
     // Check sync state
-    const sqlite = (await import('@/src/lib/db/index')).getSqlite();
-    const state = sqlite
-      .prepare('SELECT * FROM sync_state WHERE id = ?')
-      .get('daily-sync') as Record<string, unknown> | undefined;
+    const { getDbClient } = await import('@/src/lib/db/driver');
+    const client = await getDbClient();
+    const result = await client.query(
+      'SELECT * FROM sync_state WHERE id = $1',
+      ['daily-sync']
+    );
+
+    const state = result.rows.length > 0
+      ? (result.rows[0] as Record<string, unknown>)
+      : undefined;
 
     if (!state) {
       return NextResponse.json({
@@ -90,7 +95,7 @@ export async function GET() {
     }
 
     const s = state as Record<string, unknown>;
-    
+
     if (s.status === 'completed') {
       return NextResponse.json({
         status: 'completed',

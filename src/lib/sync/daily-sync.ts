@@ -1,6 +1,6 @@
 /**
  * Daily sync strategy: fetch only items newer than what we already have
- * 
+ *
  * Features:
  * - Tracks last synced item timestamp in database
  * - Fetches only items published after that timestamp
@@ -8,7 +8,7 @@
  * - Resumable if interrupted by rate limits
  * - Tracks progress and continuation tokens
  * - Designed to fit within 100-call daily limit
- * 
+ *
  * Expected cost: 1-3 API calls per sync
  * Remaining budget: 97+ calls for other uses
  */
@@ -19,7 +19,7 @@ import { categorizeItems } from '../pipeline/categorize';
 import { saveItems, getLastPublishedTimestamp } from '../db/items';
 import { logger } from '../logger';
 import { Category } from '../model';
-import { getSqlite } from '../db/index';
+import { getDbClient, detectDriver, nowTimestamp } from '../db/driver';
 
 interface SyncStateRow {
   id: string;
@@ -48,13 +48,20 @@ const FALLBACK_HOURS_IF_EMPTY = 24; // Fallback window if database has no items
 /**
  * Get current sync state from database
  */
-function getSyncState(): SyncStateRow | null {
+async function getSyncState(): Promise<SyncStateRow | null> {
   try {
-    const sqlite = getSqlite();
-    const row = sqlite
-      .prepare('SELECT * FROM sync_state WHERE id = ?')
-      .get(SYNC_ID) as SyncStateRow | undefined;
-    return row ?? null;
+    const client = await getDbClient();
+    const result = await client.query(
+      'SELECT * FROM sync_state WHERE id = $1',
+      [SYNC_ID]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0] as unknown as SyncStateRow;
+    return row;
   } catch (error) {
     logger.warn('[DAILY-SYNC] Could not load sync state, starting fresh', error as Record<string, unknown>);
     return null;
@@ -64,28 +71,61 @@ function getSyncState(): SyncStateRow | null {
 /**
  * Save sync state to resume later if interrupted
  */
-function saveSyncState(data: {
+async function saveSyncState(data: {
   continuationToken?: string | null;
   itemsProcessed: number;
   callsUsed: number;
   status: 'in_progress' | 'completed' | 'paused';
   error?: string;
-}): void {
+}): Promise<void> {
   try {
-    const sqlite = getSqlite();
-    sqlite.prepare(`
-      INSERT OR REPLACE INTO sync_state 
-      (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
-      VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), ?, ?)
-    `).run(
+    const client = await getDbClient();
+    const driver = detectDriver();
+    const now = Math.floor(Date.now() / 1000);
+
+    // Build SQL with driver-specific timestamp expression
+    const nowExpr = nowTimestamp(driver);
+
+    // Use ON CONFLICT syntax that works for both SQLite and Postgres
+    // Note: We need to build the SQL string with the timestamp expression since it's driver-specific
+    let sql: string;
+    if (driver === 'postgres') {
+      sql = `
+        INSERT INTO sync_state
+        (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
+        VALUES ($1, $2, $3, $4, $5, EXTRACT(EPOCH FROM NOW())::INTEGER, $6, $7)
+        ON CONFLICT (id) DO UPDATE SET
+          continuation_token = EXCLUDED.continuation_token,
+          items_processed = EXCLUDED.items_processed,
+          calls_used = EXCLUDED.calls_used,
+          last_updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
+          status = EXCLUDED.status,
+          error = EXCLUDED.error
+      `;
+    } else {
+      sql = `
+        INSERT INTO sync_state
+        (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
+        VALUES ($1, $2, $3, $4, $5, strftime('%s', 'now'), $6, $7)
+        ON CONFLICT (id) DO UPDATE SET
+          continuation_token = EXCLUDED.continuation_token,
+          items_processed = EXCLUDED.items_processed,
+          calls_used = EXCLUDED.calls_used,
+          last_updated_at = strftime('%s', 'now'),
+          status = EXCLUDED.status,
+          error = EXCLUDED.error
+      `;
+    }
+
+    await client.run(sql, [
       SYNC_ID,
       data.continuationToken || null,
       data.itemsProcessed,
       data.callsUsed,
-      Math.floor(Date.now() / 1000),
+      now,
       data.status,
       data.error || null
-    );
+    ]);
     logger.debug('[DAILY-SYNC] Saved sync state', data);
   } catch (error) {
     logger.error('[DAILY-SYNC] Failed to save sync state', error);
@@ -95,10 +135,10 @@ function saveSyncState(data: {
 /**
  * Clear sync state when completed
  */
-function clearSyncState(): void {
+async function clearSyncState(): Promise<void> {
   try {
-    const sqlite = getSqlite();
-    sqlite.prepare('DELETE FROM sync_state WHERE id = ?').run(SYNC_ID);
+    const client = await getDbClient();
+    await client.run('DELETE FROM sync_state WHERE id = $1', [SYNC_ID]);
     logger.info('[DAILY-SYNC] Cleared sync state (sync complete)');
   } catch (error) {
     logger.warn('[DAILY-SYNC] Could not clear sync state', error as Record<string, unknown>);
@@ -108,7 +148,7 @@ function clearSyncState(): void {
 /**
  * Run daily sync: fetch items newer than the last one in our database
  * This ensures we never miss items and uses minimal API calls
- * 
+ *
  * @param lookbackDays Optional: override default sync window. Use for bootstrap or catch-up.
  *                     If provided, fetches items from the last N days instead of since last sync.
  *                     Example: runDailySync({ lookbackDays: 7 }) fetches last 7 days.
@@ -124,14 +164,14 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 }> {
   const lookbackDays = options?.lookbackDays;
   const isCatchup = lookbackDays !== undefined;
-  
+
   if (isCatchup) {
     logger.info(`[DAILY-SYNC] Starting catch-up sync (fetch last ${lookbackDays} days)`);
   } else {
     logger.info('[DAILY-SYNC] Starting daily sync (fetch newer items)');
   }
 
-  const existingState = getSyncState();
+  const existingState = await getSyncState();
   const resumed = existingState ? existingState.status === 'paused' : false;
 
   if (resumed) {
@@ -257,7 +297,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
       // Update sync state (resume point)
       continuation = response.continuation || undefined;
-      saveSyncState({
+      await saveSyncState({
         continuationToken: continuation,
         itemsProcessed: totalItemsAdded,
         callsUsed,
@@ -267,7 +307,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       // Safety check: if we've used 95+ calls, pause and resume tomorrow
       if (callsUsed >= 95) {
         logger.warn(`[DAILY-SYNC] Approaching rate limit (${callsUsed} calls used). Pausing. Will resume tomorrow.`);
-        saveSyncState({
+        await saveSyncState({
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
           callsUsed,
@@ -290,7 +330,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     }
 
     // Sync complete
-    clearSyncState();
+    await clearSyncState();
 
     logger.info(
       `[DAILY-SYNC] Complete: ${totalItemsAdded} items, ${categoriesProcessed.length} categories, ${callsUsed} API calls`
@@ -308,7 +348,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     // Save error state for resumption
-    saveSyncState({
+    await saveSyncState({
       continuationToken: continuation,
       itemsProcessed: totalItemsAdded,
       callsUsed,
