@@ -85,12 +85,26 @@ async function fetchArxivPublicationDate(url: string): Promise<Date | null> {
 
     // Extract published date from XML
     // arXiv API returns dates in ISO 8601 format: 2024-12-20T18:00:00Z
+    // <published> is the original submission date (what we want)
+    // <updated> is the latest revision date
     const publishedMatch = xml.match(/<published[^>]*>([^<]+)<\/published>/);
     if (publishedMatch) {
       const dateStr = publishedMatch[1].trim();
       const date = new Date(dateStr);
       if (!isNaN(date.getTime())) {
         logger.debug(`Extracted arXiv publication date: ${dateStr} for ${arxivId}`);
+        return date;
+      }
+    }
+
+    // Fallback: try <updated> tag if <published> not found
+    // (though <published> should always be present)
+    const updatedMatch = xml.match(/<updated[^>]*>([^<]+)<\/updated>/);
+    if (updatedMatch) {
+      const dateStr = updatedMatch[1].trim();
+      const date = new Date(dateStr);
+      if (!isNaN(date.getTime())) {
+        logger.debug(`Extracted arXiv updated date (fallback): ${dateStr} for ${arxivId}`);
         return date;
       }
     }

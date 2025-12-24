@@ -23,11 +23,13 @@ import { logger } from "@/src/lib/logger";
 
 interface PodcastRequest {
   categories: string[];
-  period: "week" | "month";
+  period: "week" | "month" | "all" | "custom";
   limit: number;
   prompt?: string;
   format?: string;
   voiceStyle?: string;
+  startDate?: string; // YYYY-MM-DD format, required when period is "custom"
+  endDate?: string; // YYYY-MM-DD format, required when period is "custom"
 }
 
 interface PodcastSegmentResponse {
@@ -158,8 +160,25 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
   // Validate period
   const period = req.period as string;
-  if (!["week", "month"].includes(period)) {
-    return { valid: false, error: 'period must be "week" or "month"' };
+  if (!["week", "month", "all", "custom"].includes(period)) {
+    return { valid: false, error: 'period must be "week", "month", "all", or "custom"' };
+  }
+
+  // Validate custom date range if period is custom
+  if (period === "custom") {
+    const startDate = req.startDate as string | undefined;
+    const endDate = req.endDate as string | undefined;
+    if (!startDate || !endDate) {
+      return { valid: false, error: 'Custom period requires startDate and endDate (YYYY-MM-DD format)' };
+    }
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return { valid: false, error: "Invalid date format. Use YYYY-MM-DD" };
+    }
+    if (start > end) {
+      return { valid: false, error: "Start date must be before end date" };
+    }
   }
 
   // Validate limit
@@ -181,11 +200,15 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     valid: true,
     data: {
       categories: categories as Category[],
-      period: period as "week" | "month",
+      period: period as "week" | "month" | "all" | "custom",
       limit,
       prompt,
       format: "transcript",
       voiceStyle,
+      ...(period === "custom" && {
+        startDate: req.startDate as string,
+        endDate: req.endDate as string,
+      }),
     },
   };
 }
@@ -209,16 +232,46 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
     }
 
     const req = validation.data!;
-    const periodDays = req.period === "week" ? 7 : 30;
+
+    // Calculate periodDays and loadOptions
+    let periodDays: number;
+    let loadOptions: { startDate?: Date; endDate?: Date } | undefined;
+
+    if (req.period === "custom" && req.startDate && req.endDate) {
+      const startDate = new Date(req.startDate);
+      const endDate = new Date(req.endDate);
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      loadOptions = { startDate, endDate };
+      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+    } else if (req.period === "all") {
+      // All time: from earliest record to today
+      const { getEarliestPublishedDate } = await import('@/src/lib/db/items');
+      const earliestDate = await getEarliestPublishedDate();
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+
+      if (earliestDate) {
+        const startDate = new Date(earliestDate);
+        startDate.setHours(0, 0, 0, 0);
+        loadOptions = { startDate, endDate: today };
+        periodDays = Math.ceil((today.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+      } else {
+        // Fallback: use 90 days if no earliest date found
+        periodDays = 90;
+      }
+    } else {
+      periodDays = req.period === "week" ? 7 : 30;
+    }
 
     logger.info(
-      `Podcast request: categories=${req.categories.join(",")}, period=${req.period}, voice=${req.voiceStyle}, prompt="${(req.prompt || "").substring(0, 50)}..."`
+      `Podcast request: categories=${req.categories.join(",")}, period=${req.period}${req.period === "custom" ? ` (${req.startDate} to ${req.endDate})` : ""}, voice=${req.voiceStyle}, prompt="${(req.prompt || "").substring(0, 50)}..."`
     );
 
     // Step 1: Retrieve candidates
     const allItems: FeedItem[] = [];
     for (const category of req.categories) {
-      const items = await loadItemsByCategory(category, periodDays);
+      const items = await loadItemsByCategory(category, periodDays, loadOptions);
       allItems.push(...items);
     }
 

@@ -6,6 +6,7 @@
 
 import React, { useState } from "react";
 import { type Category } from "@/src/lib/model";
+import { DateRangePicker, DateRange } from "@/src/components/common/date-range-picker";
 
 interface SynthesisFormProps {
   onGenerate: (params: SynthesisParams) => Promise<void>;
@@ -16,10 +17,11 @@ interface SynthesisFormProps {
 export interface SynthesisParams {
   type: "newsletter" | "podcast";
   categories: Category[];
-  period: "week" | "month";
+  period: "week" | "month" | "all" | "custom";
   limit: number;
   prompt?: string;
   voiceStyle?: "conversational" | "technical" | "executive";
+  customDateRange?: DateRange | null;
 }
 
 const ALLOWED_CATEGORIES: Category[] = [
@@ -50,7 +52,8 @@ export function SynthesisForm({
   const [selectedCategories, setSelectedCategories] = useState<Category[]>(
     ALLOWED_CATEGORIES
   );
-  const [period, setPeriod] = useState<"week" | "month">("week");
+  const [period, setPeriod] = useState<"week" | "month" | "all" | "custom">("week");
+  const [customDateRange, setCustomDateRange] = useState<DateRange | null>(null);
   const [limit, setLimit] = useState(50);
   const [prompt, setPrompt] = useState(
     "Focus on code search, coding agents, context management for agents, information retrieval for code, and developer productivity with AI tools. Prioritize research papers, technical articles, and product announcements that demonstrate actual progress in these areas. Filter out benchmarking studies that don't address practical developer needs."
@@ -75,6 +78,11 @@ export function SynthesisForm({
       return;
     }
 
+    if (period === "custom" && !customDateRange) {
+      alert("Please select a date range");
+      return;
+    }
+
     await onGenerate({
       type,
       categories: selectedCategories,
@@ -82,6 +90,7 @@ export function SynthesisForm({
       limit,
       prompt: prompt || undefined,
       ...(type === "podcast" && { voiceStyle }),
+      ...(period === "custom" && { customDateRange }),
     });
   };
 
@@ -135,7 +144,7 @@ export function SynthesisForm({
                   name="period"
                   value="week"
                   checked={period === "week"}
-                  onChange={(e) => setPeriod(e.target.value as "week" | "month")}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "custom")}
                   disabled={isLoading}
                   className="accent-black focus:ring-black"
                 />
@@ -150,7 +159,7 @@ export function SynthesisForm({
                   name="period"
                   value="month"
                   checked={period === "month"}
-                  onChange={(e) => setPeriod(e.target.value as "week" | "month")}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "custom")}
                   disabled={isLoading}
                   className="accent-black focus:ring-black"
                 />
@@ -158,7 +167,46 @@ export function SynthesisForm({
                   This Month (30 days)
                 </label>
               </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="all"
+                  name="period"
+                  value="all"
+                  checked={period === "all"}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "all" | "custom")}
+                  disabled={isLoading}
+                  className="accent-black focus:ring-black"
+                />
+                <label htmlFor="all" className="ml-2 text-sm text-foreground cursor-pointer">
+                  All Time
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="custom"
+                  name="period"
+                  value="custom"
+                  checked={period === "custom"}
+                  onChange={(e) => setPeriod(e.target.value as "week" | "month" | "all" | "custom")}
+                  disabled={isLoading}
+                  className="accent-black focus:ring-black"
+                />
+                <label htmlFor="custom" className="ml-2 text-sm text-foreground cursor-pointer">
+                  Custom Range
+                </label>
+              </div>
             </div>
+            {period === "custom" && (
+              <div className="mt-3">
+                <DateRangePicker
+                  value={customDateRange}
+                  onChange={setCustomDateRange}
+                  disabled={isLoading}
+                />
+              </div>
+            )}
           </div>
 
           {/* Limit */}

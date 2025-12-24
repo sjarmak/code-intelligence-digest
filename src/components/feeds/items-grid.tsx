@@ -25,25 +25,43 @@ interface RankedItemResponse {
   diversityReason?: string;
 }
 
+import { DateRange } from '@/src/components/common/date-range-picker';
+
 interface ItemsGridProps {
   category: string;
-  period: 'day' | 'week' | 'month' | 'all';
+  period: 'day' | 'week' | 'month' | 'all' | 'custom';
+  customDateRange?: DateRange | null;
 }
 
-export default function ItemsGrid({ category, period }: ItemsGridProps) {
+export default function ItemsGrid({ category, period, customDateRange }: ItemsGridProps) {
   const [items, setItems] = useState<RankedItemResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchItems = async () => {
+      // Don't fetch if custom range is selected but not yet configured
+      if (period === 'custom' && !customDateRange) {
+        setLoading(false);
+        setItems([]);
+        return;
+      }
+
       setLoading(true);
       setError(null);
 
       try {
-        const response = await fetch(
-          `/api/items?category=${category}&period=${period}`
-        );
+        const params = new URLSearchParams({
+          category,
+          period,
+        });
+
+        if (period === 'custom' && customDateRange) {
+          params.append('startDate', customDateRange.startDate);
+          params.append('endDate', customDateRange.endDate);
+        }
+
+        const response = await fetch(`/api/items?${params.toString()}`);
 
         if (!response.ok) {
           throw new Error('Failed to fetch items');
@@ -61,7 +79,7 @@ export default function ItemsGrid({ category, period }: ItemsGridProps) {
     };
 
     fetchItems();
-  }, [category, period]);
+  }, [category, period, customDateRange]);
 
   if (loading) {
     return (

@@ -58,3 +58,43 @@ a {
 .text-muted {
   color: var(--muted);
 }
+
+/* Date picker styling - override browser defaults to use black instead of blue */
+input[type="date"] {
+  color-scheme: light;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: none;
+}
+
+input[type="date"]::-webkit-datetime-edit {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-text {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-month-field {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-day-field {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-year-field {
+  color: inherit;
+}
+
+/* Firefox date picker */
+input[type="date"]::-moz-calendar-picker-indicator {
+  cursor: pointer;
+}

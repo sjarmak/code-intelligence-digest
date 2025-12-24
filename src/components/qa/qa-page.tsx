@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Category } from '@/src/lib/model';
 import AskBox from './ask-box';
 import AnswerDisplay from './answer-display';
+import { DateRange } from '@/src/components/common/date-range-picker';
 
 interface LLMAnswerResponse {
   question: string;
@@ -27,7 +28,12 @@ export default function QAPage() {
   const [hasAsked, setHasAsked] = useState(false);
   const [itemsSearched, setItemsSearched] = useState(0);
 
-  const handleAsk = async (question: string, category: Category | null, period: 'week' | 'month') => {
+  const handleAsk = async (
+    question: string,
+    category: Category | null,
+    period: 'week' | 'month' | 'custom',
+    customDateRange?: DateRange | null
+  ) => {
     setIsLoading(true);
     setError(null);
     setHasAsked(true);
@@ -41,6 +47,11 @@ export default function QAPage() {
 
       if (category) {
         params.append('category', category);
+      }
+
+      if (period === 'custom' && customDateRange) {
+        params.append('startDate', customDateRange.startDate);
+        params.append('endDate', customDateRange.endDate);
       }
 
       const response = await fetch(`/api/ask?${params.toString()}`);

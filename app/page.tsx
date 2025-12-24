@@ -6,10 +6,11 @@ import SearchPage from '@/src/components/search/search-page';
 import QAPage from '@/src/components/qa/qa-page';
 import StarredItems from '@/src/components/feeds/starred-items';
 import { useAppConfig } from '@/src/hooks/useAppConfig';
+import { DateRangePicker, DateRange } from '@/src/components/common/date-range-picker';
 
 export const dynamic = 'force-dynamic';
 
-type Period = 'day' | 'week' | 'month' | 'all';
+type Period = 'day' | 'week' | 'month' | 'all' | 'custom';
 type TabType = 'resources' | 'search' | 'ask' | 'starred';
 
 function Loading() {
@@ -19,6 +20,7 @@ function Loading() {
 export default function Home() {
   const { config } = useAppConfig();
   const [period, setPeriod] = useState<Period>('week');
+  const [customDateRange, setCustomDateRange] = useState<DateRange | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('newsletters');
   const [activeTab, setActiveTab] = useState<TabType>('resources');
 
@@ -75,6 +77,27 @@ export default function Home() {
                 title="Generate podcast episodes"
               >
                 Generate Podcast
+              </a>
+              {/* Starred button - only in dev */}
+              {config.features.starred && (
+                <button
+                  onClick={() => setActiveTab('starred')}
+                  className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                    activeTab === 'starred'
+                      ? 'bg-black text-white border border-black'
+                      : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                  }`}
+                  title="View starred items"
+                >
+                  Starred
+                </button>
+              )}
+              <a
+                href="/libraries"
+                className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
+                title="View ADS research libraries"
+              >
+                Libraries
               </a>
               {/* Settings icon - only in dev */}
               {config.adminUIEnabled && (
@@ -137,31 +160,6 @@ export default function Home() {
                  Ask
                </button>
              </nav>
-
-             {/* Action buttons row - separate row to prevent overlap */}
-             <div className="flex flex-wrap items-center gap-2">
-               {/* Starred button - only in dev */}
-               {config.features.starred && (
-                 <button
-                   onClick={() => setActiveTab('starred')}
-                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
-                     activeTab === 'starred'
-                       ? 'bg-black text-white border border-black'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
-                   title="View starred items"
-                 >
-                   Starred
-                 </button>
-               )}
-               <a
-                 href="/libraries"
-                 className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
-                 title="View ADS research libraries"
-               >
-                 Libraries
-               </a>
-             </div>
           </div>
         </div>
       </div>
@@ -232,7 +230,29 @@ export default function Home() {
                 >
                    All-time
                 </button>
+                <button
+                   onClick={() => setPeriod('custom')}
+                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                     period === 'custom'
+                       ? 'bg-black text-white'
+                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                   }`}
+                >
+                   Custom Range
+                </button>
               </div>
+              {/* Custom date range picker - shown when custom is selected */}
+              {period === 'custom' && (
+                <div className="mt-3 pb-2">
+                  <DateRangePicker
+                    value={customDateRange}
+                    onChange={(range) => {
+                      setCustomDateRange(range);
+                    }}
+                    className="max-w-md"
+                  />
+                </div>
+              )}
             </div>
           </div>
          </div>
@@ -242,7 +262,11 @@ export default function Home() {
       <main className={`px-4 sm:px-6 lg:px-8 py-8 ${activeTab === 'resources' ? 'w-full' : 'max-w-7xl mx-auto'}`}>
         {activeTab === 'resources' && (
           <Suspense fallback={<Loading />}>
-            <ItemsGrid category={activeCategory} period={period} />
+            <ItemsGrid
+              category={activeCategory}
+              period={period}
+              customDateRange={period === 'custom' ? customDateRange : null}
+            />
           </Suspense>
         )}
         {activeTab === 'search' && <SearchPage />}

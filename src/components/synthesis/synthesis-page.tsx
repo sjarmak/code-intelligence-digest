@@ -130,6 +130,10 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
           limit: params.limit,
           ...(params.prompt && { prompt: params.prompt }),
           ...(type === "podcast" && { voiceStyle: params.voiceStyle }),
+          ...(params.period === "custom" && params.customDateRange && {
+            startDate: params.customDateRange.startDate,
+            endDate: params.customDateRange.endDate,
+          }),
         }),
         signal: controller.signal,
       });
