@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export default function LibrariesPage() {
    const papersQARef = useRef<{
      addPaper: (paper: { bibcode: string; title?: string }) => void;
-     setSelectedLibrary: (library: { id: string; name: string; numPapers: number } | null) => void;
+     setSelectedLibrary: (library: { id: string; name: string; numPapers: number }) => void;
    } | null>(null);
 
    const handleAddPaperToQA = (paper: { bibcode: string; title?: string }) => {

@@ -13,7 +13,7 @@ export default function DigestThemes({ themes }: DigestThemesProps) {
         {themes.map((theme, idx) => (
           <div
             key={theme}
-            className="px-3 py-2 bg-gray-100 border border-gray-400/50 rounded-full text-sm text-gray-600 hover:bg-blue-900/50 transition-colors"
+            className="px-3 py-2 bg-gray-100 border border-gray-400/50 rounded-full text-sm text-gray-600 hover:bg-gray-200 transition-colors"
           >
             <span className="font-medium">{theme}</span>
             <span className="text-gray-700/70 ml-2">{`#${idx + 1}`}.</span>
