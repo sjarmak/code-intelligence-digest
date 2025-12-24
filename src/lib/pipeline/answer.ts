@@ -99,7 +99,7 @@ Guidelines:
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.warn("OpenAI API call failed, falling back to template synthesis", { 
+        logger.warn("OpenAI API call failed, falling back to template synthesis", {
           error: errorMsg,
           model: "gpt-4o-mini"
         });
