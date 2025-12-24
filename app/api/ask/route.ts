@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { retrieveRelevantItems } from "@/src/lib/pipeline/retrieval";
 import { generateAnswer } from "@/src/lib/pipeline/answer";
 
@@ -66,6 +66,8 @@ export async function GET(req: NextRequest) {
     const category = searchParams.get("category") as Category | null;
     const period = searchParams.get("period") || "week";
     const limit = Math.min(parseInt(searchParams.get("limit") || "5"), 20);
+    const startDateParam = searchParams.get("startDate");
+    const endDateParam = searchParams.get("endDate");
 
     // Validate required parameters
     if (!question || question.trim().length === 0) {
@@ -85,14 +87,45 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Map period to days
+    // Map period to days or handle custom range
     const periodDaysMap: Record<string, number> = {
       day: 1,
       week: 7,
       month: 30,
       all: 90,
     };
-    const periodDays = periodDaysMap[period] || 7;
+
+    let periodDays: number;
+    let loadOptions: { startDate?: Date; endDate?: Date } | undefined;
+
+    if (period === "custom") {
+      if (!startDateParam || !endDateParam) {
+        return NextResponse.json(
+          { error: "Custom period requires startDate and endDate parameters" },
+          { status: 400 }
+        );
+      }
+      const startDate = new Date(startDateParam);
+      const endDate = new Date(endDateParam);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return NextResponse.json(
+          { error: "Invalid date format. Use YYYY-MM-DD" },
+          { status: 400 }
+        );
+      }
+      if (startDate > endDate) {
+        return NextResponse.json(
+          { error: "Start date must be before end date" },
+          { status: 400 }
+        );
+      }
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      loadOptions = { startDate, endDate };
+      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+    } else {
+      periodDays = periodDaysMap[period] || 7;
+    }
 
     logger.info(
       `[ASK] Question: "${question}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}`
@@ -106,12 +139,16 @@ export async function GET(req: NextRequest) {
 
     if (category) {
       // Use specific category for context
-      const categoryItems = await loadItemsByCategory(category, periodDays);
+      const categoryItems = loadOptions?.startDate && loadOptions?.endDate
+        ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
+        : await loadItemsByCategory(category, periodDays);
       contextItems = categoryItems || [];
     } else {
       // Use all categories for context
       for (const cat of VALID_CATEGORIES) {
-        const items = await loadItemsByCategory(cat, periodDays);
+        const items = loadOptions?.startDate && loadOptions?.endDate
+          ? await loadItemsByCategoryWithDateRange(cat, loadOptions.startDate, loadOptions.endDate)
+          : await loadItemsByCategory(cat, periodDays);
         if (items && items.length > 0) {
           contextItems.push(...items);
         }
