@@ -116,12 +116,12 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     data: {
       categories: categories as Category[],
       period: period as "week" | "month" | "all" | "custom",
-      ...(period === "custom" && req.customDateRange && {
+      ...(period === "custom" && req.customDateRange ? {
         customDateRange: {
           startDate: req.customDateRange.startDate,
           endDate: req.customDateRange.endDate,
         },
-      }),
+      } : {}),
       limit,
       prompt,
     },
