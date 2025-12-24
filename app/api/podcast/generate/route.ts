@@ -222,10 +222,28 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       allItems.push(...items);
     }
 
-    // Step 2: Rank ALL candidates (no pre-filtering)
+    // Step 1.5: Early filtering to prevent OOM on large datasets
+    // Limit items per category before ranking to reduce memory usage
+    // Use recency as a simple pre-filter (most recent first)
+    const MAX_ITEMS_PER_CATEGORY = 500; // Limit before ranking to prevent OOM
+    const preFilteredItems: FeedItem[] = [];
+    for (const category of req.categories) {
+      const categoryItems = allItems.filter((item) => item.category === category);
+      // Sort by recency (most recent first) and take top N
+      const sorted = categoryItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+      const limited = sorted.slice(0, MAX_ITEMS_PER_CATEGORY);
+      preFilteredItems.push(...limited);
+      if (categoryItems.length > MAX_ITEMS_PER_CATEGORY) {
+        logger.info(
+          `Pre-filtered ${category}: ${categoryItems.length} → ${limited.length} items (recency-based)`
+        );
+      }
+    }
+
+    // Step 2: Rank pre-filtered candidates
      const rankedPerCategory = await Promise.all(
        req.categories.map(async (category) => {
-         const categoryItems = allItems.filter((item) => item.category === category);
+         const categoryItems = preFilteredItems.filter((item) => item.category === category);
          const ranked = await rankCategory(categoryItems, category as Category, periodDays);
          return { category, items: ranked };
        })
