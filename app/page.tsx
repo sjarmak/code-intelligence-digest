@@ -60,9 +60,24 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Settings icon - only in dev */}
-            {config.adminUIEnabled && (
-              <div className="flex-shrink-0">
+            {/* Action buttons - upper right */}
+            <div className="flex shrink-0 items-center gap-2">
+              <a
+                href="/synthesis/newsletter"
+                className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
+                title="Generate newsletters"
+              >
+                Generate Newsletter
+              </a>
+              <a
+                href="/synthesis/podcast"
+                className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
+                title="Generate podcast episodes"
+              >
+                Generate Podcast
+              </a>
+              {/* Settings icon - only in dev */}
+              {config.adminUIEnabled && (
                 <a
                   href="/admin"
                   className="p-1 rounded-md transition-colors hover:bg-gray-100"
@@ -73,8 +88,8 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
                 </a>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -145,20 +160,6 @@ export default function Home() {
                  title="View ADS research libraries"
                >
                  Libraries
-               </a>
-               <a
-                 href="/synthesis/newsletter"
-                 className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
-                 title="Generate newsletters"
-               >
-                 Newsletter
-               </a>
-               <a
-                 href="/synthesis/podcast"
-                 className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
-                 title="Generate podcast episodes"
-               >
-                 Podcast
                </a>
              </div>
           </div>
