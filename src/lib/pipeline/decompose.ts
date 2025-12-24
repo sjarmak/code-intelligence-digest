@@ -146,6 +146,20 @@ function shouldExcludeUrl(url: string): boolean {
     return true;
   }
 
+  // CRITICAL: Filter ALL Substack URLs that don't have /p/ (article post path)
+  // Substack home pages, index pages, and profile pages redirect to main page
+  // Only /p/article-slug URLs are actual article pages
+  if (url.includes('.substack.com') || url.includes('substack.com/')) {
+    // Allow only article post URLs with /p/ path
+    if (!url.includes('/p/')) {
+      return true; // Reject - this is a home page or index page
+    }
+    // Also reject if it's just the domain with /p/ but no actual slug
+    if (/\.substack\.com\/p\/?(\?|$|#)/i.test(url)) {
+      return true; // Reject - incomplete article URL
+    }
+  }
+
   return false;
 }
 
@@ -322,6 +336,13 @@ function extractArticlesFromHtml(html: string): Array<{
                            !normalizedUrl.includes("action=share") &&
                            !normalizedUrl.includes("redirect=app-store");
 
+    // CRITICAL: For Substack domains, ONLY accept URLs with /p/ (article posts)
+    // Reject all other Substack URLs (home pages, index pages, profile pages)
+    if (isSubstackDomain && !normalizedUrl.includes("/p/")) {
+      logger.debug(`Filtered out Substack non-article URL (missing /p/): ${normalizedUrl}`);
+      continue; // Skip this URL - it's not an article
+    }
+
     // These are internal Substack pages that should be filtered
     const isSubstackInternal = isSubstackDomain && !isSubstackPost && (
       normalizedUrl.includes("/subscribe") ||
@@ -387,6 +408,14 @@ function extractArticlesFromHtml(html: string): Array<{
       const normalizedUrl = url.replace(/&amp;/g, "&");
       const isSubstackDomain = normalizedUrl.includes("substack.com/") ||
                                 normalizedUrl.includes("substackcdn.com/");
+
+      // CRITICAL: For Substack domains, ONLY accept URLs with /p/ (article posts)
+      // Reject all other Substack URLs (home pages, index pages, profile pages)
+      if (isSubstackDomain && !normalizedUrl.includes("/p/")) {
+        logger.debug(`Pattern 3: Filtered out Substack non-article URL (missing /p/): ${normalizedUrl}`);
+        continue; // Skip this URL - it's not an article
+      }
+
       const isSubstackPost = isSubstackDomain &&
                               normalizedUrl.includes("/p/") &&
                               !normalizedUrl.includes("open.substack.com/") &&
@@ -447,6 +476,13 @@ function extractArticlesFromHtml(html: string): Array<{
     const normalizedUrl = nearbyUrl ? nearbyUrl.replace(/&amp;/g, "&").trim() : null;
 
     if (normalizedUrl && isValidAbsoluteUrl(normalizedUrl) && !seen.has(normalizedUrl)) {
+      // CRITICAL: For Substack domains, ONLY accept URLs with /p/ (article posts)
+      // Reject all other Substack URLs (home pages, index pages, profile pages)
+      if ((normalizedUrl.includes('.substack.com') || normalizedUrl.includes('substack.com/')) && !normalizedUrl.includes('/p/')) {
+        logger.debug(`Pattern 4: Filtered out Substack non-article URL (missing /p/): ${normalizedUrl}`);
+        continue; // Skip this URL - it's not an article
+      }
+
       // Validate the URL
       if (
         !normalizedUrl.includes("inoreader.com") &&
