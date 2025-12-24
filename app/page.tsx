@@ -117,11 +117,11 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Spacer for fixed header */}
-      <div className="h-[88px] sm:h-20" aria-hidden="true"></div>
+      {/* Spacer for fixed header - increased height to account for header with buttons */}
+      <div className="h-[120px] sm:h-24" aria-hidden="true"></div>
 
       {/* Main Tabs */}
-      <div className="border-b border-surface-border bg-surface sticky top-[88px] sm:top-20 z-10">
+      <div className="border-b border-surface-border bg-surface sticky top-[120px] sm:top-24 z-10">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 py-2 sm:py-0">
             {/* Navigation tabs row */}
@@ -169,7 +169,7 @@ export default function Home() {
 
       {/* Category Tabs (only show for resources tab) */}
       {activeTab === 'resources' && (
-        <div className="border-b border-surface-border bg-surface sticky top-[148px] sm:top-32 z-10">
+        <div className="border-b border-surface-border bg-surface sticky top-[176px] sm:top-[152px] z-10">
           <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-3 py-2 sm:py-0">
               {/* Category tabs row */}
