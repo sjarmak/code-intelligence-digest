@@ -22,6 +22,7 @@ import {
 } from "@/src/lib/audio/sanitize";
 import { renderAudio, renderMultiVoiceAudio, DEFAULT_VOICE_PAIRS, MultiVoiceConfig } from "@/src/lib/audio/render";
 import { getPodcastAudioByHash, savePodcastAudio } from "@/src/lib/db/podcast-audio";
+import { initializeDatabase } from "@/src/lib/db/index";
 import { getLocalStorage } from "@/src/lib/storage/local";
 import { logger } from "@/src/lib/logger";
 
@@ -126,6 +127,9 @@ export async function POST(
   const startTime = Date.now();
 
   try {
+    // Initialize database to ensure tables exist
+    await initializeDatabase();
+
     // Check rate limits
     const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
     const rateLimitResponse = await enforceRateLimit(request, '/api/podcast/render-audio');

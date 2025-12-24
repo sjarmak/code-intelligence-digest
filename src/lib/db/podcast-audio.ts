@@ -3,6 +3,7 @@
  */
 
 import { getSqlite } from "./index";
+import { getDbClient, detectDriver } from "./driver";
 import { SegmentAudioMetadata } from "../audio/types";
 
 export interface PodcastAudioRecord {
@@ -24,29 +25,54 @@ export interface PodcastAudioRecord {
  * Save generated audio metadata to database
  */
 export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void> {
-  const sqlite = getSqlite();
+  const driver = detectDriver();
+  const generatedAt = Math.floor(Date.now() / 1000);
 
-  const stmt = sqlite.prepare(`
-    INSERT INTO generated_podcast_audio (
-      id, podcast_id, transcript_hash, provider, voice, format,
-      duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    await client.run(`
+      INSERT INTO generated_podcast_audio (
+        id, podcast_id, transcript_hash, provider, voice, format,
+        duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `, [
+      audio.id,
+      audio.podcastId || null,
+      audio.transcriptHash,
+      audio.provider,
+      audio.voice || null,
+      audio.format,
+      audio.duration || null,
+      audio.durationSeconds || null,
+      audio.audioUrl,
+      audio.segmentAudio ? JSON.stringify(audio.segmentAudio) : null,
+      audio.bytes,
+      generatedAt
+    ]);
+  } else {
+    const sqlite = getSqlite();
+    const stmt = sqlite.prepare(`
+      INSERT INTO generated_podcast_audio (
+        id, podcast_id, transcript_hash, provider, voice, format,
+        duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
 
-  stmt.run(
-    audio.id,
-    audio.podcastId || null,
-    audio.transcriptHash,
-    audio.provider,
-    audio.voice || null,
-    audio.format,
-    audio.duration || null,
-    audio.durationSeconds || null,
-    audio.audioUrl,
-    audio.segmentAudio ? JSON.stringify(audio.segmentAudio) : null,
-    audio.bytes,
-    Math.floor(Date.now() / 1000)
-  );
+    stmt.run(
+      audio.id,
+      audio.podcastId || null,
+      audio.transcriptHash,
+      audio.provider,
+      audio.voice || null,
+      audio.format,
+      audio.duration || null,
+      audio.durationSeconds || null,
+      audio.audioUrl,
+      audio.segmentAudio ? JSON.stringify(audio.segmentAudio) : null,
+      audio.bytes,
+      generatedAt
+    );
+  }
 }
 
 /**
@@ -55,15 +81,27 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
 export async function getPodcastAudioByHash(
   transcriptHash: string
 ): Promise<PodcastAudioRecord | null> {
-  const sqlite = getSqlite();
+  const driver = detectDriver();
 
-  const stmt = sqlite.prepare(`
-    SELECT * FROM generated_podcast_audio 
-    WHERE transcript_hash = ?
-    LIMIT 1
-  `);
+  let row: any;
 
-  const row = stmt.get(transcriptHash) as any;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT * FROM generated_podcast_audio
+      WHERE transcript_hash = $1
+      LIMIT 1
+    `, [transcriptHash]);
+    row = result.rows[0];
+  } else {
+    const sqlite = getSqlite();
+    const stmt = sqlite.prepare(`
+      SELECT * FROM generated_podcast_audio
+      WHERE transcript_hash = ?
+      LIMIT 1
+    `);
+    row = stmt.get(transcriptHash) as any;
+  }
 
   if (!row) return null;
 
@@ -87,15 +125,27 @@ export async function getPodcastAudioByHash(
  * Get audio by ID
  */
 export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecord | null> {
-  const sqlite = getSqlite();
+  const driver = detectDriver();
 
-  const stmt = sqlite.prepare(`
-    SELECT * FROM generated_podcast_audio 
-    WHERE id = ?
-    LIMIT 1
-  `);
+  let row: any;
 
-  const row = stmt.get(id) as any;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT * FROM generated_podcast_audio
+      WHERE id = $1
+      LIMIT 1
+    `, [id]);
+    row = result.rows[0];
+  } else {
+    const sqlite = getSqlite();
+    const stmt = sqlite.prepare(`
+      SELECT * FROM generated_podcast_audio
+      WHERE id = ?
+      LIMIT 1
+    `);
+    row = stmt.get(id) as any;
+  }
 
   if (!row) return null;
 
@@ -119,31 +169,53 @@ export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecor
  * Check if audio exists for hash
  */
 export async function podcastAudioExists(transcriptHash: string): Promise<boolean> {
-  const sqlite = getSqlite();
+  const driver = detectDriver();
 
-  const stmt = sqlite.prepare(`
-    SELECT id FROM generated_podcast_audio 
-    WHERE transcript_hash = ?
-    LIMIT 1
-  `);
-
-  const row = stmt.get(transcriptHash);
-  return !!row;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT id FROM generated_podcast_audio
+      WHERE transcript_hash = $1
+      LIMIT 1
+    `, [transcriptHash]);
+    return result.rows.length > 0;
+  } else {
+    const sqlite = getSqlite();
+    const stmt = sqlite.prepare(`
+      SELECT id FROM generated_podcast_audio
+      WHERE transcript_hash = ?
+      LIMIT 1
+    `);
+    const row = stmt.get(transcriptHash);
+    return !!row;
+  }
 }
 
 /**
  * List recent audio records
  */
 export async function listRecentPodcastAudio(limit: number = 20): Promise<PodcastAudioRecord[]> {
-  const sqlite = getSqlite();
+  const driver = detectDriver();
 
-  const stmt = sqlite.prepare(`
-    SELECT * FROM generated_podcast_audio 
-    ORDER BY created_at DESC
-    LIMIT ?
-  `);
+  let rows: any[];
 
-  const rows = stmt.all(limit) as any[];
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT * FROM generated_podcast_audio
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+    rows = result.rows;
+  } else {
+    const sqlite = getSqlite();
+    const stmt = sqlite.prepare(`
+      SELECT * FROM generated_podcast_audio
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    rows = stmt.all(limit) as any[];
+  }
 
   return rows.map((record) => ({
     id: record.id,

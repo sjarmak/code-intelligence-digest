@@ -11,11 +11,11 @@ import React, { useState } from "react";
  */
 function parseMarkdownText(text: string): React.ReactNode {
   if (!text) return null;
-  
+
   // Split by ** to handle bold sections
   // Match ** followed by anything (non-greedy) followed by **
   const parts = text.split(/(\*\*.*?\*\*)/g);
-  
+
   return (
     <>
       {parts.map((part, idx) => {
