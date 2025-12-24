@@ -112,8 +112,11 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
 
   // Extract customDateRange for type narrowing
-  const customDateRange: { startDate: string; endDate: string } | undefined = 
-    period === "custom" && req.customDateRange ? req.customDateRange : undefined;
+  // After validation above, if period is "custom", req.customDateRange is guaranteed to exist
+  const customDateRange: { startDate: string; endDate: string } | undefined =
+    period === "custom" && req.customDateRange && req.customDateRange.startDate && req.customDateRange.endDate
+      ? { startDate: req.customDateRange.startDate, endDate: req.customDateRange.endDate }
+      : undefined;
 
   return {
     valid: true,
