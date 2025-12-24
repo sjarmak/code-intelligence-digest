@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
@@ -35,6 +35,8 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get("category") as Category | null;
     const period = searchParams.get("period") || "week";
     const limitParam = searchParams.get("limit");
+    const startDateParam = searchParams.get("startDate");
+    const endDateParam = searchParams.get("endDate");
 
     // Parse limit, clamp to [1, 50]
     let customLimit: number | undefined;
@@ -57,25 +59,71 @@ export async function GET(request: NextRequest) {
     }
 
     // Validate period
-    if (!PERIOD_DAYS[period]) {
+    if (period === "custom") {
+      if (!startDateParam || !endDateParam) {
+        return NextResponse.json(
+          {
+            error: "Custom period requires startDate and endDate parameters",
+          },
+          { status: 400 }
+        );
+      }
+      const startDate = new Date(startDateParam);
+      const endDate = new Date(endDateParam);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return NextResponse.json(
+          {
+            error: "Invalid date format. Use YYYY-MM-DD",
+          },
+          { status: 400 }
+        );
+      }
+      if (startDate > endDate) {
+        return NextResponse.json(
+          {
+            error: "Start date must be before end date",
+          },
+          { status: 400 }
+        );
+      }
+    } else if (!PERIOD_DAYS[period]) {
       return NextResponse.json(
         {
           error: "Invalid period",
-          validPeriods: Object.keys(PERIOD_DAYS),
+          validPeriods: [...Object.keys(PERIOD_DAYS), "custom"],
         },
         { status: 400 }
       );
     }
 
-    const periodDays = PERIOD_DAYS[period];
+    // Calculate periodDays for custom or use predefined
+    let periodDays: number;
+    let loadOptions: { startDate?: Date; endDate?: Date } | undefined;
 
-    logger.info(`API request: category=${category}, period=${period} (${periodDays}d)`);
+    if (period === "custom") {
+      const startDate = new Date(startDateParam!);
+      const endDate = new Date(endDateParam!);
+      // Set to start of day for start, end of day for end
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      loadOptions = { startDate, endDate };
+      // Calculate approximate days for logging/config
+      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+    } else {
+      periodDays = PERIOD_DAYS[period];
+    }
+
+    logger.info(
+      `API request: category=${category}, period=${period}${period === "custom" ? ` (${startDateParam} to ${endDateParam})` : ` (${periodDays}d)`}`
+    );
 
     // Initialize database (creates tables if needed)
     await initializeDatabase();
 
     // Load items from database
-    const items = await loadItemsByCategory(category, periodDays);
+    const items = loadOptions?.startDate && loadOptions?.endDate
+      ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
+      : await loadItemsByCategory(category, periodDays);
     logger.info(`Loaded ${items.length} items from database`);
 
     // Rank items
