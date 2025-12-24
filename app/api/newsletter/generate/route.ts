@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
@@ -20,8 +20,10 @@ interface NewsletterRequest {
   period: "week" | "month" | "all" | "custom";
   limit: number;
   prompt?: string;
-  startDate?: string; // YYYY-MM-DD format, required when period is "custom"
-  endDate?: string; // YYYY-MM-DD format, required when period is "custom"
+  customDateRange?: {
+    startDate: string;
+    endDate: string;
+  };
 }
 
 interface NewsletterResponse {
@@ -83,18 +85,20 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
   // Validate custom date range if period is custom
   if (period === "custom") {
-    const startDate = req.startDate as string | undefined;
-    const endDate = req.endDate as string | undefined;
-    if (!startDate || !endDate) {
-      return { valid: false, error: 'Custom period requires startDate and endDate (YYYY-MM-DD format)' };
+    const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+    if (!customRange || !customRange.startDate || !customRange.endDate) {
+      return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
     }
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return { valid: false, error: "Invalid date format. Use YYYY-MM-DD" };
+    const startDate = new Date(customRange.startDate);
+    const endDate = new Date(customRange.endDate);
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return { valid: false, error: "Invalid date format in customDateRange" };
     }
-    if (start > end) {
-      return { valid: false, error: "Start date must be before end date" };
+    if (startDate > endDate) {
+      return { valid: false, error: "startDate must be before endDate" };
+    }
+    if (endDate > new Date()) {
+      return { valid: false, error: "endDate cannot be in the future" };
     }
   }
 
@@ -112,12 +116,14 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     data: {
       categories: categories as Category[],
       period: period as "week" | "month" | "all" | "custom",
+      ...(period === "custom" && req.customDateRange && {
+        customDateRange: {
+          startDate: req.customDateRange.startDate,
+          endDate: req.customDateRange.endDate,
+        },
+      }),
       limit,
       prompt,
-      ...(period === "custom" && {
-        startDate: req.startDate as string,
-        endDate: req.endDate as string,
-      }),
     },
   };
 }
@@ -142,35 +148,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     const req = validation.data!;
 
-    // Calculate periodDays and loadOptions
+    // Calculate period days or use custom date range
     let periodDays: number;
-    let loadOptions: { startDate?: Date; endDate?: Date } | undefined;
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
 
-    if (req.period === "custom" && req.startDate && req.endDate) {
-      const startDate = new Date(req.startDate);
-      const endDate = new Date(req.endDate);
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setHours(23, 59, 59, 999);
-      loadOptions = { startDate, endDate };
+    if (req.period === "custom" && req.customDateRange) {
+      startDate = new Date(req.customDateRange.startDate);
+      endDate = new Date(req.customDateRange.endDate);
+      // Calculate days for ranking purposes (use the range span)
       periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-    } else if (req.period === "all") {
-      // All time: from earliest record to today
-      const { getEarliestPublishedDate } = await import('@/src/lib/db/items');
-      const earliestDate = await getEarliestPublishedDate();
-      const today = new Date();
-      today.setHours(23, 59, 59, 999);
-
-      if (earliestDate) {
-        const startDate = new Date(earliestDate);
-        startDate.setHours(0, 0, 0, 0);
-        loadOptions = { startDate, endDate: today };
-        periodDays = Math.ceil((today.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-      } else {
-        // Fallback: use 90 days if no earliest date found
-        periodDays = 90;
-      }
     } else {
-      periodDays = req.period === "week" ? 7 : 30;
+      periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 90;
     }
 
     // Check request size limits
@@ -180,14 +169,17 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
     }
 
-    logger.info(
-      `Newsletter request: categories=${req.categories.join(",")}, period=${req.period}${req.period === "custom" ? ` (${req.startDate} to ${req.endDate})` : ""}, prompt="${(req.prompt || "").substring(0, 50)}..."`
-    );
+    logger.info(`Newsletter request: categories=${req.categories.join(",")}, period=${req.period}, prompt="${(req.prompt || "").substring(0, 50)}..."${req.period === "custom" ? `, dateRange=${req.customDateRange?.startDate} to ${req.customDateRange?.endDate}` : ""}`);
 
     // Step 1: Retrieve candidates
     const allItems: FeedItem[] = [];
     for (const category of req.categories) {
-      const items = await loadItemsByCategory(category, periodDays, loadOptions);
+      let items: FeedItem[];
+      if (req.period === "custom" && startDate && endDate) {
+        items = await loadItemsByCategoryWithDateRange(category, startDate, endDate);
+      } else {
+        items = await loadItemsByCategory(category, periodDays);
+      }
       allItems.push(...items);
     }
 
