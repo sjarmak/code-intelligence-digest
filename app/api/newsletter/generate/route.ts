@@ -111,15 +111,18 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   // Normalize prompt
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
 
+  // Extract customDateRange for type narrowing
+  const customDateRange = period === "custom" && req.customDateRange ? req.customDateRange : undefined;
+
   return {
     valid: true,
     data: {
       categories: categories as Category[],
       period: period as "week" | "month" | "all" | "custom",
-      ...(period === "custom" && req.customDateRange ? {
+      ...(customDateRange ? {
         customDateRange: {
-          startDate: req.customDateRange.startDate,
-          endDate: req.customDateRange.endDate,
+          startDate: customDateRange.startDate,
+          endDate: customDateRange.endDate,
         },
       } : {}),
       limit,
