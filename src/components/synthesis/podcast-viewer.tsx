@@ -169,18 +169,18 @@ export function PodcastViewer({
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-3 gap-4 pt-4 border-t border-surface-border">
-          <div className="bg-gray-100 rounded p-3 border border-gray-400">
-            <p className="text-xs text-gray-700 font-semibold">Period</p>
-            <p className="text-lg font-bold text-black">{period}</p>
+        <div className="grid grid-cols-3 gap-2 sm:gap-4 pt-4 border-t border-surface-border">
+          <div className="bg-gray-100 rounded p-2 sm:p-3 border border-gray-400 min-w-0">
+            <p className="text-xs text-gray-700 font-semibold truncate">Period</p>
+            <p className="text-base sm:text-lg font-bold text-black truncate">{period}</p>
           </div>
-          <div className="bg-gray-100 rounded p-3 border border-gray-400">
-            <p className="text-xs text-gray-700 font-semibold">Items</p>
-            <p className="text-lg font-bold text-black">{itemsIncluded}</p>
+          <div className="bg-gray-100 rounded p-2 sm:p-3 border border-gray-400 min-w-0">
+            <p className="text-xs text-gray-700 font-semibold truncate">Items</p>
+            <p className="text-base sm:text-lg font-bold text-black truncate">{itemsIncluded}</p>
           </div>
-          <div className="bg-gray-100 rounded p-3 border border-gray-400">
-            <p className="text-xs text-gray-700 font-semibold">Voice</p>
-            <p className="text-lg font-bold text-black capitalize">{generationMetadata.voiceStyle}</p>
+          <div className="bg-gray-100 rounded p-2 sm:p-3 border border-gray-400 min-w-0 overflow-hidden">
+            <p className="text-xs text-gray-700 font-semibold truncate">Voice</p>
+            <p className="text-sm sm:text-lg font-bold text-black capitalize truncate overflow-hidden text-ellipsis whitespace-nowrap">{generationMetadata.voiceStyle}</p>
           </div>
         </div>
 
