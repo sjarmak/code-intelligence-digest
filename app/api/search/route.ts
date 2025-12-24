@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { hybridSearch, semanticSearch, keywordSearch } from "@/src/lib/pipeline/search";
 
 const VALID_CATEGORIES: Category[] = [
@@ -122,13 +122,17 @@ export async function GET(req: NextRequest) {
 
     if (category) {
       // Search in specific category
-      const categoryItems = await loadItemsByCategory(category, periodDays, loadOptions);
+      const categoryItems = loadOptions?.startDate && loadOptions?.endDate
+        ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
+        : await loadItemsByCategory(category, periodDays);
       searchItems = categoryItems || [];
     } else {
       // Search across all categories
       const allCategories = VALID_CATEGORIES;
       for (const cat of allCategories) {
-        const items = await loadItemsByCategory(cat, periodDays, loadOptions);
+        const items = loadOptions?.startDate && loadOptions?.endDate
+          ? await loadItemsByCategoryWithDateRange(cat, loadOptions.startDate, loadOptions.endDate)
+          : await loadItemsByCategory(cat, periodDays);
         if (items && items.length > 0) {
           searchItems.push(...items);
         }
