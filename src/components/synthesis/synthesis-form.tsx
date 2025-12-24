@@ -111,7 +111,7 @@ export function SynthesisForm({
                     checked={selectedCategories.includes(category)}
                     onChange={() => handleCategoryToggle(category)}
                     disabled={isLoading}
-                    className="rounded border-surface-border text-black focus:ring-black bg-surface"
+                    className="rounded border-surface-border accent-black focus:ring-black bg-surface"
                   />
                   <label
                     htmlFor={category}
@@ -137,7 +137,7 @@ export function SynthesisForm({
                   checked={period === "week"}
                   onChange={(e) => setPeriod(e.target.value as "week" | "month")}
                   disabled={isLoading}
-                  className="text-black focus:ring-black"
+                  className="accent-black focus:ring-black"
                 />
                 <label htmlFor="week" className="ml-2 text-sm text-foreground cursor-pointer">
                   This Week (7 days)
@@ -152,7 +152,7 @@ export function SynthesisForm({
                   checked={period === "month"}
                   onChange={(e) => setPeriod(e.target.value as "week" | "month")}
                   disabled={isLoading}
-                  className="text-black focus:ring-black"
+                  className="accent-black focus:ring-black"
                 />
                 <label htmlFor="month" className="ml-2 text-sm text-foreground cursor-pointer">
                   This Month (30 days)
