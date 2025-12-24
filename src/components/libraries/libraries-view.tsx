@@ -188,11 +188,11 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => onSelectLibraryForQA?.({ id: lib.id, name: lib.name, numPapers: lib.numPapers })}
-                    title="Use all papers from this library for Q&A"
-                    className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap flex items-center gap-1"
+                    title="Add all papers from this library to Q&A context"
+                    className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap flex items-center gap-1"
                   >
                     <BookOpen className="w-3 h-3" />
-                    Use Library
+                    Add Library to Context
                   </button>
                   <span className="text-xs px-2 py-1 rounded bg-surface-border/30 text-muted">
                     {lib.numPapers}
@@ -273,7 +273,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                     <button
                                       onClick={() => onAddPaperToQA?.({ bibcode: item.bibcode, title: item.title })}
                                       title="Add to Q&A context"
-                                      className="text-xs px-2 py-1 rounded bg-green-50 text-green-700 hover:bg-green-900/40 transition-colors whitespace-nowrap"
+                                      className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap"
                                     >
                                       <Plus className="w-3 h-3 inline mr-1" />
                                       Add

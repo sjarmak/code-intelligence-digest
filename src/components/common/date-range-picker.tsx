@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import DatePicker from 'react-datepicker';
 
 export interface DateRange {
   startDate: string; // ISO date string (YYYY-MM-DD)
@@ -16,7 +17,7 @@ interface DateRangePickerProps {
 
 /**
  * Reusable date range picker component
- * Uses native HTML5 date inputs for best UX and accessibility
+ * Uses react-datepicker for full styling control
  * Automatically adjusts dates to valid ranges and provides clear feedback
  */
 export function DateRangePicker({
@@ -25,8 +26,12 @@ export function DateRangePicker({
   disabled = false,
   className = '',
 }: DateRangePickerProps) {
-  const [startDate, setStartDate] = useState(value?.startDate || '');
-  const [endDate, setEndDate] = useState(value?.endDate || '');
+  const [startDate, setStartDate] = useState<Date | null>(
+    value?.startDate ? new Date(value.startDate) : null
+  );
+  const [endDate, setEndDate] = useState<Date | null>(
+    value?.endDate ? new Date(value.endDate) : null
+  );
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [earliestDate, setEarliestDate] = useState<string | null>(null);
@@ -64,78 +69,98 @@ export function DateRangePicker({
   // Sync with external value changes
   useEffect(() => {
     if (value) {
-      setStartDate(value.startDate);
-      setEndDate(value.endDate);
+      setStartDate(value.startDate ? new Date(value.startDate) : null);
+      setEndDate(value.endDate ? new Date(value.endDate) : null);
     } else {
-      setStartDate('');
-      setEndDate('');
+      setStartDate(null);
+      setEndDate(null);
     }
     setError(null);
     setInfo(null);
   }, [value]);
 
-  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newStart = e.target.value;
-    let adjustedStart = newStart;
+  const handleStartDateChange = (date: Date | null) => {
+    if (!date) {
+      setStartDate(null);
+      onChange(null);
+      return;
+    }
+
+    let adjustedDate = date;
     let infoMessage: string | null = null;
 
     // Auto-adjust if before earliest date
-    if (earliestDate && newStart && newStart < earliestDate) {
-      adjustedStart = earliestDate;
-      infoMessage = `Start date adjusted to earliest available record: ${new Date(earliestDate).toLocaleDateString()}`;
+    if (earliestDate) {
+      const earliest = new Date(earliestDate);
+      if (date < earliest) {
+        adjustedDate = earliest;
+        infoMessage = `Start date adjusted to earliest available record: ${earliest.toLocaleDateString()}`;
+      }
     }
 
-    setStartDate(adjustedStart);
+    setStartDate(adjustedDate);
     if (infoMessage) {
       setInfo(infoMessage);
-      // Clear info message after 5 seconds
       setTimeout(() => setInfo(null), 5000);
     } else {
       setInfo(null);
     }
 
     // Validate against end date
-    if (adjustedStart && endDate && adjustedStart > endDate) {
+    if (endDate && adjustedDate > endDate) {
       setError('Start date must be before end date');
       onChange(null);
     } else {
       setError(null);
-      if (adjustedStart && endDate) {
-        onChange({ startDate: adjustedStart, endDate });
+      if (endDate) {
+        const startStr = adjustedDate.toISOString().split('T')[0];
+        const endStr = endDate.toISOString().split('T')[0];
+        onChange({ startDate: startStr, endDate: endStr });
       } else {
         onChange(null);
       }
     }
   };
 
-  const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newEnd = e.target.value;
-    let adjustedEnd = newEnd;
+  const handleEndDateChange = (date: Date | null) => {
+    if (!date) {
+      setEndDate(null);
+      if (startDate) {
+        onChange(null);
+      }
+      return;
+    }
+
+    let adjustedDate = date;
     let infoMessage: string | null = null;
 
     // Auto-adjust if after today
-    if (today && newEnd && newEnd > today) {
-      adjustedEnd = today;
-      infoMessage = `End date adjusted to today (${new Date(today).toLocaleDateString()}) - future dates are not available`;
+    if (today) {
+      const todayDate = new Date(today);
+      if (date > todayDate) {
+        adjustedDate = todayDate;
+        infoMessage = `End date adjusted to today (${todayDate.toLocaleDateString()}) - future dates are not available`;
+      }
     }
 
-    setEndDate(adjustedEnd);
+    setEndDate(adjustedDate);
     if (infoMessage) {
       setInfo(infoMessage);
-      // Clear info message after 5 seconds
       setTimeout(() => setInfo(null), 5000);
     } else {
       setInfo(null);
     }
 
     // Validate against start date
-    if (startDate && adjustedEnd && startDate > adjustedEnd) {
+    if (startDate && adjustedDate < startDate) {
       setError('Start date must be before end date');
       onChange(null);
     } else {
       setError(null);
-      if (startDate && adjustedEnd) {
-        onChange({ startDate, endDate: adjustedEnd });
+      if (startDate) {
+        const startStr = startDate.toISOString().split('T')[0];
+        const endStr = adjustedDate.toISOString().split('T')[0];
+        onChange({ startDate: startStr, endDate: endStr });
       } else {
         onChange(null);
       }
@@ -143,52 +168,106 @@ export function DateRangePicker({
   };
 
   // Use fetched bounds or fallback
-  const minDate = earliestDate || (() => {
+  const minDate = earliestDate ? new Date(earliestDate) : (() => {
     const twoYearsAgo = new Date();
     twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
-    return twoYearsAgo.toISOString().split('T')[0];
+    return twoYearsAgo;
   })();
-  const maxDate = today || new Date().toISOString().split('T')[0];
+  const maxDate = today ? new Date(today) : new Date();
+
+  const handleSetEarliest = () => {
+    if (earliestDate) {
+      const newStart = new Date(earliestDate);
+      setStartDate(newStart);
+      if (endDate) {
+        const startStr = newStart.toISOString().split('T')[0];
+        const endStr = endDate.toISOString().split('T')[0];
+        onChange({ startDate: startStr, endDate: endStr });
+      } else {
+        onChange(null);
+      }
+      setInfo(null);
+      setError(null);
+    }
+  };
+
+  const handleSetLatest = () => {
+    const newEnd = maxDate;
+    setEndDate(newEnd);
+    if (startDate) {
+      const startStr = startDate.toISOString().split('T')[0];
+      const endStr = newEnd.toISOString().split('T')[0];
+      onChange({ startDate: startStr, endDate: endStr });
+    } else {
+      onChange(null);
+    }
+    setInfo(null);
+    setError(null);
+  };
 
   return (
     <div className={`space-y-2 ${className}`}>
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label htmlFor="start-date" className="block text-xs font-medium text-foreground mb-1">
-            Start Date
+        <div className="flex flex-col">
+          <div className="flex items-start justify-between mb-1 min-h-[2rem]">
+            <label className="text-xs font-medium text-foreground">
+              Start Date
+              {earliestDate && (
+                <span className="text-muted font-normal ml-1 block">
+                  (earliest: {new Date(earliestDate).toLocaleDateString()})
+                </span>
+              )}
+            </label>
             {earliestDate && (
-              <span className="text-muted font-normal ml-1">
-                (earliest: {new Date(earliestDate).toLocaleDateString()})
-              </span>
+              <button
+                type="button"
+                onClick={handleSetEarliest}
+                disabled={disabled}
+                className="text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ml-2"
+                title="Set to earliest available date"
+              >
+                Earliest
+              </button>
             )}
-          </label>
-          <input
-            id="start-date"
-            type="date"
-            value={startDate}
+          </div>
+          <DatePicker
+            selected={startDate}
             onChange={handleStartDateChange}
-            min={minDate}
-            max={endDate || maxDate}
+            minDate={minDate}
+            maxDate={endDate || maxDate}
             disabled={disabled}
+            dateFormat="MM/dd/yyyy"
             className="w-full px-3 py-2 text-sm border border-surface-border rounded-md bg-surface text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+            wrapperClassName="w-full"
           />
         </div>
-        <div>
-          <label htmlFor="end-date" className="block text-xs font-medium text-foreground mb-1">
-            End Date
-            <span className="text-muted font-normal ml-1">
-              (latest: today)
-            </span>
-          </label>
-          <input
-            id="end-date"
-            type="date"
-            value={endDate}
+        <div className="flex flex-col">
+          <div className="flex items-start justify-between mb-1 min-h-[2rem]">
+            <label className="text-xs font-medium text-foreground">
+              End Date
+              <span className="text-muted font-normal ml-1 block">
+                (latest: today)
+              </span>
+            </label>
+            <button
+              type="button"
+              onClick={handleSetLatest}
+              disabled={disabled}
+              className="text-xs px-2 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0 ml-2"
+              title="Set to latest available date (today)"
+            >
+              Latest
+            </button>
+          </div>
+          <DatePicker
+            selected={endDate}
             onChange={handleEndDateChange}
-            min={startDate || minDate}
-            max={maxDate}
+            minDate={startDate || minDate}
+            maxDate={maxDate}
             disabled={disabled}
+            dateFormat="MM/dd/yyyy"
             className="w-full px-3 py-2 text-sm border border-surface-border rounded-md bg-surface text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+            wrapperClassName="w-full"
           />
         </div>
       </div>
@@ -210,4 +289,3 @@ export function DateRangePicker({
     </div>
   );
 }
-
