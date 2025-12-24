@@ -284,31 +284,31 @@ export function PodcastViewer({
   return (
     <div className="space-y-4">
       {/* Header Card */}
-      <div className="bg-surface rounded-lg border border-surface-border shadow-sm p-6 space-y-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-black">{title}</h2>
+      <div className="bg-surface rounded-lg border border-surface-border shadow-sm p-4 sm:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl sm:text-2xl font-bold text-black break-words">{title}</h2>
             <p className="text-sm text-muted mt-1">{generatedDate}</p>
           </div>
-          <div className="text-right">
+          <div className="text-left sm:text-right flex-shrink-0">
             <p className="text-2xl font-bold text-black">{duration}</p>
             <p className="text-xs text-muted">Episode Duration</p>
           </div>
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-3 gap-4 pt-4 border-t border-surface-border">
-          <div className="bg-gray-100 rounded p-3 border border-gray-400">
-            <p className="text-xs text-gray-700 font-semibold">Period</p>
-            <p className="text-lg font-bold text-black">{period}</p>
+        <div className="grid grid-cols-3 gap-2 sm:gap-4 pt-4 border-t border-surface-border">
+          <div className="bg-gray-100 rounded p-2 sm:p-3 border border-gray-400 min-w-0">
+            <p className="text-xs text-gray-700 font-semibold truncate">Period</p>
+            <p className="text-base sm:text-lg font-bold text-black truncate">{period}</p>
           </div>
-          <div className="bg-gray-100 rounded p-3 border border-gray-400">
-            <p className="text-xs text-gray-700 font-semibold">Items</p>
-            <p className="text-lg font-bold text-black">{itemsIncluded}</p>
+          <div className="bg-gray-100 rounded p-2 sm:p-3 border border-gray-400 min-w-0">
+            <p className="text-xs text-gray-700 font-semibold truncate">Items</p>
+            <p className="text-base sm:text-lg font-bold text-black truncate">{itemsIncluded}</p>
           </div>
-          <div className="bg-gray-100 rounded p-3 border border-gray-400">
-            <p className="text-xs text-gray-700 font-semibold">Voice</p>
-            <p className="text-lg font-bold text-black capitalize">{generationMetadata.voiceStyle}</p>
+          <div className="bg-gray-100 rounded p-2 sm:p-3 border border-gray-400 min-w-0 overflow-hidden">
+            <p className="text-xs text-gray-700 font-semibold truncate">Voice</p>
+            <p className="text-sm sm:text-lg font-bold text-black capitalize truncate overflow-hidden text-ellipsis whitespace-nowrap">{generationMetadata.voiceStyle}</p>
           </div>
         </div>
 
@@ -325,29 +325,29 @@ export function PodcastViewer({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-2 pt-2">
+        <div className="flex flex-wrap gap-2 pt-2">
           <button
             onClick={handleCopyTranscript}
-            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-surface hover:border-foreground text-foreground font-medium transition-colors"
+            className="px-3 py-2 text-xs sm:text-sm border border-surface-border rounded hover:bg-surface hover:border-foreground text-foreground font-medium transition-colors whitespace-nowrap"
           >
             Copy Transcript
           </button>
           <button
             onClick={handleDownloadTranscript}
-            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-surface hover:border-foreground text-foreground font-medium transition-colors"
+            className="px-3 py-2 text-xs sm:text-sm border border-surface-border rounded hover:bg-surface hover:border-foreground text-foreground font-medium transition-colors whitespace-nowrap"
           >
             Download TXT
           </button>
           <button
             onClick={handleDownloadShowNotes}
-            className="px-3 py-2 text-sm border border-surface-border rounded hover:bg-surface hover:border-foreground text-foreground font-medium transition-colors"
+            className="px-3 py-2 text-xs sm:text-sm border border-surface-border rounded hover:bg-surface hover:border-foreground text-foreground font-medium transition-colors whitespace-nowrap"
           >
             Show Notes
           </button>
           <button
             onClick={handleRenderAudio}
             disabled={audioState.isLoading}
-            className="px-3 py-2 text-sm bg-black text-white rounded hover:bg-gray-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-2 text-xs sm:text-sm bg-black text-white rounded hover:bg-gray-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
           >
             {audioState.isLoading ? "Rendering Audio..." : audioState.audioUrl ? "Re-render Audio" : "Render Audio"}
           </button>
@@ -365,12 +365,12 @@ export function PodcastViewer({
       {/* Content Card with Tabs */}
       <div className="bg-surface rounded-lg border border-surface-border shadow-sm overflow-hidden">
         {/* Tabs */}
-        <div className="border-b border-surface-border flex overflow-x-auto">
+        <div className="border-b border-surface-border flex overflow-x-auto scrollbar-hide">
           {(["segments", "transcript", "shownotes", "audio", "metadata"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+              className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer flex-shrink-0 ${
                 activeTab === tab
                   ? "border-black text-black"
                   : "border-transparent text-muted hover:text-foreground hover:border-gray-300"
@@ -386,17 +386,17 @@ export function PodcastViewer({
         </div>
 
         {/* Tab Content */}
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           {activeTab === "segments" && (
             <div className="space-y-3">
               {segments.length === 0 ? (
                 <p className="text-muted py-8 text-center">No segments available</p>
               ) : (
                 segments.map((segment, idx) => (
-                  <div key={idx} className="border border-surface-border rounded-lg p-4 space-y-3">
+                  <div key={idx} className="border border-surface-border rounded-lg p-3 sm:p-4 space-y-3">
                     <div className="flex items-start justify-between">
-                      <div>
-                        <h3 className="font-semibold text-black">{segment.title}</h3>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-black break-words">{segment.title}</h3>
                         <p className="text-xs text-muted mt-1">
                           {segment.startTime} – {segment.endTime}
                         </p>
@@ -426,10 +426,10 @@ export function PodcastViewer({
                               href={item.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="block text-sm text-black hover:underline"
+                              className="block text-sm text-black hover:underline break-words"
                             >
                               {item.title}
-                              <span className="text-muted text-xs ml-2">({item.sourceTitle})</span>
+                              <span className="text-muted text-xs ml-2 break-words">({item.sourceTitle})</span>
                             </a>
                           ))}
                         </div>
@@ -442,13 +442,13 @@ export function PodcastViewer({
           )}
 
           {activeTab === "transcript" && (
-            <pre className="bg-white p-4 rounded border border-surface-border overflow-x-auto text-sm text-black max-h-[600px] overflow-y-auto">
+            <pre className="bg-white p-4 rounded border border-surface-border overflow-x-auto text-xs sm:text-sm text-black max-h-[600px] overflow-y-auto break-words whitespace-pre-wrap">
               {transcript}
             </pre>
           )}
 
           {activeTab === "shownotes" && (
-            <div className="bg-white p-6 rounded border border-surface-border max-h-[600px] overflow-y-auto">
+            <div className="bg-white p-4 sm:p-6 rounded border border-surface-border max-h-[600px] overflow-y-auto">
               {renderMarkdown(showNotes)}
             </div>
           )}
@@ -467,7 +467,7 @@ export function PodcastViewer({
                     <a
                       href={audioState.audioUrl}
                       download={`${id}-audio.mp3`}
-                      className="px-3 py-2 text-sm bg-black !text-white rounded hover:bg-gray-800 font-medium transition-colors cursor-pointer"
+                      className="px-3 py-2 text-xs sm:text-sm bg-black !text-white rounded hover:bg-gray-800 font-medium transition-colors cursor-pointer whitespace-nowrap"
                     >
                       Download MP3
                     </a>
@@ -479,7 +479,7 @@ export function PodcastViewer({
                   <button
                     onClick={handleRenderAudio}
                     disabled={audioState.isLoading}
-                    className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 font-medium transition-colors disabled:opacity-50"
+                    className="px-4 py-2 text-xs sm:text-sm bg-black text-white rounded hover:bg-gray-800 font-medium transition-colors disabled:opacity-50 whitespace-nowrap"
                   >
                     {audioState.isLoading ? "Rendering Audio..." : "Render Audio"}
                   </button>
