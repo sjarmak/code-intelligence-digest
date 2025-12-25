@@ -58,3 +58,197 @@ a {
 .text-muted {
   color: var(--muted);
 }
+
+/* Date picker styling - override browser defaults to use black instead of blue */
+input[type="date"] {
+  color-scheme: light;
+  /* Force dark color scheme for calendar popup to try to get black instead of blue */
+  color-scheme: dark light;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: invert(0) brightness(0) saturate(0);
+  /* Try to force black icon */
+  background-color: transparent;
+}
+
+input[type="date"]::-webkit-datetime-edit {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-fields-wrapper {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-text {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-month-field {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-day-field {
+  color: inherit;
+}
+
+input[type="date"]::-webkit-datetime-edit-year-field {
+  color: inherit;
+}
+
+/* Firefox date picker */
+input[type="date"]::-moz-calendar-picker-indicator {
+  cursor: pointer;
+  filter: invert(0);
+}
+
+/* React DatePicker custom styling - black/grey theme */
+.react-datepicker {
+  font-family: inherit;
+  border: 1px solid var(--surface-border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.react-datepicker__header {
+  background-color: var(--background);
+  border-bottom: 1px solid var(--surface-border);
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+  padding-top: 0.75rem;
+}
+
+.react-datepicker__current-month {
+  color: var(--foreground);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.react-datepicker__day-names {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 0.5rem;
+}
+
+.react-datepicker__day-name {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  width: 2rem;
+  line-height: 2rem;
+}
+
+.react-datepicker__day {
+  color: var(--foreground);
+  width: 2rem;
+  line-height: 2rem;
+  margin: 0.166rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+.react-datepicker__day:hover {
+  background-color: var(--surface);
+  border-radius: 0.25rem;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected {
+  background-color: black !important;
+  color: white !important;
+  border-radius: 0.25rem;
+  font-weight: 500;
+}
+
+.react-datepicker__day--selected:hover,
+.react-datepicker__day--keyboard-selected:hover {
+  background-color: #333 !important;
+  color: white !important;
+}
+
+.react-datepicker__day--today {
+  font-weight: 600;
+  border: 1px solid var(--surface-border);
+}
+
+.react-datepicker__day--disabled {
+  color: #ccc;
+  cursor: not-allowed;
+}
+
+.react-datepicker__day--outside-month {
+  color: #ccc;
+}
+
+.react-datepicker__navigation {
+  top: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.25rem;
+}
+
+.react-datepicker__navigation:hover {
+  background-color: var(--surface);
+}
+
+.react-datepicker__navigation-icon::before {
+  border-color: var(--foreground);
+}
+
+.react-datepicker__navigation:hover .react-datepicker__navigation-icon::before {
+  border-color: var(--foreground);
+}
+
+.react-datepicker__triangle {
+  display: none;
+}
+
+.react-datepicker__input-container input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  border: 1px solid var(--surface-border);
+  border-radius: 0.375rem;
+  background: var(--surface);
+  color: var(--foreground);
+}
+
+.react-datepicker__input-container input:focus {
+  outline: none;
+  ring: 2px;
+  ring-color: black;
+  border-color: transparent;
+}
+
+/* Radio buttons and checkboxes - use black/grey instead of blue */
+input[type="radio"],
+input[type="checkbox"] {
+  accent-color: black;
+  cursor: pointer;
+}
+
+input[type="radio"]:checked,
+input[type="checkbox"]:checked {
+  accent-color: black;
+  background-color: black;
+  border-color: black;
+}
+
+input[type="radio"]:focus,
+input[type="checkbox"]:focus {
+  outline: 2px solid black;
+  outline-offset: 2px;
+}
+
+/* Hide scrollbar for horizontal scrolling tabs */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari and Opera */
+}

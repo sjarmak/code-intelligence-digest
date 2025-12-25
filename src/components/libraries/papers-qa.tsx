@@ -3,6 +3,52 @@
 import { useState, forwardRef, useImperativeHandle, useCallback } from 'react';
 import { Send, X } from 'lucide-react';
 
+/**
+ * Render markdown text with proper formatting
+ * Handles bold (**text**), links, and line breaks
+ */
+function renderMarkdown(text: string): React.ReactNode {
+  if (!text) return null;
+
+  // Split by lines first to handle line breaks
+  const lines = text.split('\n');
+
+  return (
+    <>
+      {lines.map((line, lineIdx) => {
+        // Split by ** to handle bold sections
+        const parts = line.split(/(\*\*[^*]+\*\*)/g);
+
+        const lineContent = (
+          <>
+            {parts.map((part, partIdx) => {
+              // Check if this part is bold markdown
+              if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+                const boldText = part.slice(2, -2);
+                return (
+                  <strong key={partIdx} className="font-semibold">
+                    {boldText}
+                  </strong>
+                );
+              }
+              // Return regular text
+              return part ? <span key={partIdx}>{part}</span> : null;
+            })}
+          </>
+        );
+
+        // Add line break except for last line
+        return (
+          <span key={lineIdx}>
+            {lineContent}
+            {lineIdx < lines.length - 1 && <br />}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 interface AskResponse {
   answer: string;
   papersUsed: number;
@@ -29,7 +75,7 @@ interface SelectedPaper {
 
 interface PapersQAProps {
   onPaperSelect?: (paper: SelectedPaper) => void;
-  onLibrarySelect?: (libraryId: string) => void;
+  onLibrarySelect?: (library: Library) => void;
 }
 
 interface Library {
@@ -39,7 +85,7 @@ interface Library {
 }
 
 export const PapersQA = forwardRef<
-  { addPaper: (paper: SelectedPaper) => void; setSelectedLibrary: (library: Library | null) => void },
+  { addPaper: (paper: SelectedPaper) => void; setSelectedLibrary: (library: Library) => void },
   PapersQAProps
 >(
   function PapersQA({ onPaperSelect: _onPaperSelect, onLibrarySelect: _onLibrarySelect }, ref) {
@@ -48,7 +94,7 @@ export const PapersQA = forwardRef<
     const [response, setResponse] = useState<AskResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [selectedPapers, setSelectedPapers] = useState<SelectedPaper[]>([]);
-    const [selectedLibrary, setSelectedLibrary] = useState<Library | null>(null);
+    const [selectedLibraries, setSelectedLibraries] = useState<Library[]>([]);
 
     // Exposed method for adding papers from external components
     const addPaper = useCallback(
@@ -64,7 +110,20 @@ export const PapersQA = forwardRef<
       []
     );
 
-    useImperativeHandle(ref, () => ({ addPaper, setSelectedLibrary }), [addPaper]);
+    const addLibrary = useCallback(
+      (library: Library) => {
+        setSelectedLibraries((prev) => {
+          // Avoid duplicates
+          if (!prev.some(l => l.id === library.id)) {
+            return [...prev, library];
+          }
+          return prev;
+        });
+      },
+      []
+    );
+
+    useImperativeHandle(ref, () => ({ addPaper, setSelectedLibrary: addLibrary }), [addPaper, addLibrary]);
 
   const handleAsk = async () => {
     if (!question.trim()) return;
@@ -75,11 +134,11 @@ export const PapersQA = forwardRef<
 
     try {
       const payload: Record<string, unknown> = { question };
-      
+
       if (selectedPapers.length > 0) {
         payload.selectedBibcodes = selectedPapers.map(p => p.bibcode);
-      } else if (selectedLibrary) {
-        payload.libraryId = selectedLibrary.id;
+      } else if (selectedLibraries.length > 0) {
+        payload.libraryIds = selectedLibraries.map(l => l.id);
       }
 
       const res = await fetch('/api/papers/ask', {
@@ -115,28 +174,38 @@ export const PapersQA = forwardRef<
         </p>
       </div>
 
-      {/* Selected Library */}
-      {selectedLibrary && (
+      {/* Selected Libraries */}
+      {selectedLibraries.length > 0 && (
         <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-3 space-y-2">
-          <p className="text-xs font-semibold text-gray-700">Selected Library</p>
-          <div className="flex items-center justify-between bg-gray-50 border border-gray-400/50 rounded px-3 py-2">
-            <div>
-              <p className="text-sm font-medium text-gray-600">{selectedLibrary.name}</p>
-              <p className="text-xs text-gray-700">{selectedLibrary.numPapers} papers</p>
-            </div>
-            <button
-              onClick={() => setSelectedLibrary(null)}
-              className="hover:text-gray-500"
-              title="Remove library"
-            >
-              <X className="w-4 h-4" />
-            </button>
+          <p className="text-xs font-semibold text-gray-700">Libraries in Context ({selectedLibraries.length})</p>
+          <div className="space-y-2">
+            {selectedLibraries.map((library) => (
+              <div key={library.id} className="flex items-center justify-between bg-gray-50 border border-gray-400/50 rounded px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">{library.name}</p>
+                  <p className="text-xs text-gray-700">{library.numPapers} papers</p>
+                </div>
+                <button
+                  onClick={() => setSelectedLibraries(selectedLibraries.filter(l => l.id !== library.id))}
+                  className="hover:text-gray-500"
+                  title="Remove library"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
           </div>
+          <button
+            onClick={() => setSelectedLibraries([])}
+            className="text-xs text-gray-700 hover:text-gray-600 underline"
+          >
+            Clear all libraries
+          </button>
         </div>
       )}
 
       {/* Selected Papers */}
-      {selectedPapers.length > 0 && !selectedLibrary && (
+      {selectedPapers.length > 0 && selectedLibraries.length === 0 && (
         <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-3 space-y-2">
           <p className="text-xs font-semibold text-gray-700">Selected Papers ({selectedPapers.length})</p>
           <div className="flex flex-wrap gap-2">
@@ -198,9 +267,9 @@ export const PapersQA = forwardRef<
         <div className="space-y-4">
           <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-4 space-y-3">
             <h3 className="font-semibold text-gray-600">Answer</h3>
-            <p className="text-sm text-muted leading-relaxed whitespace-pre-wrap">
-              {response.answer}
-            </p>
+            <div className="text-sm text-muted leading-relaxed whitespace-pre-wrap">
+              {renderMarkdown(response.answer)}
+            </div>
             <p className="text-xs text-muted mt-2">
               Based on {response.papersUsed} papers in your libraries
             </p>
@@ -209,7 +278,7 @@ export const PapersQA = forwardRef<
           {/* Cited Papers */}
           {response.citedPapers && response.citedPapers.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-sm font-semibold text-green-700">Papers Cited in Answer</h4>
+              <h4 className="text-sm font-semibold text-foreground">Papers Cited in Answer</h4>
               <div className="space-y-2">
                 {response.citedPapers.map((paper) => (
                   <a
@@ -217,13 +286,13 @@ export const PapersQA = forwardRef<
                     href={paper.adsUrl || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-start gap-3 p-3 rounded-lg border border-gray-300 hover:border-green-500/70 hover:bg-green-500/10 transition-colors group"
+                    className="flex items-start gap-3 p-3 rounded-lg border border-surface-border hover:border-gray-400 hover:bg-gray-50 transition-colors group"
                   >
-                    <span className="text-xs font-semibold text-green-700 bg-green-500/20 rounded px-2 py-1 flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-semibold text-foreground bg-gray-100 border border-gray-300 rounded px-2 py-1 flex-shrink-0 mt-0.5">
                       [{paper.index}]
                     </span>
                     <div className="flex-1 min-w-0">
-                      <span className="text-sm text-green-700 group-hover:text-green-900 line-clamp-2 block">
+                      <span className="text-sm text-foreground group-hover:text-black line-clamp-2 block">
                         {paper.title || 'No title available'}
                       </span>
                       {paper.authors && (

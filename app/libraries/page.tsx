@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export default function LibrariesPage() {
    const papersQARef = useRef<{
      addPaper: (paper: { bibcode: string; title?: string }) => void;
-     setSelectedLibrary: (library: { id: string; name: string; numPapers: number } | null) => void;
+     setSelectedLibrary: (library: { id: string; name: string; numPapers: number }) => void;
    } | null>(null);
 
    const handleAddPaperToQA = (paper: { bibcode: string; title?: string }) => {
@@ -39,7 +39,7 @@ export default function LibrariesPage() {
             <div>
               <h1 className="text-3xl font-bold">Research Libraries</h1>
               <p className="text-muted mt-2">
-                Curated research papers from your ADS libraries with AI-powered analysis
+                Curated research papers from ADS/SciX libraries with AI-powered analysis
               </p>
             </div>
           </div>
@@ -53,7 +53,7 @@ export default function LibrariesPage() {
 
         {/* Libraries */}
         <div>
-          <h2 className="text-2xl font-bold mb-4">My Libraries</h2>
+          <h2 className="text-2xl font-bold mb-4">Libraries</h2>
           <LibrariesView onAddPaperToQA={handleAddPaperToQA} onSelectLibraryForQA={handleSelectLibrary} />
         </div>
       </main>

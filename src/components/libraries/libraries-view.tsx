@@ -164,6 +164,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           const isExpanded = expandedLibrary === lib.name;
           const data = libraryData[lib.name];
           const items = data?.items || [];
+          const cleanName = lib.name.replace(/^My ADS library\s*/i, '');
+          const cleanDescription = lib.description?.replace(/^My ADS library\s*/i, '');
 
           return (
             <div key={lib.id} className="border border-surface-border rounded-lg overflow-hidden bg-surface">
@@ -179,20 +181,20 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                     <ChevronRight className="w-5 h-5 text-muted flex-shrink-0" />
                   )}
                   <div>
-                    <h3 className="font-semibold text-lg">{lib.name}</h3>
+                    <h3 className="font-semibold text-lg">{cleanName}</h3>
                     <p className="text-xs text-muted mt-0.5">
-                      {lib.numPapers} papers{lib.description && ` • ${lib.description}`}
+                      {lib.numPapers} papers{cleanDescription && ` • ${cleanDescription}`}
                     </p>
                   </div>
                 </button>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => onSelectLibraryForQA?.({ id: lib.id, name: lib.name, numPapers: lib.numPapers })}
-                    title="Use all papers from this library for Q&A"
-                    className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap flex items-center gap-1"
+                    title="Add all papers from this library to Q&A context"
+                    className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap flex items-center gap-1"
                   >
                     <BookOpen className="w-3 h-3" />
-                    Use Library
+                    Add Library to Context
                   </button>
                   <span className="text-xs px-2 py-1 rounded bg-surface-border/30 text-muted">
                     {lib.numPapers}
@@ -273,7 +275,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                     <button
                                       onClick={() => onAddPaperToQA?.({ bibcode: item.bibcode, title: item.title })}
                                       title="Add to Q&A context"
-                                      className="text-xs px-2 py-1 rounded bg-green-50 text-green-700 hover:bg-green-900/40 transition-colors whitespace-nowrap"
+                                      className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap"
                                     >
                                       <Plus className="w-3 h-3 inline mr-1" />
                                       Add

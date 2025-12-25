@@ -177,13 +177,13 @@ export function NewsletterViewer({
   return (
     <div className="space-y-4">
       {/* Header Card - Light, Simple */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 space-y-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">{title}</h1>
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 sm:p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 break-words">{title}</h1>
             <p className="text-sm text-gray-500 mt-1">{generatedDate}</p>
           </div>
-          <div className="text-right">
+          <div className="text-left sm:text-right flex-shrink-0">
             <p className="text-3xl font-bold text-gray-900">{itemsIncluded}</p>
             <p className="text-xs text-gray-500">items included</p>
           </div>
@@ -207,27 +207,27 @@ export function NewsletterViewer({
         <div className="flex flex-wrap gap-2">
           <button
             onClick={handleCopyMarkdown}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors"
+            className="px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors whitespace-nowrap"
           >
             Copy Markdown
           </button>
           <button
             onClick={handleDownloadMarkdown}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors"
+            className="px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors whitespace-nowrap"
           >
             Download MD
           </button>
           <button
             onClick={handleDownloadHTML}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors"
+            className="px-3 py-2 text-xs sm:text-sm border border-gray-300 rounded-md hover:bg-gray-50 text-gray-700 font-medium transition-colors whitespace-nowrap"
           >
             Download HTML
           </button>
           <button
             onClick={handleDownloadPDF}
-            className="px-3 py-2 text-sm bg-black hover:bg-gray-800 rounded-md text-white font-medium transition-colors"
+            className="px-3 py-2 text-xs sm:text-sm bg-black hover:bg-gray-800 rounded-md text-white font-medium transition-colors whitespace-nowrap"
           >
-            📄 Download PDF
+            Download PDF
           </button>
         </div>
       </div>
@@ -235,12 +235,12 @@ export function NewsletterViewer({
       {/* Content Card with Tabs */}
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         {/* Tabs */}
-        <div className="border-b border-gray-200 flex">
+        <div className="border-b border-gray-200 flex overflow-x-auto scrollbar-hide">
           {(["rendered", "markdown"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-medium border-b-2 whitespace-nowrap transition-colors flex-shrink-0 ${
                 activeTab === tab
                   ? "border-black text-black"
                   : "border-transparent text-gray-600 hover:text-gray-900"
@@ -253,7 +253,7 @@ export function NewsletterViewer({
         </div>
 
         {/* Tab Content */}
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           {activeTab === "rendered" && (
             <div
               className="prose prose-sm max-w-none prose-a:text-black prose-a:hover:text-gray-800 prose-a:underline"
@@ -262,7 +262,7 @@ export function NewsletterViewer({
           )}
 
           {activeTab === "markdown" && (
-            <pre className="bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto text-sm text-gray-700">
+            <pre className="bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto text-xs sm:text-sm text-gray-700 break-words whitespace-pre-wrap">
               {markdown}
             </pre>
           )}

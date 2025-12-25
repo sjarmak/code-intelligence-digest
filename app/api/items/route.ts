@@ -23,7 +23,7 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const PERIOD_DAYS: Record<string, number> = {
-  day: 1,
+  day: 2, // 2 days to account for daily cron job running at 9 PM (2 AM UTC)
   week: 7,
   month: 30,
   all: 90,

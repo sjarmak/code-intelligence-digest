@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchPapers, getPaper, getLibraryPapers } from '@/src/lib/db/ads-papers';
+import { searchPapers, getPaper, getLibraryPapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
 import { logger } from '@/src/lib/logger';
-import { getADSUrl } from '@/src/lib/ads/client';
+import { getADSUrl, getArxivUrl, getLibraryItems, getBibcodeMetadata } from '@/src/lib/ads/client';
 import OpenAI from 'openai';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,8 @@ interface ConversationMessage {
 
 interface AskRequest {
   question: string;
-  libraryId?: string;
+  libraryId?: string; // Deprecated: use libraryIds instead
+  libraryIds?: string[]; // Array of library IDs
   selectedBibcodes?: string[]; // Papers selected by user
   limit?: number;
   conversationHistory?: ConversationMessage[]; // For follow-up questions
@@ -37,7 +38,8 @@ export async function POST(request: NextRequest) {
     const {
       question,
       limit = 20,
-      libraryId,
+      libraryId, // Deprecated, kept for backward compatibility
+      libraryIds,
       selectedBibcodes,
       conversationHistory,
       papersContext
@@ -66,10 +68,14 @@ export async function POST(request: NextRequest) {
     }
 
     const isFollowUp = !!conversationHistory && conversationHistory.length > 0;
+    // Support both old libraryId and new libraryIds
+    const effectiveLibraryIds = libraryIds || (libraryId ? [libraryId] : []);
+
     logger.info('Processing question', {
       question,
       hasSelectedPapers: !!selectedBibcodes?.length,
-      hasLibrary: !!libraryId,
+      hasLibraries: effectiveLibraryIds.length > 0,
+      libraryCount: effectiveLibraryIds.length,
       isFollowUp
     });
 
@@ -94,10 +100,82 @@ export async function POST(request: NextRequest) {
         papers = selectedBibcodes
           .map((bibcode: string) => getPaper(bibcode))
           .filter((p): p is ADSPaperRecord => p !== null);
-      } else if (libraryId) {
-        // Use papers from selected library
-        logger.info('Fetching papers from library', { libraryId, limit });
-        papers = getLibraryPapers(libraryId, limit);
+      } else if (effectiveLibraryIds.length > 0) {
+        // Use papers from selected libraries
+        logger.info('Fetching papers from libraries', { libraryIds: effectiveLibraryIds, limit });
+        const allPapers: ADSPaperRecord[] = [];
+        const token = process.env.ADS_API_TOKEN;
+
+        for (const libId of effectiveLibraryIds) {
+          // First try to get papers from database
+          let libPapers = getLibraryPapers(libId, limit);
+
+          // If no papers in database, fetch from ADS API
+          if (libPapers.length === 0 && token) {
+            try {
+              logger.info(`No papers in database for library ${libId}, fetching from ADS API`);
+              const bibcodes = await getLibraryItems(libId, token, { start: 0, rows: limit });
+
+              if (bibcodes.length > 0) {
+                // Fetch metadata and store papers
+                const metadata = await getBibcodeMetadata(bibcodes, token);
+
+                // Initialize tables if needed
+                try {
+                  initializeADSTables();
+                } catch {
+                  // Tables may already exist
+                }
+
+                // Store papers
+                const papersToStore = bibcodes
+                  .map((bibcode) => ({
+                    bibcode,
+                    title: metadata[bibcode]?.title,
+                    authors: metadata[bibcode]?.authors
+                      ? JSON.stringify(metadata[bibcode].authors)
+                      : undefined,
+                    pubdate: metadata[bibcode]?.pubdate,
+                    abstract: metadata[bibcode]?.abstract,
+                    body: metadata[bibcode]?.body,
+                    adsUrl: getADSUrl(bibcode),
+                    arxivUrl: getArxivUrl(bibcode),
+                    fulltextSource: metadata[bibcode]?.body ? 'ads_api' : undefined,
+                  }))
+                  .filter(
+                    (p) =>
+                      p.title ||
+                      p.authors ||
+                      p.pubdate ||
+                      p.abstract ||
+                      p.body,
+                  );
+
+                if (papersToStore.length > 0) {
+                  storePapersBatch(papersToStore);
+                  linkPapersToLibraryBatch(libId, bibcodes);
+                  logger.info(`Stored ${papersToStore.length} papers from library ${libId}`);
+                }
+
+                // Now get papers from database
+                libPapers = getLibraryPapers(libId, limit);
+              }
+            } catch (error) {
+              logger.error(`Failed to fetch papers from ADS API for library ${libId}`, {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
+          // Deduplicate by bibcode
+          for (const paper of libPapers) {
+            if (!allPapers.some(p => p.bibcode === paper.bibcode)) {
+              allPapers.push(paper);
+            }
+          }
+        }
+        papers = allPapers.slice(0, limit); // Limit total papers
+        logger.info(`Found ${papers.length} unique papers from ${effectiveLibraryIds.length} libraries`);
       } else {
         // Fall back to search all cached papers
         logger.info('Searching all papers', { question });
@@ -105,8 +183,14 @@ export async function POST(request: NextRequest) {
       }
 
       if (papers.length === 0) {
+        let errorMessage = 'No papers found matching your query.';
+        if (effectiveLibraryIds.length > 0) {
+          errorMessage = `No papers found in the selected ${effectiveLibraryIds.length > 1 ? 'libraries' : 'library'}. The library may be empty, or papers may need to be fetched first. Try expanding the library in the libraries view to load papers.`;
+        } else if (selectedBibcodes && selectedBibcodes.length > 0) {
+          errorMessage = 'None of the selected papers were found in the database.';
+        }
         return NextResponse.json(
-          { answer: 'No papers found matching your query. Try a different search term.' },
+          { answer: errorMessage },
           { status: 200 }
         );
       }

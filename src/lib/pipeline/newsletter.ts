@@ -228,12 +228,12 @@ Return only valid JSON.`,
  */
 export async function generateNewsletterFromDigests(
   digests: ItemDigest[],
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   categories: Category[],
   profile: PromptProfile | null,
   userPrompt?: string
 ): Promise<NewsletterContent> {
-  const periodLabel = period === "week" ? "weekly" : "monthly";
+  const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
   return await generateNewsletterFromDigestData(digests, periodLabel, userPrompt || "");
 }
 
