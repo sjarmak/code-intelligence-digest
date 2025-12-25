@@ -57,6 +57,11 @@ const BAD_TITLE_PATTERNS = [
   /subscribe to .* (newsletter|publication)/i,
   /^(the|subscribe|get) .* (in|for) \d{4}$/i, // e.g., "The Pragmatic Engineer in 2025"
   /.* (in|for) \d{4}$/i, // Titles ending with year (often subscription promotions)
+  // Substack promotional titles
+  /your favorite substacker/i,
+  /favorite substacker/i,
+  /become a (paid|premium) subscriber/i,
+  /upgrade to (paid|premium)/i,
 ];
 
 /**
@@ -157,6 +162,60 @@ function shouldExcludeUrl(url: string): boolean {
     // Also reject if it's just the domain with /p/ but no actual slug
     if (/\.substack\.com\/p\/?(\?|$|#)/i.test(url)) {
       return true; // Reject - incomplete article URL
+    }
+    // Reject subscription/payment pages even if they have /p/
+    if (urlLower.includes('/subscribe') || urlLower.includes('/payment') || urlLower.includes('/checkout') || urlLower.includes('/upgrade')) {
+      return true; // Reject - subscription/payment page
+    }
+  }
+
+  // Filter out localhost URLs (invalid/placeholder URLs)
+  if (urlLower.includes('localhost') || urlLower.includes('127.0.0.1')) {
+    return true; // Reject - localhost URLs are invalid
+  }
+
+  // Filter URLs that are just domain roots or homepages (these redirect to main page)
+  // Pattern: https://domain.com/ or https://domain.com?params (no path or just query params)
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname;
+    const hasOnlyRootPath = pathname === '/' || pathname === '';
+
+    // If URL is just the domain root (with or without query params), it's likely a homepage
+    if (hasOnlyRootPath) {
+      // Allow if it has a hash fragment (might be an anchor link)
+      if (!parsed.hash || parsed.hash === '#') {
+        return true; // Reject - this is a homepage URL
+      }
+    }
+  } catch {
+    // If URL parsing fails, let other checks handle it
+  }
+
+  // Filter known newsletter domain homepages that don't have article paths
+  // These domains often redirect to subscription pages when accessed without article paths
+  const newsletterDomains = [
+    'tldr.tech',
+    'tldrnewsletter.com',
+    'pointer.io',
+    'bytebytego.com',
+  ];
+
+  // urlLower already declared above, reuse it
+  for (const domain of newsletterDomains) {
+    if (urlLower.includes(domain)) {
+      // Check if URL is just the domain or has minimal path
+      const domainPattern = new RegExp(`https?://(www\\.)?${domain.replace(/\./g, '\\.')}/?([?#]|$)`, 'i');
+      if (domainPattern.test(url)) {
+        return true; // Reject - homepage URL
+      }
+
+      // Also reject if path is just common homepage paths
+      const homepagePaths = ['/', '/home', '/index', '/welcome', '/start'];
+      const pathMatch = url.match(new RegExp(`https?://[^/]+/([^?#]+)`, 'i'));
+      if (pathMatch && homepagePaths.includes('/' + pathMatch[1].toLowerCase())) {
+        return true; // Reject - homepage path
+      }
     }
   }
 
@@ -275,6 +334,16 @@ function extractArticlesFromHtml(html: string): Array<{
 
         // Validate decoded URL is absolute and valid
         if (isValidAbsoluteUrl(decoded)) {
+          // Filter out localhost URLs (these are invalid/placeholder URLs)
+          if (decoded.includes('localhost') || decoded.includes('127.0.0.1')) {
+            logger.debug(`Filtered out decoded TLDR URL with localhost: ${decoded}`);
+            continue;
+          }
+          // Check if decoded URL is a homepage or should be excluded
+          if (shouldExcludeUrl(decoded)) {
+            logger.debug(`Filtered out decoded TLDR homepage/subscription URL: ${decoded}`);
+            continue;
+          }
           url = decoded;
         } else {
           // If decoding failed, skip this URL
@@ -517,8 +586,20 @@ function createArticleItem(
   // Validate article URL - must be absolute and valid
   let finalUrl = article.url?.trim() || "";
 
+  // Reject if URL is empty or invalid from the start
+  if (!finalUrl || !isValidAbsoluteUrl(finalUrl)) {
+    logger.debug(`Article "${article.title}" has empty or invalid URL: "${finalUrl}"`);
+    finalUrl = ""; // Clear it so we try to find a better URL
+  }
+
+  // Filter out localhost URLs immediately
+  if (finalUrl && (finalUrl.includes("localhost") || finalUrl.includes("127.0.0.1"))) {
+    logger.debug(`Filtered out localhost URL for article "${article.title}": ${finalUrl}`);
+    finalUrl = ""; // Clear it so we try to find a better URL
+  }
+
   // Validate URL is absolute (http/https) and valid
-  if (!isValidAbsoluteUrl(finalUrl) || finalUrl.includes("inoreader.com")) {
+  if (!finalUrl || !isValidAbsoluteUrl(finalUrl) || finalUrl.includes("inoreader.com")) {
     // Try to find any URL in the base item's full text that might be the article
     const htmlContent = baseItem.fullText || baseItem.summary || "";
     const urlMatch = htmlContent.match(/https?:\/\/[^\s<>"'\)]+/);
@@ -528,6 +609,8 @@ function createArticleItem(
         isValidAbsoluteUrl(candidateUrl) &&
         !candidateUrl.includes("inoreader.com") &&
         !candidateUrl.includes("tracking.tldrnewsletter") &&
+        !candidateUrl.includes("localhost") &&
+        !candidateUrl.includes("127.0.0.1") &&
         !shouldExcludeUrl(candidateUrl)
       ) {
         finalUrl = candidateUrl;
@@ -537,9 +620,32 @@ function createArticleItem(
   }
 
   // If still no valid URL, use the base item's URL as last resort (but log warning)
-  if (!isValidAbsoluteUrl(finalUrl)) {
-    logger.warn(`No valid URL found for article "${article.title}", using base item URL: ${baseItem.url}`);
-    finalUrl = baseItem.url || "";
+  // But only if it's not a localhost URL and not a subscription page
+  if (!finalUrl || !isValidAbsoluteUrl(finalUrl) || finalUrl.includes("localhost") || finalUrl.includes("127.0.0.1")) {
+    if (baseItem.url &&
+        !baseItem.url.includes("localhost") &&
+        !baseItem.url.includes("127.0.0.1") &&
+        !baseItem.url.includes("inoreader.com") &&
+        isValidAbsoluteUrl(baseItem.url) &&
+        !shouldExcludeUrl(baseItem.url)) {
+      logger.warn(`No valid URL found for article "${article.title}", using base item URL: ${baseItem.url}`);
+      finalUrl = baseItem.url;
+    } else {
+      logger.warn(`No valid URL found for article "${article.title}", skipping (base URL is invalid or excluded: ${baseItem.url})`);
+      finalUrl = ""; // Empty URL - item will be filtered out
+    }
+  }
+
+  // Final validation: if URL is still empty or invalid, return null (caller should skip)
+  if (!finalUrl || !isValidAbsoluteUrl(finalUrl)) {
+    logger.warn(`Article "${article.title}" has no valid URL after all attempts, will be skipped`);
+    // Return a placeholder item that will be filtered out by rank.ts
+    return {
+      ...baseItem,
+      id: `${baseItem.id}-article-${articleIndex}-invalid`,
+      title: article.title,
+      url: "", // Empty URL will be filtered
+    };
   }
 
   return {
@@ -612,14 +718,27 @@ export function decomposeNewsletterItem(item: RankedItem): RankedItem[] {
 
   if (articles.length === 1) {
     // Only one article, update the item with the extracted article info
-    logger.info(`Single article found in ${item.sourceTitle}: "${articles[0].title}"`);
+    const article = articles[0];
+
+    // Validate the article URL before returning
+    if (!article.url || !isValidAbsoluteUrl(article.url) || shouldExcludeUrl(article.url)) {
+      logger.debug(`Filtering out single article with invalid/excluded URL: "${article.title}" (URL: "${article.url}")`);
+      // Check if the original item itself should be excluded
+      if (shouldExcludeUrl(item.url) || shouldExcludeTitle(item.title)) {
+        logger.info(`Excluding newsletter item as subscription/promotional content: "${item.title}"`);
+        return []; // Return empty array to exclude this item
+      }
+      return [item]; // Fallback: return original item
+    }
+
+    logger.info(`Single article found in ${item.sourceTitle}: "${article.title}"`);
     return [
       {
         ...item,
-        title: articles[0].title,
-        url: articles[0].url,
-        summary: articles[0].snippet,
-        contentSnippet: articles[0].snippet.substring(0, 500),
+        title: article.title,
+        url: article.url,
+        summary: article.snippet,
+        contentSnippet: article.snippet.substring(0, 500),
       },
     ];
   }
@@ -628,9 +747,23 @@ export function decomposeNewsletterItem(item: RankedItem): RankedItem[] {
   logger.info(`Decomposing ${item.sourceTitle} into ${articles.length} articles`);
   logger.info(`[DECOMPOSE_DEBUG] Article URLs extracted: ${articles.slice(0, 3).map(a => a.url).join(" | ")}`);
 
-  const decomposed = articles.map((article, idx) =>
-    createArticleItem(item, article, idx + 1, articles.length)
-  );
+  const decomposed = articles
+    .map((article, idx) =>
+      createArticleItem(item, article, idx + 1, articles.length)
+    )
+    .filter(decomposedItem => {
+      // Filter out items with empty or invalid URLs
+      if (!decomposedItem.url || !isValidAbsoluteUrl(decomposedItem.url)) {
+        logger.debug(`Filtering out decomposed item with invalid URL: "${decomposedItem.title}" (URL: "${decomposedItem.url}")`);
+        return false;
+      }
+      // Also check if URL should be excluded (subscription pages, etc.)
+      if (shouldExcludeUrl(decomposedItem.url)) {
+        logger.debug(`Filtering out decomposed item with excluded URL: "${decomposedItem.title}" (URL: "${decomposedItem.url}")`);
+        return false;
+      }
+      return true;
+    });
 
   logger.info(`[DECOMPOSE_DEBUG] Decomposed item URLs: ${decomposed.slice(0, 3).map(d => d.url).join(" | ")}`);
 

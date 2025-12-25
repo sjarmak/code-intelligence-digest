@@ -164,6 +164,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           const isExpanded = expandedLibrary === lib.name;
           const data = libraryData[lib.name];
           const items = data?.items || [];
+          const cleanName = lib.name.replace(/^My ADS library\s*/i, '');
+          const cleanDescription = lib.description?.replace(/^My ADS library\s*/i, '');
 
           return (
             <div key={lib.id} className="border border-surface-border rounded-lg overflow-hidden bg-surface">
@@ -179,9 +181,9 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                     <ChevronRight className="w-5 h-5 text-muted flex-shrink-0" />
                   )}
                   <div>
-                    <h3 className="font-semibold text-lg">{lib.name}</h3>
+                    <h3 className="font-semibold text-lg">{cleanName}</h3>
                     <p className="text-xs text-muted mt-0.5">
-                      {lib.numPapers} papers{lib.description && ` • ${lib.description}`}
+                      {lib.numPapers} papers{cleanDescription && ` • ${cleanDescription}`}
                     </p>
                   </div>
                 </button>
