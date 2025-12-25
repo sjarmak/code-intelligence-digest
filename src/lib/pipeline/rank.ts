@@ -44,12 +44,24 @@ export async function rankCategory(
 
   const config = getCategoryConfig(category);
 
-  // Filter to items within time window
+  // Filter to items within time window and with valid URLs
   const now = Date.now();
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
   const recentItems = items.filter((item) => {
     const ageMs = now - item.publishedAt.getTime();
-    return ageMs <= windowMs;
+    const withinWindow = ageMs <= windowMs;
+
+    // Filter out items with invalid URLs (localhost, empty, or invalid)
+    const hasValidUrl = item.url &&
+      item.url.startsWith('http://') || item.url.startsWith('https://');
+    const isNotLocalhost = !item.url.includes('localhost') && !item.url.includes('127.0.0.1');
+
+    if (!hasValidUrl || !isNotLocalhost) {
+      logger.debug(`Filtering out item with invalid URL: "${item.title}" (URL: ${item.url})`);
+      return false;
+    }
+
+    return withinWindow;
   });
 
   logger.info(`${recentItems.length} items within ${periodDays} day window`);
@@ -72,7 +84,7 @@ export async function rankCategory(
   // Load pre-computed LLM scores from database (only during daily sync should new scores be calculated)
   const itemIds = recentItems.map((item) => item.id);
   const preComputedScores = await loadScoresForItems(itemIds);
-  
+
   // Convert to LLMScoreResult format expected by the ranking logic
   const llmScores: Record<string, { relevance: number; usefulness: number; tags: string[] }> = {};
   for (const itemId of itemIds) {
@@ -101,10 +113,10 @@ export async function rankCategory(
     let boostMultiplier = 1.0;
     const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
     const boostTags: string[] = [];
-    
+
     // SOURCEGRAPH: Highest priority
     const hasSourcegraph = contentToSearch.includes('sourcegraph');
-    
+
     // Core domain terms
     const coreTerms = [
       'deep search',
@@ -121,7 +133,7 @@ export async function rankCategory(
       'developer productivity',
       'ai tooling',
     ];
-    
+
     if (hasSourcegraph) {
       // Sourcegraph gets maximum boost - it's a core product we want to highlight
       boostMultiplier = 5.0;
@@ -130,11 +142,11 @@ export async function rankCategory(
     } else {
       // Count matching core terms (excluding sourcegraph)
       const matchingCoreTerms = coreTerms.filter(term => contentToSearch.includes(term)).length;
-      
+
       // Check for compound terms (agent + code search/intelligence/context)
       const hasAgent = contentToSearch.includes('agent') || contentToSearch.includes('agentic') || contentToSearch.includes('coding agent');
       const hasCodeContext = coreTerms.slice(1, 8).some(term => contentToSearch.includes(term)); // code search through context management
-      
+
       if (matchingCoreTerms >= 3) {
         // Multiple domain terms = strong signal
         boostMultiplier = 3.0;
@@ -157,7 +169,7 @@ export async function rankCategory(
       config.weights.llm * llmScore +
       config.weights.bm25 * bm25Score +
       config.weights.recency * recencyScore;
-    
+
     // Apply boost multiplier
     finalScore = finalScore * boostMultiplier;
 
@@ -184,33 +196,76 @@ export async function rankCategory(
     };
   });
 
-  // Filter out off-topic items
-  const validItems = rankedItems.filter((item) => {
-    const isOffTopic = item.llmScore.tags.includes("off-topic");
-    // For items without LLM scores (using BM25 fallback), be more lenient:
-    // require relevance >= 3 instead of config.minRelevance (typically 5)
-    const hasLLMScore = llmScores[item.id];
-    const minThreshold = hasLLMScore ? config.minRelevance : 3;
-    const meetsMinRelevance = item.llmScore.relevance >= minThreshold;
+  // Sort by final score first (before filtering)
+  rankedItems.sort((a, b) => b.finalScore - a.finalScore);
 
+  // Filter out off-topic items (always filter these, regardless of threshold)
+  const nonOffTopicItems = rankedItems.filter((item) => {
+    const isOffTopic = item.llmScore.tags.includes("off-topic");
     if (isOffTopic) {
       logger.debug(`Filtering out off-topic item: ${item.title}`);
     }
-    if (!meetsMinRelevance) {
-      logger.debug(
-        `Filtering out low relevance item: ${item.title} (score: ${item.llmScore.relevance}, threshold: ${minThreshold})`
-      );
-    }
-
-    return !isOffTopic && meetsMinRelevance;
+    return !isOffTopic;
   });
 
-  // Sort by final score
-  validItems.sort((a, b) => b.finalScore - a.finalScore);
+  // Adaptive threshold: start with configured minRelevance, but lower it if needed
+  // to ensure we return at least maxItems (or as many as available)
+  const targetItems = config.maxItems;
+  let currentThreshold = config.minRelevance;
+  const minAllowedThreshold = 3; // Never go below 3 (too permissive)
 
-  logger.info(
-    `Ranked to ${validItems.length} valid items (filtered ${rankedItems.length - validItems.length})`
-  );
+  // For items without LLM scores (BM25 fallback), use lower threshold
+  const hasLLMScore = (item: RankedItem) => !!llmScores[item.id];
+
+  let validItems: RankedItem[] = [];
+
+  // Try progressively lower thresholds until we have enough items
+  while (currentThreshold >= minAllowedThreshold && validItems.length < targetItems) {
+    validItems = nonOffTopicItems.filter((item) => {
+      const itemHasLLMScore = hasLLMScore(item);
+      // For items without LLM scores, use more lenient threshold (3)
+      const itemThreshold = itemHasLLMScore ? currentThreshold : 3;
+      const meetsMinRelevance = item.llmScore.relevance >= itemThreshold;
+
+      if (!meetsMinRelevance && currentThreshold === config.minRelevance) {
+        // Only log on first pass to avoid spam
+        logger.debug(
+          `Filtering out low relevance item: ${item.title} (score: ${item.llmScore.relevance}, threshold: ${itemThreshold})`
+        );
+      }
+
+      return meetsMinRelevance;
+    });
+
+    // If we have enough items, stop
+    if (validItems.length >= targetItems) {
+      break;
+    }
+
+    // Lower threshold and try again (but not below minAllowedThreshold)
+    if (currentThreshold > minAllowedThreshold) {
+      currentThreshold = Math.max(minAllowedThreshold, currentThreshold - 1);
+      logger.debug(
+        `Lowering relevance threshold to ${currentThreshold} to get more items (have ${validItems.length}, need ${targetItems})`
+      );
+    } else {
+      // Can't go lower, use what we have
+      break;
+    }
+  }
+
+  // Take only top targetItems (already sorted by final score)
+  validItems = validItems.slice(0, targetItems);
+
+  if (currentThreshold < config.minRelevance) {
+    logger.info(
+      `Ranked to ${validItems.length} valid items (lowered threshold from ${config.minRelevance} to ${currentThreshold} to reach target of ${targetItems})`
+    );
+  } else {
+    logger.info(
+      `Ranked to ${validItems.length} valid items (filtered ${rankedItems.length - validItems.length}, threshold: ${currentThreshold})`
+    );
+  }
 
   return validItems;
 }

@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 
 interface HighlightItem {
   id: string;
@@ -55,7 +54,7 @@ export default function DigestHighlights({
            const limit = expandedLimits[category] || 10;
            const displayedItems = items.slice(0, limit);
            const hasMore = items.length > limit;
-           
+
            return (
            <div
              key={category}
@@ -80,14 +79,14 @@ export default function DigestHighlights({
                  <div key={item.id} className="flex gap-3">
                    <div className="text-muted font-bold min-w-6">{i + 1}.</div>
                    <div className="flex-1 min-w-0">
-                     <Link
-                       href={item.url}
-                       target="_blank"
-                       rel="noopener noreferrer"
-                       className="text-black hover:text-gray-700 font-medium text-sm break-words line-clamp-2"
-                     >
-                       {item.title}
-                     </Link>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-black hover:text-gray-700 font-medium text-sm break-words line-clamp-2"
+                    >
+                      {item.title}
+                    </a>
                      <div className="text-xs text-muted mt-1">
                        {item.sourceTitle} • {(item.finalScore * 100).toFixed(0)}%
                      </div>
