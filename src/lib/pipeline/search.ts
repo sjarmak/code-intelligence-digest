@@ -15,6 +15,7 @@ import { FeedItem, RankedItem } from "../model";
 import { generateEmbedding, generateEmbeddingsBatch, topKSimilar, cosineSimilarity } from "../embeddings";
 import { getEmbeddingsBatch, saveEmbeddingsBatch } from "../db/embeddings";
 import { logger } from "../logger";
+import { decodeHtmlEntities } from "../utils/html-entities";
 
 export interface SearchResult {
   id: string;
@@ -22,6 +23,7 @@ export interface SearchResult {
   url: string;
   sourceTitle: string;
   publishedAt: string;
+  createdAt?: string | null;
   summary?: string;
   contentSnippet?: string;
   category: string;
@@ -328,10 +330,11 @@ export async function semanticSearch(
 
       return {
         id: item.id,
-        title: item.title,
+        title: decodeHtmlEntities(item.title), // Decode HTML entities in title
         url: item.url,
         sourceTitle: item.sourceTitle,
         publishedAt: item.publishedAt.toISOString(),
+        createdAt: item.createdAt?.toISOString() || null,
         summary: item.summary,
         contentSnippet: item.contentSnippet,
         category: item.category,
@@ -412,10 +415,11 @@ export async function keywordSearch(
 
   return scored.map((x) => ({
     id: x.item.id,
-    title: x.item.title,
+    title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
     url: x.item.url,
     sourceTitle: x.item.sourceTitle,
     publishedAt: x.item.publishedAt.toISOString(),
+    createdAt: x.item.createdAt?.toISOString() || null,
     summary: x.item.summary,
     contentSnippet: x.item.contentSnippet,
     category: x.item.category,
@@ -473,10 +477,11 @@ function termBasedSearch(
 
   return scored.map((x) => ({
     id: x.item.id,
-    title: x.item.title,
+    title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
     url: x.item.url,
     sourceTitle: x.item.sourceTitle,
     publishedAt: x.item.publishedAt.toISOString(),
+    createdAt: x.item.createdAt?.toISOString() || null,
     summary: x.item.summary,
     contentSnippet: x.item.contentSnippet,
     category: x.item.category,

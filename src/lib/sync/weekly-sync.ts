@@ -1,13 +1,13 @@
 /**
  * Weekly sync strategy: fetch last 7 days in a single optimized call
- * 
+ *
  * Features:
  * - Single batch fetch of last 7 days of items (n=1000)
  * - Only uses continuation if >1000 items in 7 days (rare)
  * - Resumable if interrupted by rate limits
  * - Expected cost: 1-2 API calls
  * - Minimal code, minimal overhead
- * 
+ *
  * Best for: Weekly digests where you want all content at once
  */
 
@@ -72,7 +72,7 @@ function saveSyncState(data: {
   try {
     const sqlite = getSqlite();
     sqlite.prepare(`
-      INSERT OR REPLACE INTO sync_state 
+      INSERT OR REPLACE INTO sync_state
       (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
       VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), ?, ?)
     `).run(
@@ -135,7 +135,7 @@ export async function runWeeklySync(): Promise<{
     // Check global budget before starting
     const budget = getGlobalApiBudget();
     logger.info(`[WEEKLY-SYNC] Global API budget: ${budget.callsUsed}/${budget.quotaLimit} calls used`);
-    
+
     if (budget.remaining <= 1) {
       logger.warn(`[WEEKLY-SYNC] Only ${budget.remaining} calls remaining. Pausing to protect daily limit.`);
       return {
@@ -151,7 +151,7 @@ export async function runWeeklySync(): Promise<{
 
     // Get user ID (cached, no API call)
     let userId: string | null = getCachedUserId();
-    
+
     if (!userId) {
       logger.debug('[WEEKLY-SYNC] User ID not cached. Fetching from API...');
       const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
@@ -165,9 +165,9 @@ export async function runWeeklySync(): Promise<{
       // Cache it for future syncs
       setCachedUserId(userId);
       logger.info('[WEEKLY-SYNC] Cached user ID for future syncs');
-      
+
       callsUsed++;
-      incrementGlobalApiCalls(1);
+      // Note: API call is automatically tracked by InoreaderClient
     } else {
       logger.debug('[WEEKLY-SYNC] Using cached user ID');
     }
@@ -190,15 +190,16 @@ export async function runWeeklySync(): Promise<{
         `[WEEKLY-SYNC] Fetching batch ${batchNumber}${continuation ? ' (continuation)' : ''} (${callsUsed} calls used)`
       );
 
-      // Single optimized fetch: n=1000 to grab up to 1000 items in 7 days (usually gets all)
+      // Single optimized fetch: n=100 (Inoreader API limit) with continuation tokens for pagination
+      // Note: Inoreader caps at ~100 items per request, so we paginate with continuation tokens
       const response = await client.getStreamContents(allItemsStreamId, {
-        n: 1000,
+        n: 100, // Inoreader API limit is ~100 items per request
         continuation,
         xt: `user/${userId}/state/com.google/read/unix:${syncSinceTimestamp}`, // Exclude read items older than threshold
       });
 
       callsUsed++;
-      incrementGlobalApiCalls(1);
+      // Note: API call is automatically tracked by InoreaderClient
 
       if (!response.items || response.items.length === 0) {
         logger.info('[WEEKLY-SYNC] No more items to fetch');
@@ -257,7 +258,7 @@ export async function runWeeklySync(): Promise<{
       // Safety: check global budget after each batch
       const currentBudget = getGlobalApiBudget();
       logger.debug(`[WEEKLY-SYNC] Global budget after batch: ${currentBudget.callsUsed}/${currentBudget.quotaLimit}`);
-      
+
       if (currentBudget.remaining <= 1) {
         logger.warn(`[WEEKLY-SYNC] Global budget critical (${currentBudget.remaining} calls remaining). Pausing.`);
         saveSyncState({

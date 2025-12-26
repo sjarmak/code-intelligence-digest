@@ -17,6 +17,9 @@ let initialized = false;
 
 /**
  * Get or create SQLite database connection (development only)
+ *
+ * NOTE: SQLite connections are cached. If you're seeing stale data,
+ * you may need to close and reopen the connection.
  */
 export function getSqlite() {
   if (!sqlite) {
@@ -32,10 +35,24 @@ export function getSqlite() {
     // Enable foreign keys
     sqlite.pragma("foreign_keys = ON");
 
+    // Enable WAL mode for better concurrency and to avoid stale reads
+    sqlite.pragma("journal_mode = WAL");
+
     logger.info(`Database initialized at ${dbPath}`);
   }
 
   return sqlite;
+}
+
+/**
+ * Close and reset the SQLite connection (useful for testing or fixing stale data)
+ */
+export function resetSqliteConnection() {
+  if (sqlite) {
+    sqlite.close();
+    sqlite = null;
+    logger.info("SQLite connection closed and reset");
+  }
 }
 
 /**
@@ -204,7 +221,7 @@ async function initializeSqliteSchema() {
         date TEXT PRIMARY KEY,
         calls_used INTEGER DEFAULT 0,
         last_updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        quota_limit INTEGER DEFAULT 100
+        quota_limit INTEGER DEFAULT 1000
       );
     `);
 
@@ -347,11 +364,11 @@ export function getGlobalApiBudget(): { callsUsed: number; remaining: number; qu
     .get(today) as { calls_used: number; quota_limit: number } | undefined;
 
   if (!row) {
-    // Initialize for today
+    // Initialize for today with default quota of 1000
     sqlite
-      .prepare('INSERT OR IGNORE INTO global_api_budget (date, calls_used) VALUES (?, 0)')
+      .prepare('INSERT OR IGNORE INTO global_api_budget (date, calls_used, quota_limit) VALUES (?, 0, 1000)')
       .run(today);
-    return { callsUsed: 0, remaining: 100, quotaLimit: 100 };
+    return { callsUsed: 0, remaining: 1000, quotaLimit: 1000 };
   }
 
   return {

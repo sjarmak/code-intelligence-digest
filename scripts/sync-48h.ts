@@ -6,6 +6,7 @@ import { initializeDatabase } from '@/src/lib/db/index';
 import { createInoreaderClient } from '@/src/lib/inoreader/client';
 import { normalizeItems } from '@/src/lib/pipeline/normalize';
 import { categorizeItems } from '@/src/lib/pipeline/categorize';
+import { decomposeFeedItems } from '@/src/lib/pipeline/decompose';
 import { saveItems } from '@/src/lib/db/items';
 import { logger } from '@/src/lib/logger';
 import type { Category } from '@/src/lib/model';
@@ -82,11 +83,15 @@ async function run() {
         `[SYNC-48H] Batch ${batchNumber}: fetched ${response.items.length} items (${callsUsed} calls used)`
       );
 
-      // Normalize and categorize
+      // Normalize, decompose newsletters, and categorize
       let items = await normalizeItems(response.items);
       logger.info(`[SYNC-48H] Normalized ${items.length} items`);
-      
-      items = await categorizeItems(items);
+
+      // Decompose newsletter items into individual articles
+      items = decomposeFeedItems(items);
+      logger.info(`[SYNC-48H] After decomposition: ${items.length} items`);
+
+      items = categorizeItems(items);
       logger.info(`[SYNC-48H] Categorized ${items.length} items`);
 
       // Save items

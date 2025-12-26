@@ -17,6 +17,7 @@ interface ItemCardProps {
     url: string;
     sourceTitle: string;
     publishedAt: string;
+    createdAt?: string | null;
     summary?: string;
     contentSnippet?: string;
     categories?: string[];
@@ -27,6 +28,7 @@ interface ItemCardProps {
     diversityReason?: string;
   };
   rank?: number;
+  period?: 'day' | 'week' | 'month' | 'all' | 'custom';
 }
 
 function formatDate(dateString: string): string {
@@ -57,7 +59,7 @@ function getCategoryColor(category: string): string {
 
 
 
-export default function ItemCard({ item, rank }: ItemCardProps) {
+export default function ItemCard({ item, rank, period }: ItemCardProps) {
   const { settings, loading } = useAdminSettings();
   const [currentRating, setCurrentRating] = useState<ItemRelevanceRating>(null);
   const [isStarred, setIsStarred] = useState(false);
@@ -164,8 +166,8 @@ export default function ItemCard({ item, rank }: ItemCardProps) {
                 </>
               )}
 
-              {/* Date */}
-              <span>{formatDate(item.publishedAt)}</span>
+              {/* Date - use createdAt only for daily view, otherwise use publishedAt */}
+              <span>{formatDate(period === 'day' && item.createdAt ? item.createdAt : item.publishedAt)}</span>
             </div>
 
             {/* Rating button - right aligned */}

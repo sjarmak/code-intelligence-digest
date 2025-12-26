@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS global_api_budget (
   date TEXT PRIMARY KEY,
   calls_used INTEGER DEFAULT 0,
   last_updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  quota_limit INTEGER DEFAULT 100
+  quota_limit INTEGER DEFAULT 1000
 );
 
 -- User cache table

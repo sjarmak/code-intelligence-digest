@@ -19,13 +19,13 @@ export interface SelectionResult {
 function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
   const seenUrls = new Map<string, string>(); // URL key -> item ID (for tracking which was kept)
   const deduped: RankedItem[] = [];
-  
+
   for (const item of rankedItems) {
     // Create a normalized URL key: hostname + path (without protocol/query params)
     try {
       const urlObj = new URL(item.url);
       const urlKey = urlObj.hostname + urlObj.pathname;
-      
+
       if (!seenUrls.has(urlKey)) {
         seenUrls.set(urlKey, item.id);
         deduped.push(item);
@@ -39,7 +39,7 @@ function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
       deduped.push(item);
     }
   }
-  
+
   logger.info(`Deduplicated ${rankedItems.length} items → ${deduped.length} unique URLs`);
   return deduped;
 }
@@ -58,11 +58,22 @@ export function selectWithDiversity(
 ): SelectionResult {
   const config = getCategoryConfig(category);
   const maxItems = maxItemsOverride ?? config.maxItems;
-  const minItems = Math.max(10, Math.ceil(maxItems * 0.67)); // Enforce minimum of 10 items
-  
+  // Always return top 10 items minimum, regardless of diversity constraints
+  const minItems = 10;
+
   // First, deduplicate by URL to handle same article from different sources
   const deduplicatedItems = deduplicateByUrl(rankedItems);
-  
+
+  // Filter out items with very low scores (likely not relevant)
+  // Items with finalScore < 0.05 are probably not useful (lowered to ensure we have enough items)
+  const qualityItems = deduplicatedItems.filter(item => item.finalScore >= 0.05);
+
+  if (qualityItems.length < deduplicatedItems.length) {
+    logger.info(
+      `Filtered out ${deduplicatedItems.length - qualityItems.length} items with scores < 0.05`
+    );
+  }
+
   const selected: RankedItem[] = [];
   const sourceCount = new Map<string, number>();
   const reasons = new Map<string, string>();
@@ -76,16 +87,39 @@ export function selectWithDiversity(
     }
   }
 
-  for (const item of deduplicatedItems) {
-    // Check source cap
+  // Calculate max per source for minimum guarantee (ensure diversity in top 10)
+  // For top 10, limit to max 4 items per source to ensure at least 3 sources
+  // But if we don't have enough items, allow up to 5 per source to reach minimum
+  const minGuaranteeMaxPerSource = qualityItems.length >= minItems
+    ? Math.max(3, Math.floor(minItems / 3))  // Normal: max 3-4 per source
+    : 5;  // If limited items, allow more per source to reach minimum
+
+  for (const item of qualityItems) {
     const currentSourceCount = sourceCount.get(item.sourceTitle) ?? 0;
-    if (currentSourceCount >= maxPerSource) {
+
+    // For minimum guarantee (first 10 items), enforce source diversity
+    if (selected.length < minItems) {
+      // Apply source cap even during minimum guarantee to ensure diversity
+      if (currentSourceCount >= minGuaranteeMaxPerSource) {
+        reasons.set(item.id, `Source cap reached for ${item.sourceTitle} during minimum guarantee (${minGuaranteeMaxPerSource} items)`);
+        continue;
+      }
+      // Accept item
+      selected.push(item);
+      sourceCount.set(item.sourceTitle, currentSourceCount + 1);
+      seenSources.add(item.sourceTitle);
+      reasons.set(item.id, `Selected at rank ${selected.length} (minimum guarantee)`);
       continue;
     }
 
-    // Check total cap (but allow exceeding if below minimum threshold)
-    if (selected.length >= maxItems && seenSources.size >= 5) {
-      // Stop if we've hit max items AND have good source diversity
+    // After minimum, apply normal source caps
+    if (currentSourceCount >= maxPerSource) {
+      reasons.set(item.id, `Source cap reached for ${item.sourceTitle} (${maxPerSource} items)`);
+      continue;
+    }
+
+    // Check total cap
+    if (selected.length >= maxItems) {
       reasons.set(item.id, `Total category limit reached (${selected.length}/${maxItems})`);
       break;
     }
@@ -96,24 +130,31 @@ export function selectWithDiversity(
     seenSources.add(item.sourceTitle);
     reasons.set(item.id, `Selected at rank ${selected.length}`);
 
-    // Stop after hitting max items OR minimum items with diversity
+    // Stop after hitting max items
     if (selected.length >= maxItems) {
       break;
     }
   }
 
-  // If we fell below minimum, add more items (relaxing source caps)
-  if (selected.length < minItems && selected.length < deduplicatedItems.length) {
+  // If we fell below minimum, add more items (relaxing source caps but still enforcing some diversity)
+  if (selected.length < minItems && selected.length < qualityItems.length) {
     logger.warn(
-      `Below minimum items (${selected.length}/${minItems}), relaxing diversity constraints`
+      `Below minimum items (${selected.length}/${minItems}), relaxing diversity constraints (allowing up to 5 per source)`
     );
-    
-    for (const item of deduplicatedItems) {
-      if (!selected.find(s => s.id === item.id) && selected.length < minItems) {
+
+    // When relaxing, still limit to 5 per source to maintain some diversity
+    const relaxedMaxPerSource = 5;
+    for (const item of qualityItems) {
+      if (selected.length >= minItems) break;
+
+      if (!selected.find(s => s.id === item.id)) {
+        const currentSourceCount = sourceCount.get(item.sourceTitle) ?? 0;
+        if (currentSourceCount >= relaxedMaxPerSource) {
+          continue; // Still respect relaxed source cap
+        }
         selected.push(item);
-        const count = (sourceCount.get(item.sourceTitle) ?? 0) + 1;
-        sourceCount.set(item.sourceTitle, count);
-        reasons.set(item.id, `Selected (minimum threshold enforcement)`);
+        sourceCount.set(item.sourceTitle, currentSourceCount + 1);
+        reasons.set(item.id, `Selected (minimum threshold enforcement, relaxed diversity)`);
       }
     }
   }

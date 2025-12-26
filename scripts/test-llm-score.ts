@@ -41,7 +41,7 @@ async function main() {
 
     // Score with GPT-4o
     console.log("\n🤖 Scoring with GPT-4o...");
-    const gptScores = await scoreWithLLM(sampleItems, 3);
+    const gptScores = await scoreWithLLM(sampleItems, "tech_articles", 3);
 
     // Also show heuristic scores for comparison
     console.log("📋 Heuristic scores (fallback):");

@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
 
     // Map period to days or handle custom range
     const periodDaysMap: Record<string, number> = {
-      day: 2, // 2 days to account for daily cron job running at 9 PM (2 AM UTC)
+      day: 2, // Last 48 hours
       week: 7,
       month: 30,
       all: 90,

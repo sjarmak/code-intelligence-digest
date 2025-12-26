@@ -80,7 +80,7 @@ describe("promptRerank", () => {
       expect(result[0].id).toBe("2");
     });
 
-    it("should preserve baseline ranking dominance", () => {
+    it("should prioritize prompt alignment over baseline score", () => {
       const highScoreItem = createMockItem("1", "Unrelated article", ["misc"]);
       highScoreItem.finalScore = 0.99;
 
@@ -91,8 +91,10 @@ describe("promptRerank", () => {
       const profile: PromptProfile = { focusTopics: ["code-search"] };
       const result = rerankWithPrompt(items, profile);
 
-      // High score item should still rank higher
-      expect(result[0].id).toBe("1");
+      // Item with prompt alignment should rank higher despite lower baseline score
+      // (reranking makes prompt alignment the PRIMARY signal)
+      expect(result[0].id).toBe("2");
+      expect(result[0].finalScore).toBeGreaterThan(result[1].finalScore);
     });
   });
 

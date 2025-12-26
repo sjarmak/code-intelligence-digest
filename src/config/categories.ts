@@ -9,14 +9,15 @@ export interface CategoryConfig {
   name: string;
   description: string;
   query: string; // BM25 query string for domain terms
-  halfLifeDays: number; // Recency decay half-life
+  halfLifeDays: number; // Recency decay half-life (for display only, not used in scoring)
   maxItems: number; // Max items per digest
   minRelevance: number; // Min LLM relevance score (0-10)
   weights: {
     llm: number;
     bm25: number;
-    recency: number;
     engagement?: number; // For community only
+    citations?: number; // For research only
+    reads?: number; // For research only
   };
 }
 
@@ -25,14 +26,13 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "Newsletters",
     description: "Curated newsletters and columns on code intelligence and developer tools",
     query:
-      "code search semantic search codebase intelligence agents code review devtools IDE",
+      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
     halfLifeDays: 3,
     maxItems: 10,
     minRelevance: 5,
     weights: {
-      llm: 0.45,
-      bm25: 0.35,
-      recency: 0.2,
+      llm: 0.6,
+      bm25: 0.4,
     },
   },
 
@@ -40,14 +40,13 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "Podcasts",
     description: "Podcast episodes about AI, coding, and developer tools",
     query:
-      "AI coding podcast agents code search LLM developer productivity tools infrastructure",
+      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
     halfLifeDays: 7,
     maxItems: 10,
     minRelevance: 5,
     weights: {
-      llm: 0.5,
-      bm25: 0.3,
-      recency: 0.2,
+      llm: 0.6,
+      bm25: 0.4,
     },
   },
 
@@ -55,14 +54,13 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "Tech Articles",
     description: "In-depth technical articles and essays on code and development",
     query:
-      "code search semantic search codebase refactoring agents code intelligence testing CI/CD architecture patterns",
+      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
     halfLifeDays: 5,
     maxItems: 10,
     minRelevance: 5,
     weights: {
-      llm: 0.4,
+      llm: 0.6,
       bm25: 0.4,
-      recency: 0.2,
     },
   },
 
@@ -70,14 +68,13 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "AI News",
     description: "AI model releases, research, and infrastructure news relevant to developers",
     query:
-      "LLM transformer model reasoning AI inference coding agents foundation models context window",
+      "AI model release acquisition breakthrough LLM transformer foundation model reasoning inference",
     halfLifeDays: 2,
     maxItems: 10,
-    minRelevance: 5,
+    minRelevance: 4, // Relaxed for general AI updates
     weights: {
-      llm: 0.45,
+      llm: 0.65,
       bm25: 0.35,
-      recency: 0.2,
     },
   },
 
@@ -85,14 +82,13 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "Product News",
     description: "Tool releases, feature announcements, and changelogs for dev tools",
     query:
-      "release feature announcement changelog IDE debugger code review tool productivity integrations",
+      "Augment Code Windsurf Cursor Claude Code Codex CLI Gemini CLI Antigravity codebase context coding agent release feature announcement changelog",
     halfLifeDays: 4,
     maxItems: 10,
     minRelevance: 5,
     weights: {
-      llm: 0.45,
-      bm25: 0.35,
-      recency: 0.2,
+      llm: 0.6,
+      bm25: 0.4,
     },
   },
 
@@ -100,15 +96,14 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "Community",
     description: "Discussions and posts from Reddit, forums, and community channels",
     query:
-      "code search agents devtools codebase refactoring code review testing CI/CD best practices",
+      "coding agent AI developer workflow sentiment code search Sourcegraph discussion",
     halfLifeDays: 3,
     maxItems: 10,
     minRelevance: 4,
     weights: {
-      llm: 0.4,
-      bm25: 0.35,
-      recency: 0.15,
-      engagement: 0.1,
+      llm: 0.5,
+      bm25: 0.3,
+      engagement: 0.2,
     },
   },
 
@@ -116,14 +111,15 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "Research",
     description: "Academic papers on software engineering, IR, PL, and ML for code",
     query:
-      "semantic search code search program synthesis AST machine learning software engineering empirical study",
+      "coding agent code search context agent information retrieval codebase developer workflow benchmark",
     halfLifeDays: 10,
     maxItems: 10,
     minRelevance: 5,
     weights: {
       llm: 0.5,
       bm25: 0.3,
-      recency: 0.2,
+      citations: 0.1,
+      reads: 0.1,
     },
   },
 };

@@ -47,7 +47,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   "dev blogs": "tech_articles",
   engineering: "tech_articles",
   "engineering-blogs": "tech_articles",
-  "tech company blogs": "tech_articles",
+  // Note: "tech company blogs" moved to product_news below
 
   // Podcasts
   podcast: "podcasts",
@@ -60,6 +60,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   "product news": "product_news",
   "product updates": "product_news",
   "coding agent product updates": "product_news",
+  "tech company blogs": "product_news", // Product announcements from tech companies
   releases: "product_news",
   changelog: "product_news",
   announcements: "product_news",
@@ -95,7 +96,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
  */
 function mapFolderToCategory(folderPath: string): Category | null {
   const parts = folderPath.toLowerCase().split("/").filter(p => p.length > 0);
-  
+
   for (const part of parts) {
     if (FOLDER_TO_CATEGORY[part]) {
       return FOLDER_TO_CATEGORY[part];
@@ -180,7 +181,7 @@ export async function getFeeds(): Promise<FeedConfig[]> {
         // Extract folder/label information from the subscription
         // Categories come as objects with { id: "user/.../label/...", label: "..." }
         const folderLabels: string[] = [];
-        
+
         if (Array.isArray(sub.categories)) {
           for (const cat of sub.categories) {
             // cat can be a string (old format) or object with label property
@@ -216,14 +217,14 @@ export async function getFeeds(): Promise<FeedConfig[]> {
 
     logger.info(`Loaded ${feeds.length} feeds from Inoreader`);
     cachedFeeds = feeds;
-    
+
     // Save to database cache and update metadata
     await saveFeedsDb(feeds);
     await updateFeedsCacheMetadata(feeds.length);
-    
+
     // Also keep disk cache in sync for backwards compatibility
     saveFeedsToCache(feeds);
-    
+
     return feeds;
   } catch (error) {
     logger.error("Failed to fetch feeds from Inoreader", error);
@@ -238,7 +239,7 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     } catch (dbError) {
       logger.error("Also failed to load from database cache", dbError);
     }
-    
+
     // Final fallback: try disk cache
     const staleDiskCache = loadFeedsFromCache();
     if (staleDiskCache && staleDiskCache.length > 0) {
@@ -246,7 +247,7 @@ export async function getFeeds(): Promise<FeedConfig[]> {
       cachedFeeds = staleDiskCache;
       return staleDiskCache;
     }
-    
+
     logger.error("No feeds available - API error and no cache");
     return [];
   }

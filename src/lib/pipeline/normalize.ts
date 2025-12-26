@@ -3,10 +3,11 @@
  * Converts raw Inoreader articles to FeedItem format
  */
 
-import { FeedItem } from "../model";
+import { FeedItem, Category } from "../model";
 import { InoreaderArticle } from "../inoreader/types";
 import { getFeedConfig } from "../../config/feeds";
 import { logger } from "../logger";
+import { decodeHtmlEntities } from "../utils/html-entities";
 
 /**
  * Check if a URL is an Inoreader item URL (should be rejected)
@@ -152,14 +153,49 @@ export async function normalizeItem(raw: InoreaderArticle): Promise<FeedItem> {
     }
   }
 
+  // Extract createdAt from crawlTimeMsec or timestampUsec (when Inoreader received the item)
+  let createdAt = publishedAt; // Default to publishedAt
+  if (raw.crawlTimeMsec) {
+    const crawlTime = parseInt(raw.crawlTimeMsec, 10);
+    if (!isNaN(crawlTime)) {
+      createdAt = new Date(crawlTime);
+    }
+  } else if (raw.timestampUsec) {
+    const timestampUsec = parseInt(raw.timestampUsec, 10);
+    if (!isNaN(timestampUsec)) {
+      createdAt = new Date(timestampUsec / 1000); // Convert microseconds to milliseconds
+    }
+  }
+
+  // Determine category: check URL first to catch misconfigured feeds
+  let category: Category = feedConfig?.defaultCategory ?? "tech_articles";
+
+  // Override category based on URL patterns (catches misconfigured feeds)
+  if (url) {
+    // Reddit URLs should always be community, regardless of feed config
+    if (/reddit\.com\/(r|u|user)\//i.test(url)) {
+      category = "community";
+      logger.debug(`Detected Reddit URL, overriding category to community: ${url}`);
+    }
+    // arXiv URLs should always be research
+    else if (url.includes("arxiv.org")) {
+      category = "research";
+      logger.debug(`Detected arXiv URL, overriding category to research: ${url}`);
+    }
+  }
+
+  // Decode HTML entities from title (e.g., &#9889; becomes ⚡)
+  const decodedTitle = decodeHtmlEntities(raw.title ?? "");
+
   return {
     id: raw.id,
     streamId: streamId || "",
     sourceTitle: feedConfig?.canonicalName ?? raw.origin?.title ?? "Unknown",
-    title: raw.title ?? "",
+    title: decodedTitle,
     url,
     author: raw.author,
     publishedAt,
+    createdAt, // When Inoreader received/crawled the item
     summary: fullSummary,
     contentSnippet: snippet,
     categories: (raw.categories ?? []).map((c: string) => {
@@ -167,7 +203,7 @@ export async function normalizeItem(raw: InoreaderArticle): Promise<FeedItem> {
       const parts = c.split("/");
       return parts[parts.length - 1] ?? c;
     }),
-    category: feedConfig?.defaultCategory ?? "tech_articles",
+    category,
     raw,
   };
 }

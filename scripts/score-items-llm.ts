@@ -58,7 +58,7 @@ async function main() {
     console.log(`  Scoring ${items.length} items in ${Math.ceil(items.length / BATCH_SIZE)} batches...`);
 
     // Score all items in this category
-    const results = await scoreWithLLM(items, BATCH_SIZE);
+    const results = await scoreWithLLM(items, category, BATCH_SIZE);
     totalBatches += Math.ceil(items.length / BATCH_SIZE);
 
     // Store scores in database

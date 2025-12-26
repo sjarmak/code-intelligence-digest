@@ -20,8 +20,8 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
       for (const item of items) {
         await client.run(`
           INSERT INTO items
-          (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, EXTRACT(EPOCH FROM NOW())::INTEGER)
+          (id, stream_id, source_title, title, url, author, published_at, created_at, summary, content_snippet, categories, category, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, EXTRACT(EPOCH FROM NOW())::INTEGER)
           ON CONFLICT (id) DO UPDATE SET
             stream_id = EXCLUDED.stream_id,
             source_title = EXCLUDED.source_title,
@@ -29,6 +29,7 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             url = EXCLUDED.url,
             author = EXCLUDED.author,
             published_at = EXCLUDED.published_at,
+            created_at = COALESCE(EXCLUDED.created_at, items.created_at),
             summary = EXCLUDED.summary,
             content_snippet = EXCLUDED.content_snippet,
             categories = EXCLUDED.categories,
@@ -42,6 +43,7 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
           item.url,
           item.author || null,
           Math.floor(item.publishedAt.getTime() / 1000),
+          item.createdAt ? Math.floor(item.createdAt.getTime() / 1000) : Math.floor(item.publishedAt.getTime() / 1000),
           item.summary || null,
           item.contentSnippet || null,
           JSON.stringify(item.categories),
@@ -52,9 +54,22 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
       const sqlite = getSqlite();
 
       const stmt = sqlite.prepare(`
-        INSERT OR REPLACE INTO items
-        (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        INSERT INTO items
+        (id, stream_id, source_title, title, url, author, published_at, created_at, summary, content_snippet, categories, category, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        ON CONFLICT (id) DO UPDATE SET
+          stream_id = EXCLUDED.stream_id,
+          source_title = EXCLUDED.source_title,
+          title = EXCLUDED.title,
+          url = EXCLUDED.url,
+          author = EXCLUDED.author,
+          published_at = EXCLUDED.published_at,
+          created_at = COALESCE(EXCLUDED.created_at, items.created_at),
+          summary = EXCLUDED.summary,
+          content_snippet = EXCLUDED.content_snippet,
+          categories = EXCLUDED.categories,
+          category = EXCLUDED.category,
+          updated_at = strftime('%s', 'now')
       `);
 
       const insertMany = sqlite.transaction((items: FeedItem[]) => {
@@ -67,6 +82,7 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             item.url,
             item.author || null,
             Math.floor(item.publishedAt.getTime() / 1000),
+            item.createdAt ? Math.floor(item.createdAt.getTime() / 1000) : Math.floor(item.publishedAt.getTime() / 1000),
             item.summary || null,
             item.contentSnippet || null,
             JSON.stringify(item.categories),
@@ -86,6 +102,10 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
 
 /**
  * Load items for a given category within a time window
+ *
+ * For the "day" period (2 days), uses created_at instead of published_at
+ * to show items added in the last 2 days, regardless of their original publication date.
+ * This ensures decomposed newsletter articles appear in the daily view.
  */
 export async function loadItemsByCategory(
   category: string,
@@ -95,6 +115,11 @@ export async function loadItemsByCategory(
     const driver = detectDriver();
     const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
 
+    // For "day" period (2 days), use created_at to show items added recently
+    // For longer periods, use published_at to show items by their original publication date
+    const useCreatedAt = periodDays === 2;
+    const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+
     let rows: Array<{
       id: string;
       stream_id: string;
@@ -103,6 +128,7 @@ export async function loadItemsByCategory(
       url: string;
       author: string | null;
       published_at: number;
+      created_at: number;
       summary: string | null;
       content_snippet: string | null;
       categories: string;
@@ -114,46 +140,76 @@ export async function loadItemsByCategory(
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at,
+        `SELECT id, stream_id, source_title, title, url, author, published_at, created_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
          FROM items
-         WHERE category = $1 AND published_at >= $2
-         ORDER BY published_at DESC`,
+         WHERE category = $1 AND ${dateColumn} >= $2
+         ORDER BY ${dateColumn} DESC`,
         [category, cutoffTime]
       );
       rows = result.rows as typeof rows;
     } else {
       const sqlite = getSqlite();
-      rows = sqlite
-        .prepare(
-          `SELECT * FROM items
-           WHERE category = ? AND published_at >= ?
-           ORDER BY published_at DESC`
-        )
-        .all(category, cutoffTime) as typeof rows;
+      const query = `SELECT * FROM items
+           WHERE category = ? AND ${dateColumn} >= ?
+           ORDER BY ${dateColumn} DESC`;
+      logger.debug(`[loadItemsByCategory] SQLite query: category='${category}', cutoffTime=${cutoffTime}, dateColumn=${dateColumn}`);
+      rows = sqlite.prepare(query).all(category, cutoffTime) as typeof rows;
+      logger.info(`[loadItemsByCategory] SQLite returned ${rows.length} rows for category='${category}', periodDays=${periodDays}, cutoffTime=${cutoffTime} (${new Date(cutoffTime * 1000).toISOString()})`);
+
+      // Verify the query is correct by doing a direct count
+      const verifyCount = sqlite.prepare(`SELECT COUNT(*) as count FROM items WHERE category = ? AND ${dateColumn} >= ?`).get(category, cutoffTime) as { count: number };
+      if (rows.length !== verifyCount.count) {
+        logger.error(`[loadItemsByCategory] MISMATCH: rows.length=${rows.length} but COUNT query returns ${verifyCount.count}`);
+      }
     }
 
-    const items: FeedItem[] = rows.map((row) => {
-      const cat = row.category as Category;
-      const finalUrl = (row.url && !row.url.includes("inoreader.com"))
-        ? row.url
-        : (row.extracted_url || row.url);
-      return {
-        id: row.id,
-        streamId: row.stream_id,
-        sourceTitle: row.source_title,
-        title: row.title,
-        url: finalUrl,
-        author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000),
-        summary: row.summary || undefined,
-        contentSnippet: row.content_snippet || undefined,
-        categories: JSON.parse(row.categories),
-        category: cat,
-        raw: {},
-        fullText: row.full_text || undefined,
-      };
-    });
+    const items: FeedItem[] = [];
+    let errorCount = 0;
+    const firstError: { id: string; error: string } | null = null;
+
+    logger.info(`[loadItemsByCategory] Starting to map ${rows.length} rows`);
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      try {
+        const cat = row.category as Category;
+        const finalUrl = (row.url && !row.url.includes("inoreader.com"))
+          ? row.url
+          : (row.extracted_url || row.url);
+        items.push({
+          id: row.id,
+          streamId: row.stream_id,
+          sourceTitle: row.source_title,
+          title: row.title,
+          url: finalUrl,
+          author: row.author || undefined,
+          publishedAt: new Date(row.published_at * 1000),
+          createdAt: new Date(row.created_at * 1000),
+          summary: row.summary || undefined,
+          contentSnippet: row.content_snippet || undefined,
+          categories: JSON.parse(row.categories),
+          category: cat,
+          raw: {},
+          fullText: row.full_text || undefined,
+        });
+      } catch (error) {
+        errorCount++;
+        if (errorCount <= 3) {
+          logger.error(`[loadItemsByCategory] Error mapping row ${i}/${rows.length} (id: ${row.id}): ${error}`, { row: { id: row.id, category: row.category, title: row.title?.substring(0, 50) } });
+        }
+      }
+    }
+
+    logger.info(`[loadItemsByCategory] Mapped ${items.length} items from ${rows.length} rows (${errorCount} errors)`);
+
+    if (errorCount > 0) {
+      logger.error(`[loadItemsByCategory] Failed to map ${errorCount} rows out of ${rows.length} - this is a critical issue!`);
+    }
+
+    if (items.length !== rows.length && errorCount === 0) {
+      logger.error(`[loadItemsByCategory] CRITICAL: items.length (${items.length}) !== rows.length (${rows.length}) but no errors were thrown!`);
+    }
 
     return items;
   } catch (error) {
@@ -453,7 +509,7 @@ export async function getItemsCountByCategory(category: string): Promise<number>
  */
 export async function loadScoresForItems(
   itemIds: string[]
-): Promise<Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[] }>> {
+): Promise<Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[]; bm25_score?: number; recency_score?: number; final_score?: number }>> {
   try {
     if (itemIds.length === 0) {
       return {};
@@ -466,6 +522,9 @@ export async function loadScoresForItems(
       llm_relevance: number;
       llm_usefulness: number;
       llm_tags: string | null;
+      bm25_score?: number;
+      recency_score?: number;
+      final_score?: number;
     };
 
     let rows: ScoreRow[];
@@ -473,28 +532,31 @@ export async function loadScoresForItems(
     if (driver === 'postgres') {
       const client = await getDbClient();
       const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+      // For Postgres, use DISTINCT ON to get latest score per item
+      // DISTINCT ON requires the column to be first in ORDER BY
       const result = await client.query(
-        `SELECT item_id, llm_relevance, llm_usefulness, llm_tags
+        `SELECT DISTINCT ON (item_id) item_id, llm_relevance, llm_usefulness, llm_tags, bm25_score, recency_score, final_score
          FROM item_scores
          WHERE item_id IN (${placeholders})
-         ORDER BY scored_at ASC`,
+         ORDER BY item_id, scored_at DESC`,
         itemIds
       );
       rows = result.rows as ScoreRow[];
     } else {
       const sqlite = getSqlite();
       const placeholders = itemIds.map(() => "?").join(",");
+      // Get latest scores for each item (ORDER BY scored_at DESC, then deduplicate by item_id)
       rows = sqlite
         .prepare(
-          `SELECT item_id, llm_relevance, llm_usefulness, llm_tags
+          `SELECT item_id, llm_relevance, llm_usefulness, llm_tags, bm25_score, recency_score, final_score
            FROM item_scores
            WHERE item_id IN (${placeholders})
-           ORDER BY scored_at ASC`
+           ORDER BY scored_at DESC`
         )
         .all(...itemIds) as ScoreRow[];
     }
 
-    const scores: Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[] }> = {};
+    const scores: Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[]; bm25_score?: number; recency_score?: number; final_score?: number }> = {};
     const seen = new Set<string>();
 
     for (const row of rows) {
@@ -504,6 +566,9 @@ export async function loadScoresForItems(
           llm_relevance: Number(row.llm_relevance),
           llm_usefulness: Number(row.llm_usefulness),
           llm_tags: row.llm_tags ? JSON.parse(row.llm_tags) : [],
+          bm25_score: row.bm25_score !== undefined ? Number(row.bm25_score) : undefined,
+          recency_score: row.recency_score !== undefined ? Number(row.recency_score) : undefined,
+          final_score: row.final_score !== undefined ? Number(row.final_score) : undefined,
         };
       }
     }

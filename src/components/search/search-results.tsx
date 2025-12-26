@@ -101,7 +101,7 @@ export default function SearchResults({
 
             {/* Metadata */}
             <div className="flex items-center gap-2 text-xs text-muted mb-3 flex-wrap">
-              <span>{new Date(result.publishedAt).toLocaleDateString()}</span>
+              <span>{new Date(result.createdAt || result.publishedAt).toLocaleDateString()}</span>
               <span>•</span>
               <span className={`badge ${getCategoryColor(result.category)}`}>
                 {result.category.replace('_', ' ')}

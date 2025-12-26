@@ -1,7 +1,7 @@
 /**
  * Periodic sync from Inoreader API to database
  * Decouples data retrieval from request path
- * 
+ *
  * This runs periodically (scheduled job) and pulls fresh data from Inoreader,
  * saving it to the database. Read requests always hit the database cache.
  */
@@ -10,9 +10,10 @@ import { createInoreaderClient } from '../inoreader/client';
 import { getStreamsByCategory } from '@/src/config/feeds';
 import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
+import { decomposeFeedItems } from '../pipeline/decompose';
 import { saveItems } from '../db/items';
 import { logger } from '../logger';
-import { Category } from '../model';
+import { Category, FeedItem } from '../model';
 
 const VALID_CATEGORIES: Category[] = [
   'newsletters',
@@ -117,29 +118,39 @@ export async function syncCategory(category: Category): Promise<{
   let items = await normalizeItems(allItems);
   logger.debug(`Normalized ${items.length} items`);
 
+  // Decompose newsletter items into individual articles (before categorization)
+  // This ensures articles from newsletters are available via /api/items
+  items = decomposeFeedItems(items);
+  logger.debug(`After decomposition: ${items.length} items`);
+
   // Categorize items
   items = categorizeItems(items);
 
-  // Filter to items in this category
-  const categoryItems = items.filter((i) => i.category === category);
-
-  if (categoryItems.length === 0) {
-    logger.warn(
-      `No items matched category filter for: ${category}. Normalized: ${items.length}, categorized to other categories`
-    );
-    itemsSkipped = allItems.length;
-    return { itemsAdded: 0, itemsSkipped };
+  // After decomposition, items may have been re-categorized (e.g., newsletter articles -> ai_news, product_news)
+  // Save ALL items regardless of their final category, not just the original category
+  // This ensures decomposed articles appear in their correct categories
+  const itemsByCategory = new Map<Category, FeedItem[]>();
+  for (const item of items) {
+    if (!itemsByCategory.has(item.category)) {
+      itemsByCategory.set(item.category, []);
+    }
+    itemsByCategory.get(item.category)!.push(item);
   }
 
-  logger.info(
-    `${categoryItems.length} items match category: ${category}`
-  );
+  // Log category distribution
+  for (const [cat, catItems] of itemsByCategory.entries()) {
+    logger.info(`Items in category ${cat}: ${catItems.length}`);
+  }
 
-  // Save to database
+  // Filter to items in this category (for return value)
+  const categoryItems = items.filter((i) => i.category === category);
+
+  // Save ALL items to database (they'll be stored with their final categories)
+  // This is important because decomposed articles may have been re-categorized
   try {
-    await saveItems(categoryItems);
+    await saveItems(items);
     logger.info(
-      `Saved ${categoryItems.length} items for category: ${category} to database`
+      `Saved ${items.length} total items to database (${categoryItems.length} in requested category: ${category})`
     );
   } catch (error) {
     logger.error(`Failed to save items for category: ${category}`, error);

@@ -1,13 +1,13 @@
 /**
  * API endpoint: POST /api/admin/sync-48h
- * 
+ *
  * 48-hour sync that fetches items from the last 48 hours only.
- * 
+ *
  * Features:
  * - Time-filtered to last 48 hours (reduces API calls to ~2-5)
  * - Resumable if interrupted by rate limits
  * - Safe within 100-call daily budget
- * 
+ *
  * Response:
  * {
  *   "success": true,
@@ -23,6 +23,7 @@ import { initializeDatabase } from '@/src/lib/db/index';
 import { createInoreaderClient } from '@/src/lib/inoreader/client';
 import { normalizeItems } from '@/src/lib/pipeline/normalize';
 import { categorizeItems } from '@/src/lib/pipeline/categorize';
+import { decomposeFeedItems } from '@/src/lib/pipeline/decompose';
 import { saveItems } from '@/src/lib/db/items';
 import { getSqlite } from '@/src/lib/db/index';
 import { Category } from '@/src/lib/model';
@@ -102,9 +103,16 @@ export async function POST() {
         `[SYNC-48H] Batch ${batchNumber}: fetched ${response.items.length} items (${callsUsed} calls used)`
       );
 
-      // Normalize and categorize
+      // Normalize, decompose newsletters, and categorize
       let items = await normalizeItems(response.items);
-      items = await categorizeItems(items);
+      logger.debug(`[SYNC-48H] Normalized ${items.length} items`);
+
+      // Decompose newsletter items into individual articles
+      items = decomposeFeedItems(items);
+      logger.debug(`[SYNC-48H] After decomposition: ${items.length} items`);
+
+      items = categorizeItems(items);
+      logger.debug(`[SYNC-48H] Categorized ${items.length} items`);
 
       // Filter to only items from last 48 hours
       const cutoffTime = new Date(syncSinceTimestamp * 1000);
@@ -115,14 +123,20 @@ export async function POST() {
 
       logger.info(`[SYNC-48H] Categorized ${items.length} items for this batch`);
 
-      // Save items
-      await saveItems(items);
-      totalItemsAdded += items.length;
+      // After decomposition, items may have been re-categorized (e.g., newsletter articles -> ai_news, product_news)
+      // Save ALL items regardless of their final category
+      // This ensures decomposed articles appear in their correct categories
+      if (items.length > 0) {
+        await saveItems(items);
+        totalItemsAdded += items.length;
 
-      // Track categories
-      items.forEach((item) => {
-        categoriesProcessed.add(item.category);
-      });
+        // Track all categories present in this batch
+        items.forEach((item) => {
+          categoriesProcessed.add(item.category);
+        });
+
+        logger.debug(`[SYNC-48H] Saved ${items.length} items (categories: ${Array.from(new Set(items.map(i => i.category))).join(', ')})`);
+      }
 
       // Continue if there are more items
       continuation = response.continuation;
