@@ -4,8 +4,9 @@
  * and creates separate RankedItem entries for each article
  */
 
-import { RankedItem } from "../model";
+import { RankedItem, FeedItem, Category } from "../model";
 import { logger } from "../logger";
+import { decodeHtmlEntities } from "../utils/html-entities";
 
 const NEWSLETTER_SOURCES = ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"];
 
@@ -62,6 +63,13 @@ const BAD_TITLE_PATTERNS = [
   /favorite substacker/i,
   /become a (paid|premium) subscriber/i,
   /upgrade to (paid|premium)/i,
+  // Test/debug content
+  /^test the code$/i,
+  /^test$/i,
+  /^debug$/i,
+  /^test article$/i,
+  /^test post$/i,
+  /^test entry$/i,
 ];
 
 /**
@@ -243,19 +251,132 @@ export function isNewsletterSource(sourceTitle: string): boolean {
 }
 
 /**
+ * Re-categorize a decomposed article based on URL patterns and content
+ * Only re-categorizes if the original category is "newsletters" (generic newsletter folder)
+ * Otherwise preserves the feed's category from Inoreader folder (ai_news, product_news, etc.)
+ */
+function recategorizeDecomposedArticle(item: FeedItem): Category {
+  // If the item is already in a specific category (not "newsletters"), keep it
+  // This preserves the category from the Inoreader folder (ai_news, product_news, etc.)
+  if (item.category !== "newsletters") {
+    logger.debug(`Keeping original category "${item.category}" for article "${item.title}" (from Inoreader folder)`);
+    return item.category;
+  }
+
+  // Only re-categorize if it's from a generic "newsletters" folder
+  // Use content-based patterns to determine the correct category
+  const url = item.url.toLowerCase();
+  const title = (item.title || "").toLowerCase();
+  const summary = (item.summary || item.contentSnippet || "").toLowerCase();
+  const combinedText = `${title} ${summary}`;
+
+  // Check if this article came from a TLDR section that should be re-categorized
+  // First check if we have explicit section information (from extraction)
+  // This is more reliable than pattern matching
+  if (item.sourceTitle.includes("TLDR")) {
+    // Check if item has section metadata (stored in summary or contentSnippet)
+    const itemSection = (item.summary || item.contentSnippet || "").match(/\[SECTION:([^\]]+)\]/);
+    if (itemSection) {
+      const sectionName = itemSection[1].toLowerCase();
+      // "Big Tech & Startups" section should be ai_news
+      if (sectionName.includes("big tech") && (sectionName.includes("startup") || sectionName.includes("startups"))) {
+        logger.debug(`Re-categorizing TLDR article "${item.title}" from newsletters to ai_news based on section: ${itemSection[1]}`);
+        return "ai_news";
+      }
+      // Articles about Nvidia, Groq, AI companies in Miscellaneous might also be ai_news
+      if (sectionName.includes("miscellaneous")) {
+        const titleLower = title.toLowerCase();
+        if (titleLower.includes("nvidia") || titleLower.includes("groq") ||
+            titleLower.includes("openai") || titleLower.includes("anthropic") ||
+            (titleLower.includes("ai") && (titleLower.includes("startup") || titleLower.includes("company")))) {
+          logger.debug(`Re-categorizing TLDR article "${item.title}" from newsletters to ai_news (AI company in Miscellaneous section)`);
+          return "ai_news";
+        }
+      }
+    }
+
+    // Fallback: Look for section context in the summary/content (TLDR includes section headers)
+    const tldrSectionPatterns = {
+      ai_news: [
+        /big tech[^<]*&amp;?[^<]*startups?/i,
+        /big tech[^<]*startups?/i,
+        /ai news/i,
+        /artificial intelligence/i,
+      ],
+      product_news: [
+        /product update/i,
+        /release/i,
+      ],
+    };
+
+    for (const [category, patterns] of Object.entries(tldrSectionPatterns)) {
+      for (const pattern of patterns) {
+        if (pattern.test(combinedText) || pattern.test(summary)) {
+          logger.debug(`Re-categorizing TLDR article "${item.title}" from newsletters to ${category} based on section pattern`);
+          return category as Category;
+        }
+      }
+    }
+  }
+
+  // AI News patterns
+  const aiNewsPatterns = [
+    /(openai|anthropic|claude|gpt-4|gpt-3|llama|mistral|gemini|deepmind)/i,
+    /(large language model|llm|transformer model|foundation model)/i,
+    /(ai model release|model announcement|ai infrastructure)/i,
+    /(prompt engineering|fine-tuning|rag|retrieval augmented)/i,
+    /(ai coding|ai agent|autonomous agent|agentic)/i,
+    /(multimodal ai|vision model|text-to-image)/i,
+    /anthropic\.com|openai\.com|deepmind\.com|huggingface\.co/i,
+  ];
+
+  // Product News patterns
+  const productNewsPatterns = [
+    /(release notes|changelog|what's new|version \d+\.\d+)/i,
+    /(feature announcement|new feature|product update)/i,
+    /(tool release|launch|beta|general availability|ga)/i,
+    /(ide|editor|debugger|code review tool|dev tool) (release|update|announcement)/i,
+    /(github|gitlab|bitbucket|jira|linear|notion) (release|update|feature)/i,
+    /(vscode|vim|emacs|jetbrains|intellij) (release|update)/i,
+    /(cursor|copilot|tabnine|codeium) (release|update|feature)/i,
+  ];
+
+  // Check for AI News
+  for (const pattern of aiNewsPatterns) {
+    if (pattern.test(url) || pattern.test(combinedText)) {
+      logger.debug(`Re-categorizing article "${item.title}" from newsletters to ai_news based on content`);
+      return "ai_news";
+    }
+  }
+
+  // Check for Product News
+  for (const pattern of productNewsPatterns) {
+    if (pattern.test(url) || pattern.test(combinedText)) {
+      logger.debug(`Re-categorizing article "${item.title}" from newsletters to product_news based on content`);
+      return "product_news";
+    }
+  }
+
+  // Keep original category (newsletters) if no patterns match
+  return item.category;
+}
+
+/**
  * Extract article links and metadata from newsletter HTML
  * Handles multiple article formats:
  * - Link text followed by description (markdown-style)
  * - HTML links with surrounding text
  * - Numbered list items
  * - Title-then-URL patterns (newsletter articles without explicit links)
+ * - Section-aware extraction for TLDR (tracks which section articles belong to)
  */
 function extractArticlesFromHtml(html: string): Array<{
   title: string;
   url: string;
   snippet: string;
+  section?: string; // Track which section this article came from (for TLDR)
 }> {
-  const articles: Array<{ title: string; url: string; snippet: string }> = [];
+  const articles: Array<{ title: string; url: string; snippet: string; section?: string }> = [];
 
   if (!html || html.length === 0) {
     return articles;
@@ -268,6 +389,53 @@ function extractArticlesFromHtml(html: string): Array<{
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
 
+  // Detect TLDR sections and map them to categories
+  // Sections appear as headers in the HTML
+  const sectionHeaders: Array<{ name: string; index: number; category?: Category }> = [];
+  const sectionPatterns = [
+    { pattern: /(?:big tech[^<]*&amp;?[^<]*startups?|big tech[^<]*startups?)/i, name: "Big Tech & Startups", category: "ai_news" as Category },
+    { pattern: /programming[^<]*(?:&amp;|and)[^<]*(?:design|data science)/i, name: "Programming, Design & Data Science", category: "newsletters" as Category },
+    { pattern: /programming[^<]*design/i, name: "Programming & Design", category: "newsletters" as Category },
+    { pattern: /science[^<]*(?:&amp;|and)[^<]*futuristic[^<]*technology/i, name: "Science & Futuristic Technology", category: "newsletters" as Category },
+    { pattern: /miscellaneous/i, name: "Miscellaneous", category: "newsletters" as Category },
+  ];
+
+  // Also look for articles near known terms (Delve, Vibium, Package Manager, Groq, Nvidia)
+  // These might not have explicit section headers but are in specific sections
+  const knownArticlePatterns = [
+    { pattern: /delve[^<]*shipmas/i, name: "Delve", section: "Miscellaneous" },
+    { pattern: /vibium[^<]*github/i, name: "Vibium", section: "Programming, Design & Data Science" },
+    { pattern: /package manager[^<]*git[^<]*database/i, name: "Package Manager", section: "Programming, Design & Data Science" },
+    { pattern: /groq[^<]*ai[^<]*technology/i, name: "Groq", section: "Big Tech & Startups" },
+    { pattern: /nvidia[^<]*groq/i, name: "Nvidia/Groq", section: "Big Tech & Startups" },
+  ];
+
+  // Find all section headers in the HTML
+  for (const { pattern, name, category } of sectionPatterns) {
+    const matches = [...cleanHtml.matchAll(new RegExp(pattern.source, 'gi'))];
+    for (const match of matches) {
+      sectionHeaders.push({
+        name,
+        index: match.index!,
+        category,
+      });
+    }
+  }
+
+  // Sort by position in document
+  sectionHeaders.sort((a, b) => a.index - b.index);
+
+  // Helper to find which section an article belongs to based on its position
+  function findSectionForIndex(index: number): string | undefined {
+    // Find the last section header before this index
+    for (let i = sectionHeaders.length - 1; i >= 0; i--) {
+      if (sectionHeaders[i].index < index) {
+        return sectionHeaders[i].name;
+      }
+    }
+    return undefined;
+  }
+
   // Pattern 1: Markdown-style links [Title](URL)
   const markdownLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
   let match;
@@ -277,24 +445,26 @@ function extractArticlesFromHtml(html: string): Array<{
     const [, title, url] = match;
     const trimmedUrl = url?.trim() || "";
 
-    if (title && trimmedUrl && isValidAbsoluteUrl(trimmedUrl) && !seen.has(trimmedUrl)) {
-      const trimmedTitle = title.trim();
-      // Skip certain URLs and titles
-      if (
-        !trimmedUrl.includes("inoreader.com") &&
-        !trimmedUrl.includes("google.com/reader") &&
-        !trimmedUrl.startsWith("javascript:") &&
-        !shouldExcludeUrl(trimmedUrl) &&
-        !shouldExcludeTitle(trimmedTitle)
-      ) {
-        articles.push({
-          title: trimmedTitle,
-          url: trimmedUrl,
-          snippet: trimmedTitle, // Will be enhanced below
-        });
-        seen.add(trimmedUrl);
+      if (title && trimmedUrl && isValidAbsoluteUrl(trimmedUrl) && !seen.has(trimmedUrl)) {
+        const trimmedTitle = decodeHtmlEntities(title.trim()); // Decode HTML entities from extracted title
+        // Skip certain URLs and titles
+        if (
+          !trimmedUrl.includes("inoreader.com") &&
+          !trimmedUrl.includes("google.com/reader") &&
+          !trimmedUrl.startsWith("javascript:") &&
+          !shouldExcludeUrl(trimmedUrl) &&
+          !shouldExcludeTitle(trimmedTitle)
+        ) {
+          const section = findSectionForIndex(match.index!);
+          articles.push({
+            title: trimmedTitle,
+            url: trimmedUrl,
+            snippet: trimmedTitle, // Will be enhanced below
+            section,
+          });
+          seen.add(trimmedUrl);
+        }
       }
-    }
   }
 
   // Helper: Find URLs that appear within a reasonable distance of a title
@@ -306,14 +476,40 @@ function extractArticlesFromHtml(html: string): Array<{
   }
 
   // Pattern 2: HTML anchor tags <a href="...">Title</a>
-  // Modified to handle nested tags like <strong>, <em>, etc.
-  // First normalize newlines in href attributes to handle multiline attributes
-  const normalizedHtml = cleanHtml.replace(/href=["']([^"'][\s\S]*?)["']/g, 'href="$1"').replace(/\n/g, '');
-  const htmlLinkRegex = /<a\s+[^>]*?href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
-  while ((match = htmlLinkRegex.exec(normalizedHtml)) !== null) {
-    const [, rawUrl, rawTitle] = match;
-    // Strip HTML tags from title
-    const title = rawTitle.replace(/<[^>]*>/g, "").trim();
+  // Modified to handle nested tags like <strong>, <em>, <span>, etc.
+  // Use a more robust approach that handles deeply nested tags
+  const htmlLinkPattern = /<a\s+[^>]*?href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  while ((match = htmlLinkPattern.exec(cleanHtml)) !== null) {
+    const [, rawUrl, rawTitleHtml] = match;
+
+    // Extract title - prefer text in <strong> tags, then <b>, then any text
+    let title = '';
+
+    // First try to find <strong> tag (most common in TLDR)
+    const strongMatch = rawTitleHtml.match(/<strong[^>]*>([\s\S]*?)<\/strong>/i);
+    if (strongMatch) {
+      title = decodeHtmlEntities(strongMatch[1].replace(/<[^>]*>/g, "").trim());
+    } else {
+      // Try <b> tag
+      const bMatch = rawTitleHtml.match(/<b[^>]*>([\s\S]*?)<\/b>/i);
+      if (bMatch) {
+        title = decodeHtmlEntities(bMatch[1].replace(/<[^>]*>/g, "").trim());
+      } else {
+        // Strip all HTML tags and get text
+        title = decodeHtmlEntities(rawTitleHtml.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim());
+      }
+    }
+
+    // If title is still empty or too short, try to extract from surrounding context
+    if (!title || title.length < 5) {
+      // Look for text before the link tag
+      const beforeLink = cleanHtml.substring(Math.max(0, match.index! - 200), match.index!);
+      const textBefore = beforeLink.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      const lastSentence = textBefore.split(/[.!?]/).pop()?.trim();
+      if (lastSentence && lastSentence.length > 10 && lastSentence.length < 150) {
+        title = lastSentence;
+      }
+    }
 
     // Extract actual URL from tracking/redirect URLs
     // Handles: https://tracking.tldrnewsletter.com/CL0/https:%2F%2Factual-url
@@ -445,7 +641,7 @@ function extractArticlesFromHtml(html: string): Array<{
 
     // Validate URL before adding to articles
     if (effectiveTitle && url && isValidAbsoluteUrl(url) && !seen.has(url)) {
-      const trimmedTitle = effectiveTitle.trim();
+      const trimmedTitle = decodeHtmlEntities(effectiveTitle.trim());
       const trimmedUrl = url.trim();
 
       if (
@@ -457,10 +653,12 @@ function extractArticlesFromHtml(html: string): Array<{
         !shouldExcludeUrl(trimmedUrl) &&
         !shouldExcludeTitle(trimmedTitle)
       ) {
+        const section = findSectionForIndex(match.index!);
         articles.push({
           title: trimmedTitle,
           url: trimmedUrl,
           snippet: trimmedTitle,
+          section,
         });
         seen.add(trimmedUrl);
       }
@@ -499,7 +697,7 @@ function extractArticlesFromHtml(html: string): Array<{
         normalizedUrl.includes("open.substack.com/")
       );
 
-      const trimmedTitle = title.trim();
+      const trimmedTitle = decodeHtmlEntities(title.trim());
       const trimmedUrl = url.trim();
 
       // Skip certain URLs and very long titles (likely not real)
@@ -515,17 +713,139 @@ function extractArticlesFromHtml(html: string): Array<{
         !shouldExcludeTitle(trimmedTitle) &&
         !seen.has(trimmedUrl)
       ) {
+        const section = findSectionForIndex(match.index!);
         articles.push({
           title: trimmedTitle,
           url: trimmedUrl,
           snippet: trimmedTitle,
+          section,
         });
         seen.add(trimmedUrl);
       }
     }
   }
 
-  // Pattern 4: Newsletter headers with titles like "Title — Source" followed by description
+  // Pattern 4: "Read Online" links (common in Elevate newsletters)
+  // Looks for "Read Online" or "read online" text followed by a link, often to turingpost.com
+  const readOnlinePattern = /(?:read\s+online|read\s+article)[^<]*<a[^>]*href=["']([^"']+)["'][^>]*>/gi;
+  while ((match = readOnlinePattern.exec(cleanHtml)) !== null) {
+    const [, url] = match;
+    const normalizedUrl = url.replace(/&amp;/g, "&").trim();
+
+    if (normalizedUrl && isValidAbsoluteUrl(normalizedUrl) && !seen.has(normalizedUrl)) {
+      // Extract title from nearby text (look for title before "Read Online")
+      const beforeMatch = cleanHtml.substring(Math.max(0, match.index! - 200), match.index!);
+      const titleMatch = beforeMatch.match(/(?:<h[1-3][^>]*>|<strong[^>]*>|<b[^>]*>|^|\n)([^<\n]{10,150})(?:<\/h[1-3]>|<\/strong>|<\/b>|$|\n)/i);
+      const title = titleMatch ? titleMatch[1].trim() : "Article";
+
+      if (!shouldExcludeUrl(normalizedUrl) && !shouldExcludeTitle(title)) {
+        const section = findSectionForIndex(match.index!);
+        articles.push({
+          title: title,
+          url: normalizedUrl,
+          snippet: title,
+          section,
+        });
+        seen.add(normalizedUrl);
+        logger.debug(`Extracted "Read Online" link: ${title} -> ${normalizedUrl}`);
+      }
+    }
+  }
+
+  // Pattern 5: Extract articles by finding known terms and their surrounding context
+  // This helps find articles that might not have explicit links but are mentioned in the text
+  const knownTerms = [
+    { term: 'Delve', patterns: [/delve[^<]*shipmas[^<]*day[^<]*\d+/i, /delve[^<]*sponsor/i] },
+    { term: 'Vibium', patterns: [/vibium[^<]*github/i, /vibium[^<]*repo/i] },
+    { term: 'Package Manager', patterns: [/package manager[^<]*git[^<]*database/i, /git as a database/i] },
+    { term: 'Groq', patterns: [/groq[^<]*ai[^<]*technology/i, /nvidia[^<]*groq/i, /groq[^<]*chip/i] },
+    { term: 'NotebookLM', patterns: [/transform sources.*structured.*data tables.*notebooklm/i, /notebooklm.*data tables/i] },
+    { term: 'Codex vs Claude', patterns: [/codex.*vs.*claude code/i, /codex vs claude.*today/i] },
+    { term: 'Memory: How Agents Learn', patterns: [/memory.*how agents learn/i] },
+    { term: 'Stirrup', patterns: [/stirrup[^<]*github/i, /stirrup[^<]*repo/i] },
+  ];
+
+  for (const { term, patterns } of knownTerms) {
+    for (const pattern of patterns) {
+      // matchAll requires global flag
+      const globalPattern = new RegExp(pattern.source, pattern.flags + 'g');
+      const matches = [...cleanHtml.matchAll(globalPattern)];
+      for (const match of matches) {
+        const matchIndex = match.index!;
+        // Look for URL within 300 chars before or after the match
+        const contextStart = Math.max(0, matchIndex - 300);
+        const contextEnd = Math.min(cleanHtml.length, matchIndex + match[0].length + 300);
+        const context = cleanHtml.substring(contextStart, contextEnd);
+
+        // Look for links in this context
+        const linkMatches = context.match(/<a[^>]*href=["']([^"']+)["'][^>]*>/gi);
+        if (linkMatches) {
+          for (const linkMatch of linkMatches) {
+            const urlMatch = linkMatch.match(/href=["']([^"']+)["']/);
+            if (urlMatch) {
+              let url = urlMatch[1].replace(/&amp;/g, "&").trim();
+
+              // Decode TLDR tracking URLs
+              if (url.includes("/CL0/")) {
+                const trackingMatch = url.match(/\/CL0\/(.+?)\/\d+\//);
+                if (trackingMatch) {
+                  const decoded = trackingMatch[1]
+                    .replace(/%2F/g, "/")
+                    .replace(/%3A/g, ":")
+                    .replace(/%3D/g, "=")
+                    .replace(/%3F/g, "?");
+                  if (isValidAbsoluteUrl(decoded) && !decoded.includes('localhost') && !shouldExcludeUrl(decoded)) {
+                    url = decoded;
+                  } else {
+                    continue;
+                  }
+                } else {
+                  continue;
+                }
+              }
+
+              if (isValidAbsoluteUrl(url) && !seen.has(url) && !shouldExcludeUrl(url)) {
+                // Extract title from context - look for <strong> tags first, then other patterns
+                let title = term; // Default to term name
+                const strongMatch = context.match(/<strong[^>]*>([^<]{10,200})<\/strong>/i);
+                if (strongMatch) {
+                  title = decodeHtmlEntities(strongMatch[1].trim());
+                } else {
+                  // Look for title patterns near the link
+                  const titlePatterns = [
+                    /([A-Z][^<]{10,150}(?:\([^)]+\))?)\s*(?:\([^)]+\))?\s*<a[^>]*href/i, // Title before link
+                    /<a[^>]*href[^>]*>([^<]{10,150})<\/a>/i, // Title in link
+                  ];
+                  for (const pattern of titlePatterns) {
+                    const match = context.match(pattern);
+                    if (match && match[1]) {
+                      title = decodeHtmlEntities(match[1].trim());
+                      break;
+                    }
+                  }
+                }
+
+                const section = findSectionForIndex(matchIndex);
+
+                if (!shouldExcludeTitle(title)) {
+                  articles.push({
+                    title: title,
+                    url: url,
+                    snippet: title,
+                    section,
+                  });
+                  seen.add(url);
+                  logger.debug(`Extracted article by known term "${term}": ${title} -> ${url}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Pattern 6: Newsletter headers with titles like "Title — Source" followed by description
   // and then a URL somewhere nearby in the content
   // Example: "My LLM coding workflow going into 2026 — Elevate\nDescription text\nhttps://example.com"
   const headerPattern = /^([^\n—\-]{10,150})\s+(?:—|-)\s+([A-Za-z\s]+?)(?:\n|$)/gm;
@@ -533,7 +853,7 @@ function extractArticlesFromHtml(html: string): Array<{
     const [fullMatch, titleText] = match;
     if (!titleText || titleText.length < 5) continue;
 
-    const title = titleText.trim();
+    const title = decodeHtmlEntities(titleText.trim());
 
     // Skip if we've already found this title with a URL
     if (seen.has(title)) continue;
@@ -548,7 +868,7 @@ function extractArticlesFromHtml(html: string): Array<{
       // CRITICAL: For Substack domains, ONLY accept URLs with /p/ (article posts)
       // Reject all other Substack URLs (home pages, index pages, profile pages)
       if ((normalizedUrl.includes('.substack.com') || normalizedUrl.includes('substack.com/')) && !normalizedUrl.includes('/p/')) {
-        logger.debug(`Pattern 4: Filtered out Substack non-article URL (missing /p/): ${normalizedUrl}`);
+        logger.debug(`Pattern 6: Filtered out Substack non-article URL (missing /p/): ${normalizedUrl}`);
         continue; // Skip this URL - it's not an article
       }
 
@@ -560,10 +880,12 @@ function extractArticlesFromHtml(html: string): Array<{
         !normalizedUrl.includes("tracking.tldrnewsletter") &&
         !shouldExcludeUrl(normalizedUrl)
       ) {
+        const section = findSectionForIndex(match.index!);
         articles.push({
           title: title.trim(),
           url: normalizedUrl,
           snippet: title.trim(),
+          section,
         });
         seen.add(normalizedUrl);
       }
@@ -579,7 +901,7 @@ function extractArticlesFromHtml(html: string): Array<{
  */
 function createArticleItem(
   baseItem: RankedItem,
-  article: { title: string; url: string; snippet: string },
+  article: { title: string; url: string; snippet: string; section?: string },
   articleIndex: number,
   totalArticles: number
 ): RankedItem {
@@ -656,7 +978,8 @@ function createArticleItem(
     title: article.title,
     url: finalUrl,
     author: baseItem.author,
-    publishedAt: baseItem.publishedAt,
+    publishedAt: baseItem.publishedAt, // Inherit newsletter's Inoreader received date, not article's original publication date
+    createdAt: baseItem.createdAt, // Inherit newsletter's createdAt (when Inoreader received it)
 
     // Use snippet as summary for the article
     summary: article.snippet,
@@ -788,6 +1111,170 @@ export function decomposeNewsletterItems(items: RankedItem[]): RankedItem[] {
 
   logger.info(
     `Decomposed ${items.length} items into ${result.length} items ` +
+    `(${result.length - items.length > 0 ? "+" : ""}${result.length - items.length} from newsletters)`
+  );
+
+  return result;
+}
+
+/**
+ * Decompose a FeedItem (used during sync, before ranking)
+ * Returns array of FeedItems - one per extracted article, or original item if not decomposable
+ */
+export function decomposeFeedItem(item: FeedItem): FeedItem[] {
+  // Only decompose known newsletter sources
+  if (!isNewsletterSource(item.sourceTitle)) {
+    return [item];
+  }
+
+  // Skip items that are already decomposed (have -article- in ID) or are clearly not newsletters
+  if (item.id.includes('-article-')) {
+    return [item];
+  }
+
+  // Filter out items with very short content (likely already decomposed or promotional)
+  const htmlContent = item.fullText || item.summary || item.contentSnippet || "";
+  if (!htmlContent || htmlContent.length < 100) {
+    // Check if it's a promotional/unsubscribe item that should be excluded
+    if (shouldExcludeTitle(item.title) || shouldExcludeUrl(item.url)) {
+      logger.debug(`Excluding short newsletter item: "${item.title}"`);
+      return [];
+    }
+    logger.warn(`Newsletter item "${item.title}" has no content to decompose (${htmlContent.length} chars)`);
+    return [item];
+  }
+
+  // Extract articles from HTML
+  const articles = extractArticlesFromHtml(htmlContent);
+
+  if (articles.length === 0) {
+    logger.warn(`No articles extracted from newsletter: "${item.title}" (${htmlContent.length} chars of content)`);
+
+    // Check if the original item itself should be excluded (subscription page, etc.)
+    if (shouldExcludeUrl(item.url) || shouldExcludeTitle(item.title)) {
+      logger.info(`Excluding newsletter item as subscription/promotional content: "${item.title}"`);
+      return []; // Return empty array to exclude this item
+    }
+
+    return [item]; // Fallback: return original item
+  }
+
+  if (articles.length === 1) {
+    // Only one article, update the item with the extracted article info
+    const article = articles[0];
+
+    // Validate the article URL before returning
+    if (!article.url || !isValidAbsoluteUrl(article.url) || shouldExcludeUrl(article.url)) {
+      logger.debug(`Filtering out single article with invalid/excluded URL: "${article.title}" (URL: "${article.url}")`);
+      // Check if the original item itself should be excluded
+      if (shouldExcludeUrl(item.url) || shouldExcludeTitle(item.title)) {
+        logger.info(`Excluding newsletter item as subscription/promotional content: "${item.title}"`);
+        return []; // Return empty array to exclude this item
+      }
+      return [item]; // Fallback: return original item
+    }
+
+    logger.info(`Single article found in ${item.sourceTitle}: "${article.title}"`);
+    // Store section information in summary for later categorization
+    const sectionInfo = article.section ? ` [SECTION:${article.section}]` : "";
+    const summaryWithSection = article.snippet + sectionInfo;
+
+    const decomposedItem: FeedItem = {
+      ...item,
+      title: article.title,
+      url: article.url,
+      summary: summaryWithSection,
+      contentSnippet: summaryWithSection.substring(0, 500),
+      category: item.category, // Will be re-categorized below
+      // publishedAt is inherited from item (newsletter's Inoreader received date)
+      // This ensures articles use the newsletter date, not the original article publication date
+    };
+
+    // Re-categorize based on content/URL patterns and section information
+    decomposedItem.category = recategorizeDecomposedArticle(decomposedItem);
+
+    return [decomposedItem];
+  }
+
+  // Multiple articles: create separate FeedItems for each
+  logger.info(`Decomposing ${item.sourceTitle} into ${articles.length} articles`);
+  logger.info(`[DECOMPOSE_DEBUG] Article URLs extracted: ${articles.slice(0, 3).map(a => a.url).join(" | ")}`);
+
+  const decomposed: FeedItem[] = [];
+
+  for (const [idx, article] of articles.entries()) {
+    // Validate article URL
+    let finalUrl = article.url?.trim() || "";
+
+    if (!finalUrl || !isValidAbsoluteUrl(finalUrl)) {
+      logger.debug(`Article "${article.title}" has empty or invalid URL: "${finalUrl}"`);
+      // Try to find URL in the item's content
+      const urlMatch = htmlContent.match(/https?:\/\/[^\s<>"'\)]+/);
+      if (urlMatch) {
+        const candidateUrl = urlMatch[0];
+        if (
+          isValidAbsoluteUrl(candidateUrl) &&
+          !candidateUrl.includes("inoreader.com") &&
+          !candidateUrl.includes("tracking.tldrnewsletter") &&
+          !shouldExcludeUrl(candidateUrl)
+        ) {
+          finalUrl = candidateUrl;
+          logger.info(`Extracted fallback URL for article "${article.title}": ${finalUrl}`);
+        }
+      }
+    }
+
+    // Final validation
+    if (!finalUrl || !isValidAbsoluteUrl(finalUrl) || shouldExcludeUrl(finalUrl)) {
+      logger.debug(`Skipping article "${article.title}" - no valid URL`);
+      continue;
+    }
+
+    // Store section information in summary for later categorization
+    const sectionInfo = article.section ? ` [SECTION:${article.section}]` : "";
+    const summaryWithSection = (article.snippet || item.summary || "") + sectionInfo;
+
+    const decomposedItem: FeedItem = {
+      ...item,
+      id: `${item.id}-article-${idx + 1}`,
+      title: article.title,
+      url: finalUrl,
+      summary: summaryWithSection,
+      contentSnippet: summaryWithSection.substring(0, 500),
+      category: item.category, // Will be re-categorized below
+      // publishedAt is inherited from item (newsletter's Inoreader received date)
+      // This ensures articles use the newsletter date, not the original article publication date
+    };
+
+    // Re-categorize based on content/URL patterns and section information
+    decomposedItem.category = recategorizeDecomposedArticle(decomposedItem);
+
+    decomposed.push(decomposedItem);
+  }
+
+  logger.info(`[DECOMPOSE_DEBUG] Decomposed ${decomposed.length} valid articles from ${articles.length} extracted`);
+
+  return decomposed;
+}
+
+/**
+ * Decompose all newsletter FeedItems in a batch (used during sync)
+ * Returns flattened array with newsletter items replaced by their constituent articles
+ */
+export function decomposeFeedItems(items: FeedItem[]): FeedItem[] {
+  const result: FeedItem[] = [];
+
+  for (const item of items) {
+    if (isNewsletterSource(item.sourceTitle)) {
+      const decomposed = decomposeFeedItem(item);
+      result.push(...decomposed);
+    } else {
+      result.push(item);
+    }
+  }
+
+  logger.info(
+    `Decomposed ${items.length} FeedItems into ${result.length} FeedItems ` +
     `(${result.length - items.length > 0 ? "+" : ""}${result.length - items.length} from newsletters)`
   );
 

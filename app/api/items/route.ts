@@ -8,9 +8,10 @@ import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib
 import { initializeDatabase } from "@/src/lib/db/index";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
-import { Category } from "@/src/lib/model";
+import { Category, FeedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { getCategoryConfig } from "@/src/config/categories";
+import { decodeHtmlEntities } from "@/src/lib/utils/html-entities";
 
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
@@ -23,7 +24,7 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const PERIOD_DAYS: Record<string, number> = {
-  day: 2, // 2 days to account for daily cron job running at 9 PM (2 AM UTC)
+  day: 2, // Last 48 hours
   week: 7,
   month: 30,
   all: 90,
@@ -120,19 +121,120 @@ export async function GET(request: NextRequest) {
     // Initialize database (creates tables if needed)
     await initializeDatabase();
 
+    // Force reset SQLite connection to avoid stale data in Next.js
+    // Next.js may cache module instances, causing stale database connections
+    const { resetSqliteConnection, getSqlite } = await import("@/src/lib/db/index");
+    resetSqliteConnection();
+
     // Load items from database
-    const items = loadOptions?.startDate && loadOptions?.endDate
-      ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
-      : await loadItemsByCategory(category, periodDays);
-    logger.info(`Loaded ${items.length} items from database`);
+    // Use direct database query to avoid Next.js module caching issues
+    let items: FeedItem[];
+    if (loadOptions?.startDate && loadOptions?.endDate) {
+      items = await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate);
+    } else {
+      // Direct database query to ensure fresh data
+      const sqlite = getSqlite();
+      const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+      const useCreatedAt = periodDays === 2;
+      const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+
+      // For newsletters, only get decomposed articles (have -article- in ID)
+      const whereClause = category === "newsletters"
+        ? `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`
+        : `category = ? AND ${dateColumn} >= ?`;
+
+      const rawRows = sqlite.prepare(
+        `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC`
+      ).all(category, cutoffTime) as any[];
+
+      logger.info(`[API] Direct query returned ${rawRows.length} rows for category=${category}, periodDays=${periodDays}, dateColumn=${dateColumn}`);
+
+      // Helper function to extract real URL from tracking links
+      function extractUrlFromTracking(trackingUrl: string): string | null {
+        // awstrack.me format: https://...awstrack.me/L0/https:%2F%2F...
+        const awstrackMatch = trackingUrl.match(/\/L0\/(https?[^\/\s]+)/);
+        if (awstrackMatch) {
+          try {
+            const encoded = awstrackMatch[1];
+            const decoded = decodeURIComponent(encoded);
+            if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+              return decoded;
+            }
+          } catch (e) {
+            // URL decode failed
+          }
+        }
+        return null;
+      }
+
+      // Map rows to FeedItem format, using extracted_url when URL is Inoreader/tracking
+      const mappedItems = rawRows.map((row): FeedItem | null => {
+        const cat = row.category as Category;
+        // Use extracted_url if URL is Inoreader/tracking, otherwise use url
+        let finalUrl = row.url;
+
+        // Check if URL is a tracking/Inoreader link
+        if (row.url && (row.url.includes("inoreader.com") || row.url.includes("google.com/reader") ||
+            row.url.includes("awstrack.me") || row.url.includes("tracking"))) {
+          // First try extracted_url from database
+          if (row.extracted_url && !row.extracted_url.includes("inoreader.com") && !row.extracted_url.includes("google.com/reader")) {
+            finalUrl = row.extracted_url;
+          } else {
+            // Try to extract URL from tracking link
+            const extracted = extractUrlFromTracking(row.url);
+            if (extracted) {
+              finalUrl = extracted;
+            } else {
+              // Skip items with tracking URLs and no way to extract real URL
+              return null;
+            }
+          }
+        }
+
+        try {
+          return {
+            id: row.id,
+            streamId: row.stream_id,
+            sourceTitle: row.source_title,
+            title: row.title,
+            url: finalUrl,
+            author: row.author || undefined,
+            publishedAt: new Date(row.published_at * 1000),
+            createdAt: new Date(row.created_at * 1000),
+            summary: row.summary || undefined,
+            contentSnippet: row.content_snippet || undefined,
+            categories: JSON.parse(row.categories),
+            category: cat,
+            raw: {},
+            fullText: row.full_text || undefined,
+          };
+        } catch (error) {
+          logger.warn(`[API] Error mapping row ${row.id}: ${error}`);
+          return null;
+        }
+      });
+
+      items = mappedItems.filter((item): item is FeedItem => item !== null);
+
+      logger.info(`[API] Mapped to ${items.length} items (filtered out ${rawRows.length - items.length} invalid items)`);
+    }
+
+    logger.info(`[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`);
 
     // Rank items
     const rankedItems = await rankCategory(items, category, periodDays);
-    logger.info(`Ranked to ${rankedItems.length} items`);
+    logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`);
+
+    // Debug: Check if scores are loading
+    if (rankedItems.length > 0) {
+      const firstItem = rankedItems[0];
+      logger.info(`[API] First ranked item: title="${firstItem.title.substring(0, 50)}...", finalScore=${firstItem.finalScore.toFixed(3)}, llmRelevance=${firstItem.llmScore.relevance}, llmUsefulness=${firstItem.llmScore.usefulness}`);
+    }
 
     // Apply diversity selection based on period
-    // Increased caps to allow ranking system to show quality results (not just diversity)
-    const perSourceCaps = { day: 1, week: 4, month: 5, all: 6 };
+    // For daily view, allow more items per source to ensure we get top 10
+    // Expansion beyond 10 will be handled by pagination/limit parameter
+    const perSourceCaps = { day: 5, week: 4, month: 5, all: 6 };
     let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
 
     // Increase per-source caps proportionally if custom limit is higher
@@ -159,12 +261,13 @@ export async function GET(request: NextRequest) {
       totalItems: selectionResult.items.length,
       itemsRanked: rankedItems.length,
       itemsFiltered: rankedItems.length - selectionResult.items.length,
-      items: selectionResult.items.map((item) => ({
+        items: selectionResult.items.map((item) => ({
         id: item.id,
-        title: item.title,
+        title: decodeHtmlEntities(item.title), // Decode HTML entities in title
         url: item.url,
         sourceTitle: item.sourceTitle,
         publishedAt: item.publishedAt.toISOString(),
+        createdAt: item.createdAt?.toISOString() || null,
         summary: item.summary,
         author: item.author,
         categories: item.categories,

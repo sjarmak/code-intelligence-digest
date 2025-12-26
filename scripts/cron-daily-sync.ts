@@ -194,6 +194,7 @@ async function main() {
     logger.info('✅ Database initialized');
 
     // Step 2: Run daily sync
+    // The sync will automatically detect and resume paused state if it exists
     logger.info('\n🔄 Running daily sync...');
     const syncResult = await runDailySync();
 
