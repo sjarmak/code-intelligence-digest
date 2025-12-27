@@ -131,6 +131,35 @@ async function exportFromSqlite(): Promise<void> {
 }
 
 /**
+ * Sanitize data for PostgreSQL
+ */
+function sanitizeRow(row: unknown[], columns: string[], table: string): unknown[] {
+  return row.map((value, index) => {
+    if (value === null || value === undefined) return value;
+
+    // Remove null bytes from text fields (PostgreSQL doesn't support them)
+    if (typeof value === 'string') {
+      value = value.replace(/\0/g, '');
+    }
+
+    // Fix type mismatches for item_scores
+    if (table === 'item_scores') {
+      const col = columns[index];
+      // Convert float to integer for these columns
+      if ((col === 'llm_relevance' || col === 'llm_usefulness') && typeof value === 'number') {
+        return Math.round(value);
+      }
+      // Also handle if they're stored as strings
+      if ((col === 'llm_relevance' || col === 'llm_usefulness') && typeof value === 'string') {
+        return Math.round(parseFloat(value));
+      }
+    }
+
+    return value;
+  });
+}
+
+/**
  * Import data from JSON files to PostgreSQL
  */
 async function importToPostgres(): Promise<void> {
@@ -187,10 +216,12 @@ async function importToPostgres(): Promise<void> {
 
         for (let i = 0; i < data.rows.length; i += batchSize) {
           const batch = data.rows.slice(i, i + batchSize);
-          
+
           for (const row of batch) {
             try {
-              await pool.query(sql, row);
+              // Sanitize row data before inserting
+              const sanitizedRow = sanitizeRow(row, data.columns, table);
+              await pool.query(sql, sanitizedRow);
               inserted++;
             } catch (err) {
               // Skip duplicates silently
