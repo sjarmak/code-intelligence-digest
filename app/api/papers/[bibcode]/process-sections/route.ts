@@ -45,13 +45,17 @@ export async function POST(
     // Initialize tables
     initializePaperSectionsTable();
 
+    // Check if force regeneration is requested
+    const { searchParams } = new URL(request.url);
+    const forceRegenerate = searchParams.get('force') === 'true';
+
     // Process sections
-    logger.info('Processing paper sections', { bibcode });
-    await processPaperSections(bibcode);
+    logger.info('Processing paper sections', { bibcode, forceRegenerate });
+    await processPaperSections(bibcode, forceRegenerate);
 
     // Get section count
     const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
-    const sections = getSectionSummaries(bibcode);
+    const sections = await getSectionSummaries(bibcode);
 
     return NextResponse.json({
       success: true,

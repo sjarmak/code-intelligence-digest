@@ -54,6 +54,15 @@ interface PaperTag {
   createdAt: number;
 }
 
+interface PaperSectionSummary {
+  sectionId: string;
+  sectionTitle: string;
+  level: number;
+  summary: string;
+  charStart: number;
+  charEnd: number;
+}
+
 interface PaperContent {
   source: 'ar5iv' | 'arxiv' | 'ads' | 'abstract';
   html: string;
@@ -63,6 +72,7 @@ interface PaperContent {
   sections?: PaperSection[];
   figures?: PaperFigure[];
   tableOfContents?: PaperSection[];
+  sectionSummaries?: PaperSectionSummary[];
   bibcode: string;
   arxivId?: string | null;
   adsUrl?: string;
@@ -558,7 +568,61 @@ export function PaperReaderModal({
                 </button>
               )}
 
-              {/* Paper content */}
+              {/* Section Summaries */}
+              {content.sectionSummaries && content.sectionSummaries.length > 0 ? (
+                <div className="mb-8 space-y-4">
+                  <h2 className="text-xl font-semibold mb-4">Section Summaries</h2>
+                  {content.sectionSummaries.map((sectionSummary) => (
+                    <div
+                      key={sectionSummary.sectionId}
+                      id={`summary-${sectionSummary.sectionId}`}
+                      className="p-4 bg-blue-50 rounded-lg border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer"
+                      style={{ marginLeft: `${(sectionSummary.level - 1) * 1.5}rem` }}
+                      onClick={() => {
+                        // Scroll to section in the paper content
+                        const sectionElement = contentRef.current?.querySelector(`#${sectionSummary.sectionId}`);
+                        if (sectionElement) {
+                          sectionElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                      }}
+                    >
+                      <h3 className="font-semibold text-blue-900 mb-2">
+                        {sectionSummary.sectionTitle}
+                      </h3>
+                      <p className="text-blue-800 text-sm leading-relaxed">
+                        {sectionSummary.summary}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                // Show message if sections haven't been processed yet
+                <div className="mb-8 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                  <p className="text-yellow-800 text-sm mb-2">
+                    Section summaries are being processed. This may take a few moments.
+                  </p>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/process-sections`, {
+                          method: 'POST',
+                        });
+                        if (response.ok) {
+                          // Reload content to show new sections
+                          await fetchContent();
+                        }
+                      } catch (err) {
+                        console.error('Failed to process sections:', err);
+                      }
+                    }}
+                    className="text-xs px-3 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 transition-colors"
+                  >
+                    Process Sections Now
+                  </button>
+                </div>
+              )}
+
+              {/* Paper content with section demarcations */}
               <article
                 className="prose prose-lg max-w-none paper-content"
                 dangerouslySetInnerHTML={{ __html: content.html }}
@@ -895,7 +959,38 @@ export function PaperReaderModal({
             margin: 1em -1rem;
           }
         }
+
+        /* Section demarcations */
+        .paper-content {
+          position: relative;
+        }
       `}</style>
+
+      {/* Dynamic section markers - using inline styles to avoid nested styled-jsx */}
+      {content?.sectionSummaries && content.sectionSummaries.length > 0 && (
+        <style dangerouslySetInnerHTML={{
+          __html: content.sectionSummaries.map((sectionSummary) => {
+            // Add visual markers for sections in the paper content
+            return `
+              .paper-content #${sectionSummary.sectionId},
+              .paper-content [id*="${sectionSummary.sectionId}"] {
+                position: relative;
+              }
+              .paper-content #${sectionSummary.sectionId}::before,
+              .paper-content [id*="${sectionSummary.sectionId}"]::before {
+                content: '';
+                position: absolute;
+                left: -1rem;
+                top: 0;
+                bottom: 0;
+                width: 3px;
+                background: linear-gradient(to bottom, #3b82f6, #60a5fa);
+                border-radius: 2px;
+              }
+            `;
+          }).join('')
+        }} />
+      )}
     </div>
   );
 }

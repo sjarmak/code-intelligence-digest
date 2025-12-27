@@ -171,7 +171,7 @@ Summary:`;
 /**
  * Process a paper: extract sections, summarize them, and store with embeddings
  */
-export async function processPaperSections(bibcode: string): Promise<void> {
+export async function processPaperSections(bibcode: string, forceRegenerate: boolean = false): Promise<void> {
   const paper = getPaper(bibcode);
 
   if (!paper || !paper.body || paper.body.length < 100) {
@@ -179,9 +179,30 @@ export async function processPaperSections(bibcode: string): Promise<void> {
     return;
   }
 
+  // Check if sections already exist
+  const existingSections = await getSectionSummaries(bibcode);
+  if (existingSections.length > 0 && !forceRegenerate) {
+    logger.info('Section summaries already exist, skipping regeneration', {
+      bibcode,
+      existingCount: existingSections.length,
+    });
+
+    // Only regenerate embeddings if they're missing
+    const sectionsWithoutEmbeddings = existingSections.filter(s => !s.embedding || s.embedding.length === 0);
+    if (sectionsWithoutEmbeddings.length > 0) {
+      logger.info('Regenerating missing embeddings', {
+        bibcode,
+        missingCount: sectionsWithoutEmbeddings.length,
+      });
+      await generateAndStoreSectionEmbeddings(bibcode);
+    }
+    return;
+  }
+
   logger.info('Processing paper sections', {
     bibcode,
     bodyLength: paper.body.length,
+    forceRegenerate,
   });
 
   // Get section metadata from cached HTML if available
@@ -262,7 +283,7 @@ export async function buildSectionContext(
 
   if (relevantSections.length === 0) {
     // Fallback: get all sections if semantic search fails
-    const allSections = getSectionSummaries(bibcode);
+    const allSections = await getSectionSummaries(bibcode);
     if (allSections.length === 0) {
       return '';
     }

@@ -4,6 +4,7 @@
  */
 
 import { getSqlite } from './index';
+import { getDbClient, detectDriver } from './driver';
 import { logger } from '../logger';
 import { generateEmbedding } from '../embeddings/generate';
 
@@ -88,39 +89,74 @@ export async function storeSectionSummaries(
     charEnd: number;
   }>
 ): Promise<void> {
-  const db = getSqlite();
+  const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
 
-  const stmt = db.prepare(`
-    INSERT INTO paper_sections (
-      id, bibcode, section_id, section_title, level, summary,
-      full_text, char_start, char_end, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(bibcode, section_id) DO UPDATE SET
-      section_title = excluded.section_title,
-      level = excluded.level,
-      summary = excluded.summary,
-      full_text = excluded.full_text,
-      char_start = excluded.char_start,
-      char_end = excluded.char_end,
-      updated_at = excluded.updated_at
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    for (const section of sections) {
+      const id = `${bibcode}:${section.sectionId}`;
+      await client.run(
+        `INSERT INTO paper_sections (
+          id, bibcode, section_id, section_title, level, summary,
+          full_text, char_start, char_end, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT(bibcode, section_id) DO UPDATE SET
+          section_title = EXCLUDED.section_title,
+          level = EXCLUDED.level,
+          summary = EXCLUDED.summary,
+          full_text = EXCLUDED.full_text,
+          char_start = EXCLUDED.char_start,
+          char_end = EXCLUDED.char_end,
+          updated_at = EXCLUDED.updated_at`,
+        [
+          id,
+          bibcode,
+          section.sectionId,
+          section.sectionTitle,
+          section.level,
+          section.summary,
+          section.fullText,
+          section.charStart,
+          section.charEnd,
+          now,
+          now,
+        ]
+      );
+    }
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      INSERT INTO paper_sections (
+        id, bibcode, section_id, section_title, level, summary,
+        full_text, char_start, char_end, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(bibcode, section_id) DO UPDATE SET
+        section_title = excluded.section_title,
+        level = excluded.level,
+        summary = excluded.summary,
+        full_text = excluded.full_text,
+        char_start = excluded.char_start,
+        char_end = excluded.char_end,
+        updated_at = excluded.updated_at
+    `);
 
-  for (const section of sections) {
-    const id = `${bibcode}:${section.sectionId}`;
-    stmt.run(
-      id,
-      bibcode,
-      section.sectionId,
-      section.sectionTitle,
-      section.level,
-      section.summary,
-      section.fullText,
-      section.charStart,
-      section.charEnd,
-      now,
-      now
-    );
+    for (const section of sections) {
+      const id = `${bibcode}:${section.sectionId}`;
+      stmt.run(
+        id,
+        bibcode,
+        section.sectionId,
+        section.sectionTitle,
+        section.level,
+        section.summary,
+        section.fullText,
+        section.charStart,
+        section.charEnd,
+        now,
+        now
+      );
+    }
   }
 
   logger.info('Stored section summaries', {
@@ -133,8 +169,8 @@ export async function storeSectionSummaries(
  * Generate and store embeddings for section summaries
  */
 export async function generateAndStoreSectionEmbeddings(bibcode: string): Promise<void> {
-  const db = getSqlite();
-  const sections = getSectionSummaries(bibcode);
+  const sections = await getSectionSummaries(bibcode);
+  const driver = detectDriver();
 
   if (sections.length === 0) {
     logger.warn('No sections found for embedding generation', { bibcode });
@@ -154,23 +190,60 @@ export async function generateAndStoreSectionEmbeddings(bibcode: string): Promis
 
   const now = Math.floor(Date.now() / 1000);
 
-  for (const section of sections) {
-    try {
-      // Generate embedding from summary (or full text if summary is short)
-      const textToEmbed = section.summary.length > 100
-        ? section.summary
-        : `${section.sectionTitle}: ${section.summary}`;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    for (const section of sections) {
+      try {
+        // Generate embedding from summary (or full text if summary is short)
+        const textToEmbed = section.summary.length > 100
+          ? section.summary
+          : `${section.sectionTitle}: ${section.summary}`;
 
-      const embedding = await generateEmbedding(textToEmbed);
-      const embeddingJson = JSON.stringify(embedding);
+        const embedding = await generateEmbedding(textToEmbed);
+        // Postgres expects vector type - convert array to Postgres vector format
+        // Format: "[0.1,0.2,...]" (same as item_embeddings)
+        const vectorStr = `[${embedding.join(',')}]`;
 
-      updateStmt.run(embeddingJson, now, section.id);
-    } catch (error) {
-      logger.error('Failed to generate embedding for section', {
-        bibcode,
-        sectionId: section.sectionId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+        await client.run(
+          `UPDATE paper_sections
+          SET embedding = $1::vector, updated_at = $2
+          WHERE id = $3`,
+          [vectorStr, now, section.id]
+        );
+      } catch (error) {
+        logger.error('Failed to generate embedding for section', {
+          bibcode,
+          sectionId: section.sectionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  } else {
+    const db = getSqlite();
+    const updateStmt = db.prepare(`
+      UPDATE paper_sections
+      SET embedding = ?, updated_at = ?
+      WHERE id = ?
+    `);
+
+    for (const section of sections) {
+      try {
+        // Generate embedding from summary (or full text if summary is short)
+        const textToEmbed = section.summary.length > 100
+          ? section.summary
+          : `${section.sectionTitle}: ${section.summary}`;
+
+        const embedding = await generateEmbedding(textToEmbed);
+        const embeddingJson = JSON.stringify(embedding);
+
+        updateStmt.run(embeddingJson, now, section.id);
+      } catch (error) {
+        logger.error('Failed to generate embedding for section', {
+          bibcode,
+          sectionId: section.sectionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -183,47 +256,93 @@ export async function generateAndStoreSectionEmbeddings(bibcode: string): Promis
 /**
  * Get all section summaries for a paper
  */
-export function getSectionSummaries(bibcode: string): PaperSectionSummary[] {
-  const db = getSqlite();
+export async function getSectionSummaries(bibcode: string): Promise<PaperSectionSummary[]> {
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT
-      id, bibcode, section_id, section_title, level, summary,
-      full_text, char_start, char_end, embedding, created_at, updated_at
-    FROM paper_sections
-    WHERE bibcode = ?
-    ORDER BY char_start ASC
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(
+      `SELECT
+        id, bibcode, section_id, section_title, level, summary,
+        full_text, char_start, char_end, embedding, created_at, updated_at
+      FROM paper_sections
+      WHERE bibcode = $1
+      ORDER BY char_start ASC`,
+      [bibcode]
+    );
 
-  const rows = stmt.all(bibcode) as Array<{
-    id: string;
-    bibcode: string;
-    section_id: string;
-    section_title: string;
-    level: number;
-    summary: string;
-    full_text: string;
-    char_start: number;
-    char_end: number;
-    embedding: string | null;
-    created_at: number;
-    updated_at: number;
-  }>;
+    return result.rows.map((row: Record<string, unknown>) => {
+      // Handle Postgres vector type - it comes as a string or array
+      let embedding: number[] | undefined;
+      if (row.embedding) {
+        if (typeof row.embedding === 'string') {
+          try {
+            embedding = JSON.parse(row.embedding);
+          } catch {
+            // If parsing fails, try to parse as Postgres array format
+            embedding = undefined;
+          }
+        } else if (Array.isArray(row.embedding)) {
+          embedding = row.embedding as number[];
+        }
+      }
 
-  return rows.map((row) => ({
-    id: row.id,
-    bibcode: row.bibcode,
-    sectionId: row.section_id,
-    sectionTitle: row.section_title,
-    level: row.level,
-    summary: row.summary,
-    fullText: row.full_text,
-    charStart: row.char_start,
-    charEnd: row.char_end,
-    embedding: row.embedding ? JSON.parse(row.embedding) : undefined,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+      return {
+        id: row.id as string,
+        bibcode: row.bibcode as string,
+        sectionId: row.section_id as string,
+        sectionTitle: row.section_title as string,
+        level: row.level as number,
+        summary: row.summary as string,
+        fullText: row.full_text as string,
+        charStart: row.char_start as number,
+        charEnd: row.char_end as number,
+        embedding,
+        createdAt: row.created_at as number,
+        updatedAt: row.updated_at as number,
+      };
+    });
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT
+        id, bibcode, section_id, section_title, level, summary,
+        full_text, char_start, char_end, embedding, created_at, updated_at
+      FROM paper_sections
+      WHERE bibcode = ?
+      ORDER BY char_start ASC
+    `);
+
+    const rows = stmt.all(bibcode) as Array<{
+      id: string;
+      bibcode: string;
+      section_id: string;
+      section_title: string;
+      level: number;
+      summary: string;
+      full_text: string;
+      char_start: number;
+      char_end: number;
+      embedding: string | null;
+      created_at: number;
+      updated_at: number;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      bibcode: row.bibcode,
+      sectionId: row.section_id,
+      sectionTitle: row.section_title,
+      level: row.level,
+      summary: row.summary,
+      fullText: row.full_text,
+      charStart: row.char_start,
+      charEnd: row.char_end,
+      embedding: row.embedding ? JSON.parse(row.embedding) : undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
 }
 
 /**
@@ -235,7 +354,7 @@ export async function findRelevantSections(
   query: string,
   limit: number = 5
 ): Promise<Array<PaperSectionSummary & { relevanceScore: number }>> {
-  const sections = getSectionSummaries(bibcode);
+  const sections = await getSectionSummaries(bibcode);
 
   if (sections.length === 0) {
     return [];
@@ -296,10 +415,18 @@ function cosineSimilarity(a: number[], b: number[]): number {
 /**
  * Clear all section summaries for a paper (useful for regeneration)
  */
-export function clearSectionSummaries(bibcode: string): void {
-  const db = getSqlite();
-  const stmt = db.prepare('DELETE FROM paper_sections WHERE bibcode = ?');
-  stmt.run(bibcode);
+export async function clearSectionSummaries(bibcode: string): Promise<void> {
+  const driver = detectDriver();
+
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    await client.run('DELETE FROM paper_sections WHERE bibcode = $1', [bibcode]);
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare('DELETE FROM paper_sections WHERE bibcode = ?');
+    stmt.run(bibcode);
+  }
+
   logger.info('Cleared section summaries', { bibcode });
 }
 
