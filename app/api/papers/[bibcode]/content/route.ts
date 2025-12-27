@@ -332,8 +332,8 @@ export async function GET(
       if (sectionSummaries.length === 0 && paper.body && paper.body.length >= 100) {
         logger.info('No section summaries found, triggering background processing', { bibcode });
         // Trigger processing asynchronously (don't wait)
-        import('@/src/lib/db/ads-papers').then(({ processPaperSectionsAsync }) => {
-          processPaperSectionsAsync(paper.bibcode).catch((err) => {
+        import('@/src/lib/pipeline/section-summarization').then(({ processPaperSections }) => {
+          processPaperSections(paper.bibcode).catch((err) => {
             logger.warn('Background section processing failed', {
               bibcode,
               error: err instanceof Error ? err.message : String(err),
