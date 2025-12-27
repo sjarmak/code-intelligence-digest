@@ -8,6 +8,7 @@ import {
 } from '@/src/lib/db/paper-annotations';
 import { getBibcodeMetadata, getADSUrl, getArxivUrl } from '@/src/lib/ads/client';
 import { fetchPaperContent, extractArxivId, parseAr5ivHtml } from '@/src/lib/ar5iv';
+import { getSectionSummaries } from '@/src/lib/db/paper-sections';
 import { logger } from '@/src/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -118,6 +119,37 @@ export async function GET(
           originalSource = 'ads';
         }
 
+        // Get section summaries if available
+        let sectionSummaries: Array<{
+          sectionId: string;
+          sectionTitle: string;
+          level: number;
+          summary: string;
+          charStart: number;
+          charEnd: number;
+        }> = [];
+        try {
+          const summaries = await getSectionSummaries(bibcode);
+          logger.info('Fetched section summaries', {
+            bibcode,
+            count: summaries.length,
+            sectionTitles: summaries.map(s => s.sectionTitle),
+          });
+          sectionSummaries = summaries.map((s) => ({
+            sectionId: s.sectionId,
+            sectionTitle: s.sectionTitle,
+            level: s.level,
+            summary: s.summary,
+            charStart: s.charStart,
+            charEnd: s.charEnd,
+          }));
+        } catch (error) {
+          logger.warn('Failed to fetch section summaries', {
+            bibcode,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
         return NextResponse.json({
           source: originalSource, // Return original source, not 'cached'
           html: cached.htmlContent,
@@ -128,6 +160,7 @@ export async function GET(
           sections,
           figures,
           tableOfContents,
+          sectionSummaries, // Include section summaries
           bibcode,
           arxivId: extractArxivId(bibcode),
           adsUrl: getADSUrl(bibcode),
@@ -270,6 +303,51 @@ export async function GET(
       figuresCount: content.figures.length,
     });
 
+    // Get section summaries if available
+    let sectionSummaries: Array<{
+      sectionId: string;
+      sectionTitle: string;
+      level: number;
+      summary: string;
+      charStart: number;
+      charEnd: number;
+    }> = [];
+    try {
+      const summaries = await getSectionSummaries(bibcode);
+      logger.info('Fetched section summaries', {
+        bibcode,
+        count: summaries.length,
+        sectionTitles: summaries.map(s => s.sectionTitle),
+      });
+      sectionSummaries = summaries.map((s) => ({
+        sectionId: s.sectionId,
+        sectionTitle: s.sectionTitle,
+        level: s.level,
+        summary: s.summary,
+        charStart: s.charStart,
+        charEnd: s.charEnd,
+      }));
+
+      // If no sections exist but paper has body, trigger processing in background
+      if (sectionSummaries.length === 0 && paper.body && paper.body.length >= 100) {
+        logger.info('No section summaries found, triggering background processing', { bibcode });
+        // Trigger processing asynchronously (don't wait)
+        import('@/src/lib/db/ads-papers').then(({ processPaperSectionsAsync }) => {
+          processPaperSectionsAsync(paper.bibcode).catch((err) => {
+            logger.warn('Background section processing failed', {
+              bibcode,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to fetch section summaries', {
+        bibcode,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     return NextResponse.json({
       source: content.source,
       html: content.html,
@@ -279,6 +357,7 @@ export async function GET(
       sections: content.sections,
       figures: content.figures,
       tableOfContents: content.tableOfContents,
+      sectionSummaries, // Include section summaries
       bibcode,
       arxivId: extractArxivId(bibcode),
       adsUrl: getADSUrl(bibcode),

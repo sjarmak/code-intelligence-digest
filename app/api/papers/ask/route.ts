@@ -227,7 +227,7 @@ export async function POST(request: NextRequest) {
             }
 
             // Try to use section-based context if sections are available
-            const sections = getSectionSummaries(p.bibcode);
+            const sections = await getSectionSummaries(p.bibcode);
             let paperContext: string;
 
             if (sections.length > 0) {
