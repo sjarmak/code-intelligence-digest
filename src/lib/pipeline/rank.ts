@@ -207,9 +207,50 @@ export async function rankCategory(
     return [];
   }
 
-  // Build BM25 index
+  // Pre-filter to reduce items before expensive operations
+  logger.info(`Starting early filtering for ${recentItems.length} items`);
+
+  // 1. Filter by minimum content length (avoid empty/spam items)
+  const minContentLength = 50;
+  const contentFiltered = recentItems.filter(item => {
+    const contentLength = (item.title + (item.summary || "") + (item.contentSnippet || "")).length;
+    if (contentLength < minContentLength) {
+      logger.debug(`Pre-filtering insufficient content: "${item.title}"`);
+      return false;
+    }
+    return true;
+  });
+
+  logger.info(`Content pre-filter: ${recentItems.length} → ${contentFiltered.length} items`);
+
+  // 2. Load scores early and filter by quality
+  const itemIds = contentFiltered.map(item => item.id);
+  logger.debug(`[RANK] Loading scores for ${itemIds.length} items`);
+  const preComputedScores = await loadScoresForItems(itemIds);
+  logger.debug(`[RANK] Loaded scores for ${Object.keys(preComputedScores).length} items`);
+
+  const qualityFiltered = contentFiltered.filter(item => {
+    const score = preComputedScores[item.id];
+    if (score) {
+      // Filter off-topic items
+      if (score.llm_tags.includes("off-topic")) {
+        logger.debug(`Pre-filtering off-topic: "${item.title}"`);
+        return false;
+      }
+      // Filter very low relevance items (< 3/10)
+      if (score.llm_relevance < 3) {
+        logger.debug(`Pre-filtering low relevance: "${item.title}" (${score.llm_relevance})`);
+        return false;
+      }
+    }
+    return true;
+  });
+
+  logger.info(`Quality pre-filter: ${contentFiltered.length} → ${qualityFiltered.length} items`);
+
+  // Build BM25 index with filtered items
   const bm25 = new BM25Index();
-  bm25.addDocuments(recentItems);
+  bm25.addDocuments(qualityFiltered);  // Use filtered items instead of recentItems
   // Parse query string into terms
   const queryTerms = config.query
     .toLowerCase()
@@ -217,12 +258,6 @@ export async function rankCategory(
     .filter((t) => t.length > 0);
   const bm25Scores = bm25.score(queryTerms);
   const bm25Normalized = bm25.normalizeScores(bm25Scores);
-
-  // Load pre-computed scores from database (latest scores for each item)
-  const itemIds = recentItems.map((item) => item.id);
-  logger.debug(`[RANK] Loading scores for ${itemIds.length} items`);
-  const preComputedScores = await loadScoresForItems(itemIds);
-  logger.debug(`[RANK] Loaded scores for ${Object.keys(preComputedScores).length} items`);
 
   // Convert to LLMScoreResult format expected by the ranking logic
   const llmScores: Record<string, { relevance: number; usefulness: number; tags: string[] }> = {};
@@ -237,8 +272,8 @@ export async function rankCategory(
     }
   }
 
-  // Compute all scores and combine
-  const rankedItems: RankedItem[] = recentItems.map((item) => {
+  // Compute all scores and combine (use qualityFiltered instead of recentItems)
+  const rankedItems: RankedItem[] = qualityFiltered.map((item) => {
     // Use pre-computed BM25 score if available, otherwise compute it
     const preComputedScore = preComputedScores[item.id];
     const bm25Score = preComputedScore?.bm25_score !== undefined

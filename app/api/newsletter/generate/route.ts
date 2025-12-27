@@ -164,7 +164,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       // Calculate days for ranking purposes (use the range span)
       periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
     } else {
-      periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 90;
+      periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 60;  // Reduced from 90
     }
 
     // Check request size limits
@@ -188,14 +188,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       allItems.push(...items);
     }
 
-    // Step 2: Rank candidates
-    const rankedPerCategory = await Promise.all(
-      req.categories.map(async (category) => {
-        const categoryItems = allItems.filter((item) => item.category === category);
-        const ranked = await rankCategory(categoryItems, category as Category, periodDays);
-        return { category, items: ranked };
-      })
-    );
+    // Step 2: Rank candidates (sequential processing to reduce peak memory)
+    const rankedPerCategory: Array<{ category: string; items: RankedItem[] }> = [];
+
+    for (const category of req.categories) {
+      logger.info(`Processing category: ${category}`);
+      const categoryItems = allItems.filter((item) => item.category === category);
+      const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+      rankedPerCategory.push({ category, items: ranked });
+
+      // Allow GC between categories
+      if (global.gc) {
+        global.gc();
+      }
+    }
+
+    logger.info(`Completed processing ${rankedPerCategory.length} categories`);
 
     // Merge ALL ranked items from all categories (no pre-filtering)
     let mergedItems: RankedItem[] = [];
