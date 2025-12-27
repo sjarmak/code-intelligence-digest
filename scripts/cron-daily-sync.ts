@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 /**
- * Daily sync cron job script
+ * Hourly sync cron job script
  *
- * This script is designed to run daily via Render cron job service.
+ * This script is designed to run hourly via Render cron job service.
  * It:
- * 1. Runs the daily sync to fetch new items from Inoreader
+ * 1. Runs the hourly sync to fetch new items from Inoreader (last 4 hours)
  * 2. Populates embeddings for newly synced items (last 7 days)
  *
  * Usage:
@@ -16,6 +16,8 @@
  *   - INOREADER_CLIENT_SECRET
  *   - INOREADER_REFRESH_TOKEN
  *   - OPENAI_API_KEY (for embeddings)
+ *
+ * Expected API usage: 1-2 calls per sync (24-48 calls/day out of 1000 quota)
  */
 
 import * as dotenv from 'dotenv';
@@ -185,7 +187,7 @@ async function main() {
   };
 
   try {
-    logger.info('🔄 Starting daily sync cron job...');
+    logger.info('🔄 Starting hourly sync cron job...');
     logger.info(`Started at: ${new Date().toISOString()}`);
 
     // Step 1: Initialize database
@@ -193,9 +195,9 @@ async function main() {
     await initializeDatabase();
     logger.info('✅ Database initialized');
 
-    // Step 2: Run daily sync
+    // Step 2: Run hourly sync (fetches last 4 hours)
     // The sync will automatically detect and resume paused state if it exists
-    logger.info('\n🔄 Running daily sync...');
+    logger.info('\n🔄 Running hourly sync...');
     const syncResult = await runDailySync();
 
     stats.sync = {
@@ -225,11 +227,11 @@ async function main() {
     // Print summary
     const totalDuration = Date.now() - overallStartTime;
     console.log('\n' + '='.repeat(60));
-    console.log('📊 Daily Sync Cron Job Summary');
+    console.log('📊 Hourly Sync Cron Job Summary');
     console.log('='.repeat(60));
     console.log(`Sync Status:        ${stats.sync.success ? '✅ Success' : stats.sync.paused ? '⏸️  Paused' : '❌ Failed'}`);
     console.log(`Items Added:        ${stats.sync.itemsAdded}`);
-    console.log(`API Calls Used:     ${stats.sync.apiCallsUsed}/100`);
+    console.log(`API Calls Used:     ${stats.sync.apiCallsUsed}/1000`);
     if (stats.sync.error) {
       console.log(`Sync Error:         ${stats.sync.error}`);
     }
@@ -247,7 +249,7 @@ async function main() {
       process.exit(1);
     }
 
-    logger.info('✅ Daily sync cron job completed successfully');
+    logger.info('✅ Hourly sync cron job completed successfully');
   } catch (error) {
     logger.error('❌ Cron job failed with error', error);
     console.error('\n❌ Cron job failed:', error);
