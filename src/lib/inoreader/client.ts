@@ -1,10 +1,13 @@
 /**
  * Inoreader API client
  * Adapted from /Users/sjarmak/research-agent/src/lib/inoreader/client.ts
+ *
+ * All API calls are automatically tracked in the global budget to prevent exceeding the 100/day limit.
  */
 
 import { InoreaderStreamResponse, InoreaderTokenResponse } from "./types.js";
 import { logger } from "../logger";
+import { getGlobalApiBudget, incrementGlobalApiCalls } from "../db/index";
 
 export interface FetchStreamOptions {
   n?: number;
@@ -90,6 +93,28 @@ export class InoreaderClient {
     streamId: string,
     options: FetchStreamOptions = {}
   ): Promise<InoreaderStreamResponse> {
+    // Check budget before making call with conservative threshold
+    try {
+      const budget = await getGlobalApiBudget();
+      const percentUsed = Math.round((budget.callsUsed / budget.quotaLimit) * 100);
+      const PAUSE_THRESHOLD = Math.max(50, Math.floor(budget.quotaLimit * 0.05));
+
+      if (budget.remaining <= 0) {
+        throw new Error(
+          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used (${percentUsed}%). Please wait until the limit resets.`
+        );
+      }
+
+      // Warn at high usage
+      if (budget.remaining <= PAUSE_THRESHOLD) {
+        logger.warn(`[INOREADER-CLIENT] ⚠️  Low API budget: ${budget.remaining} calls remaining (${percentUsed}% used)`);
+      }
+    } catch (error) {
+      // If budget check fails (e.g., database not initialized), log warning but continue
+      // This allows the client to work in environments where budget tracking isn't available
+      logger.warn("Could not check API budget, proceeding anyway", { error });
+    }
+
     const token = await this.getAccessToken();
     const encodedStreamId = encodeURIComponent(streamId);
 
@@ -117,6 +142,13 @@ export class InoreaderClient {
         );
       }
 
+      // Track successful API call
+      try {
+        await incrementGlobalApiCalls(1);
+      } catch (error) {
+        logger.warn("Could not track API call in budget", { error });
+      }
+
       return (await response.json()) as InoreaderStreamResponse;
     } catch (error) {
       logger.error(`Error fetching stream contents for ${streamId}`, error);
@@ -128,6 +160,18 @@ export class InoreaderClient {
    * Fetch user info from Inoreader
    */
   async getUserInfo(): Promise<Record<string, unknown>> {
+    // Check budget before making call
+    try {
+      const budget = await getGlobalApiBudget();
+      if (budget.remaining <= 0) {
+        throw new Error(
+          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
+        );
+      }
+    } catch (error) {
+      logger.warn("Could not check API budget, proceeding anyway", { error });
+    }
+
     const token = await this.getAccessToken();
     const url = "https://www.inoreader.com/reader/api/0/user-info";
 
@@ -145,6 +189,13 @@ export class InoreaderClient {
         );
       }
 
+      // Track successful API call
+      try {
+        await incrementGlobalApiCalls(1);
+      } catch (error) {
+        logger.warn("Could not track API call in budget", { error });
+      }
+
       return await response.json();
     } catch (error) {
       logger.error("Error fetching user info", error);
@@ -156,6 +207,18 @@ export class InoreaderClient {
    * Fetch subscription list with folder/label information
    */
   async getSubscriptions(): Promise<Record<string, unknown>> {
+    // Check budget before making call
+    try {
+      const budget = await getGlobalApiBudget();
+      if (budget.remaining <= 0) {
+        throw new Error(
+          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
+        );
+      }
+    } catch (error) {
+      logger.warn("Could not check API budget, proceeding anyway", { error });
+    }
+
     const token = await this.getAccessToken();
     const url = "https://www.inoreader.com/reader/api/0/subscription/list";
 
@@ -175,6 +238,13 @@ export class InoreaderClient {
         );
       }
 
+      // Track successful API call
+      try {
+        await incrementGlobalApiCalls(1);
+      } catch (error) {
+        logger.warn("Could not track API call in budget", { error });
+      }
+
       return await response.json();
     } catch (error) {
       logger.error("Error fetching subscriptions", error);
@@ -186,6 +256,18 @@ export class InoreaderClient {
    * Fetch tags/labels with their stream IDs
    */
   async getTags(): Promise<Record<string, unknown>> {
+    // Check budget before making call
+    try {
+      const budget = await getGlobalApiBudget();
+      if (budget.remaining <= 0) {
+        throw new Error(
+          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
+        );
+      }
+    } catch (error) {
+      logger.warn("Could not check API budget, proceeding anyway", { error });
+    }
+
     const token = await this.getAccessToken();
     const url = "https://www.inoreader.com/reader/api/0/tag/list";
 
@@ -203,6 +285,13 @@ export class InoreaderClient {
         throw new Error(
           `Failed to fetch tags: ${response.status} ${response.statusText} - ${errorText}`
         );
+      }
+
+      // Track successful API call
+      try {
+        await incrementGlobalApiCalls(1);
+      } catch (error) {
+        logger.warn("Could not track API call in budget", { error });
       }
 
       return await response.json();

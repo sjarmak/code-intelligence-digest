@@ -192,7 +192,15 @@ export class BM25Index {
   /**
    * Add documents to the index
    */
-  addDocuments(items: Array<{ id: string; title?: string; summary?: string; sourceTitle?: string; categories?: string[] }>) {
+  addDocuments(items: Array<{
+    id: string;
+    title?: string;
+    summary?: string;
+    contentSnippet?: string;
+    fullText?: string;
+    sourceTitle?: string;
+    categories?: string[]
+  }>) {
     this.documents.clear();
     this.docFreq.clear();
     this.docLengths.clear();
@@ -277,11 +285,21 @@ export class BM25Index {
 
   /**
    * Convert item to searchable document text
+   * Includes title, summary, contentSnippet, fullText (when available), sourceTitle, and categories
    */
-  private itemToDocument(item: { title?: string; summary?: string; sourceTitle?: string; categories?: string[] }): string {
+  private itemToDocument(item: {
+    title?: string;
+    summary?: string;
+    contentSnippet?: string;
+    fullText?: string;
+    sourceTitle?: string;
+    categories?: string[]
+  }): string {
     const parts = [
       item.title || "",
       item.summary || "",
+      item.contentSnippet || "", // Include content snippet for better keyword matching
+      item.fullText || "", // Include full text when available (especially for research papers)
       item.sourceTitle || "",
       (item.categories || []).join(" "),
     ];

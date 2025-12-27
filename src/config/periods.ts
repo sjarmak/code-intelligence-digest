@@ -15,7 +15,7 @@ export interface PeriodConfig {
 export const PERIOD_CONFIG: Record<Exclude<Period, 'custom'>, PeriodConfig> = {
   day: {
     label: 'Daily',
-    days: 2, // 2 days to account for daily cron job running at 9 PM (2 AM UTC)
+    days: 2, // Last 48 hours
     halfLifeDays: 0.5, // 12 hours
     maxPerSource: 1, // Stricter for daily
   },

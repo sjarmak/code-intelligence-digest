@@ -1,6 +1,6 @@
 /**
  * API endpoint: GET /api/admin/api-budget
- * 
+ *
  * Check global Inoreader API call budget across all syncs.
  * Resets at midnight UTC.
  */
@@ -15,10 +15,10 @@ export async function GET() {
 
   try {
     await initializeDatabase();
-    
-    const budget = getGlobalApiBudget();
+
+    const budget = await getGlobalApiBudget();
     const today = new Date().toISOString().split('T')[0];
-    
+
     return NextResponse.json({
       date: today,
       callsUsed: budget.callsUsed,

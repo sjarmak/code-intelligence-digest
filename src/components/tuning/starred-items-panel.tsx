@@ -11,6 +11,7 @@ interface StarredItem {
   url: string;
   sourceTitle: string;
   publishedAt: string;
+  createdAt?: string | null;
   summary?: string;
   relevanceRating: number | null;
   notes: string | null;
@@ -197,7 +198,7 @@ export default function StarredItemsPanel() {
               <div className="flex items-center gap-2 text-xs text-muted mb-1">
                 <span className="font-medium">{item.sourceTitle}</span>
                 <span>•</span>
-                <span>{new Date(item.publishedAt).toLocaleDateString()}</span>
+                <span>{new Date(item.createdAt || item.publishedAt).toLocaleDateString()}</span>
               </div>
 
               {item.summary && (

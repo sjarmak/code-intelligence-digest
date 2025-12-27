@@ -19,6 +19,7 @@ export interface FeedItem {
   url: string;
   author?: string;
   publishedAt: Date;
+  createdAt?: Date; // When the item was added to the database (for daily view filtering)
   summary?: string;
   contentSnippet?: string;
   categories: string[];

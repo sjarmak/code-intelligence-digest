@@ -9,6 +9,7 @@ interface RankedItemResponse {
   url: string;
   sourceTitle: string;
   publishedAt: string;
+  createdAt?: string | null;
   summary?: string;
   contentSnippet?: string;
   categories?: string[];
@@ -108,7 +109,7 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
   return (
     <div className="space-y-3 w-full">
       {items.map((item, index) => (
-        <ItemCard key={item.id} item={item} rank={index + 1} />
+        <ItemCard key={item.id} item={item} rank={index + 1} period={period} />
       ))}
     </div>
   );

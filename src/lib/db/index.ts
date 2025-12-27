@@ -17,6 +17,9 @@ let initialized = false;
 
 /**
  * Get or create SQLite database connection (development only)
+ *
+ * NOTE: SQLite connections are cached. If you're seeing stale data,
+ * you may need to close and reopen the connection.
  */
 export function getSqlite() {
   if (!sqlite) {
@@ -32,10 +35,24 @@ export function getSqlite() {
     // Enable foreign keys
     sqlite.pragma("foreign_keys = ON");
 
+    // Enable WAL mode for better concurrency and to avoid stale reads
+    sqlite.pragma("journal_mode = WAL");
+
     logger.info(`Database initialized at ${dbPath}`);
   }
 
   return sqlite;
+}
+
+/**
+ * Close and reset the SQLite connection (useful for testing or fixing stale data)
+ */
+export function resetSqliteConnection() {
+  if (sqlite) {
+    sqlite.close();
+    sqlite = null;
+    logger.info("SQLite connection closed and reset");
+  }
 }
 
 /**
@@ -204,7 +221,7 @@ async function initializeSqliteSchema() {
         date TEXT PRIMARY KEY,
         calls_used INTEGER DEFAULT 0,
         last_updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        quota_limit INTEGER DEFAULT 100
+        quota_limit INTEGER DEFAULT 1000
       );
     `);
 
@@ -338,22 +355,26 @@ async function initializeSqliteSchema() {
  * Tracks all Inoreader API calls made in a single day
  */
 
-export function getGlobalApiBudget(): { callsUsed: number; remaining: number; quotaLimit: number } {
-  const sqlite = getSqlite();
+export async function getGlobalApiBudget(): Promise<{ callsUsed: number; remaining: number; quotaLimit: number }> {
+  const client = await getDbClient();
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
-  const row = sqlite
-    .prepare('SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?')
-    .get(today) as { calls_used: number; quota_limit: number } | undefined;
+  const result = await client.query(
+    'SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?',
+    [today]
+  );
 
-  if (!row) {
-    // Initialize for today
-    sqlite
-      .prepare('INSERT OR IGNORE INTO global_api_budget (date, calls_used) VALUES (?, 0)')
-      .run(today);
-    return { callsUsed: 0, remaining: 100, quotaLimit: 100 };
+  if (result.rows.length === 0) {
+    // Initialize for today with default quota of 1000
+    const driver = detectDriver();
+    const insertSql = driver === 'postgres'
+      ? 'INSERT INTO global_api_budget (date, calls_used, quota_limit) VALUES ($1, 0, 1000) ON CONFLICT (date) DO NOTHING'
+      : 'INSERT OR IGNORE INTO global_api_budget (date, calls_used, quota_limit) VALUES (?, 0, 1000)';
+    await client.run(insertSql, [today]);
+    return { callsUsed: 0, remaining: 1000, quotaLimit: 1000 };
   }
 
+  const row = result.rows[0] as { calls_used: number; quota_limit: number };
   return {
     callsUsed: row.calls_used,
     remaining: row.quota_limit - row.calls_used,
@@ -361,21 +382,26 @@ export function getGlobalApiBudget(): { callsUsed: number; remaining: number; qu
   };
 }
 
-export function incrementGlobalApiCalls(count: number): { callsUsed: number; remaining: number } {
-  const sqlite = getSqlite();
+export async function incrementGlobalApiCalls(count: number): Promise<{ callsUsed: number; remaining: number }> {
+  const client = await getDbClient();
+  const driver = detectDriver();
   const today = new Date().toISOString().split('T')[0];
 
-  sqlite
-    .prepare(`
-      INSERT INTO global_api_budget (date, calls_used)
-      VALUES (?, ?)
-      ON CONFLICT(date) DO UPDATE SET
-        calls_used = calls_used + ?,
-        last_updated_at = strftime('%s', 'now')
-    `)
-    .run(today, count, count);
+  const updateSql = driver === 'postgres'
+    ? `INSERT INTO global_api_budget (date, calls_used, last_updated_at)
+       VALUES ($1, $2, EXTRACT(EPOCH FROM NOW())::INTEGER)
+       ON CONFLICT(date) DO UPDATE SET
+         calls_used = global_api_budget.calls_used + $3,
+         last_updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER`
+    : `INSERT INTO global_api_budget (date, calls_used)
+       VALUES (?, ?)
+       ON CONFLICT(date) DO UPDATE SET
+         calls_used = calls_used + ?,
+         last_updated_at = strftime('%s', 'now')`;
 
-  const budget = getGlobalApiBudget();
+  await client.run(updateSql, [today, count, count]);
+
+  const budget = await getGlobalApiBudget();
   return {
     callsUsed: budget.callsUsed,
     remaining: budget.remaining,
@@ -387,20 +413,21 @@ export function incrementGlobalApiCalls(count: number): { callsUsed: number; rem
  * First run: fetch from API (1 call)
  * Subsequent runs: retrieve from cache (0 calls)
  */
-export function getCachedUserId(): string | null {
-  const sqlite = getSqlite();
-  const row = sqlite
-    .prepare('SELECT user_id FROM user_cache WHERE key = ?')
-    .get('inoreader_user_id') as { user_id: string } | undefined;
+export async function getCachedUserId(): Promise<string | null> {
+  const client = await getDbClient();
+  const result = await client.query(
+    'SELECT user_id FROM user_cache WHERE key = ?',
+    ['inoreader_user_id']
+  );
+  const row = result.rows[0] as { user_id: string } | undefined;
   return row?.user_id || null;
 }
 
-export function setCachedUserId(userId: string): void {
-  const sqlite = getSqlite();
-  sqlite
-    .prepare(`
-      INSERT OR REPLACE INTO user_cache (key, user_id)
-      VALUES (?, ?)
-    `)
-    .run('inoreader_user_id', userId);
+export async function setCachedUserId(userId: string): Promise<void> {
+  const client = await getDbClient();
+  const driver = detectDriver();
+  const insertSql = driver === 'postgres'
+    ? 'INSERT INTO user_cache (key, user_id, cached_at) VALUES ($1, $2, EXTRACT(EPOCH FROM NOW())::INTEGER) ON CONFLICT (key) DO UPDATE SET user_id = $2, cached_at = EXTRACT(EPOCH FROM NOW())::INTEGER'
+    : 'INSERT OR REPLACE INTO user_cache (key, user_id) VALUES (?, ?)';
+  await client.run(insertSql, ['inoreader_user_id', userId]);
 }
