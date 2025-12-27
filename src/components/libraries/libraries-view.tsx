@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, BookOpen } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { ChevronDown, ChevronRight, Plus, BookOpen, FileText, Tag } from 'lucide-react';
+import { PaperReaderModal } from './paper-reader-modal';
 
 interface LibraryItemMetadata {
   bibcode: string;
@@ -53,6 +54,48 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const [libraryData, setLibraryData] = useState<Record<string, LibrariesResponse>>({});
   const [processingBibcode, setProcessingBibcode] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
+
+  // Reader modal state
+  const [readerOpen, setReaderOpen] = useState(false);
+  const [readerBibcode, setReaderBibcode] = useState<string | null>(null);
+  const [readerTitle, setReaderTitle] = useState<string | undefined>();
+
+  // Get all papers in current library for navigation
+  const getCurrentLibraryPapers = useCallback(() => {
+    if (!expandedLibrary || !libraryData[expandedLibrary]) return [];
+    return libraryData[expandedLibrary].items;
+  }, [expandedLibrary, libraryData]);
+
+  // Open reader for a paper
+  const openReader = (bibcode: string, title?: string) => {
+    setReaderBibcode(bibcode);
+    setReaderTitle(title);
+    setReaderOpen(true);
+  };
+
+  // Navigate to previous/next paper
+  const navigatePaper = (direction: 'prev' | 'next') => {
+    const papers = getCurrentLibraryPapers();
+    const currentIndex = papers.findIndex((p) => p.bibcode === readerBibcode);
+    if (currentIndex === -1) return;
+
+    const newIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
+    if (newIndex >= 0 && newIndex < papers.length) {
+      const paper = papers[newIndex];
+      setReaderBibcode(paper.bibcode);
+      setReaderTitle(paper.title);
+    }
+  };
+
+  // Check if navigation is available
+  const getNavigationState = () => {
+    const papers = getCurrentLibraryPapers();
+    const currentIndex = papers.findIndex((p) => p.bibcode === readerBibcode);
+    return {
+      hasPrevious: currentIndex > 0,
+      hasNext: currentIndex < papers.length - 1,
+    };
+  };
 
   // Fetch all available libraries
   const fetchAllLibraries = async () => {
@@ -273,6 +316,14 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                   )}
                                   <div className="flex gap-2">
                                     <button
+                                      onClick={() => openReader(item.bibcode, item.title)}
+                                      title="Open in reader"
+                                      className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors whitespace-nowrap flex items-center gap-1"
+                                    >
+                                      <FileText className="w-3 h-3" />
+                                      Read
+                                    </button>
+                                    <button
                                       onClick={() => onAddPaperToQA?.({ bibcode: item.bibcode, title: item.title })}
                                       title="Add to Q&A context"
                                       className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap"
@@ -346,6 +397,19 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
         <div className="border border-surface-border rounded-lg p-6 text-center text-muted bg-surface">
           No libraries found. Check your ADS_API_TOKEN configuration.
         </div>
+      )}
+
+      {/* Paper Reader Modal */}
+      {readerOpen && readerBibcode && (
+        <PaperReaderModal
+          bibcode={readerBibcode}
+          title={readerTitle}
+          onClose={() => setReaderOpen(false)}
+          onPrevious={() => navigatePaper('prev')}
+          onNext={() => navigatePaper('next')}
+          hasPrevious={getNavigationState().hasPrevious}
+          hasNext={getNavigationState().hasNext}
+        />
       )}
     </div>
   );
