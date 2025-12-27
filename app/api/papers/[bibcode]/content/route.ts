@@ -259,6 +259,7 @@ export async function GET(
     logger.info('Fetching paper content', {
       bibcode,
       hasAdsBody: !!paper.body,
+      bodyLength: paper.body?.length || 0,
       hasAbstract: !!paper.abstract,
       arxivUrl: paper.arxivUrl,
     });
@@ -279,8 +280,12 @@ export async function GET(
         hasAbstract: !!paper.abstract,
       });
 
-      // If we have abstract, return abstract-only content
-      if (paper.abstract) {
+      // Prefer ADS body over abstract if available
+      if (paper.body && paper.body.length > 0) {
+        logger.warn('Using ADS body after fetchPaperContent failed', { bibcode });
+        const { adsBodyToHtml } = await import('@/src/lib/ar5iv');
+        content = adsBodyToHtml(paper.body, paper.abstract);
+      } else if (paper.abstract) {
         logger.warn('Falling back to abstract-only content', { bibcode });
         const { abstractToHtml } = await import('@/src/lib/ar5iv');
         content = abstractToHtml(paper.abstract, paper.title);
