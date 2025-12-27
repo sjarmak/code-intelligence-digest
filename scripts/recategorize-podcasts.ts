@@ -55,7 +55,12 @@ async function main() {
   `;
 
   const result = await db.query(query);
-  const candidates = result.rows;
+  const candidates = result.rows as Array<{
+    id: string;
+    title: string;
+    category: string;
+    source_title: string;
+  }>;
 
   console.log(`Found ${candidates.length} potential podcast items to recategorize\n`);
 
