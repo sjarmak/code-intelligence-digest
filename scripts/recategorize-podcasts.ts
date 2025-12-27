@@ -9,11 +9,18 @@ import { getDbClient } from '../src/lib/db/driver';
 import { logger } from '../src/lib/logger';
 
 /**
- * Detect if a title indicates a podcast
+ * Detect if a title or source indicates a podcast
  */
-function isPodcastTitle(title: string): boolean {
-  const lower = title.toLowerCase();
+function isPodcast(title: string, sourceTitle: string): boolean {
+  const lowerTitle = title.toLowerCase();
+  const lowerSource = sourceTitle.toLowerCase();
 
+  // First check if source title contains "podcast"
+  if (lowerSource.includes('podcast')) {
+    return true;
+  }
+
+  // Then check title patterns
   const podcastPatterns = [
     /^podcast:/i,
     /\bpodcast\b.*episode/i,
@@ -27,7 +34,7 @@ function isPodcastTitle(title: string): boolean {
     }
   }
 
-  if (lower.startsWith('podcast:') || lower.includes('podcast:')) {
+  if (lowerTitle.startsWith('podcast:') || lowerTitle.includes('podcast:')) {
     return true;
   }
 
@@ -41,12 +48,14 @@ async function main() {
   const db = await getDbClient();
 
   // Find items that look like podcasts but aren't categorized as podcasts
+  // This includes checking BOTH source_title and title patterns
   const query = `
     SELECT id, title, category, source_title
     FROM items
     WHERE category != 'podcasts'
     AND (
-      title ILIKE 'podcast:%'
+      source_title ILIKE '%podcast%'
+      OR title ILIKE 'podcast:%'
       OR title ILIKE '%podcast%episode%'
       OR title ~* 'episode \\d+'
       OR title ~* '^ep\\.\\s*\\d+'
@@ -81,7 +90,7 @@ async function main() {
 
   let updated = 0;
   for (const item of candidates) {
-    if (isPodcastTitle(item.title)) {
+    if (isPodcast(item.title, item.source_title)) {
       await db.query(
         'UPDATE items SET category = $1, updated_at = extract(epoch from now())::integer WHERE id = $2',
         ['podcasts', item.id]
