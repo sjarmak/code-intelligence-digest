@@ -27,10 +27,10 @@ services:
     healthCheckPath: /api/health
 
   - type: cron
-    name: daily-sync
+    name: hourly-sync
     runtime: node
     region: oregon
-    schedule: "0 2 * * *"  # Run daily at 2 AM UTC
+    schedule: "0 * * * *"  # Run every hour at minute 0
     # Note: After deployment, manually trigger once from Render Dashboard ("Trigger Run" button)
     # to run immediately, then it will continue on schedule
     buildCommand: npm install

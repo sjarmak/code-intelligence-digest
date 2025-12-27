@@ -1,22 +1,23 @@
 /**
- * Daily sync strategy: fetch last 48 hours of items (fixed window)
+ * Hourly sync strategy: fetch last 4 hours of items (fixed window)
  *
  * Features:
- * - Always fetches last 48 hours regardless of database state (reliable)
+ * - Always fetches last 4 hours regardless of database state (reliable)
  * - Server-side filtering via `ot` parameter minimizes API calls
  * - Database handles deduplication (INSERT OR REPLACE / ON CONFLICT)
  * - Post-processing handles decomposition, categorization, etc.
  * - Resumable if interrupted by rate limits
  * - Tracks progress and continuation tokens
- * - Designed to fit within 100-call daily limit
+ * - Designed to fit within 1000-call daily limit
  *
- * Why 48 hours?
- * - Ensures we catch items even if sync misses a day
+ * Why 4 hours?
+ * - Since we sync hourly, 4 hours provides overlap to catch items even if one sync fails
  * - Overlap prevents gaps while still being efficient
  * - Server-side filtering means we only get items from that window
+ * - Smaller window = fewer items per sync = faster processing
  *
- * Expected cost: 1-3 API calls per sync
- * Remaining budget: 97+ calls for other uses
+ * Expected cost: 1-2 API calls per sync (24-48 calls/day)
+ * Remaining budget: 950+ calls for other uses
  */
 
 import { createInoreaderClient } from '../inoreader/client';
@@ -51,8 +52,8 @@ const VALID_CATEGORIES: Category[] = [
   'research',
 ];
 
-const SYNC_ID = 'daily-sync';
-const FALLBACK_HOURS_IF_EMPTY = 24; // Fallback window if database has no items
+const SYNC_ID = 'hourly-sync';
+const FALLBACK_HOURS_IF_EMPTY = 4; // Fallback window if database has no items (matches sync window)
 
 /**
  * Get current sync state from database
@@ -242,13 +243,15 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       syncSinceTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
       reason = `last ${lookbackDays} days (catch-up mode)`;
     } else {
-      // Normal mode: always fetch last 48 hours (fixed window)
+      // Normal mode: always fetch last 4 hours (fixed window)
+      // Since we sync hourly, 4 hours provides overlap to catch items even if one sync fails
       // This is more reliable than "newer than last sync" because:
       // 1. Doesn't depend on sync history
       // 2. Handles missed syncs gracefully
       // 3. Database deduplication prevents duplicates
       // 4. Server-side filtering (ot parameter) minimizes API calls
-      const SYNC_WINDOW_HOURS = 48;
+      // 5. Smaller window = fewer items per sync = faster processing
+      const SYNC_WINDOW_HOURS = 4;
       syncSinceTimestamp = Math.floor((Date.now() - SYNC_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
       reason = `last ${SYNC_WINDOW_HOURS} hours (fixed window)`;
     }
