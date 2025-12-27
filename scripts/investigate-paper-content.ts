@@ -61,15 +61,14 @@ async function investigate() {
 
       // Try to capture request body if it's a POST/PATCH
       if (['POST', 'PATCH', 'PUT'].includes(request.method())) {
-        request.postData().then((body) => {
-          if (body) {
-            try {
-              apiReq.requestBody = JSON.parse(body);
-            } catch {
-              apiReq.requestBody = body;
-            }
+        const postData = request.postData();
+        if (postData) {
+          try {
+            apiReq.requestBody = JSON.parse(postData);
+          } catch {
+            apiReq.requestBody = postData;
           }
-        });
+        }
       }
 
       apiRequests.push(apiReq);
@@ -220,7 +219,7 @@ async function investigate() {
 
       // Make direct API call to paper content endpoint
       const contentResponse = await page.evaluate(
-        async (baseUrl, bibcode) => {
+        async ({ baseUrl, bibcode }: { baseUrl: string; bibcode: string }) => {
           const encodedBibcode = encodeURIComponent(bibcode);
           const response = await fetch(`${baseUrl}/api/papers/${encodedBibcode}/content`);
           const data = await response.json();
@@ -231,9 +230,18 @@ async function investigate() {
             url: response.url,
           };
         },
-        baseUrl,
-        testBibcode,
-      );
+        { baseUrl, bibcode: testBibcode }
+      ) as {
+        status: number;
+        statusText: string;
+        data?: {
+          source?: string;
+          html?: string;
+          abstract?: string;
+          sections?: Array<unknown>;
+        };
+        url: string;
+      };
 
       console.log(`   API Status: ${contentResponse.status} ${contentResponse.statusText}`);
       console.log(`   Response source: ${contentResponse.data?.source || 'unknown'}`);
