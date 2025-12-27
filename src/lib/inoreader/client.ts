@@ -95,7 +95,7 @@ export class InoreaderClient {
   ): Promise<InoreaderStreamResponse> {
     // Check budget before making call with conservative threshold
     try {
-      const budget = getGlobalApiBudget();
+      const budget = await getGlobalApiBudget();
       const percentUsed = Math.round((budget.callsUsed / budget.quotaLimit) * 100);
       const PAUSE_THRESHOLD = Math.max(50, Math.floor(budget.quotaLimit * 0.05));
 
@@ -144,7 +144,7 @@ export class InoreaderClient {
 
       // Track successful API call
       try {
-        incrementGlobalApiCalls(1);
+        await incrementGlobalApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }
@@ -162,7 +162,7 @@ export class InoreaderClient {
   async getUserInfo(): Promise<Record<string, unknown>> {
     // Check budget before making call
     try {
-      const budget = getGlobalApiBudget();
+      const budget = await getGlobalApiBudget();
       if (budget.remaining <= 0) {
         throw new Error(
           `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
@@ -191,7 +191,7 @@ export class InoreaderClient {
 
       // Track successful API call
       try {
-        incrementGlobalApiCalls(1);
+        await incrementGlobalApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }
@@ -209,7 +209,7 @@ export class InoreaderClient {
   async getSubscriptions(): Promise<Record<string, unknown>> {
     // Check budget before making call
     try {
-      const budget = getGlobalApiBudget();
+      const budget = await getGlobalApiBudget();
       if (budget.remaining <= 0) {
         throw new Error(
           `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
@@ -240,7 +240,7 @@ export class InoreaderClient {
 
       // Track successful API call
       try {
-        incrementGlobalApiCalls(1);
+        await incrementGlobalApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }
@@ -258,7 +258,7 @@ export class InoreaderClient {
   async getTags(): Promise<Record<string, unknown>> {
     // Check budget before making call
     try {
-      const budget = getGlobalApiBudget();
+      const budget = await getGlobalApiBudget();
       if (budget.remaining <= 0) {
         throw new Error(
           `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
@@ -289,7 +289,7 @@ export class InoreaderClient {
 
       // Track successful API call
       try {
-        incrementGlobalApiCalls(1);
+        await incrementGlobalApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }
