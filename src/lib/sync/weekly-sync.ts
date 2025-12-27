@@ -133,7 +133,7 @@ export async function runWeeklySync(): Promise<{
 
   try {
     // Check global budget before starting
-    const budget = getGlobalApiBudget();
+    const budget = await getGlobalApiBudget();
     logger.info(`[WEEKLY-SYNC] Global API budget: ${budget.callsUsed}/${budget.quotaLimit} calls used`);
 
     if (budget.remaining <= 1) {
@@ -150,7 +150,7 @@ export async function runWeeklySync(): Promise<{
     }
 
     // Get user ID (cached, no API call)
-    let userId: string | null = getCachedUserId();
+    let userId: string | null = await getCachedUserId();
 
     if (!userId) {
       logger.debug('[WEEKLY-SYNC] User ID not cached. Fetching from API...');
@@ -163,7 +163,7 @@ export async function runWeeklySync(): Promise<{
       }
 
       // Cache it for future syncs
-      setCachedUserId(userId);
+      await setCachedUserId(userId);
       logger.info('[WEEKLY-SYNC] Cached user ID for future syncs');
 
       callsUsed++;
@@ -256,7 +256,7 @@ export async function runWeeklySync(): Promise<{
       });
 
       // Safety: check global budget after each batch
-      const currentBudget = getGlobalApiBudget();
+      const currentBudget = await getGlobalApiBudget();
       logger.debug(`[WEEKLY-SYNC] Global budget after batch: ${currentBudget.callsUsed}/${currentBudget.quotaLimit}`);
 
       if (currentBudget.remaining <= 1) {

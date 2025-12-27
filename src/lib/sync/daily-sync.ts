@@ -184,7 +184,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
   try {
     // Check global budget before starting
-    const budget = getGlobalApiBudget();
+    const budget = await getGlobalApiBudget();
     const percentUsed = Math.round((budget.callsUsed / budget.quotaLimit) * 100);
     logger.info(`[DAILY-SYNC] Global API budget: ${budget.callsUsed}/${budget.quotaLimit} calls used (${percentUsed}%)`);
 
@@ -213,7 +213,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     }
 
     // Get user ID (cached, no API call if available)
-    let userId: string | null = getCachedUserId();
+    let userId: string | null = await getCachedUserId();
 
     if (!userId) {
       logger.debug('[DAILY-SYNC] User ID not cached. Fetching from API...');
@@ -225,7 +225,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       }
 
       // Cache it for future syncs
-      setCachedUserId(userId);
+      await setCachedUserId(userId);
       logger.info('[DAILY-SYNC] Cached user ID for future syncs');
 
       callsUsed++;
@@ -287,7 +287,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       // Note: API call is automatically tracked by InoreaderClient
 
       // Check budget after each call with conservative threshold
-      const currentBudget = getGlobalApiBudget();
+      const currentBudget = await getGlobalApiBudget();
       const currentPercentUsed = Math.round((currentBudget.callsUsed / currentBudget.quotaLimit) * 100);
       const PAUSE_THRESHOLD = Math.max(50, Math.floor(currentBudget.quotaLimit * 0.05));
 
@@ -442,7 +442,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     await clearSyncState();
 
     // Final efficiency report
-    const finalBudget = getGlobalApiBudget();
+    const finalBudget = await getGlobalApiBudget();
     const finalPercentUsed = Math.round((finalBudget.callsUsed / finalBudget.quotaLimit) * 100);
     const avgItemsPerCall = totalItemsAdded > 0 ? (totalItemsAdded / callsUsed).toFixed(1) : '0';
 
