@@ -150,21 +150,31 @@ async function syncFromProduction(options: SyncOptions): Promise<void> {
         for (let i = 0; i < itemIds.length; i += BATCH_SIZE) {
           const batch = itemIds.slice(i, i + BATCH_SIZE);
           const embeddingsResult = await prodPool.query(
-            'SELECT item_id, embedding FROM embeddings WHERE item_id = ANY($1)',
+            'SELECT item_id, embedding FROM item_embeddings WHERE item_id = ANY($1)',
             [batch]
           );
 
           const embeddings = embeddingsResult.rows;
 
           const embeddingInsert = localDb.prepare(`
-            INSERT OR REPLACE INTO embeddings (item_id, embedding)
-            VALUES (?, ?)
+            INSERT OR REPLACE INTO item_embeddings (item_id, embedding, generated_at)
+            VALUES (?, ?, ?)
           `);
 
           for (const emb of embeddings) {
-            // Convert PostgreSQL array to JSON string for SQLite
-            const embeddingJson = JSON.stringify(emb.embedding);
-            embeddingInsert.run(emb.item_id, embeddingJson);
+            // Convert pgvector to JSON array for SQLite
+            // pgvector may return as string '[0.1,0.2,...]' or as array
+            let embeddingArray = emb.embedding;
+            if (typeof emb.embedding === 'string') {
+              // Parse pgvector string format
+              embeddingArray = emb.embedding
+                .replace(/[\[\]]/g, '')
+                .split(',')
+                .map((s: string) => parseFloat(s.trim()));
+            }
+            const embeddingJson = JSON.stringify(embeddingArray);
+            const now = Math.floor(Date.now() / 1000);
+            embeddingInsert.run(emb.item_id, embeddingJson, now);
             totalEmbeddings++;
           }
         }
@@ -172,10 +182,11 @@ async function syncFromProduction(options: SyncOptions): Promise<void> {
         logger.info(`✅ Synced ${totalEmbeddings} embeddings\n`);
       }
     } catch (error) {
-      const err = error as { code?: string };
+      const err = error as { code?: string; message?: string };
       if (err.code === '42P01') {
-        logger.warn('⚠️  Embeddings table does not exist in production - skipping embeddings sync');
+        logger.warn('⚠️  item_embeddings table does not exist in production - skipping embeddings sync');
       } else {
+        logger.error('Error syncing embeddings:', err.message);
         throw error;
       }
     }
