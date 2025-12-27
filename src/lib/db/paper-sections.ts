@@ -182,12 +182,6 @@ export async function generateAndStoreSectionEmbeddings(bibcode: string): Promis
     sectionCount: sections.length,
   });
 
-  const updateStmt = db.prepare(`
-    UPDATE paper_sections
-    SET embedding = ?, updated_at = ?
-    WHERE id = ?
-  `);
-
   const now = Math.floor(Date.now() / 1000);
 
   if (driver === 'postgres') {
