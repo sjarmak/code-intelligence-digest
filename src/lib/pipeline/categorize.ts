@@ -16,9 +16,51 @@ const CATEGORY_OVERRIDES: Record<string, Category> = {
 };
 
 /**
+ * Detect if an item is a podcast based on title patterns
+ */
+function isPodcastItem(item: FeedItem): boolean {
+  const title = item.title.toLowerCase();
+  const summary = item.summary?.toLowerCase() || '';
+
+  // Strong podcast indicators in title
+  const podcastPatterns = [
+    /^podcast:/i,
+    /\bpodcast\b.*episode/i,
+    /episode \d+/i,
+    /^ep\.\s*\d+/i,
+  ];
+
+  for (const pattern of podcastPatterns) {
+    if (pattern.test(item.title)) {
+      return true;
+    }
+  }
+
+  // Check if InfoQ/similar tech sites with "Podcast:" prefix
+  if (title.startsWith('podcast:') || title.includes('podcast:')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Adjust category assignment based on item metadata
  */
 export function categorizeItem(item: FeedItem): FeedItem {
+  // First, check if item looks like a podcast (title-based detection)
+  if (isPodcastItem(item)) {
+    if (item.category !== 'podcasts') {
+      logger.debug(
+        `Detected podcast item, recategorizing: ${item.title}: ${item.category} -> podcasts`
+      );
+      return {
+        ...item,
+        category: 'podcasts',
+      };
+    }
+  }
+
   // Check if any of the item's categories match our override map
   for (const cat of item.categories) {
     const normalized = cat.toLowerCase().trim();
