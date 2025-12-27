@@ -38,7 +38,13 @@ export async function GET(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in annotations GET', { encodedBibcode });
+    }
 
     logger.info('Fetching annotations', { bibcode });
 
@@ -73,7 +79,13 @@ export async function POST(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in annotations POST', { encodedBibcode });
+    }
     const body = await request.json();
 
     // Handle paper-level notes update
@@ -145,7 +157,13 @@ export async function PATCH(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in annotations PATCH', { encodedBibcode });
+    }
     const body = await request.json();
 
     const { id, content, note } = body;
@@ -192,7 +210,13 @@ export async function DELETE(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in annotations DELETE', { encodedBibcode });
+    }
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');

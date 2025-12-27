@@ -133,9 +133,37 @@ export function storePaper(paper: ADSPaperRecord): void {
     );
 
     logger.info('Paper stored in database', { bibcode: paper.bibcode });
+
+    // Automatically process sections if body text is available
+    // Do this asynchronously to avoid blocking the store operation
+    if (paper.body && paper.body.length >= 100) {
+      // Process in background (fire and forget)
+      processPaperSectionsAsync(paper.bibcode).catch((err) => {
+        logger.warn('Background section processing failed', {
+          bibcode: paper.bibcode,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   } catch (error) {
     logger.error('Failed to store paper', {
       bibcode: paper.bibcode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Process paper sections asynchronously (non-blocking)
+ */
+async function processPaperSectionsAsync(bibcode: string): Promise<void> {
+  try {
+    const { processPaperSections } = await import('../pipeline/section-summarization');
+    await processPaperSections(bibcode);
+  } catch (error) {
+    // Silently fail - this is background processing
+    logger.debug('Section processing skipped or failed', {
+      bibcode,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -189,9 +217,44 @@ export function storePapersBatch(papers: ADSPaperRecord[]): void {
 
     insertMany(papers);
     logger.info('Papers batch stored in database', { count: papers.length });
+
+    // Automatically process sections for papers with body text (async, non-blocking)
+    const papersWithBody = papers.filter((p) => p.body && p.body.length >= 100);
+    if (papersWithBody.length > 0) {
+      // Process in background
+      processPapersSectionsAsync(papersWithBody.map((p) => p.bibcode)).catch((err) => {
+        logger.warn('Background batch section processing failed', {
+          count: papersWithBody.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   } catch (error) {
     logger.error('Failed to store papers batch', {
       count: papers.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Process multiple papers' sections asynchronously (non-blocking)
+ */
+async function processPapersSectionsAsync(bibcodes: string[]): Promise<void> {
+  try {
+    const { processPaperSections } = await import('../pipeline/section-summarization');
+    // Process sequentially to avoid overwhelming the API
+    for (const bibcode of bibcodes) {
+      await processPaperSections(bibcode).catch((err) => {
+        logger.debug('Section processing failed for paper in batch', {
+          bibcode,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  } catch (error) {
+    logger.debug('Batch section processing skipped or failed', {
+      count: bibcodes.length,
       error: error instanceof Error ? error.message : String(error),
     });
   }

@@ -191,6 +191,41 @@ CREATE TABLE IF NOT EXISTS usage_quota (
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
+
+-- ADS papers table
+CREATE TABLE IF NOT EXISTS ads_papers (
+  bibcode TEXT PRIMARY KEY,
+  title TEXT,
+  authors TEXT,
+  pubdate TEXT,
+  abstract TEXT,
+  body TEXT,
+  year INTEGER,
+  journal TEXT,
+  ads_url TEXT,
+  arxiv_url TEXT,
+  fulltext_source TEXT,
+  fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
+-- Paper sections table for section-based retrieval
+CREATE TABLE IF NOT EXISTS paper_sections (
+  id TEXT PRIMARY KEY,
+  bibcode TEXT NOT NULL REFERENCES ads_papers(bibcode) ON DELETE CASCADE,
+  section_id TEXT NOT NULL,
+  section_title TEXT NOT NULL,
+  level INTEGER NOT NULL,
+  summary TEXT NOT NULL,
+  full_text TEXT NOT NULL,
+  char_start INTEGER NOT NULL,
+  char_end INTEGER NOT NULL,
+  embedding vector(1536), -- pgvector for semantic search
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  UNIQUE(bibcode, section_id)
+);
 `;
 
 /**
@@ -241,6 +276,16 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings
 -- Usage quota indexes
 CREATE INDEX IF NOT EXISTS idx_usage_quota_endpoint ON usage_quota(endpoint, client_ip);
 CREATE INDEX IF NOT EXISTS idx_usage_quota_reset ON usage_quota(reset_at);
+
+-- ADS papers indexes
+CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
+CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
+
+-- Paper sections indexes
+CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode ON paper_sections(bibcode);
+-- Vector similarity index for section embeddings
+CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding ON paper_sections
+  USING hnsw (embedding vector_cosine_ops);
 `;
 
 /**

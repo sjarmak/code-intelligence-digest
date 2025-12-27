@@ -106,6 +106,12 @@ export function initializeAnnotationTables() {
     if (!columnNames.includes('html_fetched_at')) {
       db.exec(`ALTER TABLE ads_papers ADD COLUMN html_fetched_at INTEGER`);
     }
+    if (!columnNames.includes('html_sections')) {
+      db.exec(`ALTER TABLE ads_papers ADD COLUMN html_sections TEXT`);
+    }
+    if (!columnNames.includes('html_figures')) {
+      db.exec(`ALTER TABLE ads_papers ADD COLUMN html_figures TEXT`);
+    }
     if (!columnNames.includes('paper_notes')) {
       db.exec(`ALTER TABLE ads_papers ADD COLUMN paper_notes TEXT`);
     }
@@ -532,44 +538,87 @@ export function updatePaperNotes(bibcode: string, notes: string | null): boolean
  */
 export function getCachedHtmlContent(
   bibcode: string
-): { htmlContent: string; htmlFetchedAt: number } | null {
+): {
+  htmlContent: string;
+  htmlFetchedAt: number;
+  sections?: Array<{ id: string; title: string; level: number }>;
+  figures?: Array<{ id: string; src: string; caption: string }>;
+} | null {
   const db = getSqlite();
 
   const stmt = db.prepare(`
-    SELECT html_content, html_fetched_at
+    SELECT html_content, html_fetched_at, html_sections, html_figures
     FROM ads_papers
     WHERE bibcode = ? AND html_content IS NOT NULL
   `);
 
   const result = stmt.get(bibcode) as
-    | { html_content: string; html_fetched_at: number }
+    | {
+        html_content: string;
+        html_fetched_at: number;
+        html_sections?: string | null;
+        html_figures?: string | null;
+      }
     | undefined;
 
   if (!result) return null;
 
+  let sections: Array<{ id: string; title: string; level: number }> | undefined;
+  let figures: Array<{ id: string; src: string; caption: string }> | undefined;
+
+  if (result.html_sections) {
+    try {
+      sections = JSON.parse(result.html_sections);
+    } catch (error) {
+      logger.warn('Failed to parse cached sections', { bibcode, error });
+    }
+  }
+
+  if (result.html_figures) {
+    try {
+      figures = JSON.parse(result.html_figures);
+    } catch (error) {
+      logger.warn('Failed to parse cached figures', { bibcode, error });
+    }
+  }
+
   return {
     htmlContent: result.html_content,
     htmlFetchedAt: result.html_fetched_at,
+    sections,
+    figures,
   };
 }
 
 /**
- * Cache HTML content for a paper
+ * Cache HTML content for a paper, along with parsed sections and figures
  */
-export function cacheHtmlContent(bibcode: string, htmlContent: string): boolean {
+export function cacheHtmlContent(
+  bibcode: string,
+  htmlContent: string,
+  sections?: Array<{ id: string; title: string; level: number }>,
+  figures?: Array<{ id: string; src: string; caption: string }>
+): boolean {
   const db = getSqlite();
   const now = Math.floor(Date.now() / 1000);
 
+  const sectionsJson = sections ? JSON.stringify(sections) : null;
+  const figuresJson = figures ? JSON.stringify(figures) : null;
+
   const stmt = db.prepare(`
     UPDATE ads_papers
-    SET html_content = ?, html_fetched_at = ?, updated_at = ?
+    SET html_content = ?, html_fetched_at = ?, html_sections = ?, html_figures = ?, updated_at = ?
     WHERE bibcode = ?
   `);
 
-  const result = stmt.run(htmlContent, now, now, bibcode);
+  const result = stmt.run(htmlContent, now, sectionsJson, figuresJson, now, bibcode);
 
   if (result.changes > 0) {
-    logger.info('HTML content cached', { bibcode });
+    logger.info('HTML content cached', {
+      bibcode,
+      hasSections: !!sections && sections.length > 0,
+      hasFigures: !!figures && figures.length > 0,
+    });
     return true;
   }
   return false;
