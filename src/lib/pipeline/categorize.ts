@@ -16,11 +16,18 @@ const CATEGORY_OVERRIDES: Record<string, Category> = {
 };
 
 /**
- * Detect if an item is a podcast based on title patterns
+ * Detect if an item is a podcast based on source title and title patterns
  */
 function isPodcastItem(item: FeedItem): boolean {
   const title = item.title.toLowerCase();
+  const sourceTitle = item.sourceTitle.toLowerCase();
   const summary = item.summary?.toLowerCase() || '';
+
+  // First, check source title for podcast indicators
+  // This catches podcast feeds even when episode titles don't match patterns
+  if (sourceTitle.includes('podcast')) {
+    return true;
+  }
 
   // Strong podcast indicators in title
   const podcastPatterns = [
