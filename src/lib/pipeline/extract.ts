@@ -226,10 +226,24 @@ export async function extractItemDigest(
       } else {
         logger.info(`Chunking long article: "${item.title}" (${chunks.length} chunks)`);
 
-        // Summarize each chunk
-        const chunkSummaries = await Promise.all(
-          chunks.map((chunk, idx) => summarizeChunk(client, chunk, idx + 1, chunks.length))
-        );
+        // Summarize chunks in batches to control memory usage
+        const chunkSummaries: string[] = [];
+        const CHUNK_BATCH_SIZE = 5; // Process 5 chunks at a time
+
+        for (let i = 0; i < chunks.length; i += CHUNK_BATCH_SIZE) {
+          const chunkBatch = chunks.slice(i, i + CHUNK_BATCH_SIZE);
+          const summaries = await Promise.all(
+            chunkBatch.map((chunk, idx) =>
+              summarizeChunk(client, chunk, i + idx + 1, chunks.length)
+            )
+          );
+          chunkSummaries.push(...summaries);
+
+          // Brief pause for GC on large articles
+          if (i + CHUNK_BATCH_SIZE < chunks.length) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        }
 
         // Merge summaries
         processedText = chunkSummaries.join("\n\n");
@@ -403,9 +417,27 @@ export async function extractBatchDigests(
   const decomposedItemUrls = decomposedItems.slice(0, 5).map(i => ({ id: i.id.substring(0, 40), title: i.title.substring(0, 40), url: i.url }));
   logger.info(`[BEFORE_EXTRACT] Decomposed item URLs: ${JSON.stringify(decomposedItemUrls)}`);
 
-  const digests = await Promise.all(
-    decomposedItems.map((item) => extractItemDigest(item, userPrompt))
-  );
+  // Extract digests in batches to control memory usage
+  const digests: ItemDigest[] = [];
+  const BATCH_SIZE = 10; // Process 10 items at a time
+
+  for (let i = 0; i < decomposedItems.length; i += BATCH_SIZE) {
+    const batch = decomposedItems.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(decomposedItems.length / BATCH_SIZE);
+    logger.info(`Extracting digests batch ${batchNum}/${totalBatches} (${batch.length} items)`);
+
+    const batchDigests = await Promise.all(
+      batch.map((item) => extractItemDigest(item, userPrompt))
+    );
+
+    digests.push(...batchDigests);
+
+    // Small delay between batches to allow GC
+    if (i + BATCH_SIZE < decomposedItems.length) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
 
   logger.info(`Extracted ${digests.length} digests`);
 
