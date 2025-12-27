@@ -33,7 +33,7 @@ export const PERIOD_CONFIG: Record<Exclude<Period, 'custom'>, PeriodConfig> = {
   },
   all: {
     label: 'All-time',
-    days: 90,
+    days: 60,  // Reduced from 90 to save memory
     halfLifeDays: 30,
     maxPerSource: 4,
   },

@@ -109,7 +109,8 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
  */
 export async function loadItemsByCategory(
   category: string,
-  periodDays: number
+  periodDays: number,
+  limit?: number
 ): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
@@ -119,6 +120,16 @@ export async function loadItemsByCategory(
     // For longer periods, use published_at to show items by their original publication date
     const useCreatedAt = periodDays === 2;
     const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+
+    // Calculate effective limit based on period
+    // For "all" (60d): limit to 500 most recent items per category
+    // For "month" (30d): limit to 300
+    // For "week"/"day": no limit (naturally small)
+    const effectiveLimit = limit ?? (
+      periodDays >= 60 ? 500 :
+      periodDays >= 30 ? 300 :
+      undefined
+    );
 
     let rows: Array<{
       id: string;
@@ -139,21 +150,27 @@ export async function loadItemsByCategory(
 
     if (driver === 'postgres') {
       const client = await getDbClient();
+      const limitClause = effectiveLimit ? `LIMIT $3` : '';
+      const params = effectiveLimit
+        ? [category, cutoffTime, effectiveLimit]
+        : [category, cutoffTime];
+
       const result = await client.query(
         `SELECT id, stream_id, source_title, title, url, author, published_at, created_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
          FROM items
          WHERE category = $1 AND ${dateColumn} >= $2
-         ORDER BY ${dateColumn} DESC`,
-        [category, cutoffTime]
+         ORDER BY ${dateColumn} DESC ${limitClause}`,
+        params
       );
       rows = result.rows as typeof rows;
     } else {
       const sqlite = getSqlite();
+      const limitClause = effectiveLimit ? `LIMIT ${effectiveLimit}` : '';
       const query = `SELECT * FROM items
            WHERE category = ? AND ${dateColumn} >= ?
-           ORDER BY ${dateColumn} DESC`;
-      logger.debug(`[loadItemsByCategory] SQLite query: category='${category}', cutoffTime=${cutoffTime}, dateColumn=${dateColumn}`);
+           ORDER BY ${dateColumn} DESC ${limitClause}`;
+      logger.debug(`[loadItemsByCategory] SQLite query: category='${category}', cutoffTime=${cutoffTime}, dateColumn=${dateColumn}, limit=${effectiveLimit || 'none'}`);
       rows = sqlite.prepare(query).all(category, cutoffTime) as typeof rows;
       logger.info(`[loadItemsByCategory] SQLite returned ${rows.length} rows for category='${category}', periodDays=${periodDays}, cutoffTime=${cutoffTime} (${new Date(cutoffTime * 1000).toISOString()})`);
 
