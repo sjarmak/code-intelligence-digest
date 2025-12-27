@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { initializeDatabase } from "@/src/lib/db/index";
+import { getDbClient } from "@/src/lib/db/driver";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { Category, FeedItem } from "@/src/lib/model";
@@ -132,8 +133,8 @@ export async function GET(request: NextRequest) {
     if (loadOptions?.startDate && loadOptions?.endDate) {
       items = await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate);
     } else {
-      // Direct database query to ensure fresh data
-      const sqlite = getSqlite();
+      // Direct database query to ensure fresh data (using driver abstraction)
+      const client = await getDbClient();
       const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
       const useCreatedAt = periodDays === 2;
       const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
@@ -143,9 +144,11 @@ export async function GET(request: NextRequest) {
         ? `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`
         : `category = ? AND ${dateColumn} >= ?`;
 
-      const rawRows = sqlite.prepare(
-        `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC`
-      ).all(category, cutoffTime) as any[];
+      const result = await client.query(
+        `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC`,
+        [category, cutoffTime]
+      );
+      const rawRows = result.rows as any[];
 
       logger.info(`[API] Direct query returned ${rawRows.length} rows for category=${category}, periodDays=${periodDays}, dateColumn=${dateColumn}`);
 
