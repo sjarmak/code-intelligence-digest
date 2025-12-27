@@ -7,7 +7,7 @@ import {
   initializeAnnotationTables,
 } from '@/src/lib/db/paper-annotations';
 import { getBibcodeMetadata, getADSUrl, getArxivUrl } from '@/src/lib/ads/client';
-import { fetchPaperContent, extractArxivId } from '@/src/lib/ar5iv';
+import { fetchPaperContent, extractArxivId, parseAr5ivHtml } from '@/src/lib/ar5iv';
 import { logger } from '@/src/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -34,7 +34,29 @@ export async function GET(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    // Handle URL encoding - decodeURIComponent handles %2F and other encoded characters
+    // If decoding fails, try using the raw value (might already be decoded by Next.js)
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      // If decoding fails, the bibcode might already be decoded or contain invalid encoding
+      // Try using it as-is, but log a warning
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed, using raw value', {
+        encodedBibcode,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Log the bibcode for debugging
+    logger.info('Paper content request', {
+      encodedBibcode,
+      decodedBibcode: bibcode,
+      containsSlash: bibcode.includes('/'),
+      containsPercent: bibcode.includes('%'),
+    });
+
     const adsToken = process.env.ADS_API_TOKEN;
 
     if (!adsToken) {
@@ -50,18 +72,62 @@ export async function GET(
     if (isCachedHtmlFresh(bibcode)) {
       const cached = getCachedHtmlContent(bibcode);
       if (cached) {
-        logger.info('Returning cached HTML content', { bibcode });
+        logger.info('Returning cached HTML content', {
+          bibcode,
+          hasSections: !!cached.sections && cached.sections.length > 0,
+          hasFigures: !!cached.figures && cached.figures.length > 0,
+        });
 
         // Get paper metadata for response
         const paper = getPaper(bibcode);
 
+        // Use cached sections/figures if available, otherwise try to parse
+        let sections = cached.sections || [];
+        let figures = cached.figures || [];
+        let tableOfContents = cached.sections || [];
+
+        // If sections weren't cached, try to parse from HTML (fallback for old cache entries)
+        if (sections.length === 0) {
+          try {
+            const htmlLower = cached.htmlContent.toLowerCase();
+            if (htmlLower.includes('<!doctype') && htmlLower.includes('ar5iv.org')) {
+              // Raw ar5iv HTML - parse it
+              logger.info('Parsing raw ar5iv HTML from cache (sections not cached)', { bibcode });
+              const parsed = parseAr5ivHtml(cached.htmlContent);
+              sections = parsed.sections;
+              figures = parsed.figures;
+              tableOfContents = parsed.tableOfContents;
+            }
+          } catch (error) {
+            logger.warn('Failed to parse cached HTML for sections', {
+              bibcode,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        // Determine the original source from the HTML content
+        // Cached content could be from ar5iv, arxiv, ads, or abstract
+        const htmlLower = cached.htmlContent.toLowerCase();
+        let originalSource: 'ar5iv' | 'arxiv' | 'ads' | 'abstract' = 'abstract';
+        if (htmlLower.includes('arxiv.org/html/') && !htmlLower.includes('arxiv.org/abs/')) {
+          originalSource = 'arxiv';
+        } else if (htmlLower.includes('ltx_') || (htmlLower.includes('paper-reader-content') && htmlLower.length > 10000)) {
+          originalSource = 'ar5iv';
+        } else if (htmlLower.includes('paper-reader-ads')) {
+          originalSource = 'ads';
+        }
+
         return NextResponse.json({
-          source: 'cached',
+          source: originalSource, // Return original source, not 'cached'
           html: cached.htmlContent,
           cachedAt: cached.htmlFetchedAt,
           title: paper?.title,
           authors: paper?.authors ? JSON.parse(paper.authors) : undefined,
           abstract: paper?.abstract,
+          sections,
+          figures,
+          tableOfContents,
           bibcode,
           arxivId: extractArxivId(bibcode),
           adsUrl: getADSUrl(bibcode),
@@ -72,41 +138,79 @@ export async function GET(
 
     // Get paper metadata (from cache or ADS)
     let paper = getPaper(bibcode);
-    const needsRefresh = !paper || !paper.body;
+    // Refresh if paper doesn't exist, has no body, or body is suspiciously short (likely invalid)
+    const needsRefresh = !paper || !paper.body || (paper.body && paper.body.length < 100);
 
     if (needsRefresh) {
       logger.info('Fetching paper metadata from ADS', {
         bibcode,
-        reason: !paper ? 'not in cache' : 'missing body field'
+        reason: !paper ? 'not in cache' : 'missing body field',
+        hasCachedPaper: !!paper,
       });
-      const metadata = await getBibcodeMetadata([bibcode], adsToken);
-      const paperData = metadata[bibcode];
 
-      if (!paperData) {
-        // If we had a cached paper without body, still use it
+      try {
+        const metadata = await getBibcodeMetadata([bibcode], adsToken);
+        const paperData = metadata[bibcode];
+
+        if (!paperData) {
+          // If we had a cached paper without body, still use it
+          if (paper) {
+            logger.warn('ADS fetch returned no data, using cached paper without body', {
+              bibcode,
+              cachedTitle: paper.title,
+            });
+          } else {
+            logger.error('Paper not found in ADS API', { bibcode });
+            return NextResponse.json(
+              { error: `Paper ${bibcode} not found in ADS` },
+              { status: 404 }
+            );
+          }
+        } else {
+          // Log what we got from ADS
+          logger.info('ADS metadata received', {
+            bibcode,
+            hasTitle: !!paperData.title,
+            hasAbstract: !!paperData.abstract,
+            hasBody: !!paperData.body,
+            bodyLength: paperData.body?.length || 0,
+          });
+
+          paper = {
+            bibcode,
+            title: paperData.title,
+            authors: paperData.authors ? JSON.stringify(paperData.authors) : undefined,
+            pubdate: paperData.pubdate,
+            abstract: paperData.abstract,
+            body: paperData.body,
+            adsUrl: getADSUrl(bibcode),
+            arxivUrl: getArxivUrl(bibcode),
+            fulltextSource: paperData.body ? 'ads_api' : undefined,
+          };
+
+          storePaper(paper);
+          logger.info('Paper stored', {
+            bibcode,
+            hasBody: !!paperData.body,
+            hasAbstract: !!paperData.abstract,
+            fulltextSource: paper.fulltextSource,
+          });
+        }
+      } catch (error) {
+        logger.error('Failed to fetch paper metadata from ADS', {
+          bibcode,
+          error: error instanceof Error ? error.message : String(error),
+        });
+
+        // If we have a cached paper, use it even if ADS fetch failed
         if (paper) {
-          logger.warn('ADS fetch failed, using cached paper without body', { bibcode });
+          logger.warn('Using cached paper after ADS fetch failure', { bibcode });
         } else {
           return NextResponse.json(
-            { error: `Paper ${bibcode} not found` },
-            { status: 404 }
+            { error: `Failed to fetch paper ${bibcode}: ${error instanceof Error ? error.message : String(error)}` },
+            { status: 500 }
           );
         }
-      } else {
-        paper = {
-          bibcode,
-          title: paperData.title,
-          authors: paperData.authors ? JSON.stringify(paperData.authors) : undefined,
-          pubdate: paperData.pubdate,
-          abstract: paperData.abstract,
-          body: paperData.body,
-          adsUrl: getADSUrl(bibcode),
-          arxivUrl: getArxivUrl(bibcode),
-          fulltextSource: paperData.body ? 'ads_api' : undefined,
-        };
-
-        storePaper(paper);
-        logger.info('Paper stored with body', { bibcode, hasBody: !!paperData.body });
       }
     }
 
@@ -119,16 +223,43 @@ export async function GET(
     }
 
     // Fetch content (ar5iv with fallbacks)
-    const content = await fetchPaperContent(bibcode, {
-      adsBody: paper.body,
-      abstract: paper.abstract,
-      title: paper.title,
-      arxivUrl: paper.arxivUrl ?? undefined,
+    logger.info('Fetching paper content', {
+      bibcode,
+      hasAdsBody: !!paper.body,
+      hasAbstract: !!paper.abstract,
+      arxivUrl: paper.arxivUrl,
     });
 
-    // Cache the HTML content
-    if (content.html && content.source === 'ar5iv') {
-      cacheHtmlContent(bibcode, content.html);
+    let content;
+    try {
+      content = await fetchPaperContent(bibcode, {
+        adsBody: paper.body,
+        abstract: paper.abstract,
+        title: paper.title,
+        arxivUrl: paper.arxivUrl ?? undefined,
+      });
+    } catch (error) {
+      logger.error('Failed to fetch paper content', {
+        bibcode,
+        error: error instanceof Error ? error.message : String(error),
+        hasAdsBody: !!paper.body,
+        hasAbstract: !!paper.abstract,
+      });
+
+      // If we have abstract, return abstract-only content
+      if (paper.abstract) {
+        logger.warn('Falling back to abstract-only content', { bibcode });
+        const { abstractToHtml } = await import('@/src/lib/ar5iv');
+        content = abstractToHtml(paper.abstract, paper.title);
+      } else {
+        throw error;
+      }
+    }
+
+    // Cache the HTML content along with sections and figures
+    // Cache ar5iv, arxiv, and ads sources (but not abstract-only)
+    if (content.html && (content.source === 'ar5iv' || content.source === 'arxiv' || content.source === 'ads')) {
+      cacheHtmlContent(bibcode, content.html, content.sections, content.figures);
     }
 
     logger.info('Paper content fetched', {

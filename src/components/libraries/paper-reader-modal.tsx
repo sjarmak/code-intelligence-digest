@@ -55,7 +55,7 @@ interface PaperTag {
 }
 
 interface PaperContent {
-  source: 'ar5iv' | 'ads' | 'abstract' | 'cached';
+  source: 'ar5iv' | 'arxiv' | 'ads' | 'abstract';
   html: string;
   title?: string;
   authors?: string[];
@@ -523,7 +523,7 @@ export function PaperReaderModal({
             >
               {/* Source indicator */}
               <div className="mb-6 text-sm text-gray-400">
-                Source: {content.source === 'ar5iv' ? 'ar5iv.org' : content.source === 'ads' ? 'ADS' : 'Abstract only'}
+                Source: {content.source === 'ar5iv' ? 'ar5iv.org' : content.source === 'arxiv' ? 'arXiv HTML' : content.source === 'ads' ? 'ADS' : 'Abstract only'}
               </div>
 
               {/* Structured Summary */}

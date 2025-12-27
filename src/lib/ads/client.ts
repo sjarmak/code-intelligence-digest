@@ -167,7 +167,7 @@ export async function getBibcodeMetadata(
     const query = bibcodes.map((b) => `bibcode:"${b}"`).join(' OR ');
     // Include 'body' field to fetch full text content
     const fields = 'bibcode,title,author,pubdate,abstract,body';
-    
+
     // Use GET with URL-encoded parameters
     const params = new URLSearchParams({
       q: query,
@@ -203,18 +203,54 @@ export async function getBibcodeMetadata(
 
     if (data.response?.docs) {
       for (const doc of data.response.docs) {
-        result[doc.bibcode] = {
-          bibcode: doc.bibcode,
+        const bibcode = doc.bibcode;
+        // Body can be a string or an array - handle both cases
+        const body = Array.isArray(doc.body) ? doc.body[0] : doc.body; // Full text content (may be undefined)
+
+        // Log what we got for each paper
+        logger.debug('ADS paper metadata', {
+          bibcode,
+          hasTitle: !!doc.title?.[0],
+          hasAbstract: !!doc.abstract,
+          hasBody: !!body,
+          bodyLength: body?.length || 0,
+          bodyType: Array.isArray(doc.body) ? 'array' : typeof doc.body,
+        });
+
+        result[bibcode] = {
+          bibcode,
           title: doc.title?.[0],
           authors: doc.author,
           pubdate: doc.pubdate,
           abstract: doc.abstract,
-          body: doc.body?.[0], // Full text content
+          body, // Full text content (may be undefined)
         };
       }
     }
 
-    logger.info('ADS bibcode metadata fetched', { count: Object.keys(result).length });
+    const fetchedCount = Object.keys(result).length;
+    const requestedCount = bibcodes.length;
+    const missingCount = requestedCount - fetchedCount;
+
+    logger.info('ADS bibcode metadata fetched', {
+      requested: requestedCount,
+      fetched: fetchedCount,
+      missing: missingCount,
+      missingBibcodes: missingCount > 0 ? bibcodes.filter(b => !result[b]) : undefined,
+    });
+
+    // Log which papers are missing body field
+    const papersWithoutBody = Object.entries(result)
+      .filter(([_, paper]) => !paper.body)
+      .map(([bibcode]) => bibcode);
+
+    if (papersWithoutBody.length > 0) {
+      logger.warn('Papers without body field from ADS', {
+        count: papersWithoutBody.length,
+        bibcodes: papersWithoutBody,
+      });
+    }
+
     return result;
   } catch (error) {
     logger.warn('Failed to fetch ADS bibcode metadata (optional)', {

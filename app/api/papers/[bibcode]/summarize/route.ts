@@ -16,7 +16,13 @@ export async function POST(
 ) {
   try {
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in summarize POST', { encodedBibcode });
+    }
     const adsToken = process.env.ADS_API_TOKEN;
     const openaiKey = process.env.OPENAI_API_KEY;
 
@@ -103,7 +109,7 @@ export async function POST(
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error('Failed to generate paper summary', { error: errorMsg });
-    
+
     // Check for common OpenAI API errors
     if (errorMsg.includes('401') || errorMsg.includes('Incorrect API key')) {
       return NextResponse.json(
@@ -111,7 +117,7 @@ export async function POST(
         { status: 500 }
       );
     }
-    
+
     if (errorMsg.includes('429')) {
       return NextResponse.json(
         { error: 'OpenAI API rate limit exceeded. Please try again in a few moments.' },

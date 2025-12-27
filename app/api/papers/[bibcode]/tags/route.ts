@@ -37,7 +37,13 @@ export async function GET(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in tags GET', { encodedBibcode });
+    }
 
     logger.info('Fetching paper tags', { bibcode });
 
@@ -70,7 +76,13 @@ export async function POST(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in tags POST', { encodedBibcode });
+    }
     const body = await request.json();
 
     const { tagId, name, color } = body;
@@ -137,7 +149,13 @@ export async function DELETE(
     ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    const bibcode = decodeURIComponent(encodedBibcode);
+    let bibcode: string;
+    try {
+      bibcode = decodeURIComponent(encodedBibcode);
+    } catch (error) {
+      bibcode = encodedBibcode;
+      logger.warn('Bibcode decoding failed in tags DELETE', { encodedBibcode });
+    }
 
     const { searchParams } = new URL(request.url);
     const tagId = searchParams.get('tagId');

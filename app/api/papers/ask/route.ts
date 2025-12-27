@@ -196,31 +196,93 @@ export async function POST(request: NextRequest) {
       }
 
       // Prepare context from papers with bibcodes for citation
-      context = papers
-        .slice(0, 10) // Limit to top 10 papers to avoid token overflow
-        .map((p, idx) => {
-          let authorStr = 'Unknown';
-          if (p.authors) {
-            try {
-              const parsedAuthors = JSON.parse(p.authors);
-              if (Array.isArray(parsedAuthors)) {
-                authorStr = parsedAuthors.slice(0, 3).join(', ');
-                if (parsedAuthors.length > 3) authorStr += ' et al.';
-              } else {
+      // Use section-based retrieval when available for better relevance
+      const { buildSectionContext } = await import('@/src/lib/pipeline/section-summarization');
+      const { initializePaperSectionsTable, getSectionSummaries } = await import('@/src/lib/db/paper-sections');
+
+      // Ensure sections table exists
+      try {
+        initializePaperSectionsTable();
+      } catch (error) {
+        logger.warn('Paper sections table initialization failed', { error });
+      }
+
+      const contextParts = await Promise.all(
+        papers
+          .slice(0, 10) // Limit to top 10 papers to avoid token overflow
+          .map(async (p, idx) => {
+            let authorStr = 'Unknown';
+            if (p.authors) {
+              try {
+                const parsedAuthors = JSON.parse(p.authors);
+                if (Array.isArray(parsedAuthors)) {
+                  authorStr = parsedAuthors.slice(0, 3).join(', ');
+                  if (parsedAuthors.length > 3) authorStr += ' et al.';
+                } else {
+                  authorStr = p.authors;
+                }
+              } catch {
                 authorStr = p.authors;
               }
-            } catch {
-              authorStr = p.authors;
             }
-          }
-          return `[${idx + 1}] Bibcode: ${p.bibcode}\nTitle: ${p.title || p.bibcode}\nAuthors: ${authorStr}\nAbstract: ${p.abstract || 'N/A'}`;
-        })
-        .join('\n\n---\n\n');
+
+            // Try to use section-based context if sections are available
+            const sections = getSectionSummaries(p.bibcode);
+            let paperContext: string;
+
+            if (sections.length > 0) {
+              // Use section-based retrieval
+              try {
+                const sectionContext = await buildSectionContext(
+                  p.bibcode,
+                  question,
+                  {
+                    maxSections: 5,
+                    includeFullText: true,
+                    maxFullTextLength: 5000,
+                  }
+                );
+
+                paperContext = `[${idx + 1}] Bibcode: ${p.bibcode}\nTitle: ${p.title || p.bibcode}\nAuthors: ${authorStr}\nAbstract: ${p.abstract || 'N/A'}\n\nRelevant Sections:\n${sectionContext}`;
+              } catch (error) {
+                logger.warn('Failed to build section context, falling back to full text', {
+                  bibcode: p.bibcode,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+                // Fall through to full text approach
+                paperContext = buildFullTextContext(p, idx, authorStr);
+              }
+            } else {
+              // Fallback: use full text (truncated) if sections aren't available
+              paperContext = buildFullTextContext(p, idx, authorStr);
+            }
+
+            return paperContext;
+          })
+      );
+
+      context = contextParts.join('\n\n---\n\n');
+
+      // Helper function to build context from full text
+      function buildFullTextContext(p: ADSPaperRecord, idx: number, authorStr: string): string {
+        let bodyText = '';
+        if (p.body && p.body.length > 0) {
+          // Truncate body to ~20K chars per paper when not using sections
+          // (smaller since we're including multiple papers)
+          const maxBodyLength = 20000;
+          bodyText = p.body.length > maxBodyLength
+            ? p.body.substring(0, maxBodyLength) + '\n[... content truncated ...]'
+            : p.body;
+        }
+
+        return `[${idx + 1}] Bibcode: ${p.bibcode}\nTitle: ${p.title || p.bibcode}\nAuthors: ${authorStr}\nAbstract: ${p.abstract || 'N/A'}${bodyText ? `\n\nFull Text:\n${bodyText}` : ''}`;
+      }
     }
 
     logger.info('Generating answer from papers', {
       papersCount: papers.length,
       contextLength: context.length,
+      papersWithBody: papers.filter(p => p.body && p.body.length > 0).length,
       isFollowUp,
     });
 
