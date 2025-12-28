@@ -48,11 +48,15 @@ export async function rankCategory(
   // Filter to items within time window and with valid URLs
   // For "day" period, use createdAt (when Inoreader received it) to show recently received items
   // For other periods, use publishedAt to show items by their original publication date
+  // For newsletters with day period, items are already filtered by the API route using the most recent item's timestamp
+  // So we should skip date filtering here to avoid double-filtering
   const now = Date.now();
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
   // Use created_at for day period (1-3 days) to show items by when Inoreader received them
   // For newsletters on weekdays, periodDays will be 1; on weekends, 2; for other categories, 3
+  // For newsletters with day period, skip date filtering since items are already filtered by API route
   const useCreatedAt = periodDays <= 3;
+  const skipDateFilter = category === "newsletters" && periodDays === 1; // Items already filtered by API route
 
   // Patterns for low-quality items that should be filtered out
   const BAD_TITLE_PATTERNS = [
@@ -128,25 +132,29 @@ export async function rankCategory(
   ];
 
   const recentItems = items.filter((item) => {
-    // For day period, STRICTLY require createdAt and use it for filtering
-    // Do NOT fall back to publishedAt for day period - this causes old items to appear
-    let withinWindow: boolean;
-    if (useCreatedAt) {
-      if (!item.createdAt) {
-        logger.warn(`[rankCategory] Item ${item.id} missing createdAt for day period - filtering out to prevent old items from appearing`);
-        return false;
+    // For newsletters with day period, items are already filtered by API route using most recent item's timestamp
+    // Skip date filtering here to avoid double-filtering
+    let withinWindow: boolean = true;
+    if (!skipDateFilter) {
+      // For day period, STRICTLY require createdAt and use it for filtering
+      // Do NOT fall back to publishedAt for day period - this causes old items to appear
+      if (useCreatedAt) {
+        if (!item.createdAt) {
+          logger.warn(`[rankCategory] Item ${item.id} missing createdAt for day period - filtering out to prevent old items from appearing`);
+          return false;
+        }
+        const createdAtAgeMs = now - item.createdAt.getTime();
+        if (createdAtAgeMs > windowMs) {
+          logger.debug(`[rankCategory] Filtering out item ${item.id} - createdAt is ${Math.floor(createdAtAgeMs / (24 * 60 * 60 * 1000))} days ago (outside ${periodDays} day window)`);
+          return false;
+        }
+        // Use createdAt for day period
+        withinWindow = createdAtAgeMs <= windowMs;
+      } else {
+        // For longer periods, use publishedAt
+        const ageMs = now - item.publishedAt.getTime();
+        withinWindow = ageMs <= windowMs;
       }
-      const createdAtAgeMs = now - item.createdAt.getTime();
-      if (createdAtAgeMs > windowMs) {
-        logger.debug(`[rankCategory] Filtering out item ${item.id} - createdAt is ${Math.floor(createdAtAgeMs / (24 * 60 * 60 * 1000))} days ago (outside ${periodDays} day window)`);
-        return false;
-      }
-      // Use createdAt for day period
-      withinWindow = createdAtAgeMs <= windowMs;
-    } else {
-      // For longer periods, use publishedAt
-      const ageMs = now - item.publishedAt.getTime();
-      withinWindow = ageMs <= windowMs;
     }
 
     // Filter out items with invalid URLs (localhost, empty, or invalid)
