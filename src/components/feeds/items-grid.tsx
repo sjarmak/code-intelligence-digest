@@ -128,7 +128,7 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
           <button
             onClick={handleLoadMore}
             disabled={loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {loading ? 'Loading...' : 'Load 10 More'}
           </button>

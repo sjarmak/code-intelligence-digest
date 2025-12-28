@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
       periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
     } else {
       periodDays = PERIOD_DAYS[period];
-      
+
       // Special handling for newsletters: adjust day period based on weekday/weekend
       // TLDR only publishes on weekdays, so:
       // - Weekdays: show last 24 hours (1 day)
@@ -131,6 +131,14 @@ export async function GET(request: NextRequest) {
           periodDays = 1; // 24 hours for weekdays
           logger.info(`[API] Weekday detected for newsletters - using 1 day window`);
         }
+      }
+      
+      // For research and product_news, use created_at for day period to show recently received items
+      // This ensures items show up even if they were published earlier but received recently
+      if ((category === "research" || category === "product_news") && period === "day") {
+        // Use 3 days for day period to catch items that were synced recently
+        periodDays = 3;
+        logger.info(`[API] Using 3 day window for ${category} day period to show recently received items`);
       }
     }
 
@@ -245,9 +253,20 @@ export async function GET(request: NextRequest) {
 
     logger.info(`[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`);
 
+    // Filter out TLDR items from ai_news category (they should be in newsletters)
+    // This handles items that were incorrectly recategorized before we fixed the logic
+    let filteredItems = items;
+    if (category === "ai_news") {
+      const beforeFilter = items.length;
+      filteredItems = items.filter(item => !item.sourceTitle.includes("TLDR"));
+      if (filteredItems.length < beforeFilter) {
+        logger.info(`[API] Filtered out ${beforeFilter - filteredItems.length} TLDR items from ai_news category`);
+      }
+    }
+
     // Rank items
-    const rankedItems = await rankCategory(items, category, periodDays);
-    logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`);
+    const rankedItems = await rankCategory(filteredItems, category, periodDays);
+    logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${filteredItems.length} items)`);
 
     // Debug: Check if scores are loading
     if (rankedItems.length > 0) {

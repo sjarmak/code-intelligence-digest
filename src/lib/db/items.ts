@@ -118,8 +118,9 @@ export async function loadItemsByCategory(
 
     // For "day" period (1-3 days), use created_at (when Inoreader received it) to show recently received items
     // For other periods, use published_at to show items by their original publication date
-    // For newsletters on weekdays, periodDays will be 1; on weekends, 2; for other categories, 3
-    const useCreatedAt = periodDays <= 3;
+    // For newsletters on weekdays, periodDays will be 1; on weekends, 2; for research/product_news, 3
+    // For research and product_news, always use created_at for day period to show recently received items
+    const useCreatedAt = periodDays <= 3 || (category === "research" || category === "product_news");
     const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
 
     // Calculate effective limit based on period
