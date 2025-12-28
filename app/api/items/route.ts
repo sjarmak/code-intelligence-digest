@@ -214,7 +214,8 @@ export async function GET(request: NextRequest) {
       }
 
       // For newsletters, only get decomposed articles (have -article- in ID)
-      // For research day/week/month: no date filtering, just get top items by relevance (via ranking)
+      // For research day/week/month: prioritize new papers (recent created_at), then show top ranked results
+      // This ensures new papers added after backfill show in daily view, while backfilled papers are ranked by relevance
       let whereClause: string;
       let queryParams: any[];
       
@@ -222,7 +223,9 @@ export async function GET(request: NextRequest) {
         whereClause = `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
       } else if (category === "research" && period !== "all") {
-        // Research day/week/month: no date filter, just get all research items (limited for performance)
+        // Research day/week/month: get all research items (no date filter)
+        // New papers (recent created_at) will naturally appear first due to ORDER BY created_at DESC
+        // Backfilled papers will be ranked by relevance in rankCategory
         whereClause = `category = ?`;
         queryParams = [category];
       } else {
@@ -231,10 +234,12 @@ export async function GET(request: NextRequest) {
       }
       
       // Add LIMIT for research day/week/month to prevent loading too many items (max 1000 for ranking)
+      // Order by created_at DESC so new papers appear first, then ranking will prioritize by relevance
+      const orderBy = (category === "research" && period !== "all") ? "created_at DESC" : `${dateColumn} DESC`;
       const limitClause = (category === "research" && period !== "all") ? " LIMIT 1000" : "";
       
       const result = await client.query(
-        `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`,
+        `SELECT * FROM items WHERE ${whereClause} ORDER BY ${orderBy}${limitClause}`,
         queryParams
       );
       const rawRows = result.rows as any[];
