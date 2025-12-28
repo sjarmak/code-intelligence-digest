@@ -57,12 +57,12 @@ export async function rankCategory(
   // Use created_at for day period (1-3 days) to show items by when Inoreader received them
   // For newsletters on weekdays, periodDays will be 1; on weekends, 2; for other categories, 3
   // For newsletters, research, and product_news with day period, skip date filtering since items are already filtered by API route
-  // For research, always skip date filtering since we use created_at for all periods (day/week/month)
+  // For research, skip date filtering for all periods since we use published_at and items are already filtered by API route
   const useCreatedAt = periodDays <= 3;
   // Skip date filtering for day period when items are already filtered by API route using created_at
-  // Also skip for research week/month periods since we use created_at for those too
+  // Also skip for research all periods since we use published_at and items are already filtered by API route
   const skipDateFilter = (period === "day" && (category === "newsletters" || category === "research" || category === "product_news")) ||
-                         (category === "research" && (period === "week" || period === "month"));
+                         (category === "research");
 
   // Patterns for low-quality items that should be filtered out
   const BAD_TITLE_PATTERNS = [
