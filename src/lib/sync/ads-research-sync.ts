@@ -178,29 +178,34 @@ function adsPaperToFeedItem(doc: ADSSearchResponse['response']['docs'][0]): Feed
   const author = authors.length > 0 ? authors.join(', ') : undefined;
 
   // Parse publication date
-  // For backfill: use pubdate if available, otherwise use current month (month granularity)
-  // For ongoing sync: use pubdate if available, otherwise use current month
-  // This ensures all papers have a reasonable published_at date
-  let publishedAt = new Date();
+  // Since pubdate is month-granular (e.g., "2025-12"), we set published_at to first of that month
+  // This ensures all papers with the same pubdate have the same published_at
+  // For backfill: all papers from same month have same published_at (treated as same age)
+  // For new papers: published_at = first of month from pubdate, created_at = when synced (age increments from created_at)
   const now = new Date();
+  let publishedAt: Date;
   
   if (doc.pubdate) {
-    // pubdate format: "2025-12" or "2025-12-15"
+    // pubdate format: "2025-12" or "2025-12-15" (month granularity)
     const dateMatch = doc.pubdate.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
     if (dateMatch) {
-      const [, year, month, day] = dateMatch;
+      const [, year, month] = dateMatch;
+      // Always use first of the month (day 1) since we only have month granularity
       publishedAt = new Date(
         parseInt(year, 10),
         parseInt(month, 10) - 1,
-        day ? parseInt(day, 10) : 1
+        1 // Always first of month
       );
+    } else {
+      // Invalid pubdate format: use first of current month
+      publishedAt = new Date(now.getFullYear(), now.getMonth(), 1);
     }
   } else {
     // No pubdate: use first of current month (month granularity)
     publishedAt = new Date(now.getFullYear(), now.getMonth(), 1);
   }
   
-  // Ensure published_at is not in the future (cap at today)
+  // Ensure published_at is not in the future (cap at first of current month)
   if (publishedAt > now) {
     publishedAt = new Date(now.getFullYear(), now.getMonth(), 1);
   }
