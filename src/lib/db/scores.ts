@@ -28,7 +28,7 @@ export async function saveItemScores(items: RankedItem[], category: Category): P
         engagement_score = excluded.engagement_score,
         final_score = excluded.final_score,
         reasoning = excluded.reasoning,
-        scored_at = CURRENT_TIMESTAMP
+        scored_at = EXTRACT(EPOCH FROM NOW())::INTEGER
     `;
 
     for (const item of items) {
