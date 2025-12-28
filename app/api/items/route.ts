@@ -114,6 +114,24 @@ export async function GET(request: NextRequest) {
       periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
     } else {
       periodDays = PERIOD_DAYS[period];
+      
+      // Special handling for newsletters: adjust day period based on weekday/weekend
+      // TLDR only publishes on weekdays, so:
+      // - Weekdays: show last 24 hours (1 day)
+      // - Weekends: show last 48 hours (2 days) to include Friday's items until Monday
+      if (category === "newsletters" && period === "day") {
+        const now = new Date();
+        const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        
+        if (isWeekend) {
+          periodDays = 2; // 48 hours to include Friday's items
+          logger.info(`[API] Weekend detected for newsletters - using 2 day window to include Friday's items`);
+        } else {
+          periodDays = 1; // 24 hours for weekdays
+          logger.info(`[API] Weekday detected for newsletters - using 1 day window`);
+        }
+      }
     }
 
     logger.info(

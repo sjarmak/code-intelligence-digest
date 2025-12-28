@@ -46,12 +46,13 @@ export async function rankCategory(
   const config = getCategoryConfig(category);
 
   // Filter to items within time window and with valid URLs
-  // For "day" period (3 days), use createdAt (when Inoreader received it) to show recently received items
+  // For "day" period, use createdAt (when Inoreader received it) to show recently received items
   // For other periods, use publishedAt to show items by their original publication date
   const now = Date.now();
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
-  // Use created_at for day period (3 days) to show items by when Inoreader received them
-  const useCreatedAt = periodDays === 3;
+  // Use created_at for day period (1-3 days) to show items by when Inoreader received them
+  // For newsletters on weekdays, periodDays will be 1; on weekends, 2; for other categories, 3
+  const useCreatedAt = periodDays <= 3;
 
   // Patterns for low-quality items that should be filtered out
   const BAD_TITLE_PATTERNS = [
