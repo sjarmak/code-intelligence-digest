@@ -60,8 +60,9 @@ export async function computeAndSaveScoresForCategory(
   const config = getCategoryConfig(category);
 
   // Process in batches to avoid memory issues (especially for research items with full text)
-  // Batch size: 50 items for research (has full text), 100 for other categories
-  const BATCH_SIZE = category === 'research' ? 50 : 100;
+  // Batch size: 25 items for research (has full text, very memory-intensive), 100 for other categories
+  // Research items with full text can be several MB each, so smaller batches are needed
+  const BATCH_SIZE = category === 'research' ? 25 : 100;
   let totalScored = 0;
 
   for (let i = 0; i < itemsToScore.length; i += BATCH_SIZE) {
