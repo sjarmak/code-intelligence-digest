@@ -188,9 +188,9 @@ export async function GET(request: NextRequest) {
       } else {
         // Standard logic for other categories/periods
         cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-        // For research, use published_at (original publication date) for all periods
-        // This shows recently published papers, not recently synced papers
-        // Exception: For research "all" period, limit to 3 years (1095 days)
+        // For research, use created_at for day/week/month (when we synced from ADS)
+        // This shows recently synced papers, which is more useful than old published dates
+        // For "all" period, use published_at to show recently published papers (last 3 years)
         if (category === 'research') {
           if (period === 'all') {
             // Research all-time: limit to last 3 years using published_at
@@ -200,10 +200,11 @@ export async function GET(request: NextRequest) {
             dateColumn = 'published_at';
             logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
           } else {
-            // For research day/week/month, use published_at to show recently published papers
-            useCreatedAt = false;
-            dateColumn = 'published_at';
-            logger.info(`[API] Research ${period} period: using published_at to show recently published papers`);
+            // For research day/week/month, use created_at to show recently synced papers
+            // This ensures we show papers that were just added to our system, regardless of publication date
+            useCreatedAt = true;
+            dateColumn = 'created_at';
+            logger.info(`[API] Research ${period} period: using created_at to show recently synced papers`);
           }
         } else {
           // For other categories: use created_at for day period, published_at for others
@@ -217,10 +218,10 @@ export async function GET(request: NextRequest) {
       const whereClause = category === "newsletters"
         ? `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`
         : `category = ? AND ${dateColumn} >= ?`;
-      
+
       // Add LIMIT for research to prevent loading too many items (max 1000 for ranking)
       const limitClause = category === "research" ? " LIMIT 1000" : "";
-      
+
       const result = await client.query(
         `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`,
         [category, cutoffTime]
