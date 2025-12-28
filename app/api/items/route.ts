@@ -188,9 +188,8 @@ export async function GET(request: NextRequest) {
       } else {
         // Standard logic for other categories/periods
         cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-        // For research, use created_at for day/week/month (when we synced from ADS)
-        // This shows recently synced papers, which is more useful than old published dates
-        // For "all" period, use published_at to show recently published papers (last 3 years)
+        // For research day/week/month: don't filter by date, just show top ranked results
+        // For research all-time: filter by published_at (last 3 years)
         if (category === 'research') {
           if (period === 'all') {
             // Research all-time: limit to last 3 years using published_at
@@ -200,11 +199,12 @@ export async function GET(request: NextRequest) {
             dateColumn = 'published_at';
             logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
           } else {
-            // For research day/week/month, use created_at to show recently synced papers
-            // This ensures we show papers that were just added to our system, regardless of publication date
-            useCreatedAt = true;
-            dateColumn = 'created_at';
-            logger.info(`[API] Research ${period} period: using created_at to show recently synced papers`);
+            // For research day/week/month: no date filtering, just show top ranked results
+            // This treats all backfilled papers as "current" and shows most relevant
+            // New papers added after backfill will have recent created_at and show in daily view
+            useCreatedAt = false; // Not used since we're not filtering
+            dateColumn = 'created_at'; // For ordering, but no cutoff
+            logger.info(`[API] Research ${period} period: no date filtering, showing top ranked results`);
           }
         } else {
           // For other categories: use created_at for day period, published_at for others
@@ -214,17 +214,28 @@ export async function GET(request: NextRequest) {
       }
 
       // For newsletters, only get decomposed articles (have -article- in ID)
-      // For research, add LIMIT to prevent loading too many items (optimize query performance)
-      const whereClause = category === "newsletters"
-        ? `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`
-        : `category = ? AND ${dateColumn} >= ?`;
-
-      // Add LIMIT for research to prevent loading too many items (max 1000 for ranking)
-      const limitClause = category === "research" ? " LIMIT 1000" : "";
-
+      // For research day/week/month: no date filtering, just get top items by relevance (via ranking)
+      let whereClause: string;
+      let queryParams: any[];
+      
+      if (category === "newsletters") {
+        whereClause = `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`;
+        queryParams = [category, cutoffTime];
+      } else if (category === "research" && period !== "all") {
+        // Research day/week/month: no date filter, just get all research items (limited for performance)
+        whereClause = `category = ?`;
+        queryParams = [category];
+      } else {
+        whereClause = `category = ? AND ${dateColumn} >= ?`;
+        queryParams = [category, cutoffTime];
+      }
+      
+      // Add LIMIT for research day/week/month to prevent loading too many items (max 1000 for ranking)
+      const limitClause = (category === "research" && period !== "all") ? " LIMIT 1000" : "";
+      
       const result = await client.query(
         `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`,
-        [category, cutoffTime]
+        queryParams
       );
       const rawRows = result.rows as any[];
 
