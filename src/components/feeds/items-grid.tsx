@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import ItemCard from './item-card';
 
 interface RankedItemResponse {
@@ -38,8 +38,9 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
   const [items, setItems] = useState<RankedItemResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [limit, setLimit] = useState(10); // Start with 10 items
+  const [loadMoreCount, setLoadMoreCount] = useState(0); // Track how many times "Load More" was clicked
   const [hasMore, setHasMore] = useState(false);
+  const itemsRef = useRef<RankedItemResponse[]>([]); // Ref to track current items for excludeIds
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -57,13 +58,77 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         const params = new URLSearchParams({
           category,
           period,
-          limit: limit.toString(),
+          limit: '10', // Always fetch 10 more items
         });
 
         if (period === 'custom' && customDateRange) {
           params.append('startDate', customDateRange.startDate);
           params.append('endDate', customDateRange.endDate);
         }
+
+        // If loading more, exclude already-loaded items
+        // Use a ref or closure to get current items
+        setItems(currentItems => {
+          if (loadMoreCount > 0 && currentItems.length > 0) {
+            const excludeIds = currentItems.map(item => item.id).join(',');
+            params.append('excludeIds', excludeIds);
+          }
+          
+          // Fetch items
+          fetch(`/api/items?${params.toString()}`)
+            .then(response => {
+              if (!response.ok) {
+                throw new Error('Failed to fetch items');
+              }
+              return response.json();
+            })
+            .then(data => {
+              const fetchedItems = data.items || [];
+              
+              // If loading more (loadMoreCount > 0), append new items
+              // Otherwise, replace items (initial load or category/period change)
+              if (loadMoreCount > 0) {
+                setItems(prev => {
+                  // Deduplicate by ID to avoid duplicates
+                  const existingIds = new Set(prev.map((item: RankedItemResponse) => item.id));
+                  const newItems = fetchedItems.filter((item: RankedItemResponse) => !existingIds.has(item.id));
+                  return [...prev, ...newItems];
+                });
+              } else {
+                setItems(fetchedItems);
+              }
+              
+              // Use hasMore from API response
+              setHasMore(data.hasMore === true);
+              setLoading(false);
+            })
+            .catch(err => {
+              const message = err instanceof Error ? err.message : 'Unknown error';
+              setError(message);
+              setItems([]);
+              setLoading(false);
+            });
+          
+          return currentItems; // Return unchanged for now
+        });
+        
+        return; // Early return since we're handling fetch inside setItems
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        setError(message);
+        setItems([]);
+        setLoading(false);
+      }
+    };
+
+    // Reset loadMoreCount when category or period changes
+    if (loadMoreCount === 0) {
+      setLoadMoreCount(0);
+      itemsRef.current = []; // Reset ref when category/period changes
+    }
+    fetchItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, period, customDateRange, loadMoreCount]);
 
         const response = await fetch(`/api/items?${params.toString()}`);
 
@@ -73,9 +138,10 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
 
         const data = await response.json();
         const fetchedItems = data.items || [];
-        // If limit > 10, we're loading more - append to existing items
+        
+        // If loading more (loadMoreCount > 0), append new items
         // Otherwise, replace items (initial load or category/period change)
-        if (limit > 10) {
+        if (loadMoreCount > 0) {
           setItems(prev => {
             // Deduplicate by ID to avoid duplicates
             const existingIds = new Set(prev.map((item: RankedItemResponse) => item.id));
@@ -85,8 +151,9 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         } else {
           setItems(fetchedItems);
         }
-        // Use hasMore from API response, or check if we got exactly the limit
-        setHasMore(data.hasMore !== undefined ? data.hasMore : fetchedItems.length === limit);
+        
+        // Use hasMore from API response
+        setHasMore(data.hasMore === true);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         setError(message);
@@ -96,14 +163,14 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
       }
     };
 
-    // Reset limit when category or period changes
-    setLimit(10);
+    // Reset loadMoreCount when category or period changes
+    setLoadMoreCount(0);
     fetchItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, period, customDateRange, limit]);
+  }, [category, period, customDateRange, loadMoreCount]);
 
   const handleLoadMore = () => {
-    setLimit(prev => prev + 10);
+    setLoadMoreCount(prev => prev + 1);
   };
 
   if (loading) {
@@ -135,7 +202,7 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
       {items.map((item, index) => (
         <ItemCard key={item.id} item={item} rank={index + 1} period={period} />
       ))}
-      {hasMore && (
+      {hasMore ? (
         <div className="text-center pt-4">
           <button
             onClick={handleLoadMore}
@@ -145,7 +212,11 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
             {loading ? 'Loading...' : 'Load 10 More'}
           </button>
         </div>
-      )}
+      ) : items.length > 0 ? (
+        <div className="text-center pt-4">
+          <p className="text-muted text-sm">No more items available that meet the relevance threshold.</p>
+        </div>
+      ) : null}
     </div>
   );
 }
