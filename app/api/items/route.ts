@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
         const now = new Date();
         const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
         const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-        
+
         if (isWeekend) {
           periodDays = 2; // 48 hours to include Friday's items
           logger.info(`[API] Weekend detected for newsletters - using 2 day window to include Friday's items`);
@@ -132,7 +132,7 @@ export async function GET(request: NextRequest) {
           logger.info(`[API] Weekday detected for newsletters - using 1 day window`);
         }
       }
-      
+
       // For research and product_news, use created_at for day period to show recently received items
       // This ensures items show up even if they were published earlier but received recently
       if ((category === "research" || category === "product_news") && period === "day") {
@@ -253,19 +253,8 @@ export async function GET(request: NextRequest) {
 
     logger.info(`[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`);
 
-    // Filter out TLDR items from ai_news category (they should be in newsletters)
-    // This handles items that were incorrectly recategorized before we fixed the logic
-    let filteredItems = items;
-    if (category === "ai_news") {
-      const beforeFilter = items.length;
-      filteredItems = items.filter(item => !item.sourceTitle.includes("TLDR"));
-      if (filteredItems.length < beforeFilter) {
-        logger.info(`[API] Filtered out ${beforeFilter - filteredItems.length} TLDR items from ai_news category`);
-      }
-    }
-
-    // Rank items
-    const rankedItems = await rankCategory(filteredItems, category, periodDays);
+    // Rank items (no filtering - it's fine for ai_news to show items from newsletters if they're relevant)
+    const rankedItems = await rankCategory(items, category, periodDays);
     logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${filteredItems.length} items)`);
 
     // Debug: Check if scores are loading
