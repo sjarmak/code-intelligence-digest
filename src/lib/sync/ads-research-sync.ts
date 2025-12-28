@@ -178,7 +178,12 @@ function adsPaperToFeedItem(doc: ADSSearchResponse['response']['docs'][0]): Feed
   const author = authors.length > 0 ? authors.join(', ') : undefined;
 
   // Parse publication date
+  // For backfill: use pubdate if available, otherwise use current month (month granularity)
+  // For ongoing sync: use pubdate if available, otherwise use current month
+  // This ensures all papers have a reasonable published_at date
   let publishedAt = new Date();
+  const now = new Date();
+  
   if (doc.pubdate) {
     // pubdate format: "2025-12" or "2025-12-15"
     const dateMatch = doc.pubdate.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
@@ -190,6 +195,14 @@ function adsPaperToFeedItem(doc: ADSSearchResponse['response']['docs'][0]): Feed
         day ? parseInt(day, 10) : 1
       );
     }
+  } else {
+    // No pubdate: use first of current month (month granularity)
+    publishedAt = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+  
+  // Ensure published_at is not in the future (cap at today)
+  if (publishedAt > now) {
+    publishedAt = new Date(now.getFullYear(), now.getMonth(), 1);
   }
 
   // Get URLs
