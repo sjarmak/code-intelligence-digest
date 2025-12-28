@@ -29,10 +29,9 @@ services:
   - type: cron
     name: hourly-sync
     runtime: node
-    region: oregon
+    region: ohio
     schedule: "0 * * * *"  # Run every hour at minute 0
-    # Note: After deployment, manually trigger once from Render Dashboard ("Trigger Run" button)
-    # to run immediately, then it will continue on schedule
+    # Updated: Dec 28, 2025 - Includes item scoring in hourly sync
     buildCommand: npm install
     startCommand: npx tsx scripts/cron-daily-sync.ts
     envVars:
