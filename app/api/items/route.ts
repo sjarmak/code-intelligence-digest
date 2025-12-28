@@ -221,7 +221,7 @@ export async function GET(request: NextRequest) {
       // For research day/week/month: no date filtering, just get top items by relevance (via ranking)
       let whereClause: string;
       let queryParams: any[];
-      
+
       if (category === "newsletters") {
         whereClause = `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
