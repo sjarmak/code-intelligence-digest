@@ -116,10 +116,9 @@ export async function loadItemsByCategory(
     const driver = detectDriver();
     const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
 
-    // For "day" period (1 day), use created_at to show items added recently (last 24 hours)
-    // For longer periods, use published_at to show items by their original publication date
-    const useCreatedAt = periodDays === 1;
-    const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+    // Use published_at for all periods to show items by their original publication date
+    // This ensures items show up even if they were synced more than periodDays ago
+    const dateColumn = 'published_at';
 
     // Calculate effective limit based on period
     // For "all" (60d): limit to 500 most recent items per category
