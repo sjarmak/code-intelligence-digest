@@ -73,7 +73,18 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
 
         const data = await response.json();
         const fetchedItems = data.items || [];
-        setItems(fetchedItems);
+        // If limit > 10, we're loading more - append to existing items
+        // Otherwise, replace items (initial load or category/period change)
+        if (limit > 10) {
+          setItems(prev => {
+            // Deduplicate by ID to avoid duplicates
+            const existingIds = new Set(prev.map(item => item.id));
+            const newItems = fetchedItems.filter(item => !existingIds.has(item.id));
+            return [...prev, ...newItems];
+          });
+        } else {
+          setItems(fetchedItems);
+        }
         // Use hasMore from API response, or check if we got exactly the limit
         setHasMore(data.hasMore !== undefined ? data.hasMore : fetchedItems.length === limit);
       } catch (err) {
