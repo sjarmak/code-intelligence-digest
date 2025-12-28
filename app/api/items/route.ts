@@ -188,17 +188,25 @@ export async function GET(request: NextRequest) {
       } else {
         // Standard logic for other categories/periods
         cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-        // For "day" period, use created_at (when Inoreader received it) to show recently received items
-        // For other periods, use published_at to show items by their original publication date
+        // For research, always use created_at (when we fetched it) since published_at can be very old
+        // This ensures we show recently synced papers regardless of when they were originally published
         // Exception: For research "all" period, limit to 3 years (1095 days) using published_at
-        if (category === 'research' && period === 'all') {
-          // Research all-time: limit to last 3 years using published_at
-          const threeYearsAgo = Math.floor((Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000);
-          cutoffTime = threeYearsAgo;
-          useCreatedAt = false;
-          dateColumn = 'published_at';
-          logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
+        if (category === 'research') {
+          if (period === 'all') {
+            // Research all-time: limit to last 3 years using published_at
+            const threeYearsAgo = Math.floor((Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000);
+            cutoffTime = threeYearsAgo;
+            useCreatedAt = false;
+            dateColumn = 'published_at';
+            logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
+          } else {
+            // For research day/week/month, use created_at to show recently synced papers
+            useCreatedAt = true;
+            dateColumn = 'created_at';
+            logger.info(`[API] Research ${period} period: using created_at to show recently synced papers`);
+          }
         } else {
+          // For other categories: use created_at for day period, published_at for others
           useCreatedAt = period === 'day';
           dateColumn = useCreatedAt ? 'created_at' : 'published_at';
         }
