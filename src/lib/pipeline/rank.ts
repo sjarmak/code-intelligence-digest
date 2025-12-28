@@ -46,11 +46,12 @@ export async function rankCategory(
   const config = getCategoryConfig(category);
 
   // Filter to items within time window and with valid URLs
-  // Use publishedAt for all periods to show items by their original publication date
+  // For "day" period (3 days), use createdAt (when Inoreader received it) to show recently received items
+  // For other periods, use publishedAt to show items by their original publication date
   const now = Date.now();
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
-  // Always use published_at to show items by publication date
-  const useCreatedAt = false;
+  // Use created_at for day period (3 days) to show items by when Inoreader received them
+  const useCreatedAt = periodDays === 3;
 
   // Patterns for low-quality items that should be filtered out
   const BAD_TITLE_PATTERNS = [
@@ -233,7 +234,7 @@ export async function rankCategory(
   // For daily view, we want to show more items even if they're slightly less relevant
   // This ensures we have enough items to display when viewing "today's" content
   const categoryMinRelevance = getCategoryConfig(category).minRelevance;
-  const qualityThreshold = periodDays === 2 
+  const qualityThreshold = periodDays === 2
     ? 2  // For "day" period, use very low threshold (2) to show more items
     : Math.max(3, categoryMinRelevance - 1);  // For other periods, use category config minus 1 (min 3)
 

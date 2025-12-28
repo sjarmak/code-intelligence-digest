@@ -116,9 +116,10 @@ export async function loadItemsByCategory(
     const driver = detectDriver();
     const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
 
-    // Use published_at for all periods to show items by their original publication date
-    // This ensures items show up even if they were synced more than periodDays ago
-    const dateColumn = 'published_at';
+    // For "day" period, use created_at (when Inoreader received it) to show recently received items
+    // For other periods, use published_at to show items by their original publication date
+    const useCreatedAt = periodDays === 3; // day period is now 3 days
+    const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
 
     // Calculate effective limit based on period
     // For "all" (60d): limit to 500 most recent items per category
