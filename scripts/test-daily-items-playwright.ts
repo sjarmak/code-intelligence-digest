@@ -168,7 +168,7 @@ async function testDailyItems() {
         }
 
         // Get page HTML to debug
-        const bodyText = await page.locator('body').textContent().catch(() => '');
+        const bodyText = await page.locator('body').textContent().catch(() => '') || '';
         if (bodyText.includes('Loading')) {
           console.log(`  ⏳ Still loading...`);
         }
