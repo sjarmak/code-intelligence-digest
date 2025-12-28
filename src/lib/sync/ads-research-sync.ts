@@ -184,7 +184,7 @@ function adsPaperToFeedItem(doc: ADSSearchResponse['response']['docs'][0]): Feed
   // For new papers: published_at = first of month from pubdate, created_at = when synced (age increments from created_at)
   const now = new Date();
   let publishedAt: Date;
-  
+
   if (doc.pubdate) {
     // pubdate format: "2025-12" or "2025-12-15" (month granularity)
     const dateMatch = doc.pubdate.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
@@ -204,7 +204,7 @@ function adsPaperToFeedItem(doc: ADSSearchResponse['response']['docs'][0]): Feed
     // No pubdate: use first of current month (month granularity)
     publishedAt = new Date(now.getFullYear(), now.getMonth(), 1);
   }
-  
+
   // Ensure published_at is not in the future (cap at first of current month)
   if (publishedAt > now) {
     publishedAt = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -277,14 +277,14 @@ export async function syncResearchFromADS(token: string): Promise<{
 
   // Convert to FeedItems
   const feedItems = docs.map(adsPaperToFeedItem);
-  
+
   logger.info(`[ADS-RESEARCH] Converted ${feedItems.length} papers to FeedItems`);
-  
+
   // Check which papers we already have in the database to avoid reprocessing
   const itemIds = feedItems.map(item => item.id);
   const client = await getDbClient();
   const driver = detectDriver();
-  
+
   // Build query that works for both PostgreSQL and SQLite
   let existingItemsResult;
   if (driver === 'postgres') {
@@ -301,32 +301,32 @@ export async function syncResearchFromADS(token: string): Promise<{
       itemIds
     );
   }
-  
+
   const existingIds = new Set(
     (existingItemsResult.rows as any[]).map(row => row.id)
   );
-  
+
   // Filter out papers we already have
   const newFeedItems = feedItems.filter(item => !existingIds.has(item.id));
-  
+
   if (newFeedItems.length === 0) {
     logger.info(`[ADS-RESEARCH] All ${feedItems.length} papers already exist in database, skipping processing`);
     return { itemsAdded: 0, itemsScored: 0, totalFound: docs.length };
   }
-  
+
   logger.info(`[ADS-RESEARCH] ${newFeedItems.length} new papers to process (${feedItems.length - newFeedItems.length} already exist)`);
-  
+
   // Note: normalizeItems expects InoreaderArticle[], but we have FeedItem[]
   // For ADS papers, we've already normalized them (URLs, dates, etc. are set)
   // So we can skip normalization and go straight to categorization
   // Categorize (should all be 'research' already, but ensure)
   const categorizedItems = await categorizeItems(newFeedItems);
-  
+
   // Filter to only research items
   const researchItems = categorizedItems.filter(item => item.category === 'research');
-  
+
   logger.info(`[ADS-RESEARCH] ${researchItems.length} items after normalization/categorization`);
-  
+
   // Save to items table
   await saveItems(researchItems);
 
