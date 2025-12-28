@@ -179,8 +179,8 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
                 </>
               )}
 
-              {/* Date - use createdAt only for daily view, otherwise use publishedAt */}
-              <span>{formatDate((period === 'day' && item.createdAt) ? item.createdAt : item.publishedAt)}</span>
+              {/* Date - use createdAt for day period or research category, otherwise use publishedAt */}
+              <span>{formatDate((period === 'day' || item.category === 'research') && item.createdAt ? item.createdAt : item.publishedAt)}</span>
             </div>
 
             {/* Rating button - right aligned */}
