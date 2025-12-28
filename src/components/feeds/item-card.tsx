@@ -44,6 +44,19 @@ function formatDate(dateString: string): string {
   return date.toLocaleDateString();
 }
 
+function formatCategoryName(category: string): string {
+  const categoryLabels: Record<string, string> = {
+    newsletters: 'Newsletters',
+    podcasts: 'Podcasts',
+    tech_articles: 'Tech Articles',
+    ai_news: 'AI News',
+    product_news: 'Product News',
+    community: 'Community',
+    research: 'Research',
+  };
+  return categoryLabels[category] || category.replace('_', ' ');
+}
+
 function getCategoryColor(category: string): string {
   const colors: Record<string, string> = {
     newsletters: 'bg-gray-100 text-gray-800 border-gray-300',
@@ -186,7 +199,7 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
           {/* Category badge */}
           {item.category && (
             <span className={`inline-block badge text-xs ${getCategoryColor(item.category)}`}>
-              {item.category.replace('_', ' ')}
+              {formatCategoryName(item.category)}
             </span>
           )}
         </div>

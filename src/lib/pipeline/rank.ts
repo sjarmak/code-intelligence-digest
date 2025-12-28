@@ -35,7 +35,8 @@ function computeRecencyScore(
 export async function rankCategory(
   items: FeedItem[],
   category: Category,
-  periodDays: number
+  periodDays: number,
+  period?: string
 ): Promise<RankedItem[]> {
   if (items.length === 0) {
     return [];
@@ -50,13 +51,15 @@ export async function rankCategory(
   // For other periods, use publishedAt to show items by their original publication date
   // For newsletters with day period, items are already filtered by the API route using the most recent item's timestamp
   // So we should skip date filtering here to avoid double-filtering
+  // For research and product_news with day period, items are also already filtered by API route (3 days)
   const now = Date.now();
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
   // Use created_at for day period (1-3 days) to show items by when Inoreader received them
   // For newsletters on weekdays, periodDays will be 1; on weekends, 2; for other categories, 3
-  // For newsletters with day period, skip date filtering since items are already filtered by API route
+  // For newsletters, research, and product_news with day period, skip date filtering since items are already filtered by API route
   const useCreatedAt = periodDays <= 3;
-  const skipDateFilter = category === "newsletters" && periodDays === 1; // Items already filtered by API route
+  // Skip date filtering for day period when items are already filtered by API route using created_at
+  const skipDateFilter = period === "day" && (category === "newsletters" || category === "research" || category === "product_news");
 
   // Patterns for low-quality items that should be filtered out
   const BAD_TITLE_PATTERNS = [

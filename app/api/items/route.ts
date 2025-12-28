@@ -152,19 +152,19 @@ export async function GET(request: NextRequest) {
     } else {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
-      
+
       // Special handling for newsletters day period: use most recent item's timestamp
       let cutoffTime: number;
       let useCreatedAt: boolean;
       let dateColumn: string;
-      
+
       if (category === "newsletters" && period === "day") {
         // Find the most recent newsletter item
         const mostRecentResult = await client.query(
           `SELECT created_at FROM items WHERE category = ? AND id LIKE '%-article-%' ORDER BY created_at DESC LIMIT 1`,
           [category]
         );
-        
+
         if (mostRecentResult.rows.length > 0) {
           const mostRecentCreatedAt = (mostRecentResult.rows[0] as any).created_at;
           // Use 24 hours before the most recent item
@@ -274,7 +274,7 @@ export async function GET(request: NextRequest) {
     logger.info(`[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`);
 
     // Rank items (no filtering - it's fine for ai_news to show items from newsletters if they're relevant)
-    const rankedItems = await rankCategory(items, category, periodDays);
+    const rankedItems = await rankCategory(items, category, periodDays, period);
     logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`);
 
     // Debug: Check if scores are loading
