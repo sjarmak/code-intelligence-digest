@@ -33,8 +33,8 @@ export const PERIOD_CONFIG: Record<Exclude<Period, 'custom'>, PeriodConfig> = {
   },
   all: {
     label: 'All-time',
-    days: 60,  // Reduced from 90 to save memory
-    halfLifeDays: 30,
+    days: 1095,  // 3 years - for research, this limits to last 3 years of papers
+    halfLifeDays: 365, // 1 year half-life for all-time
     maxPerSource: 4,
   },
 };
