@@ -263,6 +263,14 @@ function recategorizeDecomposedArticle(item: FeedItem): Category {
     return item.category;
   }
 
+  // CRITICAL: Keep items from newsletter sources in "newsletters" category
+  // This ensures they show up in the newsletters view even if they're also relevant to other categories
+  // The user expects to see Elevate, Byte Byte Go, etc. items in newsletters
+  if (isNewsletterSource(item.sourceTitle)) {
+    logger.debug(`Keeping "newsletters" category for article "${item.title}" from newsletter source "${item.sourceTitle}"`);
+    return "newsletters";
+  }
+
   // Only re-categorize if it's from a generic "newsletters" folder
   // Use content-based patterns to determine the correct category
   const url = item.url.toLowerCase();
