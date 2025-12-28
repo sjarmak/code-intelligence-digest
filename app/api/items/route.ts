@@ -258,8 +258,8 @@ export async function GET(request: NextRequest) {
       `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`
     );
 
-    // Return response
-    return NextResponse.json({
+    // Return response with cache control headers to prevent Next.js caching
+    const response = NextResponse.json({
       category,
       period,
       periodDays,
@@ -289,6 +289,13 @@ export async function GET(request: NextRequest) {
         diversityReason: selectionResult.reasons.get(item.id),
       })),
     });
+    
+    // Set cache control headers to prevent Next.js from caching API responses
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+    
+    return response;
   } catch (error) {
     logger.error("GET /api/items failed", { error });
     return NextResponse.json(
