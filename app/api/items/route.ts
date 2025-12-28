@@ -268,6 +268,9 @@ export async function GET(request: NextRequest) {
       `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`
     );
 
+    // Check if there are more items available beyond the current limit
+    const hasMore = rankedItems.length > selectionResult.items.length;
+
     // Return response with cache control headers to prevent Next.js caching
     const response = NextResponse.json({
       category,
@@ -276,7 +279,8 @@ export async function GET(request: NextRequest) {
       totalItems: selectionResult.items.length,
       itemsRanked: rankedItems.length,
       itemsFiltered: rankedItems.length - selectionResult.items.length,
-        items: selectionResult.items.map((item) => ({
+      hasMore, // Indicate if more items are available
+      items: selectionResult.items.map((item) => ({
         id: item.id,
         title: decodeHtmlEntities(item.title), // Decode HTML entities in title
         url: item.url,
