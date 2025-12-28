@@ -26,10 +26,10 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const PERIOD_DAYS: Record<string, number> = {
-  day: PERIOD_CONFIG.day.days,
-  week: PERIOD_CONFIG.week.days,
-  month: PERIOD_CONFIG.month.days,
-  all: PERIOD_CONFIG.all.days,
+  day: PERIOD_CONFIG.day.days!,
+  week: PERIOD_CONFIG.week.days!,
+  month: PERIOD_CONFIG.month.days!,
+  all: PERIOD_CONFIG.all.days!,
 };
 
 export async function GET(request: NextRequest) {
