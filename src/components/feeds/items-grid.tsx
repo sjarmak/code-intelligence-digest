@@ -67,52 +67,10 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         }
 
         // If loading more, exclude already-loaded items
-        // Use a ref or closure to get current items
-        setItems(currentItems => {
-          if (loadMoreCount > 0 && currentItems.length > 0) {
-            const excludeIds = currentItems.map(item => item.id).join(',');
-            params.append('excludeIds', excludeIds);
-          }
-          
-          // Fetch items
-          fetch(`/api/items?${params.toString()}`)
-            .then(response => {
-              if (!response.ok) {
-                throw new Error('Failed to fetch items');
-              }
-              return response.json();
-            })
-            .then(data => {
-              const fetchedItems = data.items || [];
-              
-              // If loading more (loadMoreCount > 0), append new items
-              // Otherwise, replace items (initial load or category/period change)
-              if (loadMoreCount > 0) {
-                setItems(prev => {
-                  // Deduplicate by ID to avoid duplicates
-                  const existingIds = new Set(prev.map((item: RankedItemResponse) => item.id));
-                  const newItems = fetchedItems.filter((item: RankedItemResponse) => !existingIds.has(item.id));
-                  return [...prev, ...newItems];
-                });
-              } else {
-                setItems(fetchedItems);
-              }
-              
-              // Use hasMore from API response
-              setHasMore(data.hasMore === true);
-              setLoading(false);
-            })
-            .catch(err => {
-              const message = err instanceof Error ? err.message : 'Unknown error';
-              setError(message);
-              setItems([]);
-              setLoading(false);
-            });
-          
-          return currentItems; // Return unchanged for now
-        });
-        
-        return; // Early return since we're handling fetch inside setItems
+        if (loadMoreCount > 0 && itemsRef.current.length > 0) {
+          const excludeIds = itemsRef.current.map(item => item.id).join(',');
+          params.append('excludeIds', excludeIds);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         setError(message);
@@ -120,15 +78,6 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         setLoading(false);
       }
     };
-
-    // Reset loadMoreCount when category or period changes
-    if (loadMoreCount === 0) {
-      setLoadMoreCount(0);
-      itemsRef.current = []; // Reset ref when category/period changes
-    }
-    fetchItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, period, customDateRange, loadMoreCount]);
 
         const response = await fetch(`/api/items?${params.toString()}`);
 
@@ -146,10 +95,13 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
             // Deduplicate by ID to avoid duplicates
             const existingIds = new Set(prev.map((item: RankedItemResponse) => item.id));
             const newItems = fetchedItems.filter((item: RankedItemResponse) => !existingIds.has(item.id));
-            return [...prev, ...newItems];
+            const updated = [...prev, ...newItems];
+            itemsRef.current = updated; // Update ref
+            return updated;
           });
         } else {
           setItems(fetchedItems);
+          itemsRef.current = fetchedItems; // Update ref
         }
         
         // Use hasMore from API response
@@ -158,9 +110,19 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         const message = err instanceof Error ? err.message : 'Unknown error';
         setError(message);
         setItems([]);
+        itemsRef.current = []; // Reset ref on error
       } finally {
         setLoading(false);
       }
+    };
+
+    // Reset loadMoreCount when category or period changes
+    if (loadMoreCount === 0) {
+      itemsRef.current = []; // Reset ref when category/period changes
+    }
+    fetchItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, period, customDateRange, loadMoreCount]);
     };
 
     // Reset loadMoreCount when category or period changes
