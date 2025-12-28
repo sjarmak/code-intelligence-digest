@@ -3,7 +3,7 @@
  * Stores all ranking scores for analytics and A/B testing
  */
 
-import { getSqlite } from "./index";
+import { getDbClient } from "./driver";
 import { RankedItem, Category } from "../model";
 import { logger } from "../logger";
 
@@ -12,32 +12,40 @@ import { logger } from "../logger";
  */
 export async function saveItemScores(items: RankedItem[], category: Category): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const stmt = sqlite.prepare(`
-      INSERT INTO item_scores 
+    // Use parameterized queries for both SQLite and Postgres
+    const sql = `
+      INSERT INTO item_scores
       (item_id, category, bm25_score, llm_relevance, llm_usefulness, llm_tags, recency_score, engagement_score, final_score, reasoning)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+      ON CONFLICT (item_id, category) DO UPDATE SET
+        bm25_score = excluded.bm25_score,
+        llm_relevance = excluded.llm_relevance,
+        llm_usefulness = excluded.llm_usefulness,
+        llm_tags = excluded.llm_tags,
+        recency_score = excluded.recency_score,
+        engagement_score = excluded.engagement_score,
+        final_score = excluded.final_score,
+        reasoning = excluded.reasoning,
+        scored_at = CURRENT_TIMESTAMP
+    `;
 
-    const insertMany = sqlite.transaction((items: RankedItem[]) => {
-      for (const item of items) {
-        stmt.run(
-          item.id,
-          category,
-          item.bm25Score,
-          item.llmScore.relevance,
-          item.llmScore.usefulness,
-          JSON.stringify(item.llmScore.tags),
-          item.recencyScore,
-          item.engagementScore || null,
-          item.finalScore,
-          item.reasoning
-        );
-      }
-    });
+    for (const item of items) {
+      await client.run(sql, [
+        item.id,
+        category,
+        item.bm25Score,
+        item.llmScore.relevance,
+        item.llmScore.usefulness,
+        JSON.stringify(item.llmScore.tags),
+        item.recencyScore,
+        item.engagementScore || null,
+        item.finalScore,
+        item.reasoning
+      ]);
+    }
 
-    insertMany(items);
     logger.info(`Saved ${items.length} item scores to database for category ${category}`);
   } catch (error) {
     logger.error(`Failed to save item scores for category ${category}`, error);
@@ -61,16 +69,20 @@ export async function getItemLatestScores(
   scoredAt: number;
 } | null> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const row = sqlite
-      .prepare(`
-      SELECT * FROM item_scores 
-      WHERE item_id = ? 
-      ORDER BY scored_at DESC 
+    const result = await client.query(`
+      SELECT * FROM item_scores
+      WHERE item_id = ?
+      ORDER BY scored_at DESC
       LIMIT 1
-    `)
-      .get(itemId) as {
+    `, [itemId]);
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0] as {
       bm25_score: number;
       llm_relevance: number;
       llm_usefulness: number;
@@ -79,11 +91,7 @@ export async function getItemLatestScores(
       final_score: number;
       reasoning: string;
       scored_at: number;
-    } | undefined;
-
-    if (!row) {
-      return null;
-    }
+    };
 
     return {
       bm25Score: row.bm25_score,
@@ -115,15 +123,15 @@ export async function getItemScoreHistory(
   }>
 > {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const rows = sqlite
-      .prepare(`
-      SELECT bm25_score, final_score, llm_relevance, scored_at FROM item_scores 
-      WHERE item_id = ? 
+    const result = await client.query(`
+      SELECT bm25_score, final_score, llm_relevance, scored_at FROM item_scores
+      WHERE item_id = ?
       ORDER BY scored_at ASC
-    `)
-      .all(itemId) as Array<{
+    `, [itemId]);
+
+    const rows = result.rows as Array<{
       bm25_score: number;
       final_score: number;
       llm_relevance: number;
@@ -153,20 +161,20 @@ export async function getAverageScoresByCategory(category: Category): Promise<{
   count: number;
 }> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const row = sqlite
-      .prepare(`
-      SELECT 
+    const result = await client.query(`
+      SELECT
         AVG(bm25_score) as avg_bm25,
         AVG(llm_relevance) as avg_llm_relevance,
         AVG(recency_score) as avg_recency,
         AVG(final_score) as avg_final,
         COUNT(*) as count
-      FROM item_scores 
+      FROM item_scores
       WHERE category = ?
-    `)
-      .get(category) as {
+    `, [category]);
+
+    const row = result.rows[0] as {
       avg_bm25: number | null;
       avg_llm_relevance: number | null;
       avg_recency: number | null;
