@@ -80,12 +80,12 @@ async function syncFromProduction(options: SyncOptions): Promise<void> {
     }
     logger.info(`✅ Synced ${feedsUpserted} feeds\n`);
 
-    // 2. Sync recent items (last N days)
+    // 2. Sync recent items (last N days) - use created_at to match our day period logic
     logger.info(`📰 Syncing items from last ${daysBack} days...`);
     const itemsResult = await prodPool.query(`
       SELECT * FROM items
-      WHERE published_at >= extract(epoch from now() - interval '${daysBack} days')::integer
-      ORDER BY published_at DESC
+      WHERE created_at >= extract(epoch from now() - interval '${daysBack} days')::integer
+      ORDER BY created_at DESC
     `);
     const items = itemsResult.rows;
 
@@ -191,7 +191,63 @@ async function syncFromProduction(options: SyncOptions): Promise<void> {
       }
     }
 
-    // 4. Update cache metadata
+    // 4. Sync item scores for recent items
+    logger.info(`\n📊 Syncing item scores...`);
+    const itemIdsForScores = items.map(i => i.id);
+    let totalScores = 0;
+
+    try {
+      if (itemIdsForScores.length > 0) {
+        // Batch scores query (Postgres has a limit on array size, so batch in chunks of 1000)
+        const BATCH_SIZE = 1000;
+
+        for (let i = 0; i < itemIdsForScores.length; i += BATCH_SIZE) {
+          const batch = itemIdsForScores.slice(i, i + BATCH_SIZE);
+          const scoresResult = await prodPool.query(
+            'SELECT * FROM item_scores WHERE item_id = ANY($1)',
+            [batch]
+          );
+
+          const scores = scoresResult.rows;
+
+          const scoreInsert = localDb.prepare(`
+            INSERT OR REPLACE INTO item_scores (
+              item_id, category, bm25_score, llm_relevance, llm_usefulness,
+              llm_tags, recency_score, engagement_score, final_score, reasoning, scored_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+
+          for (const score of scores) {
+            scoreInsert.run(
+              score.item_id,
+              score.category,
+              score.bm25_score,
+              score.llm_relevance,
+              score.llm_usefulness,
+              score.llm_tags,
+              score.recency_score,
+              score.engagement_score || null,
+              score.final_score,
+              score.reasoning || null,
+              score.scored_at
+            );
+            totalScores++;
+          }
+        }
+
+        logger.info(`✅ Synced ${totalScores} item scores\n`);
+      }
+    } catch (error) {
+      const err = error as { code?: string; message?: string };
+      if (err.code === '42P01') {
+        logger.warn('⚠️  item_scores table does not exist in production - skipping scores sync');
+      } else {
+        logger.error('Error syncing scores:', err.message);
+        throw error;
+      }
+    }
+
+    // 5. Update cache metadata
     logger.info('🔄 Updating cache metadata...');
     const now = Math.floor(Date.now() / 1000);
 
@@ -208,6 +264,7 @@ async function syncFromProduction(options: SyncOptions): Promise<void> {
     console.log('='.repeat(60));
     console.log(`Feeds synced:       ${feedsUpserted}`);
     console.log(`Items synced:       ${itemsUpserted}`);
+    console.log(`Scores synced:      ${totalScores || 0}`);
     console.log(`Embeddings synced:  ${totalEmbeddings || 0}`);
     console.log(`Days back:          ${daysBack}`);
     console.log('='.repeat(60) + '\n');
