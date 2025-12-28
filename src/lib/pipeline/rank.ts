@@ -50,6 +50,7 @@ export async function rankCategory(
   // For longer periods, use publishedAt to show items by their original publication date
   const now = Date.now();
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
+  // Use created_at for day period (2 days) to show recently synced items
   const useCreatedAt = periodDays === 2;
 
   // Patterns for low-quality items that should be filtered out
@@ -229,6 +230,14 @@ export async function rankCategory(
   const preComputedScores = await loadScoresForItems(itemIds);
   logger.debug(`[RANK] Loaded scores for ${Object.keys(preComputedScores).length} items`);
 
+  // Use category-specific minRelevance, but be more lenient for "day" period
+  // For daily view, we want to show more items even if they're slightly less relevant
+  // This ensures we have enough items to display when viewing "today's" content
+  const categoryMinRelevance = getCategoryConfig(category).minRelevance;
+  const qualityThreshold = periodDays === 2 
+    ? 2  // For "day" period, use very low threshold (2) to show more items
+    : Math.max(3, categoryMinRelevance - 1);  // For other periods, use category config minus 1 (min 3)
+
   const qualityFiltered = contentFiltered.filter(item => {
     const score = preComputedScores[item.id];
     if (score) {
@@ -237,12 +246,13 @@ export async function rankCategory(
         logger.debug(`Pre-filtering off-topic: "${item.title}"`);
         return false;
       }
-      // Filter very low relevance items (< 3/10)
-      if (score.llm_relevance < 3) {
-        logger.debug(`Pre-filtering low relevance: "${item.title}" (${score.llm_relevance})`);
+      // Filter very low relevance items (use category-specific threshold)
+      if (score.llm_relevance < qualityThreshold) {
+        logger.debug(`Pre-filtering low relevance: "${item.title}" (${score.llm_relevance} < ${qualityThreshold})`);
         return false;
       }
     }
+    // Items without scores pass through (they'll be scored on-the-fly or use BM25)
     return true;
   });
 

@@ -8,6 +8,7 @@ import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
 import { scoreWithLLM } from "./llmScore";
 import { saveItemScores } from "../db/scores";
+import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
 
 /**
@@ -41,11 +42,25 @@ export async function computeAndSaveScoresForCategory(
 
   logger.info(`[SCORE-COMPUTE] Computing scores for ${items.length} items in category: ${category}`);
 
+  // Load existing scores to avoid recomputing - only score items that don't have scores
+  const itemIds = items.map((item) => item.id);
+  const existingScores = await loadScoresForItems(itemIds);
+
+  // Filter out items that already have scores - we only add scores, never rescore
+  const itemsToScore = items.filter((item) => !existingScores[item.id]);
+
+  if (itemsToScore.length === 0) {
+    logger.info(`[SCORE-COMPUTE] All ${items.length} items already have scores, skipping (no rescoring)`);
+    return 0;
+  }
+
+  logger.info(`[SCORE-COMPUTE] ${itemsToScore.length} items need scores (${items.length - itemsToScore.length} already have scores, skipping)`);
+
   const config = getCategoryConfig(category);
 
-  // Build BM25 index
+  // Build BM25 index - only for items that need scoring
   const bm25 = new BM25Index();
-  bm25.addDocuments(items);
+  bm25.addDocuments(itemsToScore);
   const queryTerms = config.query
     .toLowerCase()
     .split(/\s+/)
@@ -56,7 +71,7 @@ export async function computeAndSaveScoresForCategory(
   // Filter out items with insufficient content before LLM scoring
   // Items with only a title (no summary/content) should not be scored by LLM
   // They'll get low BM25-based scores instead
-  const itemsWithContent = items.filter((item) => {
+  const itemsWithContent = itemsToScore.filter((item) => {
     const hasRealContent =
       (item.summary && item.summary.length > item.title.length + 20) ||
       (item.contentSnippet && item.contentSnippet.length > item.title.length + 20) ||
@@ -70,13 +85,13 @@ export async function computeAndSaveScoresForCategory(
   });
 
   // Compute LLM scores only for items with sufficient content
-  logger.info(`[SCORE-COMPUTE] Computing LLM scores for ${itemsWithContent.length} items (filtered ${items.length - itemsWithContent.length} items with insufficient content)...`);
+  logger.info(`[SCORE-COMPUTE] Computing LLM scores for ${itemsWithContent.length} items (filtered ${itemsToScore.length - itemsWithContent.length} items with insufficient content)...`);
   const llmScores = itemsWithContent.length > 0
     ? await scoreWithLLM(itemsWithContent, category, 30) // Batch size 30
     : {};
 
-  // Compute all scores and combine
-  const rankedItems: RankedItem[] = items.map((item) => {
+  // Compute all scores and combine - only for items that need scoring
+  const rankedItems: RankedItem[] = itemsToScore.map((item) => {
     const bm25Score = bm25Normalized.get(item.id) ?? 0;
     const llmResult = llmScores[item.id];
 
