@@ -33,14 +33,16 @@ const PERIOD_DAYS: Record<string, number> = {
 };
 
 export async function GET(request: NextRequest) {
+  // Extract parameters early so they're available in error handler
+  const searchParams = request.nextUrl.searchParams;
+  const category = searchParams.get("category") as Category | null;
+  const period = searchParams.get("period") || "week";
+  const limitParam = searchParams.get("limit");
+  const excludeIdsParam = searchParams.get("excludeIds"); // Comma-separated list of item IDs to exclude
+  const startDateParam = searchParams.get("startDate");
+  const endDateParam = searchParams.get("endDate");
+
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const category = searchParams.get("category") as Category | null;
-    const period = searchParams.get("period") || "week";
-    const limitParam = searchParams.get("limit");
-    const excludeIdsParam = searchParams.get("excludeIds"); // Comma-separated list of item IDs to exclude
-    const startDateParam = searchParams.get("startDate");
-    const endDateParam = searchParams.get("endDate");
 
     // Parse limit, clamp to [1, 50]
     let customLimit: number | undefined;
