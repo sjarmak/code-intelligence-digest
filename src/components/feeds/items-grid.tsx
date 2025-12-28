@@ -88,7 +88,8 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
     // Reset limit when category or period changes
     setLimit(10);
     fetchItems();
-  }, [category, period, customDateRange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, period, customDateRange, limit]);
 
   const handleLoadMore = () => {
     setLimit(prev => prev + 10);
