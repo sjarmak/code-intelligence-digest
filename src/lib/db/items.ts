@@ -116,11 +116,12 @@ export async function loadItemsByCategory(
     const driver = detectDriver();
     const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
 
-    // For "day" period (1-3 days), use created_at (when Inoreader received it) to show recently received items
+    // For "day" period, use created_at (when Inoreader received it) to show recently received items
     // For other periods, use published_at to show items by their original publication date
-    // For newsletters on weekdays, periodDays will be 1; on weekends, 2; for research/product_news, 3
-    // For research and product_news, always use created_at for day period to show recently received items
-    const useCreatedAt = periodDays <= 3 || (category === "research" || category === "product_news");
+    // For newsletters: periodDays will be 1 (weekdays) or 2 (weekends)
+    // For research and product_news: periodDays will be 3
+    // Always use created_at for day period (periodDays <= 3) to show items by when Inoreader received them
+    const useCreatedAt = periodDays <= 3;
     const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
 
     // Calculate effective limit based on period

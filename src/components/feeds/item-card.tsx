@@ -150,9 +150,9 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
               {item.llmScore.tags.length > 0 && (
                 <>
                   <div className="flex gap-1">
-                    {item.llmScore.tags.slice(0, 2).map((tag) => (
+                    {item.llmScore.tags.slice(0, 2).map((tag, tagIndex) => (
                       <span
-                        key={tag}
+                        key={`${item.id}-tag-${tagIndex}-${tag}`}
                         className="inline-block px-1.5 py-0.5 bg-surface border border-surface-border rounded text-gray-600"
                       >
                         {tag}
