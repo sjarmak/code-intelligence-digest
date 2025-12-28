@@ -115,22 +115,12 @@ export async function GET(request: NextRequest) {
     } else {
       periodDays = PERIOD_DAYS[period];
 
-      // Special handling for newsletters: adjust day period based on weekday/weekend
-      // TLDR only publishes on weekdays, so:
-      // - Weekdays: show last 24 hours (1 day)
-      // - Weekends: show last 48 hours (2 days) to include Friday's items until Monday
+      // Special handling for newsletters: use most recent item's timestamp as reference
+      // Show items from the last 24 hours relative to the most recent item
+      // This ensures that if it's Sunday and the most recent item is from Friday,
+      // we'll show Friday's items (24 hours relative to Friday)
       if (category === "newsletters" && period === "day") {
-        const now = new Date();
-        const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
-        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-        if (isWeekend) {
-          periodDays = 2; // 48 hours to include Friday's items
-          logger.info(`[API] Weekend detected for newsletters - using 2 day window to include Friday's items`);
-        } else {
-          periodDays = 1; // 24 hours for weekdays
-          logger.info(`[API] Weekday detected for newsletters - using 1 day window`);
-        }
+        periodDays = 1; // Will be adjusted based on most recent item
       }
 
       // For research and product_news, use created_at for day period to show recently received items
@@ -162,11 +152,41 @@ export async function GET(request: NextRequest) {
     } else {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
-      const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-      // For "day" period, use created_at (when Inoreader received it) to show recently received items
-      // For other periods, use published_at to show items by their original publication date
-      const useCreatedAt = period === 'day';
-      const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+      
+      // Special handling for newsletters day period: use most recent item's timestamp
+      let cutoffTime: number;
+      let useCreatedAt: boolean;
+      let dateColumn: string;
+      
+      if (category === "newsletters" && period === "day") {
+        // Find the most recent newsletter item
+        const mostRecentResult = await client.query(
+          `SELECT created_at FROM items WHERE category = ? AND id LIKE '%-article-%' ORDER BY created_at DESC LIMIT 1`,
+          [category]
+        );
+        
+        if (mostRecentResult.rows.length > 0) {
+          const mostRecentCreatedAt = (mostRecentResult.rows[0] as any).created_at;
+          // Use 24 hours before the most recent item
+          cutoffTime = mostRecentCreatedAt - (24 * 60 * 60); // 24 hours in seconds
+          useCreatedAt = true;
+          dateColumn = 'created_at';
+          logger.info(`[API] Newsletters day period: using most recent item timestamp (${new Date(mostRecentCreatedAt * 1000).toISOString()}), cutoff: ${new Date(cutoffTime * 1000).toISOString()}`);
+        } else {
+          // Fallback: use current time - 24 hours if no items found
+          cutoffTime = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+          useCreatedAt = true;
+          dateColumn = 'created_at';
+          logger.info(`[API] Newsletters day period: no items found, using current time - 24 hours`);
+        }
+      } else {
+        // Standard logic for other categories/periods
+        cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+        // For "day" period, use created_at (when Inoreader received it) to show recently received items
+        // For other periods, use published_at to show items by their original publication date
+        useCreatedAt = period === 'day';
+        dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+      }
 
       // For newsletters, only get decomposed articles (have -article- in ID)
       const whereClause = category === "newsletters"
