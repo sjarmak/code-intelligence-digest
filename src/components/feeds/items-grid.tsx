@@ -71,13 +71,6 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
           const excludeIds = itemsRef.current.map(item => item.id).join(',');
           params.append('excludeIds', excludeIds);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        setError(message);
-        setItems([]);
-        setLoading(false);
-      }
-    };
 
         const response = await fetch(`/api/items?${params.toString()}`);
 
@@ -120,13 +113,6 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
     if (loadMoreCount === 0) {
       itemsRef.current = []; // Reset ref when category/period changes
     }
-    fetchItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, period, customDateRange, loadMoreCount]);
-    };
-
-    // Reset loadMoreCount when category or period changes
-    setLoadMoreCount(0);
     fetchItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, period, customDateRange, loadMoreCount]);
