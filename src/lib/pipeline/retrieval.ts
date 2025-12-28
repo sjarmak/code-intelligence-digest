@@ -142,7 +142,7 @@ export async function retrieveRelevantItems(
     }
 
     // Rank using the standard ranking pipeline
-    const rankedItems = await rankCategory(retrievedItems, category, periodDays);
+    const rankedItems = await rankCategory(retrievedItems, category, periodDays, "day");
 
     // Re-rank by semantic similarity to boost relevant items
     const reranked = rankedItems.map((item) => {
