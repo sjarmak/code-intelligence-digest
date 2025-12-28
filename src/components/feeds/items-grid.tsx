@@ -78,8 +78,8 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         if (limit > 10) {
           setItems(prev => {
             // Deduplicate by ID to avoid duplicates
-            const existingIds = new Set(prev.map(item => item.id));
-            const newItems = fetchedItems.filter(item => !existingIds.has(item.id));
+            const existingIds = new Set(prev.map((item: RankedItemResponse) => item.id));
+            const newItems = fetchedItems.filter((item: RankedItemResponse) => !existingIds.has(item.id));
             return [...prev, ...newItems];
           });
         } else {
