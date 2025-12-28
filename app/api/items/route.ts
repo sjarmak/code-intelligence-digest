@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get("category") as Category | null;
     const period = searchParams.get("period") || "week";
     const limitParam = searchParams.get("limit");
+    const excludeIdsParam = searchParams.get("excludeIds"); // Comma-separated list of item IDs to exclude
     const startDateParam = searchParams.get("startDate");
     const endDateParam = searchParams.get("endDate");
 
@@ -49,6 +50,11 @@ export async function GET(request: NextRequest) {
         customLimit = Math.min(Math.max(parsed, 1), 50);
       }
     }
+    
+    // Parse excludeIds for pagination
+    const excludeIds = excludeIdsParam
+      ? new Set(excludeIdsParam.split(',').filter(id => id.trim().length > 0))
+      : undefined;
 
     // Validate category
     if (!category || !VALID_CATEGORIES.includes(category)) {
@@ -318,14 +324,21 @@ export async function GET(request: NextRequest) {
       rankedItems,
       category,
       maxPerSource,
-      customLimit // Pass custom limit to override category config
+      customLimit, // Pass custom limit to override category config
+      excludeIds // Exclude already-loaded items for pagination
     );
     logger.info(
       `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`
     );
 
-    // Check if there are more items available beyond the current limit
-    const hasMore = rankedItems.length > selectionResult.items.length;
+    // Check if there are more items available beyond the current selection
+    // We need to check if there are any items in rankedItems that weren't selected
+    // and that meet the quality threshold (finalScore >= 0.05)
+    const selectedIds = new Set(selectionResult.items.map(item => item.id));
+    const remainingItems = rankedItems.filter(
+      item => !selectedIds.has(item.id) && item.finalScore >= 0.05
+    );
+    const hasMore = remainingItems.length > 0;
 
     // Return response with cache control headers to prevent Next.js caching
     const response = NextResponse.json({

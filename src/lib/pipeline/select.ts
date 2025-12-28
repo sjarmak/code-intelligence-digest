@@ -49,20 +49,32 @@ function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
  * - Deduplication: max 1 item per unique URL
  * - Per-source cap: max N items per source per category
  * - Total cap: max CATEGORY_CONFIG[category].maxItems (or custom limit if provided)
+ * 
+ * @param excludeIds Optional set of item IDs to exclude (for pagination)
  */
 export function selectWithDiversity(
   rankedItems: RankedItem[],
   category: Category,
   maxPerSource: number = 2,
-  maxItemsOverride?: number
+  maxItemsOverride?: number,
+  excludeIds?: Set<string>
 ): SelectionResult {
   const config = getCategoryConfig(category);
   const maxItems = maxItemsOverride ?? config.maxItems;
   // Always return top 10 items minimum, regardless of diversity constraints
   const minItems = 10;
 
+  // First, exclude already-selected items (for pagination)
+  const filteredItems = excludeIds && excludeIds.size > 0
+    ? rankedItems.filter(item => !excludeIds.has(item.id))
+    : rankedItems;
+  
+  if (excludeIds && excludeIds.size > 0) {
+    logger.info(`Excluding ${excludeIds.size} already-selected items for pagination`);
+  }
+  
   // First, deduplicate by URL to handle same article from different sources
-  const deduplicatedItems = deduplicateByUrl(rankedItems);
+  const deduplicatedItems = deduplicateByUrl(filteredItems);
 
   // Filter out items with very low scores (likely not relevant)
   // Items with finalScore < 0.05 are probably not useful (lowered to ensure we have enough items)
