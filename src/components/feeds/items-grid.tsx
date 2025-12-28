@@ -80,7 +80,7 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
 
         const data = await response.json();
         const fetchedItems = data.items || [];
-        
+
         // If loading more (loadMoreCount > 0), append new items
         // Otherwise, replace items (initial load or category/period change)
         if (loadMoreCount > 0) {
@@ -96,7 +96,7 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
           setItems(fetchedItems);
           itemsRef.current = fetchedItems; // Update ref
         }
-        
+
         // Use hasMore from API response
         setHasMore(data.hasMore === true);
       } catch (err) {
