@@ -278,54 +278,10 @@ function recategorizeDecomposedArticle(item: FeedItem): Category {
   const summary = (item.summary || item.contentSnippet || "").toLowerCase();
   const combinedText = `${title} ${summary}`;
 
-  // Check if this article came from a TLDR section that should be re-categorized
-  // First check if we have explicit section information (from extraction)
-  // This is more reliable than pattern matching
-  if (item.sourceTitle.includes("TLDR")) {
-    // Check if item has section metadata (stored in summary or contentSnippet)
-    const itemSection = (item.summary || item.contentSnippet || "").match(/\[SECTION:([^\]]+)\]/);
-    if (itemSection) {
-      const sectionName = itemSection[1].toLowerCase();
-      // "Big Tech & Startups" section should be ai_news
-      if (sectionName.includes("big tech") && (sectionName.includes("startup") || sectionName.includes("startups"))) {
-        logger.debug(`Re-categorizing TLDR article "${item.title}" from newsletters to ai_news based on section: ${itemSection[1]}`);
-        return "ai_news";
-      }
-      // Articles about Nvidia, Groq, AI companies in Miscellaneous might also be ai_news
-      if (sectionName.includes("miscellaneous")) {
-        const titleLower = title.toLowerCase();
-        if (titleLower.includes("nvidia") || titleLower.includes("groq") ||
-            titleLower.includes("openai") || titleLower.includes("anthropic") ||
-            (titleLower.includes("ai") && (titleLower.includes("startup") || titleLower.includes("company")))) {
-          logger.debug(`Re-categorizing TLDR article "${item.title}" from newsletters to ai_news (AI company in Miscellaneous section)`);
-          return "ai_news";
-        }
-      }
-    }
-
-    // Fallback: Look for section context in the summary/content (TLDR includes section headers)
-    const tldrSectionPatterns = {
-      ai_news: [
-        /big tech[^<]*&amp;?[^<]*startups?/i,
-        /big tech[^<]*startups?/i,
-        /ai news/i,
-        /artificial intelligence/i,
-      ],
-      product_news: [
-        /product update/i,
-        /release/i,
-      ],
-    };
-
-    for (const [category, patterns] of Object.entries(tldrSectionPatterns)) {
-      for (const pattern of patterns) {
-        if (pattern.test(combinedText) || pattern.test(summary)) {
-          logger.debug(`Re-categorizing TLDR article "${item.title}" from newsletters to ${category} based on section pattern`);
-          return category as Category;
-        }
-      }
-    }
-  }
+  // REMOVED: TLDR recategorization logic
+  // TLDR items should stay in newsletters category, not be moved to ai_news or product_news
+  // AI News should only come from the AI Articles feed, not from TLDR newsletters
+  // This prevents TLDR articles from appearing in ai_news category
 
   // AI News patterns
   const aiNewsPatterns = [
