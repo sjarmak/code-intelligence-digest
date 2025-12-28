@@ -91,22 +91,23 @@ export function selectWithDiversity(
   const uniqueSourcesCount = new Set(qualityItems.map(item => item.sourceTitle)).size;
 
   // Calculate max per source for minimum guarantee (ensure diversity in top 10)
-  // For top 10, limit to max 4 items per source to ensure at least 3 sources
-  // But if we have limited sources (especially 1-2), allow more per source to reach minimum
-  // This is important for categories like newsletters where decomposition creates many items from one source
+  // For newsletters, be more strict to ensure we see items from multiple sources (TLDR, Elevate, Byte Byte Go, etc.)
+  // For other categories, allow slightly more per source
+  const isNewsletters = category === "newsletters";
   let minGuaranteeMaxPerSource: number;
   if (uniqueSourcesCount === 1) {
     // Single source: allow up to minItems to ensure we reach the minimum
     minGuaranteeMaxPerSource = minItems;
   } else if (uniqueSourcesCount === 2) {
-    // Two sources: allow up to 7 per source to reach minimum of 10
-    minGuaranteeMaxPerSource = 7;
+    // Two sources: allow up to 6 per source for newsletters, 7 for others
+    minGuaranteeMaxPerSource = isNewsletters ? 6 : 7;
   } else if (qualityItems.length >= minItems) {
-    // Multiple sources: normal diversity constraint
-    minGuaranteeMaxPerSource = Math.max(3, Math.floor(minItems / 3));  // Normal: max 3-4 per source
+    // Multiple sources: stricter for newsletters (max 2 per source) to ensure diversity
+    // For other categories, allow max 3-4 per source
+    minGuaranteeMaxPerSource = isNewsletters ? 2 : Math.max(3, Math.floor(minItems / 3));
   } else {
     // Limited items overall: allow more per source to reach minimum
-    minGuaranteeMaxPerSource = 5;
+    minGuaranteeMaxPerSource = isNewsletters ? 4 : 5;
   }
 
   for (const item of qualityItems) {

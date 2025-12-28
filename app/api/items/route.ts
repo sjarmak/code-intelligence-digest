@@ -238,15 +238,24 @@ export async function GET(request: NextRequest) {
     }
 
     // Apply diversity selection based on period
-    // For daily view, allow more items per source to ensure we get top 10
-    // Expansion beyond 10 will be handled by pagination/limit parameter
-    const perSourceCaps = { day: 5, week: 4, month: 5, all: 6 };
+    // For newsletters, use stricter per-source caps to ensure diversity (max 2-3 per source)
+    // For other categories, allow more items per source
+    const isNewsletters = category === "newsletters";
+    const perSourceCaps = isNewsletters
+      ? { day: 2, week: 2, month: 3, all: 4 }  // Stricter for newsletters
+      : { day: 5, week: 4, month: 5, all: 6 };
     let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
 
     // Increase per-source caps proportionally if custom limit is higher
+    // But for newsletters, still keep it relatively strict to maintain diversity
     if (customLimit && customLimit > getCategoryConfig(category).maxItems) {
       const expansionRatio = customLimit / getCategoryConfig(category).maxItems;
-      maxPerSource = Math.ceil(maxPerSource * expansionRatio);
+      if (isNewsletters) {
+        // For newsletters, increase more conservatively to maintain diversity
+        maxPerSource = Math.min(Math.ceil(maxPerSource * Math.sqrt(expansionRatio)), 6);
+      } else {
+        maxPerSource = Math.ceil(maxPerSource * expansionRatio);
+      }
     }
 
     const selectionResult = selectWithDiversity(
@@ -290,12 +299,12 @@ export async function GET(request: NextRequest) {
         diversityReason: selectionResult.reasons.get(item.id),
       })),
     });
-    
+
     // Set cache control headers to prevent Next.js from caching API responses
     response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     response.headers.set('Pragma', 'no-cache');
     response.headers.set('Expires', '0');
-    
+
     return response;
   } catch (error) {
     logger.error("GET /api/items failed", { error });

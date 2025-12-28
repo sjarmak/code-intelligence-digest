@@ -38,6 +38,8 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
   const [items, setItems] = useState<RankedItemResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [limit, setLimit] = useState(10); // Start with 10 items
+  const [hasMore, setHasMore] = useState(false);
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -55,6 +57,7 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         const params = new URLSearchParams({
           category,
           period,
+          limit: limit.toString(),
         });
 
         if (period === 'custom' && customDateRange) {
@@ -69,7 +72,10 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         }
 
         const data = await response.json();
-        setItems(data.items || []);
+        const fetchedItems = data.items || [];
+        setItems(fetchedItems);
+        // Use hasMore from API response, or check if we got exactly the limit
+        setHasMore(data.hasMore !== undefined ? data.hasMore : fetchedItems.length === limit);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         setError(message);
@@ -79,8 +85,14 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
       }
     };
 
+    // Reset limit when category or period changes
+    setLimit(10);
     fetchItems();
   }, [category, period, customDateRange]);
+
+  const handleLoadMore = () => {
+    setLimit(prev => prev + 10);
+  };
 
   if (loading) {
     return (
@@ -111,6 +123,17 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
       {items.map((item, index) => (
         <ItemCard key={item.id} item={item} rank={index + 1} period={period} />
       ))}
+      {hasMore && (
+        <div className="text-center pt-4">
+          <button
+            onClick={handleLoadMore}
+            disabled={loading}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Loading...' : 'Load 10 More'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
