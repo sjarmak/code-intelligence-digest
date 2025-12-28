@@ -265,6 +265,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     let batchNumber = 0;
     let hasMoreItems = true;
     const allItemsToScore: FeedItem[] = []; // Collect all items for scoring at the end
+    let totalScoresComputed = 0; // Track total scores computed across all batches
 
     while (hasMoreItems) {
       batchNumber++;
@@ -375,8 +376,19 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
           await saveItems(items);
           totalItemsAdded += items.length;
 
-          // Collect items for scoring at the end
-          allItemsToScore.push(...items);
+          // CRITICAL: Score items immediately after saving to ensure they have scores
+          // This ensures items are scored even if sync is interrupted
+          // Only scores items that don't already have scores (no rescoring)
+          try {
+            logger.debug(`[DAILY-SYNC] Batch ${batchNumber}: scoring ${items.length} items immediately after save...`);
+            const batchScoreResult = await computeAndSaveScoresForItems(items);
+            totalScoresComputed += batchScoreResult.totalScored;
+            logger.debug(`[DAILY-SYNC] Batch ${batchNumber}: scored ${batchScoreResult.totalScored} items across ${batchScoreResult.categoriesScored.length} categories`);
+          } catch (scoreError) {
+            logger.error(`[DAILY-SYNC] Batch ${batchNumber}: Failed to score items (will retry at end)`, scoreError);
+            // Collect for retry at end if batch scoring fails
+            allItemsToScore.push(...items);
+          }
 
           // Track all categories present in this batch
           items.forEach((item) => {
@@ -427,16 +439,21 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       hasMoreItems = !!continuation && continuation.length > 0;
     }
 
-    // Sync complete - now compute and save relevance scores
-    logger.info(`[DAILY-SYNC] Computing relevance scores for ${allItemsToScore.length} items...`);
-    let scoresComputed = 0;
-    try {
-      const scoreResult = await computeAndSaveScoresForItems(allItemsToScore);
-      scoresComputed = scoreResult.totalScored;
-      logger.info(`[DAILY-SYNC] Computed and saved scores for ${scoresComputed} items across ${scoreResult.categoriesScored.length} categories`);
-    } catch (error) {
-      logger.error(`[DAILY-SYNC] Failed to compute scores (items still saved)`, error);
-      // Don't fail the sync if scoring fails - items are already saved
+    // Sync complete - score any remaining items that weren't scored during batch processing
+    // (This handles items that failed to score during batch processing)
+    let scoresComputed = totalScoresComputed; // Start with scores from batch processing
+    if (allItemsToScore.length > 0) {
+      logger.info(`[DAILY-SYNC] Computing relevance scores for ${allItemsToScore.length} remaining items...`);
+      try {
+        const scoreResult = await computeAndSaveScoresForItems(allItemsToScore);
+        scoresComputed += scoreResult.totalScored;
+        logger.info(`[DAILY-SYNC] Computed and saved scores for ${scoreResult.totalScored} remaining items across ${scoreResult.categoriesScored.length} categories`);
+      } catch (error) {
+        logger.error(`[DAILY-SYNC] Failed to compute scores for remaining items (items still saved)`, error);
+        logger.error(`[DAILY-SYNC] CRITICAL: Some items may be missing scores. Run scripts/score-missing-items.ts to fix.`);
+      }
+    } else {
+      logger.info(`[DAILY-SYNC] All items were scored during batch processing - no remaining items to score`);
     }
 
     await clearSyncState();

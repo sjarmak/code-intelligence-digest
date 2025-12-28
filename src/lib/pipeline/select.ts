@@ -87,12 +87,27 @@ export function selectWithDiversity(
     }
   }
 
+  // Count unique sources to determine if we need to be more lenient
+  const uniqueSourcesCount = new Set(qualityItems.map(item => item.sourceTitle)).size;
+
   // Calculate max per source for minimum guarantee (ensure diversity in top 10)
   // For top 10, limit to max 4 items per source to ensure at least 3 sources
-  // But if we don't have enough items, allow up to 5 per source to reach minimum
-  const minGuaranteeMaxPerSource = qualityItems.length >= minItems
-    ? Math.max(3, Math.floor(minItems / 3))  // Normal: max 3-4 per source
-    : 5;  // If limited items, allow more per source to reach minimum
+  // But if we have limited sources (especially 1-2), allow more per source to reach minimum
+  // This is important for categories like newsletters where decomposition creates many items from one source
+  let minGuaranteeMaxPerSource: number;
+  if (uniqueSourcesCount === 1) {
+    // Single source: allow up to minItems to ensure we reach the minimum
+    minGuaranteeMaxPerSource = minItems;
+  } else if (uniqueSourcesCount === 2) {
+    // Two sources: allow up to 7 per source to reach minimum of 10
+    minGuaranteeMaxPerSource = 7;
+  } else if (qualityItems.length >= minItems) {
+    // Multiple sources: normal diversity constraint
+    minGuaranteeMaxPerSource = Math.max(3, Math.floor(minItems / 3));  // Normal: max 3-4 per source
+  } else {
+    // Limited items overall: allow more per source to reach minimum
+    minGuaranteeMaxPerSource = 5;
+  }
 
   for (const item of qualityItems) {
     const currentSourceCount = sourceCount.get(item.sourceTitle) ?? 0;
@@ -100,6 +115,7 @@ export function selectWithDiversity(
     // For minimum guarantee (first 10 items), enforce source diversity
     if (selected.length < minItems) {
       // Apply source cap even during minimum guarantee to ensure diversity
+      // But be more lenient when we have few sources
       if (currentSourceCount >= minGuaranteeMaxPerSource) {
         reasons.set(item.id, `Source cap reached for ${item.sourceTitle} during minimum guarantee (${minGuaranteeMaxPerSource} items)`);
         continue;
@@ -139,11 +155,20 @@ export function selectWithDiversity(
   // If we fell below minimum, add more items (relaxing source caps but still enforcing some diversity)
   if (selected.length < minItems && selected.length < qualityItems.length) {
     logger.warn(
-      `Below minimum items (${selected.length}/${minItems}), relaxing diversity constraints (allowing up to 5 per source)`
+      `Below minimum items (${selected.length}/${minItems}), relaxing diversity constraints`
     );
 
-    // When relaxing, still limit to 5 per source to maintain some diversity
-    const relaxedMaxPerSource = 5;
+    // When relaxing, be more lenient based on number of sources
+    // Single source: allow all items up to minItems
+    // Multiple sources: still limit to maintain some diversity
+    const relaxedMaxPerSource = uniqueSourcesCount === 1
+      ? minItems  // Single source: allow all items needed to reach minimum
+      : uniqueSourcesCount === 2
+        ? 8  // Two sources: allow up to 8 per source
+        : 6;  // Multiple sources: allow up to 6 per source
+
+    logger.info(`Relaxing to ${relaxedMaxPerSource} items per source (${uniqueSourcesCount} unique sources)`);
+
     for (const item of qualityItems) {
       if (selected.length >= minItems) break;
 

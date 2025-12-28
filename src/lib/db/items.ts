@@ -116,9 +116,9 @@ export async function loadItemsByCategory(
     const driver = detectDriver();
     const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
 
-    // For "day" period (2 days), use created_at to show items added recently
+    // For "day" period (1 day), use created_at to show items added recently (last 24 hours)
     // For longer periods, use published_at to show items by their original publication date
-    const useCreatedAt = periodDays === 2;
+    const useCreatedAt = periodDays === 1;
     const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
 
     // Calculate effective limit based on period

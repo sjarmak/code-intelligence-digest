@@ -216,7 +216,71 @@ async function main() {
       logger.error(`❌ Sync failed: ${syncResult.error}`);
     }
 
-    // Step 3: Populate embeddings for recent items (even if sync was paused)
+    // Step 3: Score any missing items (critical - all items MUST have scores)
+    if (syncResult.itemsAdded > 0 || !syncResult.paused) {
+      logger.info('\n📊 Checking for items missing scores...');
+      try {
+        const { computeAndSaveScoresForItems } = await import('../src/lib/pipeline/compute-scores');
+        const { getDbClient } = await import('../src/lib/db/driver');
+        const { loadItemsByCategory } = await import('../src/lib/db/items');
+        
+        const client = await getDbClient();
+        const categories: Category[] = ['newsletters', 'podcasts', 'tech_articles', 'ai_news', 'product_news', 'community', 'research'];
+        const cutoffTime = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000); // Last 7 days
+        
+        let totalScored = 0;
+        for (const category of categories) {
+          const whereClause = category === 'newsletters'
+            ? `i.category = ? AND i.id LIKE '%-article-%' AND i.created_at >= ?`
+            : `i.category = ? AND i.created_at >= ?`;
+          
+          const result = await client.query(
+            `SELECT i.* FROM items i 
+             LEFT JOIN item_scores s ON i.id = s.item_id 
+             WHERE ${whereClause}
+             AND s.item_id IS NULL
+             ORDER BY i.created_at DESC LIMIT 100`,
+            [category, cutoffTime]
+          );
+          
+          if (result.rows.length > 0) {
+            logger.info(`  Found ${result.rows.length} items without scores in ${category}, scoring...`);
+            // Map to FeedItem format and score
+            const items = result.rows.map((row: any) => ({
+              id: row.id,
+              streamId: row.stream_id,
+              sourceTitle: row.source_title,
+              title: row.title,
+              url: row.extracted_url || row.url,
+              author: row.author || undefined,
+              publishedAt: new Date(row.published_at * 1000),
+              createdAt: row.created_at ? new Date(row.created_at * 1000) : undefined,
+              summary: row.summary || undefined,
+              contentSnippet: row.content_snippet || undefined,
+              categories: JSON.parse(row.categories),
+              category: row.category,
+              raw: {},
+              fullText: row.full_text || undefined,
+            }));
+            
+            const scoreResult = await computeAndSaveScoresForItems(items);
+            totalScored += scoreResult.totalScored;
+            logger.info(`  ✅ Scored ${scoreResult.totalScored} items in ${category}`);
+          }
+        }
+        
+        if (totalScored > 0) {
+          logger.info(`✅ Scored ${totalScored} missing items total`);
+        } else {
+          logger.info('✅ All items already have scores');
+        }
+      } catch (error) {
+        logger.error('Failed to score missing items', error);
+        // Don't fail the cron job if this fails
+      }
+    }
+
+    // Step 4: Populate embeddings for recent items (even if sync was paused)
     if (syncResult.itemsAdded > 0 || !syncResult.paused) {
       logger.info('\n🧮 Populating embeddings for recent items...');
       stats.embeddings = await populateEmbeddingsForRecentItems();

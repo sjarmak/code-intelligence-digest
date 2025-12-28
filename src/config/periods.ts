@@ -15,8 +15,8 @@ export interface PeriodConfig {
 export const PERIOD_CONFIG: Record<Exclude<Period, 'custom'>, PeriodConfig> = {
   day: {
     label: 'Daily',
-    days: 1, // Last 24 hours
-    halfLifeDays: 0.5, // 12 hours
+    days: 2, // Last 48 hours - ensures we catch items from recent syncs
+    halfLifeDays: 1, // 24 hours
     maxPerSource: 1, // Stricter for daily
   },
   week: {
