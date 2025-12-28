@@ -18,6 +18,7 @@ import { computeAndSaveScoresForItems } from '../pipeline/compute-scores';
 import { categorizeItems } from '../pipeline/categorize';
 import { storePapersBatch } from '../db/ads-papers';
 import { getArxivUrl, getADSUrl } from '../ads/client';
+import { getDbClient, detectDriver } from '../db/driver';
 
 interface ADSSearchResponse {
   response: {
@@ -258,20 +259,56 @@ export async function syncResearchFromADS(token: string): Promise<{
 
   // Convert to FeedItems
   const feedItems = docs.map(adsPaperToFeedItem);
-
+  
   logger.info(`[ADS-RESEARCH] Converted ${feedItems.length} papers to FeedItems`);
-
+  
+  // Check which papers we already have in the database to avoid reprocessing
+  const itemIds = feedItems.map(item => item.id);
+  const client = await getDbClient();
+  const driver = detectDriver();
+  
+  // Build query that works for both PostgreSQL and SQLite
+  let existingItemsResult;
+  if (driver === 'postgres') {
+    // PostgreSQL: use ANY(array)
+    existingItemsResult = await client.query(
+      `SELECT id FROM items WHERE id = ANY($1)`,
+      [itemIds]
+    );
+  } else {
+    // SQLite: use IN (?, ?, ...)
+    const placeholders = itemIds.map(() => '?').join(',');
+    existingItemsResult = await client.query(
+      `SELECT id FROM items WHERE id IN (${placeholders})`,
+      itemIds
+    );
+  }
+  
+  const existingIds = new Set(
+    (existingItemsResult.rows as any[]).map(row => row.id)
+  );
+  
+  // Filter out papers we already have
+  const newFeedItems = feedItems.filter(item => !existingIds.has(item.id));
+  
+  if (newFeedItems.length === 0) {
+    logger.info(`[ADS-RESEARCH] All ${feedItems.length} papers already exist in database, skipping processing`);
+    return { itemsAdded: 0, itemsScored: 0, totalFound: docs.length };
+  }
+  
+  logger.info(`[ADS-RESEARCH] ${newFeedItems.length} new papers to process (${feedItems.length - newFeedItems.length} already exist)`);
+  
   // Note: normalizeItems expects InoreaderArticle[], but we have FeedItem[]
   // For ADS papers, we've already normalized them (URLs, dates, etc. are set)
   // So we can skip normalization and go straight to categorization
   // Categorize (should all be 'research' already, but ensure)
-  const categorizedItems = await categorizeItems(feedItems);
-
+  const categorizedItems = await categorizeItems(newFeedItems);
+  
   // Filter to only research items
   const researchItems = categorizedItems.filter(item => item.category === 'research');
-
+  
   logger.info(`[ADS-RESEARCH] ${researchItems.length} items after normalization/categorization`);
-
+  
   // Save to items table
   await saveItems(researchItems);
 
