@@ -314,7 +314,7 @@ export async function syncResearchFromADS(token: string): Promise<{
  * Initial backfill: Sync research papers from last 3 years
  * This should be run once to populate the database with historical papers
  * Fetches in monthly chunks to avoid timeout
- * 
+ *
  * @param token ADS API token
  * @param yearsBack Number of years to go back (default: 3)
  * @returns Number of items added
@@ -328,62 +328,62 @@ export async function syncResearchFromADSInitial(
   totalFound: number;
 }> {
   logger.info(`[ADS-RESEARCH] Starting initial research backfill from ADS (last ${yearsBack} years)`);
-  
+
   // Fetch in monthly chunks to avoid timeout
   const now = new Date();
   const endYear = now.getFullYear();
   const endMonth = now.getMonth() + 1; // 1-12
-  
+
   const startDate = new Date(now);
   startDate.setFullYear(endYear - yearsBack);
   const startYear = startDate.getFullYear();
   const startMonth = startDate.getMonth() + 1; // 1-12
-  
+
   logger.info(`[ADS-RESEARCH] Fetching papers from ${startYear}-${String(startMonth).padStart(2, '0')} to ${endYear}-${String(endMonth).padStart(2, '0')} in monthly chunks`);
-  
+
   let totalItemsAdded = 0;
   let totalItemsScored = 0;
   let totalFound = 0;
   let currentYear = startYear;
   let currentMonth = startMonth;
-  
+
   // Iterate month by month, processing in batches to avoid memory issues
   while (currentYear < endYear || (currentYear === endYear && currentMonth <= endMonth)) {
     const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
     const nextYear = currentMonth === 12 ? currentYear + 1 : currentYear;
-    
+
     // Build query for this month
     const query = buildResearchQuery(currentYear, currentMonth, nextYear, nextMonth);
-    
+
     logger.info(`[ADS-RESEARCH] Fetching month ${currentYear}-${String(currentMonth).padStart(2, '0')}...`);
-    
+
     try {
       // Fetch papers for this month (limit to 2000 per month to avoid timeout)
       const monthDocs = await fetchResearchPapers(token, query, 2000);
       totalFound += monthDocs.length;
-      
+
       logger.info(`[ADS-RESEARCH] Fetched ${monthDocs.length} papers for ${currentYear}-${String(currentMonth).padStart(2, '0')} (total fetched: ${totalFound})`);
-      
+
       if (monthDocs.length === 0) {
         // Move to next month
         currentMonth = nextMonth;
         currentYear = nextYear;
         continue;
       }
-      
+
       // Process this month's papers immediately to avoid memory buildup
       const feedItems = monthDocs.map(adsPaperToFeedItem);
-      
+
       // Categorize (should all be 'research' already, but ensure)
       const categorizedItems = await categorizeItems(feedItems);
-      
+
       // Filter to only research items
       const researchItems = categorizedItems.filter(item => item.category === 'research');
-      
+
       if (researchItems.length > 0) {
         // Save to items table
         await saveItems(researchItems);
-        
+
         // Also save to ads_papers table for full text storage
         const papersToStore = researchItems.map(item => {
           const raw = item.raw as { bibcode: string; adsUrl: string; arxivUrl?: string; arxivClass?: string[] };
@@ -401,39 +401,39 @@ export async function syncResearchFromADSInitial(
             fulltextSource: item.fullText ? 'ads_api' : undefined,
           };
         });
-        
+
         await storePapersBatch(papersToStore);
-        
+
         // Score items
         const scoreResult = await computeAndSaveScoresForItems(researchItems);
-        
+
         totalItemsAdded += researchItems.length;
         totalItemsScored += scoreResult.totalScored;
-        
+
         logger.info(`[ADS-RESEARCH] Processed ${researchItems.length} items for ${currentYear}-${String(currentMonth).padStart(2, '0')} (total added: ${totalItemsAdded}, total scored: ${totalItemsScored})`);
       }
-      
+
       // Small delay between requests to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 500));
     } catch (error) {
       logger.error(`[ADS-RESEARCH] Failed to fetch ${currentYear}-${String(currentMonth).padStart(2, '0')}, continuing...`, error);
       // Continue with next month even if this one fails
     }
-    
+
     // Move to next month
     currentMonth = nextMonth;
     currentYear = nextYear;
   }
-  
+
   if (totalFound === 0) {
     logger.info(`[ADS-RESEARCH] No papers found for last ${yearsBack} years`);
     return { itemsAdded: 0, itemsScored: 0, totalFound: 0 };
   }
-  
+
   logger.info(
     `[ADS-RESEARCH] Initial backfill complete: ${totalItemsAdded} items added, ${totalItemsScored} scored, ${totalFound} total papers found`
   );
-  
+
   return {
     itemsAdded: totalItemsAdded,
     itemsScored: totalItemsScored,
