@@ -137,10 +137,9 @@ export async function GET(request: NextRequest) {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
       const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-      // For "day" period (2 days), use created_at to show items added recently
-      // For other periods, use published_at to show items by their original publication date
-      const useCreatedAt = periodDays === 2;
-      const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+      // Use published_at for all periods to show items by their original publication date
+      // This ensures items show up even if they were synced more than periodDays ago
+      const dateColumn = 'published_at';
 
       // For newsletters, only get decomposed articles (have -article- in ID)
       const whereClause = category === "newsletters"

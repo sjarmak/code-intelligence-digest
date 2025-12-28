@@ -46,12 +46,11 @@ export async function rankCategory(
   const config = getCategoryConfig(category);
 
   // Filter to items within time window and with valid URLs
-  // For "day" period (2 days), use createdAt to show items added recently
-  // For longer periods, use publishedAt to show items by their original publication date
+  // Use publishedAt for all periods to show items by their original publication date
   const now = Date.now();
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
-  // Use created_at for day period (2 days) to show recently synced items
-  const useCreatedAt = periodDays === 2;
+  // Always use published_at to show items by publication date
+  const useCreatedAt = false;
 
   // Patterns for low-quality items that should be filtered out
   const BAD_TITLE_PATTERNS = [
