@@ -191,8 +191,8 @@ export async function GET(request: NextRequest) {
         // Standard logic for other categories/periods
         cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
         // For research:
-        // - Daily/Weekly: Filter by created_at (new papers added after backfill)
-        // - Monthly: Filter by published_at (current month) - shows all papers published this month
+        // - Daily/Weekly/Monthly: All show top-ranked results (no date filtering for backfilled papers)
+        //   New papers added after backfill will have recent created_at and show in daily/weekly
         // - All-time: Filter by published_at (last 3 years)
         if (category === 'research') {
           if (period === 'all') {
@@ -202,20 +202,13 @@ export async function GET(request: NextRequest) {
             useCreatedAt = false;
             dateColumn = 'published_at';
             logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
-          } else if (period === 'month') {
-            // Research monthly: filter by published_at (current month)
-            // Get first day of current month
-            const now = new Date();
-            const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            cutoffTime = Math.floor(firstOfMonth.getTime() / 1000);
-            useCreatedAt = false;
-            dateColumn = 'published_at';
-            logger.info(`[API] Research monthly: filtering by published_at >= ${new Date(cutoffTime * 1000).toISOString()} (first of current month)`);
           } else {
-            // Research daily/weekly: filter by created_at (new papers added after backfill)
-            useCreatedAt = true;
-            dateColumn = 'created_at';
-            logger.info(`[API] Research ${period} period: filtering by created_at (new papers added after backfill)`);
+            // Research daily/weekly/monthly: no date filtering, just show top ranked results
+            // This treats all backfilled papers as "current" and shows most relevant
+            // New papers added after backfill will have recent created_at and show in daily/weekly
+            useCreatedAt = false; // Not used since we're not filtering
+            dateColumn = 'created_at'; // For ordering, but no cutoff
+            logger.info(`[API] Research ${period} period: no date filtering, showing top ranked results`);
           }
         } else {
           // For other categories: use created_at for day period, published_at for others
@@ -225,13 +218,17 @@ export async function GET(request: NextRequest) {
       }
 
       // For newsletters, only get decomposed articles (have -article- in ID)
-      // For research: API route handles filtering (created_at for day/week, published_at for month/all)
+      // For research day/week/month: no date filtering, just get top items by relevance (via ranking)
       let whereClause: string;
       let queryParams: any[];
-
+      
       if (category === "newsletters") {
         whereClause = `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
+      } else if (category === "research" && period !== "all") {
+        // Research day/week/month: no date filter, just get all research items (limited for performance)
+        whereClause = `category = ?`;
+        queryParams = [category];
       } else {
         whereClause = `category = ? AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
@@ -241,10 +238,10 @@ export async function GET(request: NextRequest) {
       // Research items have full_text which can be very large, so use smaller limit
       // Also exclude full_text from initial query to reduce memory usage (load it only if needed)
       const limitClause = category === "research" ? " LIMIT 500" : "";
-      
+
       // For research, exclude full_text from initial query to reduce memory usage
       // full_text is only needed for search/ask features, not for displaying items
-      const selectColumns = category === "research" 
+      const selectColumns = category === "research"
         ? "id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, created_at, updated_at, extracted_url, full_text_fetched_at, full_text_source"
         : "*";
 
