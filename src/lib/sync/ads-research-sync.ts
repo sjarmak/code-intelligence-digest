@@ -36,17 +36,20 @@ interface ADSSearchResponse {
 
 /**
  * Build ADS search query for research papers
- * @param year Current year
- * @param month Current month (1-12)
+ * @param startYear Start year
+ * @param startMonth Start month (1-12)
+ * @param endYear End year
+ * @param endMonth End month (1-12)
  */
-function buildResearchQuery(year: number, month: number): string {
-  // Calculate next month for date range
-  const nextMonth = month === 12 ? 1 : month + 1;
-  const nextYear = month === 12 ? year + 1 : year;
-  
+function buildResearchQuery(
+  startYear: number,
+  startMonth: number,
+  endYear: number,
+  endMonth: number
+): string {
   // Format dates: YYYY-MM
-  const startDate = `${year}-${String(month).padStart(2, '0')}`;
-  const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}`;
+  const startDate = `${startYear}-${String(startMonth).padStart(2, '0')}`;
+  const endDate = `${endYear}-${String(endMonth).padStart(2, '0')}`;
   
   // Build query components
   const pubdateQuery = `pubdate:[${startDate} TO ${endDate}]`;
@@ -66,15 +69,43 @@ function buildResearchQuery(year: number, month: number): string {
 }
 
 /**
+ * Build query for current month + next month (sliding window for ongoing sync)
+ */
+function buildSlidingWindowQuery(year: number, month: number): string {
+  // Calculate next month for date range
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  
+  return buildResearchQuery(year, month, nextYear, nextMonth);
+}
+
+/**
+ * Build query for last N years (for initial backfill)
+ */
+function buildYearsBackQuery(yearsBack: number): string {
+  const now = new Date();
+  const endYear = now.getFullYear();
+  const endMonth = now.getMonth() + 1; // 1-12
+  
+  const startDate = new Date(now);
+  startDate.setFullYear(endYear - yearsBack);
+  const startYear = startDate.getFullYear();
+  const startMonth = startDate.getMonth() + 1; // 1-12
+  
+  return buildResearchQuery(startYear, startMonth, endYear, endMonth);
+}
+
+/**
  * Fetch research papers from ADS Search API
+ * @param token ADS API token
+ * @param query Pre-built ADS query string
+ * @param maxResults Maximum number of results to fetch (default: 10000)
  */
 async function fetchResearchPapers(
   token: string,
-  year: number,
-  month: number
+  query: string,
+  maxResults: number = 10000
 ): Promise<ADSSearchResponse['response']['docs']> {
-  const query = buildResearchQuery(year, month);
-  
   logger.info(`[ADS-RESEARCH] Fetching research papers with query: ${query}`);
   
   // Fetch all results (not just top 10) - ADS allows up to 2000 rows per request
@@ -125,9 +156,9 @@ async function fetchResearchPapers(
     hasMore = allDocs.length < totalFound && docs.length === rowsPerBatch;
     start += rowsPerBatch;
     
-    // Limit to reasonable number (e.g., 10,000 papers max)
-    if (allDocs.length >= 10000) {
-      logger.warn('[ADS-RESEARCH] Reached 10,000 paper limit, stopping fetch');
+    // Limit to maxResults
+    if (allDocs.length >= maxResults) {
+      logger.warn(`[ADS-RESEARCH] Reached ${maxResults} paper limit, stopping fetch`);
       break;
     }
   }
@@ -195,7 +226,9 @@ function adsPaperToFeedItem(doc: ADSSearchResponse['response']['docs'][0]): Feed
 }
 
 /**
- * Sync research papers from ADS Search API
+ * Sync research papers from ADS Search API (ongoing sync)
+ * Uses a sliding month window: current month + next month
+ * This ensures we catch new papers as they're published
  * 
  * @param token ADS API token
  * @returns Number of items added
@@ -205,15 +238,18 @@ export async function syncResearchFromADS(token: string): Promise<{
   itemsScored: number;
   totalFound: number;
 }> {
-  logger.info('[ADS-RESEARCH] Starting research sync from ADS');
+  logger.info('[ADS-RESEARCH] Starting ongoing research sync from ADS (sliding month window)');
   
   // Get current month
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1; // 1-12
   
-  // Fetch papers from ADS
-  const docs = await fetchResearchPapers(token, year, month);
+  // Build query for current month + next month (sliding window)
+  const query = buildSlidingWindowQuery(year, month);
+  
+  // Fetch papers from ADS (limit to 5000 for ongoing sync to avoid timeout)
+  const docs = await fetchResearchPapers(token, query, 5000);
   
   if (docs.length === 0) {
     logger.info('[ADS-RESEARCH] No papers found for current month');
@@ -265,6 +301,88 @@ export async function syncResearchFromADS(token: string): Promise<{
   
   logger.info(
     `[ADS-RESEARCH] Sync complete: ${researchItems.length} items added, ${scoreResult.totalScored} scored`
+  );
+  
+  return {
+    itemsAdded: researchItems.length,
+    itemsScored: scoreResult.totalScored,
+    totalFound: docs.length,
+  };
+}
+
+/**
+ * Initial backfill: Sync research papers from last 3 years
+ * This should be run once to populate the database with historical papers
+ * 
+ * @param token ADS API token
+ * @param yearsBack Number of years to go back (default: 3)
+ * @returns Number of items added
+ */
+export async function syncResearchFromADSInitial(
+  token: string,
+  yearsBack: number = 3
+): Promise<{
+  itemsAdded: number;
+  itemsScored: number;
+  totalFound: number;
+}> {
+  logger.info(`[ADS-RESEARCH] Starting initial research backfill from ADS (last ${yearsBack} years)`);
+  
+  // Build query for last N years
+  const query = buildYearsBackQuery(yearsBack);
+  
+  // Fetch all papers (up to 50,000 for initial backfill)
+  const docs = await fetchResearchPapers(token, query, 50000);
+  
+  if (docs.length === 0) {
+    logger.info(`[ADS-RESEARCH] No papers found for last ${yearsBack} years`);
+    return { itemsAdded: 0, itemsScored: 0, totalFound: 0 };
+  }
+  
+  logger.info(`[ADS-RESEARCH] Fetched ${docs.length} papers from last ${yearsBack} years`);
+  
+  // Convert to FeedItems
+  const feedItems = docs.map(adsPaperToFeedItem);
+  
+  logger.info(`[ADS-RESEARCH] Converted ${feedItems.length} papers to FeedItems`);
+  
+  // Categorize (should all be 'research' already, but ensure)
+  const categorizedItems = await categorizeItems(feedItems);
+  
+  // Filter to only research items
+  const researchItems = categorizedItems.filter(item => item.category === 'research');
+  
+  logger.info(`[ADS-RESEARCH] ${researchItems.length} items after normalization/categorization`);
+  
+  // Save to items table
+  await saveItems(researchItems);
+  
+  // Also save to ads_papers table for full text storage
+  const papersToStore = researchItems.map(item => {
+    const raw = item.raw as { bibcode: string; adsUrl: string; arxivUrl?: string; arxivClass?: string[] };
+    return {
+      bibcode: raw.bibcode,
+      title: item.title,
+      authors: item.author ? JSON.stringify([item.author]) : undefined,
+      pubdate: item.publishedAt.toISOString().split('T')[0], // YYYY-MM-DD format
+      abstract: item.summary || item.contentSnippet || undefined,
+      body: item.fullText || undefined, // Full text from ADS
+      year: item.publishedAt.getFullYear(),
+      journal: 'arXiv', // Most will be from arXiv
+      adsUrl: raw.adsUrl,
+      arxivUrl: raw.arxivUrl || null,
+      fulltextSource: item.fullText ? 'ads_api' : undefined,
+    };
+  });
+  
+  await storePapersBatch(papersToStore);
+  logger.info(`[ADS-RESEARCH] Stored ${papersToStore.length} papers in ads_papers table`);
+  
+  // Score items
+  const scoreResult = await computeAndSaveScoresForItems(researchItems);
+  
+  logger.info(
+    `[ADS-RESEARCH] Initial backfill complete: ${researchItems.length} items added, ${scoreResult.totalScored} scored`
   );
   
   return {

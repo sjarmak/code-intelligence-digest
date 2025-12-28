@@ -184,8 +184,18 @@ export async function GET(request: NextRequest) {
         cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
         // For "day" period, use created_at (when Inoreader received it) to show recently received items
         // For other periods, use published_at to show items by their original publication date
-        useCreatedAt = period === 'day';
-        dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+        // Exception: For research "all" period, limit to 3 years (1095 days) using published_at
+        if (category === 'research' && period === 'all') {
+          // Research all-time: limit to last 3 years using published_at
+          const threeYearsAgo = Math.floor((Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000);
+          cutoffTime = threeYearsAgo;
+          useCreatedAt = false;
+          dateColumn = 'published_at';
+          logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
+        } else {
+          useCreatedAt = period === 'day';
+          dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+        }
       }
 
       // For newsletters, only get decomposed articles (have -article- in ID)
