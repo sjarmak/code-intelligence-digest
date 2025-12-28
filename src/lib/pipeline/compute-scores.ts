@@ -58,7 +58,7 @@ export async function computeAndSaveScoresForCategory(
   logger.info(`[SCORE-COMPUTE] ${itemsToScore.length} items need scores (${items.length - itemsToScore.length} already have scores, skipping)`);
 
   const config = getCategoryConfig(category);
-  
+
   // Process in batches to avoid memory issues (especially for research items with full text)
   // Batch size: 50 items for research (has full text), 100 for other categories
   const BATCH_SIZE = category === 'research' ? 50 : 100;
@@ -68,7 +68,7 @@ export async function computeAndSaveScoresForCategory(
     const batch = itemsToScore.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
     const totalBatches = Math.ceil(itemsToScore.length / BATCH_SIZE);
-    
+
     logger.info(`[SCORE-COMPUTE] Processing batch ${batchNum}/${totalBatches} (${batch.length} items)...`);
 
     // Build BM25 index for this batch

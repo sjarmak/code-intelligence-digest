@@ -409,11 +409,22 @@ export async function GET(request: NextRequest) {
 
     return response;
   } catch (error) {
-    logger.error("GET /api/items failed", { error });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    logger.error("GET /api/items failed", { 
+      error: errorMessage,
+      stack: errorStack,
+      category,
+      period,
+      limitParam,
+      excludeIdsParam,
+    });
     return NextResponse.json(
       {
         error: "Failed to fetch items",
-        message: error instanceof Error ? error.message : "Unknown error",
+        message: errorMessage,
+        category,
+        period,
       },
       { status: 500 }
     );
