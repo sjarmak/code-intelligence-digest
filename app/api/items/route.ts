@@ -237,11 +237,19 @@ export async function GET(request: NextRequest) {
         queryParams = [category, cutoffTime];
       }
 
-      // Add LIMIT for research to prevent loading too many items (max 1000 for ranking)
-      const limitClause = category === "research" ? " LIMIT 1000" : "";
+      // Add LIMIT for research to prevent loading too many items and causing memory issues
+      // Research items have full_text which can be very large, so use smaller limit
+      // Also exclude full_text from initial query to reduce memory usage (load it only if needed)
+      const limitClause = category === "research" ? " LIMIT 500" : "";
+      
+      // For research, exclude full_text from initial query to reduce memory usage
+      // full_text is only needed for search/ask features, not for displaying items
+      const selectColumns = category === "research" 
+        ? "id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, created_at, updated_at, extracted_url, full_text_fetched_at, full_text_source"
+        : "*";
 
       const result = await client.query(
-        `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`,
+        `SELECT ${selectColumns} FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`,
         queryParams
       );
       const rawRows = result.rows as any[];
@@ -305,7 +313,7 @@ export async function GET(request: NextRequest) {
             categories: JSON.parse(row.categories),
             category: cat,
             raw: {},
-            fullText: row.full_text || undefined,
+            fullText: row.full_text || undefined, // May be null if excluded from SELECT to reduce memory
           };
         } catch (error) {
           logger.warn(`[API] Error mapping row ${row.id}: ${error}`);
@@ -413,7 +421,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
-    logger.error("GET /api/items failed", { 
+    logger.error("GET /api/items failed", {
       error: errorMessage,
       stack: errorStack,
       category,
