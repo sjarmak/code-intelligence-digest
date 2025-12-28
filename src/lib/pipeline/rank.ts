@@ -234,7 +234,7 @@ export async function rankCategory(
   // For daily view, we want to show more items even if they're slightly less relevant
   // This ensures we have enough items to display when viewing "today's" content
   const categoryMinRelevance = getCategoryConfig(category).minRelevance;
-  const qualityThreshold = periodDays === 2
+  const qualityThreshold = periodDays === 3  // day period is now 3 days
     ? 2  // For "day" period, use very low threshold (2) to show more items
     : Math.max(3, categoryMinRelevance - 1);  // For other periods, use category config minus 1 (min 3)
 
