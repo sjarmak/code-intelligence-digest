@@ -226,7 +226,7 @@ export async function GET(request: NextRequest) {
       // For research: API route handles filtering (created_at for day/week, published_at for month/all)
       let whereClause: string;
       let queryParams: any[];
-      
+
       if (category === "newsletters") {
         whereClause = `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
@@ -234,10 +234,10 @@ export async function GET(request: NextRequest) {
         whereClause = `category = ? AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
       }
-      
+
       // Add LIMIT for research to prevent loading too many items (max 1000 for ranking)
       const limitClause = category === "research" ? " LIMIT 1000" : "";
-      
+
       const result = await client.query(
         `SELECT * FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`,
         queryParams
