@@ -12,6 +12,7 @@ import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { Category, FeedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { getCategoryConfig } from "@/src/config/categories";
+import { PERIOD_CONFIG } from "@/src/config/periods";
 import { decodeHtmlEntities } from "@/src/lib/utils/html-entities";
 
 const VALID_CATEGORIES: Category[] = [
@@ -25,10 +26,10 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const PERIOD_DAYS: Record<string, number> = {
-  day: 2, // Last 48 hours
-  week: 7,
-  month: 30,
-  all: 90,
+  day: PERIOD_CONFIG.day.days,
+  week: PERIOD_CONFIG.week.days,
+  month: PERIOD_CONFIG.month.days,
+  all: PERIOD_CONFIG.all.days,
 };
 
 export async function GET(request: NextRequest) {
