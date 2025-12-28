@@ -15,20 +15,11 @@ export async function saveItemScores(items: RankedItem[], category: Category): P
     const client = await getDbClient();
 
     // Use parameterized queries for both SQLite and Postgres
+    // Note: Primary key is (item_id, scored_at), so we insert new rows for score history
     const sql = `
       INSERT INTO item_scores
       (item_id, category, bm25_score, llm_relevance, llm_usefulness, llm_tags, recency_score, engagement_score, final_score, reasoning)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (item_id, category) DO UPDATE SET
-        bm25_score = excluded.bm25_score,
-        llm_relevance = excluded.llm_relevance,
-        llm_usefulness = excluded.llm_usefulness,
-        llm_tags = excluded.llm_tags,
-        recency_score = excluded.recency_score,
-        engagement_score = excluded.engagement_score,
-        final_score = excluded.final_score,
-        reasoning = excluded.reasoning,
-        scored_at = EXTRACT(EPOCH FROM NOW())::INTEGER
     `;
 
     for (const item of items) {
