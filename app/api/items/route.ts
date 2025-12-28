@@ -255,7 +255,7 @@ export async function GET(request: NextRequest) {
 
     // Rank items (no filtering - it's fine for ai_news to show items from newsletters if they're relevant)
     const rankedItems = await rankCategory(items, category, periodDays);
-    logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${filteredItems.length} items)`);
+    logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`);
 
     // Debug: Check if scores are loading
     if (rankedItems.length > 0) {
