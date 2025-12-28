@@ -137,9 +137,10 @@ export async function GET(request: NextRequest) {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
       const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-      // Use published_at for all periods to show items by their original publication date
-      // This ensures items show up even if they were synced more than periodDays ago
-      const dateColumn = 'published_at';
+      // For "day" period, use created_at (when Inoreader received it) to show recently received items
+      // For other periods, use published_at to show items by their original publication date
+      const useCreatedAt = period === 'day';
+      const dateColumn = useCreatedAt ? 'created_at' : 'published_at';
 
       // For newsletters, only get decomposed articles (have -article- in ID)
       const whereClause = category === "newsletters"
