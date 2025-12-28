@@ -16,6 +16,7 @@
  *   - INOREADER_CLIENT_SECRET
  *   - INOREADER_REFRESH_TOKEN
  *   - OPENAI_API_KEY (for embeddings)
+ *   - ADS_API_TOKEN (for research paper sync from ADS)
  *
  * Expected API usage: 1-2 calls per sync (24-48 calls/day out of 1000 quota)
  */
