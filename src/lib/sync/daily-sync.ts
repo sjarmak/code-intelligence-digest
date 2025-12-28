@@ -30,6 +30,7 @@ import { logger } from '../logger';
 import { Category, FeedItem } from '../model';
 import { getDbClient, detectDriver, nowTimestamp } from '../db/driver';
 import { getGlobalApiBudget, incrementGlobalApiCalls, getCachedUserId, setCachedUserId } from '../db/index';
+import { syncResearchFromADS } from './ads-research-sync';
 
 interface SyncStateRow {
   id: string;
@@ -181,9 +182,33 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
   let totalItemsAdded = 0;
   let callsUsed = existingState?.calls_used ?? 0;
   let continuation = existingState?.continuation_token || undefined;
+  let researchItemsAdded = 0;
+  let researchItemsScored = 0;
 
   try {
-    // Check global budget before starting
+    // Sync research from ADS instead of Inoreader
+    const adsToken = process.env.ADS_API_TOKEN;
+    
+    if (adsToken) {
+      try {
+        logger.info('[DAILY-SYNC] Syncing research papers from ADS...');
+        const researchResult = await syncResearchFromADS(adsToken);
+        researchItemsAdded = researchResult.itemsAdded;
+        researchItemsScored = researchResult.itemsScored;
+        logger.info(`[DAILY-SYNC] ADS research sync: ${researchItemsAdded} items added, ${researchItemsScored} scored`);
+        
+        // Add research to categories processed
+        if (researchItemsAdded > 0 && !categoriesProcessed.includes('research')) {
+          categoriesProcessed.push('research');
+        }
+      } catch (error) {
+        logger.error('[DAILY-SYNC] Failed to sync research from ADS (continuing with Inoreader sync)', error);
+      }
+    } else {
+      logger.warn('[DAILY-SYNC] ADS_API_TOKEN not set, skipping research sync from ADS');
+    }
+
+    // Check global budget before starting Inoreader sync
     const budget = await getGlobalApiBudget();
     const percentUsed = Math.round((budget.callsUsed / budget.quotaLimit) * 100);
     logger.info(`[DAILY-SYNC] Global API budget: ${budget.callsUsed}/${budget.quotaLimit} calls used (${percentUsed}%)`);
@@ -356,6 +381,17 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       items = categorizeItems(items);
       logger.debug(`[DAILY-SYNC] Categorized ${items.length} items`);
 
+      // Filter out research items - we get those from ADS instead of Inoreader
+      const beforeResearchFilter = items.length;
+      items = items.filter(item => item.category !== 'research');
+      const afterResearchFilter = items.length;
+      
+      if (beforeResearchFilter !== afterResearchFilter) {
+        logger.debug(
+          `[DAILY-SYNC] Batch ${batchNumber}: filtered out ${beforeResearchFilter - afterResearchFilter} research items (using ADS instead)`
+        );
+      }
+
       // Filter to only items newer than sync threshold (client-side enforcement)
       const syncThresholdDate = new Date(syncSinceTimestamp * 1000);
       const beforeFilter = items.length;
@@ -462,15 +498,17 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     const finalBudget = await getGlobalApiBudget();
     const finalPercentUsed = Math.round((finalBudget.callsUsed / finalBudget.quotaLimit) * 100);
     const avgItemsPerCall = totalItemsAdded > 0 ? (totalItemsAdded / callsUsed).toFixed(1) : '0';
+    const totalItemsIncludingResearch = totalItemsAdded + researchItemsAdded;
+    const totalScoresIncludingResearch = scoresComputed + researchItemsScored;
 
     logger.info(
-      `[DAILY-SYNC] Complete: ${totalItemsAdded} items, ${scoresComputed} scored, ${categoriesProcessed.length} categories, ${callsUsed} API calls (${avgItemsPerCall} items/call, ${finalPercentUsed}% of quota used)`
+      `[DAILY-SYNC] Complete: ${totalItemsIncludingResearch} items (${totalItemsAdded} from Inoreader, ${researchItemsAdded} from ADS), ${totalScoresIncludingResearch} scored, ${categoriesProcessed.length} categories, ${callsUsed} API calls (${avgItemsPerCall} items/call, ${finalPercentUsed}% of quota used)`
     );
 
     return {
       success: true,
-      itemsAdded: totalItemsAdded,
-      apiCallsUsed: callsUsed,
+      itemsAdded: totalItemsAdded + researchItemsAdded, // Include research items
+      apiCallsUsed: callsUsed, // ADS calls don't count against Inoreader quota
       categoriesProcessed,
       resumed,
       paused: false,
