@@ -99,6 +99,20 @@ export async function storePaper(paper: ADSPaperRecord): Promise<void> {
   const driver = detectDriver();
   const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
 
+  // Sanitize text fields to remove null bytes (required for PostgreSQL)
+  const sanitizedPaper = {
+    ...paper,
+    title: sanitizeText(paper.title),
+    authors: sanitizeText(paper.authors),
+    pubdate: sanitizeText(paper.pubdate),
+    abstract: sanitizeText(paper.abstract),
+    body: sanitizeText(paper.body),
+    journal: sanitizeText(paper.journal),
+    adsUrl: sanitizeText(paper.adsUrl),
+    arxivUrl: sanitizeText(paper.arxivUrl),
+    fulltextSource: sanitizeText(paper.fulltextSource),
+  };
+
   try {
     if (driver === 'postgres') {
       const client = await getDbClient();
@@ -121,17 +135,17 @@ export async function storePaper(paper: ADSPaperRecord): Promise<void> {
           fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
           updated_at = $12`,
         [
-          paper.bibcode,
-          paper.title || null,
-          paper.authors || null,
-          paper.pubdate || null,
-          paper.abstract || null,
-          paper.body || null,
+          sanitizedPaper.bibcode,
+          sanitizedPaper.title || null,
+          sanitizedPaper.authors || null,
+          sanitizedPaper.pubdate || null,
+          sanitizedPaper.abstract || null,
+          sanitizedPaper.body || null,
           year || null,
-          paper.journal || null,
-          paper.adsUrl || null,
-          paper.arxivUrl || null,
-          paper.fulltextSource || null,
+          sanitizedPaper.journal || null,
+          sanitizedPaper.adsUrl || null,
+          sanitizedPaper.arxivUrl || null,
+          sanitizedPaper.fulltextSource || null,
           now,
         ]
       );
@@ -176,16 +190,16 @@ export async function storePaper(paper: ADSPaperRecord): Promise<void> {
     // Do this asynchronously to avoid blocking the store operation
     if (paper.body && paper.body.length >= 100) {
       // Process in background (fire and forget)
-      processPaperSectionsAsync(paper.bibcode).catch((err) => {
+      processPaperSectionsAsync(sanitizedPaper.bibcode).catch((err) => {
         logger.warn('Background section processing failed', {
-          bibcode: paper.bibcode,
+          bibcode: sanitizedPaper.bibcode,
           error: err instanceof Error ? err.message : String(err),
         });
       });
     }
   } catch (error) {
     logger.error('Failed to store paper', {
-      bibcode: paper.bibcode,
+      bibcode: sanitizedPaper.bibcode,
       error: error instanceof Error ? error.message : String(error),
     });
     throw error;
@@ -209,6 +223,15 @@ async function processPaperSectionsAsync(bibcode: string): Promise<void> {
 }
 
 /**
+ * Sanitize text fields for PostgreSQL (remove null bytes)
+ */
+function sanitizeText(value: string | null | undefined): string | null {
+  if (!value) return null;
+  // PostgreSQL doesn't allow null bytes in text fields
+  return value.replace(/\0/g, '');
+}
+
+/**
  * Store multiple papers in batch
  */
 export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> {
@@ -218,6 +241,20 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
 
   const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
+  
+  // Sanitize all text fields to remove null bytes (required for PostgreSQL)
+  const sanitizedPapers = papers.map(paper => ({
+    ...paper,
+    title: sanitizeText(paper.title),
+    authors: sanitizeText(paper.authors),
+    pubdate: sanitizeText(paper.pubdate),
+    abstract: sanitizeText(paper.abstract),
+    body: sanitizeText(paper.body),
+    journal: sanitizeText(paper.journal),
+    adsUrl: sanitizeText(paper.adsUrl),
+    arxivUrl: sanitizeText(paper.arxivUrl),
+    fulltextSource: sanitizeText(paper.fulltextSource),
+  }));
 
   try {
     if (driver === 'postgres') {
@@ -227,7 +264,7 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
       const placeholders: string[] = [];
       let paramIndex = 1;
 
-      for (const paper of papers) {
+      for (const paper of sanitizedPapers) {
         const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
         placeholders.push(
           `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`
@@ -308,14 +345,14 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
         }
       });
 
-      insertMany(papers);
+      insertMany(sanitizedPapers);
     }
 
-    logger.info('Papers batch stored in database', { count: papers.length });
+    logger.info('Papers batch stored in database', { count: sanitizedPapers.length });
 
     // Automatically process sections for papers with body text (async, non-blocking)
     // processPaperSections will skip if sections already exist (unless forceRegenerate=true)
-    const papersWithBody = papers.filter((p) => p.body && p.body.length >= 100);
+    const papersWithBody = sanitizedPapers.filter((p) => p.body && p.body.length >= 100);
     if (papersWithBody.length > 0) {
       logger.info('Triggering section processing for papers with body text', {
         count: papersWithBody.length,

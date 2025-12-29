@@ -161,32 +161,20 @@ export async function GET(request: NextRequest) {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
 
-      // Special handling for newsletters day period: use most recent item's timestamp
+      // Special handling for newsletters day period: use current time - 24 hours
+      // This ensures the daily view always shows items from the last 24 hours,
+      // not items from 24 hours before an old most recent item
       let cutoffTime: number;
       let useCreatedAt: boolean;
       let dateColumn: string;
 
       if (category === "newsletters" && period === "day") {
-        // Find the most recent newsletter item
-        const mostRecentResult = await client.query(
-          `SELECT created_at FROM items WHERE category = ? AND id LIKE '%-article-%' ORDER BY created_at DESC LIMIT 1`,
-          [category]
-        );
-
-        if (mostRecentResult.rows.length > 0) {
-          const mostRecentCreatedAt = (mostRecentResult.rows[0] as any).created_at;
-          // Use 24 hours before the most recent item
-          cutoffTime = mostRecentCreatedAt - (24 * 60 * 60); // 24 hours in seconds
-          useCreatedAt = true;
-          dateColumn = 'created_at';
-          logger.info(`[API] Newsletters day period: using most recent item timestamp (${new Date(mostRecentCreatedAt * 1000).toISOString()}), cutoff: ${new Date(cutoffTime * 1000).toISOString()}`);
-        } else {
-          // Fallback: use current time - 24 hours if no items found
-          cutoffTime = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
-          useCreatedAt = true;
-          dateColumn = 'created_at';
-          logger.info(`[API] Newsletters day period: no items found, using current time - 24 hours`);
-        }
+        // Use current time - 24 hours for daily view
+        // This ensures users see items from the last 24 hours, not items from days ago
+        cutoffTime = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+        useCreatedAt = true;
+        dateColumn = 'created_at';
+        logger.info(`[API] Newsletters day period: using current time - 24 hours, cutoff: ${new Date(cutoffTime * 1000).toISOString()}`);
       } else {
         // Standard logic for other categories/periods
         cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
