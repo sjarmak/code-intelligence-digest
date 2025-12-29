@@ -369,13 +369,13 @@ export function PaperReaderModal({
       }
     }
     console.log('[scrollToSection] No element found by ID selectors');
-    
+
     // Also try to find by section number if sectionId is like "section-N" or "chunk-N"
     const sectionNumberMatch = sectionId.match(/(?:section|chunk)-(\d+)/);
     if (sectionNumberMatch) {
       const sectionNum = parseInt(sectionNumberMatch[1], 10);
       console.log('[scrollToSection] Trying to find section by number', { sectionNum });
-      
+
       // Find all section elements and try to match by index
       const allSections = articleElement.querySelectorAll('section.paper-section, section[id*="section"]');
       if (allSections.length > sectionNum) {
@@ -384,7 +384,7 @@ export function PaperReaderModal({
         scrollToElement(targetSection);
         return;
       }
-      
+
       // Also try finding by heading that might contain the section number
       const headings = articleElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
       for (const heading of Array.from(headings)) {
