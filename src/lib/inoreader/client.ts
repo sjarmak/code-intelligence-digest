@@ -8,6 +8,7 @@
 import { InoreaderStreamResponse, InoreaderTokenResponse } from "./types.js";
 import { logger } from "../logger";
 import { getGlobalApiBudget, incrementGlobalApiCalls } from "../db/index";
+import { incrementApiCalls } from "../db/api-budget";
 
 export interface FetchStreamOptions {
   n?: number;
@@ -142,9 +143,9 @@ export class InoreaderClient {
         );
       }
 
-      // Track successful API call
+      // Track successful API call (automatically capped at quota limit)
       try {
-        await incrementGlobalApiCalls(1);
+        await incrementApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }
@@ -160,15 +161,20 @@ export class InoreaderClient {
    * Fetch user info from Inoreader
    */
   async getUserInfo(): Promise<Record<string, unknown>> {
-    // Check budget before making call
+    // Check budget before making call (using new budget guard)
     try {
-      const budget = await getGlobalApiBudget();
-      if (budget.remaining <= 0) {
+      const { hasBudgetFor } = await import("../db/api-budget");
+      if (!(await hasBudgetFor(1))) {
+        const budget = await getGlobalApiBudget();
         throw new Error(
-          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
+          `Inoreader API budget insufficient: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
         );
       }
     } catch (error) {
+      // If it's a budget error, re-throw it
+      if (error instanceof Error && error.message.includes('budget')) {
+        throw error;
+      }
       logger.warn("Could not check API budget, proceeding anyway", { error });
     }
 
@@ -189,9 +195,9 @@ export class InoreaderClient {
         );
       }
 
-      // Track successful API call
+      // Track successful API call (automatically capped at quota limit)
       try {
-        await incrementGlobalApiCalls(1);
+        await incrementApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }
@@ -238,9 +244,9 @@ export class InoreaderClient {
         );
       }
 
-      // Track successful API call
+      // Track successful API call (automatically capped at quota limit)
       try {
-        await incrementGlobalApiCalls(1);
+        await incrementApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }
@@ -287,9 +293,9 @@ export class InoreaderClient {
         );
       }
 
-      // Track successful API call
+      // Track successful API call (automatically capped at quota limit)
       try {
-        await incrementGlobalApiCalls(1);
+        await incrementApiCalls(1);
       } catch (error) {
         logger.warn("Could not track API call in budget", { error });
       }

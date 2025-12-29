@@ -379,55 +379,26 @@ async function initializeSqliteSchema() {
 /**
  * Global API budget tracking (cross-endpoint)
  * Tracks all Inoreader API calls made in a single day
+ *
+ * @deprecated Use getApiBudget() and incrementApiCalls() from './api-budget' instead
+ * Keeping for backward compatibility during migration
  */
 
 export async function getGlobalApiBudget(): Promise<{ callsUsed: number; remaining: number; quotaLimit: number }> {
-  const client = await getDbClient();
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-
-  const result = await client.query(
-    'SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?',
-    [today]
-  );
-
-  if (result.rows.length === 0) {
-    // Initialize for today with default quota of 1000
-    const driver = detectDriver();
-    const insertSql = driver === 'postgres'
-      ? 'INSERT INTO global_api_budget (date, calls_used, quota_limit) VALUES ($1, 0, 1000) ON CONFLICT (date) DO NOTHING'
-      : 'INSERT OR IGNORE INTO global_api_budget (date, calls_used, quota_limit) VALUES (?, 0, 1000)';
-    await client.run(insertSql, [today]);
-    return { callsUsed: 0, remaining: 1000, quotaLimit: 1000 };
-  }
-
-  const row = result.rows[0] as { calls_used: number; quota_limit: number };
+  // Re-export from new module for backward compatibility
+  const { getApiBudget } = await import('./api-budget');
+  const budget = await getApiBudget();
   return {
-    callsUsed: row.calls_used,
-    remaining: row.quota_limit - row.calls_used,
-    quotaLimit: row.quota_limit,
+    callsUsed: budget.callsUsed,
+    remaining: budget.remaining,
+    quotaLimit: budget.quotaLimit,
   };
 }
 
 export async function incrementGlobalApiCalls(count: number): Promise<{ callsUsed: number; remaining: number }> {
-  const client = await getDbClient();
-  const driver = detectDriver();
-  const today = new Date().toISOString().split('T')[0];
-
-  const updateSql = driver === 'postgres'
-    ? `INSERT INTO global_api_budget (date, calls_used, last_updated_at)
-       VALUES ($1, $2, EXTRACT(EPOCH FROM NOW())::INTEGER)
-       ON CONFLICT(date) DO UPDATE SET
-         calls_used = global_api_budget.calls_used + $3,
-         last_updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER`
-    : `INSERT INTO global_api_budget (date, calls_used)
-       VALUES (?, ?)
-       ON CONFLICT(date) DO UPDATE SET
-         calls_used = calls_used + ?,
-         last_updated_at = strftime('%s', 'now')`;
-
-  await client.run(updateSql, [today, count, count]);
-
-  const budget = await getGlobalApiBudget();
+  // Re-export from new module for backward compatibility
+  const { incrementApiCalls } = await import('./api-budget');
+  const budget = await incrementApiCalls(count);
   return {
     callsUsed: budget.callsUsed,
     remaining: budget.remaining,
