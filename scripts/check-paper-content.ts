@@ -16,7 +16,7 @@ async function checkPaper(bibcode: string) {
   console.log(`\n🔍 Checking paper: ${bibcode}\n`);
 
   // Get paper from database
-  const paper = getPaper(bibcode);
+  const paper = await getPaper(bibcode);
   if (!paper) {
     console.log('❌ Paper not found in database');
     return;
@@ -31,7 +31,7 @@ async function checkPaper(bibcode: string) {
   console.log(`   ArXiv ID: ${extractArxivId(bibcode) || 'N/A'}`);
 
   // Check cached HTML
-  const cached = getCachedHtmlContent(bibcode);
+  const cached = await getCachedHtmlContent(bibcode);
   if (cached) {
     console.log(`\n📦 Cached HTML:`);
     console.log(`   HTML length: ${cached.htmlContent.length} chars`);

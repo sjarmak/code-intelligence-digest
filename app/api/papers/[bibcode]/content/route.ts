@@ -82,7 +82,7 @@ export async function GET(
     // If not, we should regenerate to ensure IDs match
     let shouldRegenerateForSections = false;
     if (hasSectionSummaries) {
-      const cached = getCachedHtmlContent(bibcode);
+      const cached = await getCachedHtmlContent(bibcode);
       if (cached) {
         // Check if cached HTML has sections that match our summaries
         const cachedSectionIds = (cached.sections || []).map(s => s.id);
@@ -104,8 +104,8 @@ export async function GET(
     }
 
     // Check for fresh cached HTML (skip if force refresh or need to regenerate for sections)
-    if (!forceRefresh && !shouldRegenerateForSections && isCachedHtmlFresh(bibcode)) {
-      const cached = getCachedHtmlContent(bibcode);
+    if (!forceRefresh && !shouldRegenerateForSections && await isCachedHtmlFresh(bibcode)) {
+      const cached = await getCachedHtmlContent(bibcode);
       if (cached) {
         logger.info('Returning cached HTML content', {
           bibcode,
@@ -114,7 +114,7 @@ export async function GET(
         });
 
         // Get paper metadata for response
-        const paper = getPaper(bibcode);
+        const paper = await getPaper(bibcode);
 
         // Use cached sections/figures if available, otherwise try to parse
         let sections = cached.sections || [];
@@ -243,12 +243,27 @@ export async function GET(
           });
         }
 
+        // Parse authors JSON safely
+        let authors: string[] | undefined;
+        if (paper?.authors) {
+          try {
+            authors = JSON.parse(paper.authors);
+          } catch (error) {
+            logger.warn('Failed to parse paper authors JSON', {
+              bibcode,
+              authors: paper.authors.substring(0, 100),
+              error: error instanceof Error ? error.message : String(error),
+            });
+            authors = undefined;
+          }
+        }
+
         return NextResponse.json({
           source: originalSource, // Return original source, not 'cached'
           html: htmlContent, // Use rewritten HTML with absolute image URLs
           cachedAt: cached.htmlFetchedAt,
           title: paper?.title,
-          authors: paper?.authors ? JSON.parse(paper.authors) : undefined,
+          authors,
           abstract: paper?.abstract,
           sections,
           figures,
@@ -263,7 +278,7 @@ export async function GET(
     }
 
     // Get paper metadata (from cache or ADS)
-    let paper = getPaper(bibcode);
+    let paper = await getPaper(bibcode);
     // Refresh if paper doesn't exist, has no body, or body is suspiciously short (likely invalid)
     const needsRefresh = !paper || !paper.body || (paper.body && paper.body.length < 100);
 
@@ -363,7 +378,7 @@ export async function GET(
       const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
       const existingSummaries = await getSectionSummaries(bibcode);
       const shouldRegenerateHtml = existingSummaries.length > 0 &&
-        (!isCachedHtmlFresh(bibcode) || // Cache is stale
+        (!(await isCachedHtmlFresh(bibcode)) || // Cache is stale
         forceRefresh); // Force refresh requested
 
       // If we have section summaries but HTML is stale, regenerate it
@@ -416,7 +431,7 @@ export async function GET(
     // Cache the HTML content along with sections and figures
     // Cache ar5iv, arxiv, and ads sources (but not abstract-only)
     if (content.html && (content.source === 'ar5iv' || content.source === 'arxiv' || content.source === 'ads')) {
-      cacheHtmlContent(bibcode, content.html, content.sections, content.figures);
+      await cacheHtmlContent(bibcode, content.html, content.sections, content.figures);
     }
 
     logger.info('Paper content fetched', {
@@ -480,11 +495,26 @@ export async function GET(
       ? content.sections
       : [];
 
+    // Parse authors JSON safely
+    let authors: string[] | undefined = content.authors;
+    if (!authors && paper.authors) {
+      try {
+        authors = JSON.parse(paper.authors);
+      } catch (error) {
+        logger.warn('Failed to parse paper authors JSON', {
+          bibcode,
+          authors: paper.authors.substring(0, 100),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        authors = undefined;
+      }
+    }
+
     return NextResponse.json({
       source: content.source,
       html: content.html,
       title: content.title || paper.title,
-      authors: content.authors || (paper.authors ? JSON.parse(paper.authors) : undefined),
+      authors,
       abstract: content.abstract || paper.abstract,
       sections: content.sections,
       figures: content.figures,

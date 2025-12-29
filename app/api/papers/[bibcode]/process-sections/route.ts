@@ -27,7 +27,7 @@ export async function POST(
     }
 
     // Check if paper exists
-    const paper = getPaper(bibcode);
+    const paper = await getPaper(bibcode);
     if (!paper) {
       return NextResponse.json(
         { error: `Paper ${bibcode} not found` },

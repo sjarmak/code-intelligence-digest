@@ -88,8 +88,7 @@ export async function POST(request: NextRequest) {
       context = papersContext;
       // Extract bibcodes from context for citation tracking
       papers = selectedBibcodes?.length
-        ? selectedBibcodes
-            .map((bibcode: string) => getPaper(bibcode))
+        ? (await Promise.all(selectedBibcodes.map((bibcode: string) => getPaper(bibcode))))
             .filter((p): p is ADSPaperRecord => p !== null)
         : [];
     } else {
@@ -97,8 +96,7 @@ export async function POST(request: NextRequest) {
       if (selectedBibcodes && selectedBibcodes.length > 0) {
         // Use user-selected papers
         logger.info('Using selected papers', { count: selectedBibcodes.length });
-        papers = selectedBibcodes
-          .map((bibcode: string) => getPaper(bibcode))
+        papers = (await Promise.all(selectedBibcodes.map((bibcode: string) => getPaper(bibcode))))
           .filter((p): p is ADSPaperRecord => p !== null);
       } else if (effectiveLibraryIds.length > 0) {
         // Use papers from selected libraries

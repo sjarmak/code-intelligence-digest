@@ -91,6 +91,72 @@ interface PaperReaderModalProps {
 
 type SidebarPanel = 'toc' | 'annotations' | 'tags' | null;
 
+interface ProcessSectionsButtonProps {
+  bibcode: string;
+  onProcessed: () => Promise<void>;
+}
+
+function ProcessSectionsButton({ bibcode, onProcessed }: ProcessSectionsButtonProps) {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleProcess = async () => {
+    setIsProcessing(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/process-sections`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      if (result.success) {
+        // Reload content to show new sections
+        await onProcessed();
+      } else {
+        throw new Error(result.error || 'Processing failed');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to process sections';
+      setError(errorMessage);
+      console.error('Failed to process sections:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="mb-8 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+      <p className="text-yellow-800 text-sm mb-2">
+        Section summaries haven't been processed yet. Click the button below to generate them.
+      </p>
+      <button
+        onClick={handleProcess}
+        disabled={isProcessing}
+        className="text-xs px-3 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+      >
+        {isProcessing ? (
+          <>
+            <Loader2 className="w-3 h-3 animate-spin" />
+            Processing...
+          </>
+        ) : (
+          'Process Sections Now'
+        )}
+      </button>
+      {error && (
+        <p className="text-red-600 text-xs mt-2">
+          Error: {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function PaperReaderModal({
   bibcode,
   title: initialTitle,
@@ -854,29 +920,7 @@ export function PaperReaderModal({
                 </div>
               ) : (
                 // Show message if sections haven't been processed yet
-                <div className="mb-8 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <p className="text-yellow-800 text-sm mb-2">
-                    Section summaries are being processed. This may take a few moments.
-                  </p>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/process-sections`, {
-                          method: 'POST',
-                        });
-                        if (response.ok) {
-                          // Reload content to show new sections
-                          await fetchContent();
-                        }
-                      } catch (err) {
-                        console.error('Failed to process sections:', err);
-                      }
-                    }}
-                    className="text-xs px-3 py-1 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 transition-colors"
-                  >
-                    Process Sections Now
-                  </button>
-                </div>
+                <ProcessSectionsButton bibcode={bibcode} onProcessed={fetchContent} />
               )}
 
               {/* Paper content with section demarcations */}

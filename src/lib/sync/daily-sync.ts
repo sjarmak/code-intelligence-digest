@@ -212,13 +212,13 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         // If getUserInfo fails (e.g., 429 error), pause and resume later
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(`[DAILY-SYNC] Failed to fetch user info: ${errorMsg}`);
-        
+
         // Check if it's a 429 (rate limit) or other error
         const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
-        const pauseError = isRateLimit 
+        const pauseError = isRateLimit
           ? `Rate limit reached. Will resume automatically.`
           : `Failed to fetch user info: ${errorMsg}`;
-        
+
         await saveSyncState({
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
@@ -352,7 +352,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         // Check if it's a 429 (rate limit) error
         const errorMsg = error instanceof Error ? error.message : String(error);
         const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
-        
+
         if (isRateLimit) {
           logger.warn(`[DAILY-SYNC] Rate limit reached (429). Pausing sync. Will resume automatically.`);
           await saveSyncState({
@@ -372,7 +372,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
             error: 'Rate limit reached (429). Will resume automatically.',
           };
         }
-        
+
         // For other errors, re-throw
         throw error;
       }
@@ -413,7 +413,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    
+
     // Check if it's a rate limit error
     const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
     const pauseError = isRateLimit
