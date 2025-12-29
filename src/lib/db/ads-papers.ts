@@ -259,51 +259,72 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
   try {
     if (driver === 'postgres') {
       const client = await getDbClient();
-      // Use a single query with VALUES for batch insert
-      const values: unknown[] = [];
-      const placeholders: string[] = [];
-      let paramIndex = 1;
+      
+      // Process in smaller batches to avoid connection timeouts and query size limits
+      // PostgreSQL can handle large queries, but with body text fields, we need smaller batches
+      const BATCH_SIZE = 10;
+      let processed = 0;
+      
+      while (processed < sanitizedPapers.length) {
+        const batch = sanitizedPapers.slice(processed, processed + BATCH_SIZE);
+        const values: unknown[] = [];
+        const placeholders: string[] = [];
+        let paramIndex = 1;
 
-      for (const paper of sanitizedPapers) {
-        const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
-        placeholders.push(
-          `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`
-        );
-        values.push(
-          paper.bibcode,
-          paper.title || null,
-          paper.authors || null,
-          paper.pubdate || null,
-          paper.abstract || null,
-          paper.body || null,
-          year || null,
-          paper.journal || null,
-          paper.adsUrl || null,
-          paper.arxivUrl || null,
-          paper.fulltextSource || null,
-          now,
-        );
+        for (const paper of batch) {
+          const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
+          placeholders.push(
+            `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`
+          );
+          values.push(
+            paper.bibcode,
+            paper.title || null,
+            paper.authors || null,
+            paper.pubdate || null,
+            paper.abstract || null,
+            paper.body || null,
+            year || null,
+            paper.journal || null,
+            paper.adsUrl || null,
+            paper.arxivUrl || null,
+            paper.fulltextSource || null,
+            now,
+          );
+        }
+
+        try {
+          await client.run(
+            `INSERT INTO ads_papers (
+              bibcode, title, authors, pubdate, abstract, body,
+              year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+            ) VALUES ${placeholders.join(', ')}
+            ON CONFLICT(bibcode) DO UPDATE SET
+              title = EXCLUDED.title,
+              authors = EXCLUDED.authors,
+              pubdate = EXCLUDED.pubdate,
+              abstract = EXCLUDED.abstract,
+              body = COALESCE(EXCLUDED.body, ads_papers.body),
+              year = COALESCE(EXCLUDED.year, ads_papers.year),
+              journal = EXCLUDED.journal,
+              ads_url = EXCLUDED.ads_url,
+              arxiv_url = EXCLUDED.arxiv_url,
+              fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
+              updated_at = EXCLUDED.updated_at`,
+            values
+          );
+          processed += batch.length;
+          logger.debug(`Stored batch of ${batch.length} papers (${processed}/${sanitizedPapers.length} total)`);
+        } catch (batchError) {
+          logger.error('Failed to store batch', {
+            batchSize: batch.length,
+            processed,
+            total: sanitizedPapers.length,
+            error: batchError instanceof Error ? batchError.message : String(batchError),
+          });
+          // Re-throw to let caller handle
+          throw batchError;
+        }
       }
-
-      await client.run(
-        `INSERT INTO ads_papers (
-          bibcode, title, authors, pubdate, abstract, body,
-          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-        ) VALUES ${placeholders.join(', ')}
-        ON CONFLICT(bibcode) DO UPDATE SET
-          title = EXCLUDED.title,
-          authors = EXCLUDED.authors,
-          pubdate = EXCLUDED.pubdate,
-          abstract = EXCLUDED.abstract,
-          body = COALESCE(EXCLUDED.body, ads_papers.body),
-          year = COALESCE(EXCLUDED.year, ads_papers.year),
-          journal = EXCLUDED.journal,
-          ads_url = EXCLUDED.ads_url,
-          arxiv_url = EXCLUDED.arxiv_url,
-          fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
-          updated_at = EXCLUDED.updated_at`,
-        values
-      );
     } else {
       const db = getSqlite();
       const stmt = db.prepare(`

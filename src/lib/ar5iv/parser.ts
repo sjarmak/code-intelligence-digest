@@ -814,17 +814,17 @@ export async function fetchPaperContent(
 
   // Fallback to ADS body (prefer this over abstract-only)
   if (options.adsBody && options.adsBody.length > 100) {
-    logger.info('Using ADS body fallback', { 
-      bibcode, 
+    logger.info('Using ADS body fallback', {
+      bibcode,
       bodyLength: options.adsBody.length,
-      hasAbstract: !!options.abstract 
+      hasAbstract: !!options.abstract
     });
     return adsBodyToHtml(options.adsBody, options.abstract);
   }
 
   // Final fallback: abstract only (only if no body available)
   if (options.abstract) {
-    logger.warn('Using abstract-only fallback - no body text available', { 
+    logger.warn('Using abstract-only fallback - no body text available', {
       bibcode,
       hasAdsBody: !!options.adsBody,
       adsBodyLength: options.adsBody?.length || 0
