@@ -43,7 +43,7 @@ export async function saveFeeds(feedConfigs: FeedConfig[]): Promise<void> {
       const { getSqlite } = await import("./index");
       const sqlite = getSqlite();
       const stmt = sqlite.prepare(`
-        INSERT OR REPLACE INTO feeds 
+        INSERT OR REPLACE INTO feeds
         (id, stream_id, canonical_name, default_category, vendor, tags, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
       `);

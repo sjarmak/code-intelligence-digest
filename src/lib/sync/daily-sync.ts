@@ -29,7 +29,9 @@ import { computeAndSaveScoresForItems } from '../pipeline/compute-scores';
 import { logger } from '../logger';
 import { Category, FeedItem } from '../model';
 import { getDbClient, detectDriver, nowTimestamp } from '../db/driver';
-import { getGlobalApiBudget, incrementGlobalApiCalls, getCachedUserId, setCachedUserId } from '../db/index';
+import { getCachedUserId, setCachedUserId } from '../db/index';
+import { incrementGlobalApiCalls } from '../db/index';
+import { checkSyncBudget } from './budget-guard';
 import { syncResearchFromADS } from './ads-research-sync';
 
 interface SyncStateRow {
@@ -212,17 +214,16 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       logger.warn('[DAILY-SYNC] ADS_API_TOKEN not set, skipping research sync from ADS');
     }
 
-    // Check global budget before starting Inoreader sync
-    const budget = await getGlobalApiBudget();
-    const percentUsed = Math.round((budget.callsUsed / budget.quotaLimit) * 100);
-    logger.info(`[DAILY-SYNC] Global API budget: ${budget.callsUsed}/${budget.quotaLimit} calls used (${percentUsed}%)`);
-
-    // Pause threshold: only pause if we don't have enough quota for at least one sync
-    // A single sync typically needs 1-2 calls, so we pause only when we have less than 10 calls remaining
-    // This prevents wasting the last few calls while still allowing syncs when quota is tight
-    const PAUSE_THRESHOLD = 10;
-    if (budget.remaining <= PAUSE_THRESHOLD) {
-      logger.warn(`[DAILY-SYNC] Only ${budget.remaining} calls remaining (${Math.round((budget.remaining / budget.quotaLimit) * 100)}%). Pausing to protect daily limit.`);
+    // Check budget once before starting - single decision point
+    const budgetCheck = await checkSyncBudget('daily', '[DAILY-SYNC]');
+    if (!budgetCheck.canProceed) {
+      await saveSyncState({
+        continuationToken: continuation,
+        itemsProcessed: totalItemsAdded,
+        callsUsed,
+        status: 'paused',
+        error: budgetCheck.reason,
+      });
       return {
         success: false,
         itemsAdded: 0,
@@ -230,47 +231,14 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         categoriesProcessed: [],
         resumed,
         paused: true,
-        error: `Rate limit near. Only ${budget.remaining} calls remaining in daily quota.`,
+        error: budgetCheck.reason,
       };
-    }
-
-    // Warn at usage milestones
-    if (percentUsed >= 90) {
-      logger.warn(`[DAILY-SYNC] ⚠️  CRITICAL: ${percentUsed}% of API budget used (${budget.remaining} remaining)`);
-    } else if (percentUsed >= 75) {
-      logger.warn(`[DAILY-SYNC] ⚠️  WARNING: ${percentUsed}% of API budget used (${budget.remaining} remaining)`);
-    } else if (percentUsed >= 50) {
-      logger.info(`[DAILY-SYNC] ℹ️  ${percentUsed}% of API budget used (${budget.remaining} remaining)`);
     }
 
     // Get user ID (cached, no API call if available)
     let userId: string | null = await getCachedUserId();
 
     if (!userId) {
-      // Check budget BEFORE attempting to fetch user info
-      // This prevents wasting API calls if quota is exhausted
-      const budgetBeforeUserInfo = await getGlobalApiBudget();
-      if (budgetBeforeUserInfo.remaining <= 0) {
-        const errorMsg = `Cannot fetch user info: API quota exhausted (${budgetBeforeUserInfo.callsUsed}/${budgetBeforeUserInfo.quotaLimit} calls used). Please wait until quota resets.`;
-        logger.error(`[DAILY-SYNC] ${errorMsg}`);
-        await saveSyncState({
-          continuationToken: continuation,
-          itemsProcessed: totalItemsAdded,
-          callsUsed,
-          status: 'paused',
-          error: errorMsg,
-        });
-        return {
-          success: false,
-          itemsAdded: totalItemsAdded,
-          apiCallsUsed: callsUsed,
-          categoriesProcessed,
-          resumed,
-          paused: true,
-          error: errorMsg,
-        };
-      }
-
       logger.debug('[DAILY-SYNC] User ID not cached. Fetching from API...');
       try {
         const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
@@ -363,40 +331,9 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       });
 
       callsUsed++;
-      // Note: API call is automatically tracked by InoreaderClient
-
-      // Check budget after each call with conservative threshold
-      const currentBudget = await getGlobalApiBudget();
-      const currentPercentUsed = Math.round((currentBudget.callsUsed / currentBudget.quotaLimit) * 100);
-      // Use same threshold as initial check (10 calls) to allow syncs when quota is tight
-      const PAUSE_THRESHOLD = 10;
-
-      if (currentBudget.remaining <= PAUSE_THRESHOLD) {
-        logger.warn(`[DAILY-SYNC] Budget near limit after batch ${batchNumber} (${currentPercentUsed}% used, ${currentBudget.remaining} remaining). Pausing.`);
-        await saveSyncState({
-          continuationToken: response.continuation,
-          itemsProcessed: totalItemsAdded,
-          callsUsed,
-          status: 'paused',
-          error: `Rate limit near. ${currentBudget.remaining} calls remaining (${currentPercentUsed}% used).`,
-        });
-        return {
-          success: false,
-          itemsAdded: totalItemsAdded,
-          apiCallsUsed: callsUsed,
-          categoriesProcessed,
-          resumed,
-          paused: true,
-          error: `Rate limit near. ${currentBudget.remaining} calls remaining (${currentPercentUsed}% used).`,
-        };
-      }
-
-      // Warn at usage milestones
-      if (currentPercentUsed >= 90) {
-        logger.warn(`[DAILY-SYNC] ⚠️  CRITICAL: ${currentPercentUsed}% of API budget used after batch ${batchNumber}`);
-      } else if (currentPercentUsed >= 75) {
-        logger.warn(`[DAILY-SYNC] ⚠️  WARNING: ${currentPercentUsed}% of API budget used after batch ${batchNumber}`);
-      }
+      // Note: API call is automatically tracked by InoreaderClient (with automatic capping)
+      // No need to check budget again - we checked at the start and increments are capped
+      // Budget increments are automatically capped at quota_limit to prevent going over
 
       if (!response.items || response.items.length === 0) {
         logger.info('[DAILY-SYNC] No more items to fetch (empty response)');
@@ -509,29 +446,8 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         status: continuation ? 'in_progress' : 'completed',
       });
 
-      // Safety check: pause if we've used 95% of quota (conservative threshold)
-      const SAFETY_THRESHOLD = Math.floor(budget.quotaLimit * 0.95);
-      if (callsUsed >= SAFETY_THRESHOLD) {
-        const percentUsed = Math.round((callsUsed / budget.quotaLimit) * 100);
-        logger.warn(`[DAILY-SYNC] Approaching rate limit (${callsUsed} calls used, ${percentUsed}% of quota). Pausing. Will resume tomorrow.`);
-        await saveSyncState({
-          continuationToken: continuation,
-          itemsProcessed: totalItemsAdded,
-          callsUsed,
-          status: 'paused',
-          error: `Rate limit approaching (${percentUsed}% used). Will resume tomorrow.`,
-        });
-
-        return {
-          success: false,
-          itemsAdded: totalItemsAdded,
-          apiCallsUsed: callsUsed,
-          categoriesProcessed,
-          resumed,
-          paused: true,
-          error: `Paused at ${callsUsed} calls (${percentUsed}% of quota) to stay within daily limit. Will resume tomorrow.`,
-        };
-      }
+      // No need to check budget here - we checked at the start
+      // Budget increments are automatically capped at quota_limit
 
       hasMoreItems = !!continuation && continuation.length > 0;
     }
@@ -556,14 +472,12 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     await clearSyncState();
 
     // Final efficiency report
-    const finalBudget = await getGlobalApiBudget();
-    const finalPercentUsed = Math.round((finalBudget.callsUsed / finalBudget.quotaLimit) * 100);
     const avgItemsPerCall = totalItemsAdded > 0 ? (totalItemsAdded / callsUsed).toFixed(1) : '0';
     const totalItemsIncludingResearch = totalItemsAdded + researchItemsAdded;
     const totalScoresIncludingResearch = scoresComputed + researchItemsScored;
 
     logger.info(
-      `[DAILY-SYNC] Complete: ${totalItemsIncludingResearch} items (${totalItemsAdded} from Inoreader, ${researchItemsAdded} from ADS), ${totalScoresIncludingResearch} scored, ${categoriesProcessed.length} categories, ${callsUsed} API calls (${avgItemsPerCall} items/call, ${finalPercentUsed}% of quota used)`
+      `[DAILY-SYNC] Complete: ${totalItemsIncludingResearch} items (${totalItemsAdded} from Inoreader, ${researchItemsAdded} from ADS), ${totalScoresIncludingResearch} scored, ${categoriesProcessed.length} categories, ${callsUsed} API calls (${avgItemsPerCall} items/call)`
     );
 
     return {
