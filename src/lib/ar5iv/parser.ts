@@ -615,16 +615,9 @@ export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperConte
   }
 
   // If we extracted meaningful sections, use them
-  // Note: We check for length > 1 to avoid using just "Abstract" and "Full Text"
-  // But if we have section summaries, we should use the extracted sections even if only 2
-  const hasMultipleSections = extractedSections.length > 1;
-  const hasGoodSections = extractedSections.length > 0 && 
-    !extractedSections.every((s: { sectionTitle: string }) => 
-      s.sectionTitle.toLowerCase().includes('abstract') || 
-      s.sectionTitle.toLowerCase().includes('full text')
-    );
-  
-  if (hasMultipleSections || hasGoodSections) {
+  // Always use extracted sections if we have any (even if just 2)
+  // The section extraction logic handles chunking properly
+  if (extractedSections.length > 0) {
     // We have multiple sections - format them nicely
     for (const section of extractedSections) {
       // Preserve the original sectionId (could be chunk-N, section-N, etc.)
