@@ -15,6 +15,29 @@ import { extractBatchDigests } from "@/src/lib/pipeline/extract";
 import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 
+// Helper function to deduplicate by URL (same logic as in select.ts)
+function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
+  const seenUrls = new Map<string, string>();
+  const deduped: RankedItem[] = [];
+
+  for (const item of rankedItems) {
+    try {
+      const urlObj = new URL(item.url);
+      const urlKey = urlObj.hostname + urlObj.pathname;
+
+      if (!seenUrls.has(urlKey)) {
+        seenUrls.set(urlKey, item.id);
+        deduped.push(item);
+      }
+    } catch {
+      // If URL parsing fails, include the item anyway
+      deduped.push(item);
+    }
+  }
+
+  return deduped;
+}
+
 interface NewsletterRequest {
   categories: string[];
   period: "week" | "month" | "all" | "custom";
@@ -252,17 +275,31 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       }
     }
 
-    // Step 5: Diversity selection with limit
-    // Note: After extraction & decomposition, item count may increase.
-    // Reduce pre-selection to account for newsletter decomposition (~1.3x expansion typical).
-    // This ensures final digest count is close to requested limit.
-    const maxPerSource = req.period === "week" ? 2 : 3;
+    // Step 5: Select items based on relevance
+    // When no prompt is provided, use highest relevance items (sorted by finalScore)
+    // When prompt is provided, apply diversity constraints
+    let selectedItems: RankedItem[];
     const decompositionFactor = 1.3; // Typical expansion from newsletter decomposition
     const adjustedLimit = Math.ceil(req.limit / decompositionFactor);
-    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, adjustedLimit);
-    const selectedItems = selection.items;
 
-    logger.info(`Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${req.limit}) with diversity constraints`);
+    if (!req.prompt || req.prompt.length === 0) {
+      // No prompt: Sort by finalScore (highest first) and take top N
+      // Still deduplicate by URL to avoid duplicates
+      // Note: After extraction & decomposition, item count may increase.
+      // Reduce pre-selection to account for newsletter decomposition (~1.3x expansion typical).
+      const deduplicatedItems = deduplicateByUrl(mergedItems);
+      deduplicatedItems.sort((a, b) => b.finalScore - a.finalScore);
+      selectedItems = deduplicatedItems.slice(0, adjustedLimit);
+      logger.info(`Selected ${selectedItems.length} highest relevance items (no prompt, sorted by finalScore, adjusted limit: ${adjustedLimit})`);
+    } else {
+      // With prompt: Apply diversity constraints
+      const maxPerSource = req.period === "week" ? 2 : 3;
+      const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, adjustedLimit);
+      selectedItems = selection.items;
+      logger.info(`Selected ${selectedItems.length} items (with prompt, diversity constraints applied, adjusted limit: ${adjustedLimit})`);
+    }
+
+    logger.info(`Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${req.limit})`);
 
     // Log newsletter items being selected
     const selectedNewsletters = selectedItems.filter(item => item.sourceTitle.includes("TLDR") || item.sourceTitle.includes("Byte Byte Go") || item.sourceTitle.includes("Elevate") || item.sourceTitle.includes("Pointer"));
