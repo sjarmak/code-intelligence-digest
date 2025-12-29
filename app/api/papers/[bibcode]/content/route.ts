@@ -35,6 +35,10 @@ export async function GET(
       await ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
+    
+    // Check for force refresh parameter
+    const searchParams = request.nextUrl.searchParams;
+    const forceRefresh = searchParams.get('refresh') === 'true';
     // Handle URL encoding - decodeURIComponent handles %2F and other encoded characters
     // If decoding fails, try using the raw value (might already be decoded by Next.js)
     let bibcode: string;
@@ -69,8 +73,8 @@ export async function GET(
 
     logger.info('Fetching paper content', { bibcode });
 
-    // Check for fresh cached HTML
-    if (isCachedHtmlFresh(bibcode)) {
+    // Check for fresh cached HTML (skip if force refresh)
+    if (!forceRefresh && isCachedHtmlFresh(bibcode)) {
       const cached = getCachedHtmlContent(bibcode);
       if (cached) {
         logger.info('Returning cached HTML content', {
