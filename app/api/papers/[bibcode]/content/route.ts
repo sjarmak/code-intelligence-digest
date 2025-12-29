@@ -94,19 +94,39 @@ export async function GET(
         const htmlLower = htmlContent.toLowerCase();
         const isArxivHtml = htmlLower.includes('arxiv.org/html/') && !htmlLower.includes('arxiv.org/abs/');
         const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
-        
+
         // Rewrite relative image URLs to absolute URLs
+        // Handle both src="..." and src='...' formats, and also handle src without quotes
         htmlContent = htmlContent.replace(
-          /<img([^>]*)\ssrc=["']([^"']+)["']([^>]*)>/gi,
-          (match, before, src, after) => {
+          /<img([^>]*?)(?:\s+src\s*=\s*["']([^"']+)["']|src\s*=\s*([^\s>]+))([^>]*)>/gi,
+          (match, before, srcQuoted, srcUnquoted, after) => {
+            const src = srcQuoted || srcUnquoted;
+            if (!src) return match; // No src found
+            
             // Only rewrite if it's a relative URL
-            if (!src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:')) {
+            if (!src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:') && !src.startsWith('//')) {
               const normalizedSrc = src.startsWith('/') 
                 ? `${imageBaseUrl}${src}`
                 : `${imageBaseUrl}/${src}`;
-              return `<img${before} src="${normalizedSrc}"${after}>`;
+              // Preserve the original quote style or use double quotes
+              const quote = srcQuoted ? (match.includes(`src="${srcQuoted}"`) ? '"' : "'") : '"';
+              return `<img${before} src=${quote}${normalizedSrc}${quote}${after}>`;
             }
             return match; // Already absolute or data URL
+          }
+        );
+        
+        // Also handle background-image URLs in style attributes
+        htmlContent = htmlContent.replace(
+          /style=["']([^"']*background[^"']*url\(["']?([^"')]+)["']?\)[^"']*)["']/gi,
+          (match, styleContent, url) => {
+            if (url && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('//')) {
+              const normalizedUrl = url.startsWith('/') 
+                ? `${imageBaseUrl}${url}`
+                : `${imageBaseUrl}/${url}`;
+              return `style="${styleContent.replace(url, normalizedUrl)}"`;
+            }
+            return match;
           }
         );
 

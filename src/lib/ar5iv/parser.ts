@@ -536,46 +536,99 @@ function addSectionIds(html: string): string {
 }
 
 /**
- * Convert ADS full text to HTML format
+ * Convert ADS full text to HTML format with proper section extraction
  */
 export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperContent {
-  // ADS body is usually plain text or light markdown
-  // Convert to simple HTML paragraphs
-
-  const paragraphs = body
-    .split(/\n\n+/)
-    .filter(p => p.trim())
-    .map(p => `<p>${escapeHtml(p.trim())}</p>`)
-    .join('\n');
-
+  // Import section extraction function
+  const { extractSectionsFromBody } = require('../pipeline/section-summarization');
+  
+  // Extract sections from body text
+  const extractedSections = extractSectionsFromBody(body);
+  
   const sections: PaperSection[] = [];
+  let htmlSections = '';
 
+  // Add abstract section if available
   if (abstract) {
     sections.push({
       id: 'abstract',
       title: 'Abstract',
       level: 2,
     });
+    htmlSections += `
+      <section id="abstract" class="paper-section">
+        <h2>Abstract</h2>
+        <p>${escapeHtml(abstract)}</p>
+      </section>
+    `;
   }
 
-  sections.push({
-    id: 'body',
-    title: 'Full Text',
-    level: 2,
-  });
+  // If we extracted meaningful sections, use them
+  if (extractedSections.length > 0 && extractedSections.length > 1) {
+    // We have multiple sections - format them nicely
+    for (const section of extractedSections) {
+      const sectionId = section.sectionId || `section-${sections.length}`;
+      const headingLevel = Math.min(section.level + 1, 6); // h2-h6
+      
+      sections.push({
+        id: sectionId,
+        title: section.sectionTitle,
+        level: section.level,
+      });
 
-  const html = `
-    <div class="paper-reader-content paper-reader-ads">
-      ${abstract ? `
-        <section id="abstract" class="paper-section">
-          <h2>Abstract</h2>
-          <p>${escapeHtml(abstract)}</p>
+      // Format section content with proper heading
+      const sectionHtml = section.fullText
+        .split(/\n\n+/)
+        .filter(p => p.trim())
+        .map(p => {
+          // Check if paragraph looks like a heading (short, all caps, or ends with colon)
+          const trimmed = p.trim();
+          if (trimmed.length < 100 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
+            return `<h${headingLevel + 1}>${escapeHtml(trimmed.replace(/[:]$/, ''))}</h${headingLevel + 1}>`;
+          }
+          return `<p>${escapeHtml(trimmed)}</p>`;
+        })
+        .join('\n');
+
+      htmlSections += `
+        <section id="${sectionId}" class="paper-section">
+          <h${headingLevel}>${escapeHtml(section.sectionTitle)}</h${headingLevel}>
+          ${sectionHtml}
         </section>
-      ` : ''}
+      `;
+    }
+  } else {
+    // Fallback: simple paragraph formatting
+    sections.push({
+      id: 'body',
+      title: 'Full Text',
+      level: 2,
+    });
+
+    const paragraphs = body
+      .split(/\n\n+/)
+      .filter(p => p.trim())
+      .map(p => {
+        const trimmed = p.trim();
+        // Check if paragraph looks like a heading
+        if (trimmed.length < 100 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
+          return `<h3>${escapeHtml(trimmed.replace(/[:]$/, ''))}</h3>`;
+        }
+        return `<p>${escapeHtml(trimmed)}</p>`;
+      })
+      .join('\n');
+
+    htmlSections += `
       <section id="body" class="paper-section">
         <h2>Full Text</h2>
         ${paragraphs}
       </section>
+    `;
+  }
+
+  const html = `
+    <div class="paper-reader-content paper-reader-ads">
+      ${htmlSections}
     </div>
   `;
 
