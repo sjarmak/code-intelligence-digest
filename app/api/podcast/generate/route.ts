@@ -12,6 +12,29 @@ import { v4 as uuid } from "uuid";
 import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
+
+// Helper function to deduplicate by URL (same logic as in select.ts)
+function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
+  const seenUrls = new Map<string, string>();
+  const deduped: RankedItem[] = [];
+
+  for (const item of rankedItems) {
+    try {
+      const urlObj = new URL(item.url);
+      const urlKey = urlObj.hostname + urlObj.pathname;
+
+      if (!seenUrls.has(urlKey)) {
+        seenUrls.set(urlKey, item.id);
+        deduped.push(item);
+      }
+    } catch {
+      // If URL parsing fails, include the item anyway
+      deduped.push(item);
+    }
+  }
+
+  return deduped;
+}
 import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
 import { rerankWithPrompt, filterByExclusions } from "@/src/lib/pipeline/promptRerank";
 import { extractPodcastBatchDigests } from "@/src/lib/pipeline/podcastDigest";
@@ -332,10 +355,25 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       }
     }
 
-    // Step 4: Diversity selection with limit
-    const maxPerSource = req.period === "week" ? 2 : req.period === "month" ? 3 : 4;
-    const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, req.limit);
-    const selectedItems = selection.items;
+    // Step 4: Select items based on relevance
+    // When no prompt is provided, use highest relevance items (sorted by finalScore)
+    // When prompt is provided, apply diversity constraints
+    let selectedItems: RankedItem[];
+
+    if (!req.prompt || req.prompt.length === 0) {
+      // No prompt: Sort by finalScore (highest first) and take top N
+      // Still deduplicate by URL to avoid duplicates
+      const deduplicatedItems = deduplicateByUrl(mergedItems);
+      deduplicatedItems.sort((a, b) => b.finalScore - a.finalScore);
+      selectedItems = deduplicatedItems.slice(0, req.limit);
+      logger.info(`Selected ${selectedItems.length} highest relevance items (no prompt, sorted by finalScore)`);
+    } else {
+      // With prompt: Apply diversity constraints
+      const maxPerSource = req.period === "week" ? 2 : req.period === "month" ? 3 : 4;
+      const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, req.limit);
+      selectedItems = selection.items;
+      logger.info(`Selected ${selectedItems.length} items (with prompt, diversity constraints applied)`);
+    }
 
     logger.info(`Selected ${selectedItems.length} items (requested limit: ${req.limit}) with diversity constraints`);
 
