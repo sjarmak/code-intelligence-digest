@@ -1,55 +1,36 @@
 /**
  * Inoreader API client
- * Adapted from /Users/sjarmak/research-agent/src/lib/inoreader/client.ts
- *
- * All API calls are automatically tracked in the global budget to prevent exceeding the 100/day limit.
+ * 
+ * Simplified: No internal budget tracking - rely on Inoreader's 429 errors for rate limiting
  */
 
 import { InoreaderStreamResponse, InoreaderTokenResponse } from "./types.js";
 import { logger } from "../logger";
-import { getGlobalApiBudget, incrementGlobalApiCalls } from "../db/index";
-import { incrementApiCalls } from "../db/api-budget";
 
 export interface FetchStreamOptions {
   n?: number;
   continuation?: string;
   xt?: string;  // Exclude tag (e.g., read items)
-  ot?: number;  // "Older than" - only fetch items newer than this Unix timestamp
+  ot?: number;  // Oldest timestamp (unix epoch seconds)
 }
 
 export class InoreaderClient {
-  private clientId: string;
-  private clientSecret: string;
-  private refreshToken: string;
   private accessToken: string | null = null;
-  private tokenExpiresAt: number = 0;
 
-  constructor(config: {
-    clientId: string;
-    clientSecret: string;
-    refreshToken: string;
-  }) {
-    this.clientId = config.clientId;
-    this.clientSecret = config.clientSecret;
-    this.refreshToken = config.refreshToken;
-  }
-
-  /**
-   * Get access token, refreshing if necessary
-   */
   private async getAccessToken(): Promise<string> {
-    if (this.accessToken && Date.now() < this.tokenExpiresAt) {
+    if (this.accessToken) {
       return this.accessToken;
     }
 
-    logger.info("Refreshing Inoreader access token...");
+    const clientId = process.env.INOREADER_CLIENT_ID;
+    const clientSecret = process.env.INOREADER_CLIENT_SECRET;
+    const refreshToken = process.env.INOREADER_REFRESH_TOKEN;
 
-    const params = new URLSearchParams({
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
-      grant_type: "refresh_token",
-      refresh_token: this.refreshToken,
-    });
+    if (!clientId || !clientSecret || !refreshToken) {
+      throw new Error(
+        "Missing Inoreader credentials. Set INOREADER_CLIENT_ID, INOREADER_CLIENT_SECRET, and INOREADER_REFRESH_TOKEN environment variables."
+      );
+    }
 
     try {
       const response = await fetch("https://www.inoreader.com/oauth2/token", {
@@ -57,27 +38,24 @@ export class InoreaderClient {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: params,
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
-          `Failed to refresh token: ${response.status} ${response.statusText} - ${errorText}`
+          `Failed to refresh Inoreader token: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
 
       const data = (await response.json()) as InoreaderTokenResponse;
       this.accessToken = data.access_token;
-      // Set expiration slightly before actual expiry (60 seconds buffer)
-      this.tokenExpiresAt = Date.now() + data.expires_in * 1000 - 60000;
 
-      // Update refresh token if a new one is returned
-      if (data.refresh_token) {
-        this.refreshToken = data.refresh_token;
-      }
-
-      logger.info("Successfully refreshed Inoreader access token");
       return this.accessToken;
     } catch (error) {
       logger.error("Error refreshing Inoreader token", error);
@@ -94,28 +72,6 @@ export class InoreaderClient {
     streamId: string,
     options: FetchStreamOptions = {}
   ): Promise<InoreaderStreamResponse> {
-    // Check budget before making call with conservative threshold
-    try {
-      const budget = await getGlobalApiBudget();
-      const percentUsed = Math.round((budget.callsUsed / budget.quotaLimit) * 100);
-      const PAUSE_THRESHOLD = Math.max(50, Math.floor(budget.quotaLimit * 0.05));
-
-      if (budget.remaining <= 0) {
-        throw new Error(
-          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used (${percentUsed}%). Please wait until the limit resets.`
-        );
-      }
-
-      // Warn at high usage
-      if (budget.remaining <= PAUSE_THRESHOLD) {
-        logger.warn(`[INOREADER-CLIENT] ⚠️  Low API budget: ${budget.remaining} calls remaining (${percentUsed}% used)`);
-      }
-    } catch (error) {
-      // If budget check fails (e.g., database not initialized), log warning but continue
-      // This allows the client to work in environments where budget tracking isn't available
-      logger.warn("Could not check API budget, proceeding anyway", { error });
-    }
-
     const token = await this.getAccessToken();
     const encodedStreamId = encodeURIComponent(streamId);
 
@@ -143,13 +99,6 @@ export class InoreaderClient {
         );
       }
 
-      // Track successful API call (automatically capped at quota limit)
-      try {
-        await incrementApiCalls(1);
-      } catch (error) {
-        logger.warn("Could not track API call in budget", { error });
-      }
-
       return (await response.json()) as InoreaderStreamResponse;
     } catch (error) {
       logger.error(`Error fetching stream contents for ${streamId}`, error);
@@ -161,23 +110,6 @@ export class InoreaderClient {
    * Fetch user info from Inoreader
    */
   async getUserInfo(): Promise<Record<string, unknown>> {
-    // Check budget before making call (using new budget guard)
-    try {
-      const { hasBudgetFor } = await import("../db/api-budget");
-      if (!(await hasBudgetFor(1))) {
-        const budget = await getGlobalApiBudget();
-        throw new Error(
-          `Inoreader API budget insufficient: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
-        );
-      }
-    } catch (error) {
-      // If it's a budget error, re-throw it
-      if (error instanceof Error && error.message.includes('budget')) {
-        throw error;
-      }
-      logger.warn("Could not check API budget, proceeding anyway", { error });
-    }
-
     const token = await this.getAccessToken();
     const url = "https://www.inoreader.com/reader/api/0/user-info";
 
@@ -195,13 +127,6 @@ export class InoreaderClient {
         );
       }
 
-      // Track successful API call (automatically capped at quota limit)
-      try {
-        await incrementApiCalls(1);
-      } catch (error) {
-        logger.warn("Could not track API call in budget", { error });
-      }
-
       return await response.json();
     } catch (error) {
       logger.error("Error fetching user info", error);
@@ -213,18 +138,6 @@ export class InoreaderClient {
    * Fetch subscription list with folder/label information
    */
   async getSubscriptions(): Promise<Record<string, unknown>> {
-    // Check budget before making call
-    try {
-      const budget = await getGlobalApiBudget();
-      if (budget.remaining <= 0) {
-        throw new Error(
-          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
-        );
-      }
-    } catch (error) {
-      logger.warn("Could not check API budget, proceeding anyway", { error });
-    }
-
     const token = await this.getAccessToken();
     const url = "https://www.inoreader.com/reader/api/0/subscription/list";
 
@@ -244,87 +157,14 @@ export class InoreaderClient {
         );
       }
 
-      // Track successful API call (automatically capped at quota limit)
-      try {
-        await incrementApiCalls(1);
-      } catch (error) {
-        logger.warn("Could not track API call in budget", { error });
-      }
-
       return await response.json();
     } catch (error) {
       logger.error("Error fetching subscriptions", error);
       throw error;
     }
   }
-
-  /**
-   * Fetch tags/labels with their stream IDs
-   */
-  async getTags(): Promise<Record<string, unknown>> {
-    // Check budget before making call
-    try {
-      const budget = await getGlobalApiBudget();
-      if (budget.remaining <= 0) {
-        throw new Error(
-          `Inoreader API budget exhausted: ${budget.callsUsed}/${budget.quotaLimit} calls used. Please wait until the limit resets.`
-        );
-      }
-    } catch (error) {
-      logger.warn("Could not check API budget, proceeding anyway", { error });
-    }
-
-    const token = await this.getAccessToken();
-    const url = "https://www.inoreader.com/reader/api/0/tag/list";
-
-    logger.debug("Fetching Inoreader tags/labels...");
-
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(
-          `Failed to fetch tags: ${response.status} ${response.statusText} - ${errorText}`
-        );
-      }
-
-      // Track successful API call (automatically capped at quota limit)
-      try {
-        await incrementApiCalls(1);
-      } catch (error) {
-        logger.warn("Could not track API call in budget", { error });
-      }
-
-      return await response.json();
-    } catch (error) {
-      logger.error("Error fetching tags", error);
-      throw error;
-    }
-  }
 }
 
-/**
- * Create an Inoreader client from environment variables
- */
 export function createInoreaderClient(): InoreaderClient {
-  const clientId = process.env.INOREADER_CLIENT_ID;
-  const clientSecret = process.env.INOREADER_CLIENT_SECRET;
-  const refreshToken = process.env.INOREADER_REFRESH_TOKEN;
-
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error(
-      "INOREADER_CLIENT_ID, INOREADER_CLIENT_SECRET, and INOREADER_REFRESH_TOKEN environment variables are required"
-    );
-  }
-
-  return new InoreaderClient({
-    clientId,
-    clientSecret,
-    refreshToken,
-  });
+  return new InoreaderClient();
 }
