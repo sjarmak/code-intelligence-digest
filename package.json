@@ -13,7 +13,8 @@
     "db:restore": "bash scripts/restore-db.sh",
     "db:start": "docker-compose up -d postgres",
     "db:stop": "docker-compose down",
-    "db:sync": "npx tsx scripts/sync-production-to-local-postgres.ts",
+    "db:sync:from-prod": "npx tsx scripts/sync-production-to-local-postgres.ts",
+    "db:sync:to-prod": "npx tsx scripts/sync-local-to-production-postgres.ts",
     "sync:daily": "npx tsx scripts/run-daily-sync.ts",
     "clear-audio-cache": "sqlite3 .data/digest.db 'DELETE FROM generated_podcast_audio;' && rm -rf .data/audio/* && echo 'Audio cache cleared'"
   },

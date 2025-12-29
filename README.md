@@ -177,7 +177,7 @@ This project includes a `render.yaml` Blueprint for one-click deployment to [Ren
 
 ### Local PostgreSQL Setup
 
-For local development, we recommend using PostgreSQL to match production:
+For batch enrichment and backfilling work, we use a local PostgreSQL instance:
 
 1. **Start local PostgreSQL with Docker:**
    ```bash
@@ -186,16 +186,30 @@ For local development, we recommend using PostgreSQL to match production:
 
 2. **Configure `.env.local`:**
    ```bash
-   DATABASE_URL=postgresql://code_intel_user:local_dev_password@localhost:5432/code_intel
+   # Production database (used by default for app)
+   DATABASE_URL=postgresql://user:pass@production-host/code_intel
+   
+   # Local database (used for batch operations)
+   LOCAL_DATABASE_URL=postgresql://code_intel_user:local_dev_password@localhost:5432/code_intel
+   
+   # Production URL for syncing (optional, can use DATABASE_URL)
+   PRODUCTION_DATABASE_URL=postgresql://user:pass@production-host/code_intel
    ```
 
-3. **Sync data from production (optional):**
+3. **Workflow:**
    ```bash
-   # Set PRODUCTION_DATABASE_URL in .env.local first
-   npm run db:sync
+   # Sync from production to local (get latest data)
+   npm run db:sync:from-prod
+   
+   # Run batch operations (they'll use LOCAL_DATABASE_URL automatically)
+   npx tsx scripts/backfill-paper-sections.ts
+   npx tsx scripts/score-production-items.ts
+   
+   # Sync back to production (push your changes)
+   npm run db:sync:to-prod
    ```
 
-The local PostgreSQL instance will be initialized automatically with the correct schema when you run the app.
+**Note:** The app uses `DATABASE_URL` (production) by default. Batch scripts automatically use `LOCAL_DATABASE_URL` when set, so you can work locally without affecting production.
 
 See [history/docs/RENDER_DEPLOYMENT.md](history/docs/RENDER_DEPLOYMENT.md) for full deployment guide.
 

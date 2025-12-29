@@ -39,9 +39,9 @@ async function syncProductionToLocal(options: SyncOptions): Promise<void> {
   }
 
   // Connect to local Postgres
-  const localUrl = process.env.DATABASE_URL;
+  const localUrl = process.env.LOCAL_DATABASE_URL;
   if (!localUrl || !localUrl.startsWith('postgres')) {
-    throw new Error('DATABASE_URL must be set to local Postgres connection string');
+    throw new Error('LOCAL_DATABASE_URL must be set to local Postgres connection string');
   }
 
   if (productionUrl === localUrl) {
@@ -66,7 +66,7 @@ async function syncProductionToLocal(options: SyncOptions): Promise<void> {
     // Sync items
     logger.info('Syncing items...');
     const itemsResult = await prodPool.query(`
-      SELECT * FROM items 
+      SELECT * FROM items
       WHERE created_at >= $1
       ORDER BY created_at DESC
     `, [cutoffTime]);
@@ -125,7 +125,7 @@ async function syncProductionToLocal(options: SyncOptions): Promise<void> {
     if (scoresResult.rows.length > 0) {
       // Delete existing scores for items in date range from local
       await localPool.query(`
-        DELETE FROM item_scores 
+        DELETE FROM item_scores
         WHERE item_id IN (SELECT id FROM items WHERE created_at >= $1)
       `, [cutoffTime]);
 

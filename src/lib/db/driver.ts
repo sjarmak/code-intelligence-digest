@@ -33,11 +33,22 @@ let clientInstance: DatabaseClient | null = null;
  * Detect which database driver to use based on environment
  */
 export function detectDriver(): DatabaseDriver {
+  // Use LOCAL_DATABASE_URL if set (for batch operations), otherwise DATABASE_URL
+  const dbUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+  
   // PostgreSQL connection string takes precedence
-  if (process.env.DATABASE_URL?.startsWith('postgres')) {
+  if (dbUrl?.startsWith('postgres')) {
     return 'postgres';
   }
   return 'sqlite';
+}
+
+/**
+ * Get the database connection string to use
+ * Prefers LOCAL_DATABASE_URL for batch operations, falls back to DATABASE_URL
+ */
+export function getDatabaseUrl(): string | undefined {
+  return process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
 }
 
 /**
