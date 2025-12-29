@@ -14,10 +14,10 @@ export const dynamic = 'force-dynamic';
 
 // Initialize tables on first import
 let tablesInitialized = false;
-function ensureTablesInitialized() {
+async function ensureTablesInitialized() {
   if (!tablesInitialized) {
     try {
-      initializeAnnotationTables();
+      await initializeAnnotationTables();
       tablesInitialized = true;
     } catch (error) {
       logger.warn('Tables may already exist', { error });
@@ -32,7 +32,7 @@ function ensureTablesInitialized() {
  */
 export async function GET(request: NextRequest) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const { searchParams } = new URL(request.url);
     const includeCounts = searchParams.get('counts') === 'true';
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const body = await request.json();
     const { name, color } = body;
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
  */
 export async function PATCH(request: NextRequest) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const body = await request.json();
     const { id, name, color } = body;
@@ -162,7 +162,7 @@ export async function PATCH(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
