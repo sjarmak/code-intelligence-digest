@@ -104,6 +104,8 @@ async function initializePostgresSchema() {
         ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_sections TEXT;
         ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_figures TEXT;
         ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS paper_notes TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS is_favorite INTEGER DEFAULT 0;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS favorited_at INTEGER;
       `);
     } catch {
       // Columns may already exist

@@ -210,6 +210,8 @@ CREATE TABLE IF NOT EXISTS ads_papers (
   html_sections TEXT,
   html_figures TEXT,
   paper_notes TEXT,
+  is_favorite INTEGER DEFAULT 0,
+  favorited_at INTEGER,
   fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER

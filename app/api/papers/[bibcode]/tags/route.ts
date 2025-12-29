@@ -47,7 +47,7 @@ export async function GET(
 
     logger.info('Fetching paper tags', { bibcode });
 
-    const tags = getPaperTags(bibcode);
+    const tags = await getPaperTags(bibcode);
 
     return NextResponse.json({
       bibcode,
@@ -98,17 +98,17 @@ export async function POST(
 
     // If name is provided, find or create the tag
     if (name) {
-      let tag = getTagByName(name);
+      let tag = await getTagByName(name);
 
       if (!tag) {
-        tag = createTag({ name, color });
+        tag = await createTag({ name, color });
         logger.info('Created new tag', { tagId: tag.id, name });
       }
 
       finalTagId = tag.id;
     }
 
-    const success = addTagToPaper(bibcode, finalTagId);
+    const success = await addTagToPaper(bibcode, finalTagId!);
 
     if (!success) {
       return NextResponse.json(
@@ -118,7 +118,7 @@ export async function POST(
     }
 
     // Return updated tags list
-    const tags = getPaperTags(bibcode);
+    const tags = await getPaperTags(bibcode);
 
     logger.info('Tag added to paper', { bibcode, tagId: finalTagId });
 
@@ -167,7 +167,7 @@ export async function DELETE(
       );
     }
 
-    const removed = removeTagFromPaper(bibcode, tagId);
+    const removed = await removeTagFromPaper(bibcode, tagId);
 
     if (!removed) {
       return NextResponse.json(
@@ -177,7 +177,7 @@ export async function DELETE(
     }
 
     // Return updated tags list
-    const tags = getPaperTags(bibcode);
+    const tags = await getPaperTags(bibcode);
 
     logger.info('Tag removed from paper', { bibcode, tagId });
 

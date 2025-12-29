@@ -39,13 +39,13 @@ export async function GET(request: NextRequest) {
 
     logger.info('Fetching all tags', { includeCounts });
 
-    const tags = getAllTags();
+    const tags = await getAllTags();
 
     if (includeCounts) {
-      const tagsWithCounts = tags.map((tag) => ({
+      const tagsWithCounts = await Promise.all(tags.map(async (tag) => ({
         ...tag,
-        paperCount: getPapersWithTag(tag.id).length,
-      }));
+        paperCount: (await getPapersWithTag(tag.id)).length,
+      })));
       return NextResponse.json({ tags: tagsWithCounts });
     }
 
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if tag already exists
-    const existing = getTagByName(name);
+    const existing = await getTagByName(name);
     if (existing) {
       return NextResponse.json(
         { error: 'Tag with this name already exists', tag: existing },
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const tag = createTag({ name, color });
+    const tag = await createTag({ name, color });
 
     logger.info('Tag created', { tagId: tag.id, name });
 
@@ -124,7 +124,7 @@ export async function PATCH(request: NextRequest) {
 
     // If updating name, check for duplicates
     if (name) {
-      const existing = getTagByName(name);
+      const existing = await getTagByName(name);
       if (existing && existing.id !== id) {
         return NextResponse.json(
           { error: 'Tag with this name already exists' },
@@ -133,7 +133,7 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
-    const updated = updateTag(id, { name, color });
+    const updated = await updateTag(id, { name, color });
 
     if (!updated) {
       return NextResponse.json(
@@ -174,7 +174,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const deleted = deleteTag(id);
+    const deleted = await deleteTag(id);
 
     if (!deleted) {
       return NextResponse.json(
