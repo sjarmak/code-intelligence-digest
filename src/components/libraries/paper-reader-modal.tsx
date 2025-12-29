@@ -317,22 +317,25 @@ export function PaperReaderModal({
 
   // Scroll to section
   const scrollToSection = useCallback((sectionId: string) => {
+    console.log('[scrollToSection] Starting scroll', { sectionId, hasContent: !!content, hasSummaries: !!content?.sectionSummaries });
+    
     // First, try to find the article element (where the actual paper content is)
     const articleElement = articleRef.current || contentRef.current?.querySelector('article.paper-content');
     if (!articleElement) {
-      console.warn('Article element not found for scrolling');
+      console.warn('[scrollToSection] Article element not found for scrolling');
       return;
     }
 
     // Get the scrollable container (main element)
     const scrollContainer = mainRef.current;
     if (!scrollContainer) {
-      console.warn('Scroll container not found');
+      console.warn('[scrollToSection] Scroll container not found');
       return;
     }
 
     // Helper to scroll to an element
     const scrollToElement = (element: Element) => {
+      console.log('[scrollToSection] Scrolling to element', { tagName: element.tagName, id: element.id, textContent: element.textContent?.substring(0, 50) });
       const containerRect = scrollContainer.getBoundingClientRect();
       const elementRect = element.getBoundingClientRect();
       const scrollTop = scrollContainer.scrollTop;
@@ -398,11 +401,22 @@ export function PaperReaderModal({
     // Note: charStart/charEnd are relative to raw body text, but we're displaying HTML
     // So we need to find the section by matching the section title in the HTML
     const sectionSummary = content?.sectionSummaries?.find(s => s.sectionId === sectionId);
+    console.log('[scrollToSection] Section summary found', { 
+      found: !!sectionSummary, 
+      sectionTitle: sectionSummary?.sectionTitle,
+      sectionId 
+    });
+    
     if (sectionSummary && sectionSummary.sectionTitle) {
       // Try to find the section by matching the title text in headings
       // This is more reliable than character positions since HTML structure differs from raw text
       const headings = articleElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
       const normalizedTitle = sectionSummary.sectionTitle.trim().toLowerCase();
+      console.log('[scrollToSection] Searching headings', { 
+        headingCount: headings.length, 
+        searchTitle: normalizedTitle,
+        allHeadings: Array.from(headings).map(h => h.textContent?.trim()).slice(0, 10)
+      });
       
       // Try exact match first
       for (const heading of Array.from(headings)) {
@@ -413,6 +427,7 @@ export function PaperReaderModal({
         if (normalizedHeading === normalizedTitle ||
             normalizedHeading.includes(normalizedTitle) ||
             normalizedTitle.includes(normalizedHeading)) {
+          console.log('[scrollToSection] Found match by exact/contains', { headingText, normalizedTitle });
           scrollToElement(heading);
           return;
         }
@@ -421,6 +436,7 @@ export function PaperReaderModal({
         const headingWithoutNumber = normalizedHeading.replace(/^\d+[.:]\s*/, '').trim();
         const titleWithoutNumber = normalizedTitle.replace(/^\d+[.:]\s*/, '').trim();
         if (headingWithoutNumber === titleWithoutNumber && headingWithoutNumber.length > 0) {
+          console.log('[scrollToSection] Found match after removing numbers', { headingText, normalizedTitle });
           scrollToElement(heading);
           return;
         }
@@ -429,6 +445,7 @@ export function PaperReaderModal({
       // If heading not found, try to find any element containing the section title text
       // This handles cases where the title appears in the content but not as a heading
       const allElements = articleElement.querySelectorAll('*');
+      console.log('[scrollToSection] Searching all elements', { elementCount: allElements.length });
       for (const element of Array.from(allElements)) {
         const elementText = element.textContent?.trim() || '';
         if (elementText.toLowerCase().includes(normalizedTitle) && 
@@ -437,14 +454,26 @@ export function PaperReaderModal({
           if (element.tagName.match(/^H[1-6]$/) || 
               element.classList.contains('section-title') ||
               element.classList.contains('paper-section')) {
+            console.log('[scrollToSection] Found match in element', { 
+              tagName: element.tagName, 
+              text: elementText.substring(0, 50) 
+            });
             scrollToElement(element);
             return;
           }
         }
       }
+      
+      // Last resort: try to find section by ID in the HTML (might be in a section tag)
+      const sectionElement = articleElement.querySelector(`section#${sectionId}, [id="${sectionId}"]`);
+      if (sectionElement) {
+        console.log('[scrollToSection] Found section by ID', { sectionId });
+        scrollToElement(sectionElement);
+        return;
+      }
     }
 
-    console.warn('Could not find section to scroll to', { sectionId, sectionTitle });
+    console.warn('[scrollToSection] Could not find section to scroll to', { sectionId, sectionTitle, sectionSummaryTitle: sectionSummary?.sectionTitle });
   }, [content, getTextNodes]);
 
   // Handle text selection for highlighting
