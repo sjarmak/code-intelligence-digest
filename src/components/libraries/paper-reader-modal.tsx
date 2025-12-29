@@ -331,6 +331,16 @@ export function PaperReaderModal({
       return;
     }
 
+    // Helper to scroll to an element
+    const scrollToElement = (element: Element) => {
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      const scrollTop = scrollContainer.scrollTop;
+      const yOffset = 20; // Offset from top of container
+      const targetScroll = scrollTop + (elementRect.top - containerRect.top) - yOffset;
+      scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
+    };
+
     // Try multiple selectors to find the section within the article
     const selectors = [
       `#${sectionId}`, // Exact ID match
@@ -342,66 +352,69 @@ export function PaperReaderModal({
     for (const selector of selectors) {
       const element = articleElement.querySelector(selector);
       if (element) {
-        // Calculate position relative to scroll container
-        const containerRect = scrollContainer.getBoundingClientRect();
-        const elementRect = element.getBoundingClientRect();
-        const scrollTop = scrollContainer.scrollTop;
-        const yOffset = 20; // Offset from top of container
-        const targetScroll = scrollTop + (elementRect.top - containerRect.top) - yOffset;
-        
-        scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
+        scrollToElement(element);
         return;
       }
     }
 
-    // If no element found, try to find by section title in headings (only in article)
-    const sectionSummary = content?.sectionSummaries?.find(s => s.sectionId === sectionId);
-    if (sectionSummary) {
-      // Try to find heading with matching text within the article
+    // Find section by title from table of contents or section summaries
+    let sectionTitle: string | undefined;
+    
+    // Try to find in table of contents first
+    const tocSection = content?.tableOfContents?.find(s => s.id === sectionId);
+    if (tocSection) {
+      sectionTitle = tocSection.title;
+    } else {
+      // Try section summaries
+      const sectionSummary = content?.sectionSummaries?.find(s => s.sectionId === sectionId);
+      if (sectionSummary) {
+        sectionTitle = sectionSummary.sectionTitle;
+      }
+    }
+
+    // If we have a section title, try to find heading with matching text
+    if (sectionTitle) {
       const headings = articleElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      const normalizedTitle = sectionTitle.trim().toLowerCase();
+      
       for (const heading of Array.from(headings)) {
         const headingText = heading.textContent?.trim() || '';
-        const sectionTitle = sectionSummary.sectionTitle.trim();
-        // More flexible matching
-        if (headingText.toLowerCase().includes(sectionTitle.toLowerCase()) || 
-            sectionTitle.toLowerCase().includes(headingText.toLowerCase()) ||
-            headingText === sectionTitle) {
-          const containerRect = scrollContainer.getBoundingClientRect();
-          const elementRect = heading.getBoundingClientRect();
-          const scrollTop = scrollContainer.scrollTop;
-          const yOffset = 20;
-          const targetScroll = scrollTop + (elementRect.top - containerRect.top) - yOffset;
-          
-          scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
+        const normalizedHeading = headingText.toLowerCase();
+        
+        // More flexible matching - check if titles match or one contains the other
+        if (normalizedHeading === normalizedTitle ||
+            normalizedHeading.includes(normalizedTitle) ||
+            normalizedTitle.includes(normalizedHeading) ||
+            // Also try matching after removing common prefixes/suffixes
+            normalizedHeading.replace(/^section\s+\d+[.:]\s*/i, '').trim() === normalizedTitle ||
+            normalizedTitle.replace(/^section\s+\d+[.:]\s*/i, '').trim() === normalizedHeading) {
+          scrollToElement(heading);
           return;
         }
       }
+    }
 
-      // If we have character positions, try to scroll to that position
-      if (sectionSummary.charStart !== undefined && content?.html) {
-        // Find the element containing the character at charStart within the article
-        const textNodes = getTextNodes(articleElement);
-        let charCount = 0;
-        for (const node of textNodes) {
-          const nodeLength = node.textContent?.length || 0;
-          if (charCount + nodeLength >= sectionSummary.charStart) {
-            // Found the node, scroll to it
-            const element = node.parentElement;
-            if (element) {
-              const containerRect = scrollContainer.getBoundingClientRect();
-              const elementRect = element.getBoundingClientRect();
-              const scrollTop = scrollContainer.scrollTop;
-              const yOffset = 20;
-              const targetScroll = scrollTop + (elementRect.top - containerRect.top) - yOffset;
-              
-              scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
-              return;
-            }
+    // If we have character positions from section summary, try to scroll to that position
+    const sectionSummary = content?.sectionSummaries?.find(s => s.sectionId === sectionId);
+    if (sectionSummary && sectionSummary.charStart !== undefined && content?.html) {
+      // Find the element containing the character at charStart within the article
+      const textNodes = getTextNodes(articleElement);
+      let charCount = 0;
+      for (const node of textNodes) {
+        const nodeLength = node.textContent?.length || 0;
+        if (charCount + nodeLength >= sectionSummary.charStart) {
+          // Found the node, scroll to it
+          const element = node.parentElement;
+          if (element) {
+            scrollToElement(element);
+            return;
           }
-          charCount += nodeLength;
         }
+        charCount += nodeLength;
       }
     }
+
+    console.warn('Could not find section to scroll to', { sectionId, sectionTitle });
   }, [content, getTextNodes]);
 
   // Handle text selection for highlighting
@@ -449,9 +462,9 @@ export function PaperReaderModal({
         const level = parseInt(heading.tagName.substring(1), 10);
         const title = heading.textContent?.trim() || '';
         const id = heading.id || `section-${index}`;
-        
+
         // Skip common non-section headings
-        if (title && 
+        if (title &&
             !title.toLowerCase().includes('abstract') &&
             !title.toLowerCase().includes('references') &&
             !title.toLowerCase().includes('title') &&
@@ -465,8 +478,8 @@ export function PaperReaderModal({
         setContent(prev => prev ? {
           ...prev,
           sections: extractedSections,
-          tableOfContents: prev.tableOfContents && prev.tableOfContents.length > 0 
-            ? prev.tableOfContents 
+          tableOfContents: prev.tableOfContents && prev.tableOfContents.length > 0
+            ? prev.tableOfContents
             : extractedSections,
         } : null);
       }
