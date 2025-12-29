@@ -96,21 +96,38 @@ export async function GET(
         const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
 
         // Rewrite relative image URLs to absolute URLs
-        // Handle both src="..." and src='...' formats, and also handle src without quotes
+        // Handle all possible src formats: src="...", src='...', src=..., and src without quotes
+        // Also handle cases where src might come before or after other attributes
         htmlContent = htmlContent.replace(
-          /<img([^>]*?)(?:\s+src\s*=\s*["']([^"']+)["']|src\s*=\s*([^\s>]+))([^>]*)>/gi,
-          (match, before, srcQuoted, srcUnquoted, after) => {
-            const src = srcQuoted || srcUnquoted;
-            if (!src) return match; // No src found
+          /<img\s+([^>]*?)>/gi,
+          (match, attributes) => {
+            // Try to find src in various formats
+            let srcMatch = attributes.match(/\ssrc\s*=\s*"([^"]+)"/i) ||
+                          attributes.match(/\ssrc\s*=\s*'([^']+)'/i) ||
+                          attributes.match(/\ssrc\s*=\s*([^\s>]+)/i) ||
+                          attributes.match(/src\s*=\s*"([^"]+)"/i) ||
+                          attributes.match(/src\s*=\s*'([^']+)'/i) ||
+                          attributes.match(/src\s*=\s*([^\s>]+)/i);
+            
+            if (!srcMatch || !srcMatch[1]) {
+              return match; // No src found, return as-is
+            }
+            
+            const src = srcMatch[1];
             
             // Only rewrite if it's a relative URL
             if (!src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:') && !src.startsWith('//')) {
               const normalizedSrc = src.startsWith('/') 
                 ? `${imageBaseUrl}${src}`
                 : `${imageBaseUrl}/${src}`;
-              // Preserve the original quote style or use double quotes
-              const quote = srcQuoted ? (match.includes(`src="${srcQuoted}"`) ? '"' : "'") : '"';
-              return `<img${before} src=${quote}${normalizedSrc}${quote}${after}>`;
+              
+              // Replace the src in the attributes
+              const updatedAttributes = attributes.replace(
+                srcMatch[0],
+                srcMatch[0].replace(src, normalizedSrc)
+              );
+              
+              return `<img ${updatedAttributes}>`;
             }
             return match; // Already absolute or data URL
           }

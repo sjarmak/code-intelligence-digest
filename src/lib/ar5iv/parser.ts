@@ -464,16 +464,32 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
     
     // Handle img tags with various src formats (quoted, unquoted)
+    // Match the entire img tag and process attributes
     mainContent = mainContent.replace(
-      /<img([^>]*?)(?:\s+src\s*=\s*["']([^"']+)["']|src\s*=\s*([^\s>]+))([^>]*)>/gi,
-      (match, before, srcQuoted, srcUnquoted, after) => {
-        const src = srcQuoted || srcUnquoted;
-        if (!src) return match;
+      /<img\s+([^>]*?)>/gi,
+      (match, attributes) => {
+        // Try to find src in various formats
+        let srcMatch = attributes.match(/\ssrc\s*=\s*"([^"]+)"/i) ||
+                      attributes.match(/\ssrc\s*=\s*'([^']+)'/i) ||
+                      attributes.match(/\ssrc\s*=\s*([^\s>]+)/i) ||
+                      attributes.match(/src\s*=\s*"([^"]+)"/i) ||
+                      attributes.match(/src\s*=\s*'([^']+)'/i) ||
+                      attributes.match(/src\s*=\s*([^\s>]+)/i);
         
+        if (!srcMatch || !srcMatch[1]) {
+          return match; // No src found, return as-is
+        }
+        
+        const src = srcMatch[1];
         const normalizedSrc = normalizeImageSrc(src, imageBaseUrl);
-        // Preserve original quote style
-        const quote = srcQuoted ? (match.includes(`src="${srcQuoted}"`) ? '"' : "'") : '"';
-        return `<img${before} src=${quote}${normalizedSrc}${quote}${after}>`;
+        
+        // Replace the src in the attributes
+        const updatedAttributes = attributes.replace(
+          srcMatch[0],
+          srcMatch[0].replace(src, normalizedSrc)
+        );
+        
+        return `<img ${updatedAttributes}>`;
       }
     );
     
