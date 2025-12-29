@@ -100,17 +100,17 @@ export async function storePaper(paper: ADSPaperRecord): Promise<void> {
   const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
 
   // Sanitize text fields to remove null bytes (required for PostgreSQL)
-  const sanitizedPaper = {
+  const sanitizedPaper: ADSPaperRecord = {
     ...paper,
-    title: sanitizeText(paper.title),
-    authors: sanitizeText(paper.authors),
-    pubdate: sanitizeText(paper.pubdate),
-    abstract: sanitizeText(paper.abstract),
-    body: sanitizeText(paper.body),
-    journal: sanitizeText(paper.journal),
-    adsUrl: sanitizeText(paper.adsUrl),
-    arxivUrl: sanitizeText(paper.arxivUrl),
-    fulltextSource: sanitizeText(paper.fulltextSource),
+    title: sanitizeText(paper.title) || undefined,
+    authors: sanitizeText(paper.authors) || undefined,
+    pubdate: sanitizeText(paper.pubdate) || undefined,
+    abstract: sanitizeText(paper.abstract) || undefined,
+    body: sanitizeText(paper.body) || undefined,
+    journal: sanitizeText(paper.journal) || undefined,
+    adsUrl: sanitizeText(paper.adsUrl) || undefined,
+    arxivUrl: sanitizeText(paper.arxivUrl) || undefined,
+    fulltextSource: sanitizeText(paper.fulltextSource) || undefined,
   };
 
   try {
@@ -243,17 +243,17 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
   const now = Math.floor(Date.now() / 1000);
   
   // Sanitize all text fields to remove null bytes (required for PostgreSQL)
-  const sanitizedPapers = papers.map(paper => ({
+  const sanitizedPapers: ADSPaperRecord[] = papers.map(paper => ({
     ...paper,
-    title: sanitizeText(paper.title),
-    authors: sanitizeText(paper.authors),
-    pubdate: sanitizeText(paper.pubdate),
-    abstract: sanitizeText(paper.abstract),
-    body: sanitizeText(paper.body),
-    journal: sanitizeText(paper.journal),
-    adsUrl: sanitizeText(paper.adsUrl),
-    arxivUrl: sanitizeText(paper.arxivUrl),
-    fulltextSource: sanitizeText(paper.fulltextSource),
+    title: sanitizeText(paper.title) || undefined,
+    authors: sanitizeText(paper.authors) || undefined,
+    pubdate: sanitizeText(paper.pubdate) || undefined,
+    abstract: sanitizeText(paper.abstract) || undefined,
+    body: sanitizeText(paper.body) || undefined,
+    journal: sanitizeText(paper.journal) || undefined,
+    adsUrl: sanitizeText(paper.adsUrl) || undefined,
+    arxivUrl: sanitizeText(paper.arxivUrl) || undefined,
+    fulltextSource: sanitizeText(paper.fulltextSource) || undefined,
   }));
 
   try {
