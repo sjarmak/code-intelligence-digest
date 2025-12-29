@@ -2,7 +2,7 @@
  * Feed database operations
  */
 
-import { getSqlite } from "./index";
+import { getDbClient, detectDriver } from "./driver";
 import { FeedConfig } from "../../config/feeds";
 import type { Category } from "../model";
 import { logger } from "../logger";
@@ -12,29 +12,58 @@ import { logger } from "../logger";
  */
 export async function saveFeeds(feedConfigs: FeedConfig[]): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
+    const client = await getDbClient();
 
-    // Use transaction for atomic operation
-    const stmt = sqlite.prepare(`
-      INSERT OR REPLACE INTO feeds 
-      (id, stream_id, canonical_name, default_category, vendor, tags, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-    `);
-
-    const insertMany = sqlite.transaction((configs: FeedConfig[]) => {
-      for (const config of configs) {
-        stmt.run(
-          config.streamId, // Use streamId as id
-          config.streamId,
-          config.canonicalName,
-          config.defaultCategory,
-          config.vendor || null,
-          config.tags ? JSON.stringify(config.tags) : null
+    if (driver === 'postgres') {
+      // PostgreSQL: use ON CONFLICT syntax
+      for (const config of feedConfigs) {
+        await client.run(
+          `INSERT INTO feeds (id, stream_id, canonical_name, default_category, vendor, tags, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, EXTRACT(EPOCH FROM NOW())::INTEGER)
+           ON CONFLICT (id) DO UPDATE SET
+             stream_id = EXCLUDED.stream_id,
+             canonical_name = EXCLUDED.canonical_name,
+             default_category = EXCLUDED.default_category,
+             vendor = EXCLUDED.vendor,
+             tags = EXCLUDED.tags,
+             updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER`,
+          [
+            config.streamId, // Use streamId as id
+            config.streamId,
+            config.canonicalName,
+            config.defaultCategory,
+            config.vendor || null,
+            config.tags ? JSON.stringify(config.tags) : null,
+          ]
         );
       }
-    });
+    } else {
+      // SQLite: use INSERT OR REPLACE
+      const { getSqlite } = await import("./index");
+      const sqlite = getSqlite();
+      const stmt = sqlite.prepare(`
+        INSERT OR REPLACE INTO feeds 
+        (id, stream_id, canonical_name, default_category, vendor, tags, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+      `);
 
-    insertMany(feedConfigs);
+      const insertMany = sqlite.transaction((configs: FeedConfig[]) => {
+        for (const config of configs) {
+          stmt.run(
+            config.streamId,
+            config.streamId,
+            config.canonicalName,
+            config.defaultCategory,
+            config.vendor || null,
+            config.tags ? JSON.stringify(config.tags) : null
+          );
+        }
+      });
+
+      insertMany(feedConfigs);
+    }
+
     logger.info(`Saved ${feedConfigs.length} feeds to database`);
   } catch (error) {
     logger.error("Failed to save feeds to database", error);
@@ -47,11 +76,10 @@ export async function saveFeeds(feedConfigs: FeedConfig[]): Promise<void> {
  */
 export async function loadAllFeeds(): Promise<FeedConfig[]> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
+    const client = await getDbClient();
 
-    const rows = sqlite
-      .prepare(`SELECT * FROM feeds ORDER BY updated_at DESC`)
-      .all() as Array<{
+    let rows: Array<{
       stream_id: string;
       canonical_name: string;
       default_category: string;
@@ -59,8 +87,20 @@ export async function loadAllFeeds(): Promise<FeedConfig[]> {
       tags: string | null;
     }>;
 
+    if (driver === 'postgres') {
+      const result = await client.query(
+        `SELECT stream_id, canonical_name, default_category, vendor, tags FROM feeds ORDER BY updated_at DESC`
+      );
+      rows = result.rows as typeof rows;
+    } else {
+      const { getSqlite } = await import("./index");
+      const sqlite = getSqlite();
+      rows = sqlite
+        .prepare(`SELECT stream_id, canonical_name, default_category, vendor, tags FROM feeds ORDER BY updated_at DESC`)
+        .all() as typeof rows;
+    }
+
     const feeds: FeedConfig[] = rows.map((row) => {
-      // DB stores as string, cast to Category type
       const category = row.default_category as Category;
       return {
         streamId: row.stream_id,
@@ -83,17 +123,30 @@ export async function loadAllFeeds(): Promise<FeedConfig[]> {
  */
 export async function loadFeed(streamId: string): Promise<FeedConfig | null> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
+    const client = await getDbClient();
 
-    const row = sqlite
-      .prepare(`SELECT * FROM feeds WHERE stream_id = ?`)
-      .get(streamId) as {
+    let row: {
       stream_id: string;
       canonical_name: string;
       default_category: string;
       vendor: string | null;
       tags: string | null;
     } | undefined;
+
+    if (driver === 'postgres') {
+      const result = await client.query(
+        `SELECT stream_id, canonical_name, default_category, vendor, tags FROM feeds WHERE stream_id = $1`,
+        [streamId]
+      );
+      row = result.rows[0] as typeof row | undefined;
+    } else {
+      const { getSqlite } = await import("./index");
+      const sqlite = getSqlite();
+      row = sqlite
+        .prepare(`SELECT stream_id, canonical_name, default_category, vendor, tags FROM feeds WHERE stream_id = ?`)
+        .get(streamId) as typeof row | undefined;
+    }
 
     if (!row) {
       return null;
@@ -118,10 +171,19 @@ export async function loadFeed(streamId: string): Promise<FeedConfig | null> {
  */
 export async function getFeedsCount(): Promise<number> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
+    const client = await getDbClient();
 
-    const result = sqlite.prepare(`SELECT COUNT(*) as count FROM feeds`).get() as { count: number } | undefined;
-    return result?.count ?? 0;
+    if (driver === 'postgres') {
+      const result = await client.query(`SELECT COUNT(*) as count FROM feeds`);
+      const row = result.rows[0] as { count: string | number } | undefined;
+      return typeof row?.count === 'string' ? parseInt(row.count, 10) : (row?.count ?? 0);
+    } else {
+      const { getSqlite } = await import("./index");
+      const sqlite = getSqlite();
+      const result = sqlite.prepare(`SELECT COUNT(*) as count FROM feeds`).get() as { count: number } | undefined;
+      return result?.count ?? 0;
+    }
   } catch (error) {
     logger.error("Failed to get feeds count", error);
     throw error;
@@ -133,17 +195,32 @@ export async function getFeedsCount(): Promise<number> {
  */
 export async function updateFeedsCacheMetadata(count: number): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
+    const client = await getDbClient();
 
-    sqlite.prepare(`
-      INSERT OR REPLACE INTO cache_metadata (key, last_refresh_at, count, expires_at)
-      VALUES (
-        'feeds',
-        strftime('%s', 'now'),
-        ?,
-        strftime('%s', 'now') + (6 * 3600)
-      )
-    `).run(count);
+    if (driver === 'postgres') {
+      await client.run(
+        `INSERT INTO cache_metadata (key, last_refresh_at, count, expires_at)
+         VALUES ($1, EXTRACT(EPOCH FROM NOW())::INTEGER, $2, EXTRACT(EPOCH FROM NOW())::INTEGER + (6 * 3600))
+         ON CONFLICT (key) DO UPDATE SET
+           last_refresh_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
+           count = EXCLUDED.count,
+           expires_at = EXTRACT(EPOCH FROM NOW())::INTEGER + (6 * 3600)`,
+        ['feeds', count]
+      );
+    } else {
+      const { getSqlite } = await import("./index");
+      const sqlite = getSqlite();
+      sqlite.prepare(`
+        INSERT OR REPLACE INTO cache_metadata (key, last_refresh_at, count, expires_at)
+        VALUES (
+          'feeds',
+          strftime('%s', 'now'),
+          ?,
+          strftime('%s', 'now') + (6 * 3600)
+        )
+      `).run(count);
+    }
 
     logger.info("Updated feeds cache metadata");
   } catch (error) {
@@ -161,11 +238,24 @@ export async function getFeedsCacheMetadata(): Promise<{
   expiresAt: number | null;
 } | null> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
+    const client = await getDbClient();
 
-    const row = sqlite
-      .prepare(`SELECT last_refresh_at, count, expires_at FROM cache_metadata WHERE key = 'feeds'`)
-      .get() as { last_refresh_at: number | null; count: number; expires_at: number | null } | undefined;
+    let row: { last_refresh_at: number | null; count: number; expires_at: number | null } | undefined;
+
+    if (driver === 'postgres') {
+      const result = await client.query(
+        `SELECT last_refresh_at, count, expires_at FROM cache_metadata WHERE key = $1`,
+        ['feeds']
+      );
+      row = result.rows[0] as typeof row | undefined;
+    } else {
+      const { getSqlite } = await import("./index");
+      const sqlite = getSqlite();
+      row = sqlite
+        .prepare(`SELECT last_refresh_at, count, expires_at FROM cache_metadata WHERE key = 'feeds'`)
+        .get() as typeof row | undefined;
+    }
 
     if (!row) {
       return null;
