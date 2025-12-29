@@ -54,12 +54,46 @@ export function extractSectionsFromBody(
       const meta = sectionMetadata[i];
       const nextMeta = sectionMetadata[i + 1];
 
-      // Estimate section boundaries (simplified - in practice, would parse body more carefully)
-      const sectionStart = currentPos;
-      // Use a heuristic: sections are roughly evenly distributed, or we can search for section titles
-      const sectionEnd = nextMeta
-        ? body.indexOf(meta.title, currentPos) + meta.title.length + 1000 // Rough estimate
-        : bodyLength;
+      // Try to find section title in body text to get accurate boundaries
+      let sectionStart = currentPos;
+      let sectionEnd = bodyLength;
+      
+      // Search for section title in body (case-insensitive, flexible matching)
+      const titleLower = meta.title.toLowerCase();
+      const titleSearch = body.toLowerCase().indexOf(titleLower, currentPos);
+      
+      if (titleSearch >= currentPos) {
+        sectionStart = titleSearch;
+      } else {
+        // If title not found, try searching for key words from title
+        const titleWords = titleLower.split(/\s+/).filter(w => w.length > 3);
+        if (titleWords.length > 0) {
+          const firstWord = titleWords[0];
+          const wordSearch = body.toLowerCase().indexOf(firstWord, currentPos);
+          if (wordSearch >= currentPos) {
+            sectionStart = wordSearch;
+          }
+        }
+      }
+      
+      // Find end of section (start of next section or end of body)
+      if (nextMeta) {
+        const nextTitleLower = nextMeta.title.toLowerCase();
+        const nextTitleSearch = body.toLowerCase().indexOf(nextTitleLower, sectionStart + 1);
+        if (nextTitleSearch > sectionStart) {
+          sectionEnd = nextTitleSearch;
+        } else {
+          // Try searching for next section's key words
+          const nextTitleWords = nextTitleLower.split(/\s+/).filter(w => w.length > 3);
+          if (nextTitleWords.length > 0) {
+            const nextFirstWord = nextTitleWords[0];
+            const nextWordSearch = body.toLowerCase().indexOf(nextFirstWord, sectionStart + 1);
+            if (nextWordSearch > sectionStart) {
+              sectionEnd = nextWordSearch;
+            }
+          }
+        }
+      }
 
       if (sectionStart < bodyLength) {
         const sectionText = body.substring(
@@ -208,7 +242,27 @@ export async function processPaperSections(bibcode: string, forceRegenerate: boo
   // Get section metadata from cached HTML if available
   const { getCachedHtmlContent } = await import('../db/paper-annotations');
   const cached = getCachedHtmlContent(bibcode);
-  const sectionMetadata = cached?.sections;
+  let sectionMetadata = cached?.sections;
+
+  // If no sections in cache, try to parse from HTML if available
+  if ((!sectionMetadata || sectionMetadata.length === 0) && cached?.htmlContent) {
+    try {
+      const { parseAr5ivHtml } = await import('../ar5iv/parser');
+      const parsed = parseAr5ivHtml(cached.htmlContent);
+      if (parsed.sections && parsed.sections.length > 0) {
+        sectionMetadata = parsed.sections;
+        logger.info('Extracted sections from cached HTML', {
+          bibcode,
+          sectionCount: sectionMetadata.length,
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to parse sections from cached HTML', {
+        bibcode,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   // Extract sections from body
   const sections = extractSectionsFromBody(paper.body, sectionMetadata);
