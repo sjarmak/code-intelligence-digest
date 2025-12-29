@@ -327,15 +327,15 @@ export async function GET(
       arxivUrl: paper.arxivUrl,
     });
 
-    // Check if we have section summaries - if so, we should regenerate HTML to match section IDs
-    const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
-    const existingSummaries = await getSectionSummaries(bibcode);
-    const shouldRegenerateHtml = existingSummaries.length > 0 && 
-      !isCachedHtmlFresh(bibcode) || // Cache is stale
-      forceRefresh; // Force refresh requested
-
     let content;
     try {
+      // Check if we have section summaries - if so, we should regenerate HTML to match section IDs
+      const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
+      const existingSummaries = await getSectionSummaries(bibcode);
+      const shouldRegenerateHtml = existingSummaries.length > 0 && 
+        (!isCachedHtmlFresh(bibcode) || // Cache is stale
+        forceRefresh); // Force refresh requested
+
       // If we have section summaries but HTML is stale, regenerate it
       if (shouldRegenerateHtml && paper.body && paper.body.length > 100) {
         logger.info('Regenerating HTML to match section summaries', { 

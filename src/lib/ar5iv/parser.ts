@@ -619,7 +619,7 @@ export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperConte
   // But if we have section summaries, we should use the extracted sections even if only 2
   const hasMultipleSections = extractedSections.length > 1;
   const hasGoodSections = extractedSections.length > 0 && 
-    !extractedSections.every(s => 
+    !extractedSections.every((s: { sectionTitle: string }) => 
       s.sectionTitle.toLowerCase().includes('abstract') || 
       s.sectionTitle.toLowerCase().includes('full text')
     );
