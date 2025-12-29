@@ -60,7 +60,7 @@ export async function initializeAnnotationTables() {
     if (driver === 'postgres') {
       // PostgreSQL initialization
       const client = await getDbClient();
-      
+
       // Create paper_annotations table
       await client.exec(`
         CREATE TABLE IF NOT EXISTS paper_annotations (
@@ -107,6 +107,8 @@ export async function initializeAnnotationTables() {
         ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_sections TEXT;
         ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_figures TEXT;
         ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS paper_notes TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS is_favorite INTEGER DEFAULT 0;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS favorited_at INTEGER;
       `);
 
       // Create indexes
@@ -178,6 +180,12 @@ export async function initializeAnnotationTables() {
       }
       if (!columnNames.includes('paper_notes')) {
         db.exec(`ALTER TABLE ads_papers ADD COLUMN paper_notes TEXT`);
+      }
+      if (!columnNames.includes('is_favorite')) {
+        db.exec(`ALTER TABLE ads_papers ADD COLUMN is_favorite INTEGER DEFAULT 0`);
+      }
+      if (!columnNames.includes('favorited_at')) {
+        db.exec(`ALTER TABLE ads_papers ADD COLUMN favorited_at INTEGER`);
       }
 
       // Create indexes
@@ -355,17 +363,26 @@ export function getAnnotationCount(bibcode: string): number {
 /**
  * Create a new tag
  */
-export function createTag(input: CreateTagInput): PaperTag {
-  const db = getSqlite();
+export async function createTag(input: CreateTagInput): Promise<PaperTag> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
   const id = randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  const stmt = db.prepare(`
-    INSERT INTO paper_tags (id, name, color, created_at)
-    VALUES (?, ?, ?, ?)
-  `);
-
-  stmt.run(id, input.name, input.color ?? null, now);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    await client.run(`
+      INSERT INTO paper_tags (id, name, color, created_at)
+      VALUES ($1, $2, $3, $4)
+    `, [id, input.name, input.color ?? null, now]);
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      INSERT INTO paper_tags (id, name, color, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+    stmt.run(id, input.name, input.color ?? null, now);
+  }
 
   logger.info('Tag created', { id, name: input.name });
 
@@ -380,105 +397,163 @@ export function createTag(input: CreateTagInput): PaperTag {
 /**
  * Get all tags
  */
-export function getAllTags(): PaperTag[] {
-  const db = getSqlite();
+export async function getAllTags(): Promise<PaperTag[]> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT id, name, color, created_at as createdAt
-    FROM paper_tags
-    ORDER BY name ASC
-  `);
-
-  return stmt.all() as PaperTag[];
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT id, name, color, created_at as createdAt
+      FROM paper_tags
+      ORDER BY name ASC
+    `);
+    return result.rows as PaperTag[];
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT id, name, color, created_at as createdAt
+      FROM paper_tags
+      ORDER BY name ASC
+    `);
+    return stmt.all() as PaperTag[];
+  }
 }
 
 /**
  * Get a tag by ID
  */
-export function getTag(id: string): PaperTag | null {
-  const db = getSqlite();
+export async function getTag(id: string): Promise<PaperTag | null> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT id, name, color, created_at as createdAt
-    FROM paper_tags
-    WHERE id = ?
-  `);
-
-  return (stmt.get(id) as PaperTag) ?? null;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT id, name, color, created_at as createdAt
+      FROM paper_tags
+      WHERE id = $1
+    `, [id]);
+    return (result.rows[0] as PaperTag) ?? null;
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT id, name, color, created_at as createdAt
+      FROM paper_tags
+      WHERE id = ?
+    `);
+    return (stmt.get(id) as PaperTag) ?? null;
+  }
 }
 
 /**
  * Get a tag by name
  */
-export function getTagByName(name: string): PaperTag | null {
-  const db = getSqlite();
+export async function getTagByName(name: string): Promise<PaperTag | null> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT id, name, color, created_at as createdAt
-    FROM paper_tags
-    WHERE name = ?
-  `);
-
-  return (stmt.get(name) as PaperTag) ?? null;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT id, name, color, created_at as createdAt
+      FROM paper_tags
+      WHERE name = $1
+    `, [name]);
+    return (result.rows[0] as PaperTag) ?? null;
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT id, name, color, created_at as createdAt
+      FROM paper_tags
+      WHERE name = ?
+    `);
+    return (stmt.get(name) as PaperTag) ?? null;
+  }
 }
 
 /**
  * Update a tag
  */
-export function updateTag(
+export async function updateTag(
   id: string,
   updates: Partial<Pick<PaperTag, 'name' | 'color'>>
-): PaperTag | null {
-  const db = getSqlite();
+): Promise<PaperTag | null> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
   const setClauses: string[] = [];
   const values: (string | null)[] = [];
 
   if (updates.name !== undefined) {
-    setClauses.push('name = ?');
+    setClauses.push(driver === 'postgres' ? 'name = $1' : 'name = ?');
     values.push(updates.name);
   }
   if (updates.color !== undefined) {
-    setClauses.push('color = ?');
+    const paramIndex = driver === 'postgres' ? `$${values.length + 1}` : '?';
+    setClauses.push(`color = ${paramIndex}`);
     values.push(updates.color);
   }
 
   if (setClauses.length === 0) {
-    return getTag(id);
+    return await getTag(id);
   }
 
+  const idParam = driver === 'postgres' ? `$${values.length + 1}` : '?';
   values.push(id);
 
-  const stmt = db.prepare(`
-    UPDATE paper_tags
-    SET ${setClauses.join(', ')}
-    WHERE id = ?
-  `);
-
-  const result = stmt.run(...values);
-
-  if (result.changes === 0) {
-    return null;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.run(`
+      UPDATE paper_tags
+      SET ${setClauses.join(', ')}
+      WHERE id = ${idParam}
+    `, values);
+    if (result.changes === 0) {
+      return null;
+    }
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      UPDATE paper_tags
+      SET ${setClauses.join(', ')}
+      WHERE id = ?
+    `);
+    const result = stmt.run(...values);
+    if (result.changes === 0) {
+      return null;
+    }
   }
 
   logger.info('Tag updated', { id });
-  return getTag(id);
+  return await getTag(id);
 }
 
 /**
  * Delete a tag (also removes all links)
  */
-export function deleteTag(id: string): boolean {
-  const db = getSqlite();
+export async function deleteTag(id: string): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`DELETE FROM paper_tags WHERE id = ?`);
-  const result = stmt.run(id);
-
-  if (result.changes > 0) {
-    logger.info('Tag deleted', { id });
-    return true;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.run(`DELETE FROM paper_tags WHERE id = $1`, [id]);
+    if (result.changes > 0) {
+      logger.info('Tag deleted', { id });
+      return true;
+    }
+    return false;
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`DELETE FROM paper_tags WHERE id = ?`);
+    const result = stmt.run(id);
+    if (result.changes > 0) {
+      logger.info('Tag deleted', { id });
+      return true;
+    }
+    return false;
   }
-  return false;
 }
 
 // ========== Tag Link Operations ==========
@@ -486,17 +561,27 @@ export function deleteTag(id: string): boolean {
 /**
  * Add a tag to a paper
  */
-export function addTagToPaper(bibcode: string, tagId: string): boolean {
-  const db = getSqlite();
+export async function addTagToPaper(bibcode: string, tagId: string): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
   try {
-    const stmt = db.prepare(`
-      INSERT INTO paper_tag_links (bibcode, tag_id)
-      VALUES (?, ?)
-      ON CONFLICT(bibcode, tag_id) DO NOTHING
-    `);
-
-    stmt.run(bibcode, tagId);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`
+        INSERT INTO paper_tag_links (bibcode, tag_id)
+        VALUES ($1, $2)
+        ON CONFLICT(bibcode, tag_id) DO NOTHING
+      `, [bibcode, tagId]);
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        INSERT INTO paper_tag_links (bibcode, tag_id)
+        VALUES (?, ?)
+        ON CONFLICT(bibcode, tag_id) DO NOTHING
+      `);
+      stmt.run(bibcode, tagId);
+    }
     logger.info('Tag added to paper', { bibcode, tagId });
     return true;
   } catch (error) {
@@ -512,51 +597,205 @@ export function addTagToPaper(bibcode: string, tagId: string): boolean {
 /**
  * Remove a tag from a paper
  */
-export function removeTagFromPaper(bibcode: string, tagId: string): boolean {
-  const db = getSqlite();
+export async function removeTagFromPaper(bibcode: string, tagId: string): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    DELETE FROM paper_tag_links WHERE bibcode = ? AND tag_id = ?
-  `);
-
-  const result = stmt.run(bibcode, tagId);
-
-  if (result.changes > 0) {
-    logger.info('Tag removed from paper', { bibcode, tagId });
-    return true;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.run(`
+      DELETE FROM paper_tag_links WHERE bibcode = $1 AND tag_id = $2
+    `, [bibcode, tagId]);
+    if (result.changes > 0) {
+      logger.info('Tag removed from paper', { bibcode, tagId });
+      return true;
+    }
+    return false;
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      DELETE FROM paper_tag_links WHERE bibcode = ? AND tag_id = ?
+    `);
+    const result = stmt.run(bibcode, tagId);
+    if (result.changes > 0) {
+      logger.info('Tag removed from paper', { bibcode, tagId });
+      return true;
+    }
+    return false;
   }
-  return false;
 }
 
 /**
  * Get all tags for a paper
  */
-export function getPaperTags(bibcode: string): PaperTag[] {
-  const db = getSqlite();
+export async function getPaperTags(bibcode: string): Promise<PaperTag[]> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT t.id, t.name, t.color, t.created_at as createdAt
-    FROM paper_tags t
-    JOIN paper_tag_links ptl ON t.id = ptl.tag_id
-    WHERE ptl.bibcode = ?
-    ORDER BY t.name ASC
-  `);
-
-  return stmt.all(bibcode) as PaperTag[];
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT t.id, t.name, t.color, t.created_at as createdAt
+      FROM paper_tags t
+      JOIN paper_tag_links ptl ON t.id = ptl.tag_id
+      WHERE ptl.bibcode = $1
+      ORDER BY t.name ASC
+    `, [bibcode]);
+    return result.rows as PaperTag[];
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT t.id, t.name, t.color, t.created_at as createdAt
+      FROM paper_tags t
+      JOIN paper_tag_links ptl ON t.id = ptl.tag_id
+      WHERE ptl.bibcode = ?
+      ORDER BY t.name ASC
+    `);
+    return stmt.all(bibcode) as PaperTag[];
+  }
 }
 
 /**
  * Get all papers with a specific tag
  */
-export function getPapersWithTag(tagId: string): string[] {
-  const db = getSqlite();
+export async function getPapersWithTag(tagId: string): Promise<string[]> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT bibcode FROM paper_tag_links WHERE tag_id = ?
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT bibcode FROM paper_tag_links WHERE tag_id = $1
+    `, [tagId]);
+    return result.rows.map((r: { bibcode: string }) => r.bibcode);
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT bibcode FROM paper_tag_links WHERE tag_id = ?
+    `);
+    const results = stmt.all(tagId) as Array<{ bibcode: string }>;
+    return results.map((r) => r.bibcode);
+  }
+}
 
-  const results = stmt.all(tagId) as Array<{ bibcode: string }>;
-  return results.map((r) => r.bibcode);
+// ========== Paper Favorites Operations ==========
+
+/**
+ * Mark a paper as favorite
+ */
+export async function markPaperAsFavorite(bibcode: string): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
+  const now = Math.floor(Date.now() / 1000);
+
+  try {
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`
+        UPDATE ads_papers
+        SET is_favorite = 1, favorited_at = $1, updated_at = $1
+        WHERE bibcode = $2
+      `, [now, bibcode]);
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        UPDATE ads_papers
+        SET is_favorite = 1, favorited_at = ?, updated_at = ?
+        WHERE bibcode = ?
+      `);
+      stmt.run(now, now, bibcode);
+    }
+    logger.info('Paper marked as favorite', { bibcode });
+    return true;
+  } catch (error) {
+    logger.error('Failed to mark paper as favorite', {
+      bibcode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Unmark a paper as favorite
+ */
+export async function unmarkPaperAsFavorite(bibcode: string): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
+  const now = Math.floor(Date.now() / 1000);
+
+  try {
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`
+        UPDATE ads_papers
+        SET is_favorite = 0, favorited_at = NULL, updated_at = $1
+        WHERE bibcode = $2
+      `, [now, bibcode]);
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        UPDATE ads_papers
+        SET is_favorite = 0, favorited_at = NULL, updated_at = ?
+        WHERE bibcode = ?
+      `);
+      stmt.run(now, bibcode);
+    }
+    logger.info('Paper unmarked as favorite', { bibcode });
+    return true;
+  } catch (error) {
+    logger.error('Failed to unmark paper as favorite', {
+      bibcode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Check if a paper is favorited
+ */
+export async function isPaperFavorite(bibcode: string): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
+
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT is_favorite FROM ads_papers WHERE bibcode = $1
+    `, [bibcode]);
+    return (result.rows[0]?.is_favorite ?? 0) === 1;
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT is_favorite FROM ads_papers WHERE bibcode = ?
+    `);
+    const result = stmt.get(bibcode) as { is_favorite: number } | undefined;
+    return (result?.is_favorite ?? 0) === 1;
+  }
+}
+
+/**
+ * Get all favorite papers
+ */
+export async function getFavoritePapers(): Promise<string[]> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
+
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT bibcode FROM ads_papers WHERE is_favorite = 1 ORDER BY favorited_at DESC
+    `);
+    return result.rows.map((r: { bibcode: string }) => r.bibcode);
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT bibcode FROM ads_papers WHERE is_favorite = 1 ORDER BY favorited_at DESC
+    `);
+    const results = stmt.all() as Array<{ bibcode: string }>;
+    return results.map((r) => r.bibcode);
+  }
 }
 
 // ========== Paper Notes Operations ==========

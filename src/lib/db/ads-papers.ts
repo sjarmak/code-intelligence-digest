@@ -41,6 +41,8 @@ export function initializeADSTables() {
         ads_url TEXT,
         arxiv_url TEXT,
         fulltext_source TEXT,
+        is_favorite INTEGER DEFAULT 0,
+        favorited_at INTEGER,
         fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
         created_at INTEGER DEFAULT (strftime('%s', 'now')),
         updated_at INTEGER DEFAULT (strftime('%s', 'now'))
