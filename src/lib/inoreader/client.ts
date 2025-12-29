@@ -1,6 +1,6 @@
 /**
  * Inoreader API client
- * 
+ *
  * Simplified: No internal budget tracking - rely on Inoreader's 429 errors for rate limiting
  */
 

@@ -52,6 +52,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const [allLibraries, setAllLibraries] = useState<Library[]>([]);
   const [expandedLibrary, setExpandedLibrary] = useState<string | null>(null);
   const [libraryData, setLibraryData] = useState<Record<string, LibrariesResponse>>({});
+  const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(new Set());
   const [processingBibcode, setProcessingBibcode] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
 
@@ -109,23 +110,65 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
     }
   };
 
-  // Fetch papers for a specific library
+  // Fetch papers for a specific library (with pagination to load all items)
   const fetchLibraryItems = async (libraryName: string, offset = 0) => {
+    // Mark library as loading
+    setLoadingLibraries((prev) => new Set(prev).add(libraryName));
+
     try {
-      const response = await fetch(
-        `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${offset}&rows=50&metadata=true`,
-      );
-      if (!response.ok) {
-        const errorData = (await response.json()) as LibrariesError;
-        throw new Error(errorData.error || 'Failed to fetch library');
+      const rowsPerPage = 50;
+      let allItems: LibraryItemMetadata[] = [];
+      let currentOffset = offset;
+      let hasMore = true;
+      let libraryInfo: Library | null = null;
+
+      // Fetch all pages until we have all items
+      while (hasMore) {
+        const response = await fetch(
+          `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${currentOffset}&rows=${rowsPerPage}&metadata=true`,
+        );
+        if (!response.ok) {
+          const errorData = (await response.json()) as LibrariesError;
+          throw new Error(errorData.error || 'Failed to fetch library');
+        }
+        const result = (await response.json()) as LibrariesResponse;
+
+        // Store library info from first page
+        if (!libraryInfo) {
+          libraryInfo = result.library;
+        }
+
+        // Accumulate items
+        allItems = [...allItems, ...result.items];
+
+        // Check if there are more pages
+        hasMore = result.pagination.hasMore;
+        currentOffset = result.pagination.start + result.pagination.rows;
       }
-      const result = (await response.json()) as LibrariesResponse;
+
+      // Update state with all items
       setLibraryData((prev) => ({
         ...prev,
-        [libraryName]: result,
+        [libraryName]: {
+          library: libraryInfo!,
+          items: allItems,
+          pagination: {
+            start: 0,
+            rows: allItems.length,
+            total: allItems.length,
+            hasMore: false,
+          },
+        },
       }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      // Remove library from loading set
+      setLoadingLibraries((prev) => {
+        const next = new Set(prev);
+        next.delete(libraryName);
+        return next;
+      });
     }
   };
 
@@ -248,7 +291,12 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
               {/* Papers List */}
               {isExpanded && (
                 <div className="border-t border-surface-border/50 p-4 space-y-3 bg-surface-border/5">
-                  {data ? (
+                  {loadingLibraries.has(lib.name) ? (
+                    <div className="flex justify-center py-4">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
+                      <span className="ml-2 text-sm text-muted">Loading papers...</span>
+                    </div>
+                  ) : data ? (
                     <>
                       {items.length > 0 ? (
                         items.map((item) => (

@@ -16,7 +16,7 @@ async function debugPaperImages(bibcode: string) {
   console.log(`\n🔍 Debugging images for paper: ${bibcode}\n`);
 
   // Get cached HTML
-  const cached = getCachedHtmlContent(bibcode);
+  const cached = await getCachedHtmlContent(bibcode);
   if (!cached) {
     console.log('❌ No cached HTML found');
     return;
@@ -31,7 +31,6 @@ async function debugPaperImages(bibcode: string) {
   for (const match of imgMatches) {
     const imgTag = match[0];
     const srcMatch = imgTag.match(/src\s*=\s*["']?([^"'\s>]+)["']?/i);
-    const images: Array<{ match: string; src?: string }> = [];
 
     images.push({
       match: imgTag,

@@ -458,15 +458,52 @@ async function processPapersSectionsAsync(bibcodes: string[]): Promise<void> {
 /**
  * Get a paper from the database
  */
-export function getPaper(bibcode: string): ADSPaperRecord | null {
-  const db = getSqlite();
+export async function getPaper(bibcode: string): Promise<ADSPaperRecord | null> {
+  const driver = detectDriver();
 
   try {
-    const stmt = db.prepare(`
-      SELECT * FROM ads_papers WHERE bibcode = ?
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT * FROM ads_papers WHERE bibcode = $1`,
+        [bibcode]
+      );
+      const row = result.rows[0] as {
+        bibcode: string;
+        title?: string | null;
+        authors?: string | null;
+        pubdate?: string | null;
+        abstract?: string | null;
+        body?: string | null;
+        year?: number | null;
+        journal?: string | null;
+        ads_url?: string | null;
+        arxiv_url?: string | null;
+        fulltext_source?: string | null;
+      } | undefined;
+      if (!row) return null;
 
-    return stmt.get(bibcode) as ADSPaperRecord | undefined || null;
+      // Map PostgreSQL column names to camelCase
+      return {
+        bibcode: row.bibcode,
+        title: row.title || undefined,
+        authors: row.authors || undefined,
+        pubdate: row.pubdate || undefined,
+        abstract: row.abstract || undefined,
+        body: row.body || undefined,
+        year: row.year || undefined,
+        journal: row.journal || undefined,
+        adsUrl: row.ads_url || undefined,
+        arxivUrl: row.arxiv_url || undefined,
+        fulltextSource: row.fulltext_source || undefined,
+      };
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        SELECT * FROM ads_papers WHERE bibcode = ?
+      `);
+      return stmt.get(bibcode) as ADSPaperRecord | undefined || null;
+    }
   } catch (error) {
     logger.error('Failed to get paper', {
       bibcode,

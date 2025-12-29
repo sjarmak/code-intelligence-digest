@@ -387,7 +387,7 @@ Summary:`;
  * Process a paper: extract sections, summarize them, and store with embeddings
  */
 export async function processPaperSections(bibcode: string, forceRegenerate: boolean = false): Promise<void> {
-  const paper = getPaper(bibcode);
+  const paper = await getPaper(bibcode);
 
   if (!paper || !paper.body || paper.body.length < 100) {
     logger.warn('Paper has no body text to process', { bibcode });
@@ -422,7 +422,7 @@ export async function processPaperSections(bibcode: string, forceRegenerate: boo
 
   // Get section metadata from cached HTML if available
   const { getCachedHtmlContent } = await import('../db/paper-annotations');
-  const cached = getCachedHtmlContent(bibcode);
+  const cached = await getCachedHtmlContent(bibcode);
   let sectionMetadata = cached?.sections;
 
   // If no sections in cache, try to parse from HTML if available

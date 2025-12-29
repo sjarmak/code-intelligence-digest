@@ -840,99 +840,161 @@ export function updatePaperNotes(bibcode: string, notes: string | null): boolean
 /**
  * Get cached HTML content for a paper
  */
-export function getCachedHtmlContent(
+export async function getCachedHtmlContent(
   bibcode: string
-): {
+): Promise<{
   htmlContent: string;
   htmlFetchedAt: number;
   sections?: Array<{ id: string; title: string; level: number }>;
   figures?: Array<{ id: string; src: string; caption: string }>;
-} | null {
-  const db = getSqlite();
+} | null> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT html_content, html_fetched_at, html_sections, html_figures
-    FROM ads_papers
-    WHERE bibcode = ? AND html_content IS NOT NULL
-  `);
+  try {
+    let result: {
+      html_content: string;
+      html_fetched_at: number;
+      html_sections?: string | null;
+      html_figures?: string | null;
+    } | null = null;
 
-  const result = stmt.get(bibcode) as
-    | {
-        html_content: string;
-        html_fetched_at: number;
-        html_sections?: string | null;
-        html_figures?: string | null;
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const queryResult = await client.query(
+        `SELECT html_content, html_fetched_at, html_sections, html_figures
+         FROM ads_papers
+         WHERE bibcode = $1 AND html_content IS NOT NULL`,
+        [bibcode]
+      );
+      if (queryResult.rows.length > 0) {
+        const row = queryResult.rows[0] as {
+          html_content: string;
+          html_fetched_at: number;
+          html_sections?: string | null;
+          html_figures?: string | null;
+        };
+        result = {
+          html_content: row.html_content,
+          html_fetched_at: row.html_fetched_at,
+          html_sections: row.html_sections || null,
+          html_figures: row.html_figures || null,
+        };
       }
-    | undefined;
-
-  if (!result) return null;
-
-  let sections: Array<{ id: string; title: string; level: number }> | undefined;
-  let figures: Array<{ id: string; src: string; caption: string }> | undefined;
-
-  if (result.html_sections) {
-    try {
-      sections = JSON.parse(result.html_sections);
-    } catch (error) {
-      logger.warn('Failed to parse cached sections', { bibcode, error });
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        SELECT html_content, html_fetched_at, html_sections, html_figures
+        FROM ads_papers
+        WHERE bibcode = ? AND html_content IS NOT NULL
+      `);
+      result = stmt.get(bibcode) as typeof result;
     }
-  }
 
-  if (result.html_figures) {
-    try {
-      figures = JSON.parse(result.html_figures);
-    } catch (error) {
-      logger.warn('Failed to parse cached figures', { bibcode, error });
+    if (!result) return null;
+
+    let sections: Array<{ id: string; title: string; level: number }> | undefined;
+    let figures: Array<{ id: string; src: string; caption: string }> | undefined;
+
+    if (result.html_sections) {
+      try {
+        sections = JSON.parse(result.html_sections);
+      } catch (error) {
+        logger.warn('Failed to parse cached sections', { bibcode, error });
+      }
     }
-  }
 
-  return {
-    htmlContent: result.html_content,
-    htmlFetchedAt: result.html_fetched_at,
-    sections,
-    figures,
-  };
+    if (result.html_figures) {
+      try {
+        figures = JSON.parse(result.html_figures);
+      } catch (error) {
+        logger.warn('Failed to parse cached figures', { bibcode, error });
+      }
+    }
+
+    return {
+      htmlContent: result.html_content,
+      htmlFetchedAt: result.html_fetched_at,
+      sections,
+      figures,
+    };
+  } catch (error) {
+    logger.error('Failed to get cached HTML content', {
+      bibcode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 /**
  * Cache HTML content for a paper, along with parsed sections and figures
  */
-export function cacheHtmlContent(
+export async function cacheHtmlContent(
   bibcode: string,
   htmlContent: string,
   sections?: Array<{ id: string; title: string; level: number }>,
   figures?: Array<{ id: string; src: string; caption: string }>
-): boolean {
-  const db = getSqlite();
+): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
 
   const sectionsJson = sections ? JSON.stringify(sections) : null;
   const figuresJson = figures ? JSON.stringify(figures) : null;
 
-  const stmt = db.prepare(`
-    UPDATE ads_papers
-    SET html_content = ?, html_fetched_at = ?, html_sections = ?, html_figures = ?, updated_at = ?
-    WHERE bibcode = ?
-  `);
+  try {
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.run(
+        `UPDATE ads_papers
+         SET html_content = $1, html_fetched_at = $2, html_sections = $3, html_figures = $4, updated_at = $5
+         WHERE bibcode = $6`,
+        [htmlContent, now, sectionsJson, figuresJson, now, bibcode]
+      );
+      if (result.changes > 0) {
+        logger.info('HTML content cached', {
+          bibcode,
+          hasSections: !!sections && sections.length > 0,
+          hasFigures: !!figures && figures.length > 0,
+        });
+        return true;
+      }
+      return false;
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        UPDATE ads_papers
+        SET html_content = ?, html_fetched_at = ?, html_sections = ?, html_figures = ?, updated_at = ?
+        WHERE bibcode = ?
+      `);
 
-  const result = stmt.run(htmlContent, now, sectionsJson, figuresJson, now, bibcode);
+      const result = stmt.run(htmlContent, now, sectionsJson, figuresJson, now, bibcode);
 
-  if (result.changes > 0) {
-    logger.info('HTML content cached', {
+      if (result.changes > 0) {
+        logger.info('HTML content cached', {
+          bibcode,
+          hasSections: !!sections && sections.length > 0,
+          hasFigures: !!figures && figures.length > 0,
+        });
+        return true;
+      }
+      return false;
+    }
+  } catch (error) {
+    logger.error('Failed to cache HTML content', {
       bibcode,
-      hasSections: !!sections && sections.length > 0,
-      hasFigures: !!figures && figures.length > 0,
+      error: error instanceof Error ? error.message : String(error),
     });
-    return true;
+    return false;
   }
-  return false;
 }
 
 /**
  * Check if cached HTML is fresh (less than 7 days old)
  */
-export function isCachedHtmlFresh(bibcode: string, maxAgeSeconds = 7 * 24 * 60 * 60): boolean {
-  const cached = getCachedHtmlContent(bibcode);
+export async function isCachedHtmlFresh(bibcode: string, maxAgeSeconds = 7 * 24 * 60 * 60): Promise<boolean> {
+  const cached = await getCachedHtmlContent(bibcode);
   if (!cached) return false;
 
   const now = Math.floor(Date.now() / 1000);

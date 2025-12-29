@@ -50,7 +50,7 @@ export async function POST(
     logger.info('Generating paper summary', { bibcode });
 
     // Try to get from cache first
-    let paper = getPaper(bibcode);
+    let paper = await getPaper(bibcode);
 
     // If not in cache, fetch from ADS
     if (!paper) {

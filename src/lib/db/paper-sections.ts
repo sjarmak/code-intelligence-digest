@@ -28,8 +28,10 @@ export interface PaperSectionSummary {
  * Works with both SQLite (dev) and PostgreSQL (prod)
  */
 export function initializePaperSectionsTable() {
+  const driver = detectDriver();
+
   // Check if we're using Postgres
-  if (process.env.DATABASE_URL?.startsWith('postgres')) {
+  if (driver === 'postgres') {
     // Postgres schema is handled by schema-postgres.ts
     // Just ensure the table exists (it will be created by schema initialization)
     logger.info('Paper sections table will be initialized via Postgres schema');
