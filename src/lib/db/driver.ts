@@ -142,6 +142,9 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     connectionString: databaseUrl,
     ssl: needsSSL ? { rejectUnauthorized: false } : undefined,
     max: 10, // Connection pool size
+    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+    connectionTimeoutMillis: 10000, // Return error after 10 seconds if connection cannot be established
+    statement_timeout: 60000, // 60 second statement timeout (PostgreSQL setting)
   });
 
   // Test connection

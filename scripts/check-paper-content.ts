@@ -38,7 +38,7 @@ async function checkPaper(bibcode: string) {
     console.log(`   Fetched at: ${new Date(cached.htmlFetchedAt * 1000).toISOString()}`);
     console.log(`   Sections: ${cached.sections?.length || 0}`);
     console.log(`   Figures: ${cached.figures?.length || 0}`);
-    
+
     // Check source
     const htmlLower = cached.htmlContent.toLowerCase();
     let source = 'unknown';
@@ -52,7 +52,7 @@ async function checkPaper(bibcode: string) {
       source = 'arxiv';
     }
     console.log(`   Detected source: ${source}`);
-    
+
     // Check for images
     const imgMatches = cached.htmlContent.match(/<img[^>]*>/gi);
     console.log(`   Image tags: ${imgMatches?.length || 0}`);
