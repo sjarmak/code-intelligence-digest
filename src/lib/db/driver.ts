@@ -28,10 +28,11 @@ export interface DatabaseClient {
 }
 
 let clientInstance: DatabaseClient | null = null;
+let postgresPool: import('pg').Pool | null = null;
 
 /**
  * Detect which database driver to use based on environment
- * 
+ *
  * For the app: Always uses DATABASE_URL (production)
  * For batch scripts: Can use LOCAL_DATABASE_URL by setting USE_LOCAL_DB=true
  */
@@ -39,7 +40,7 @@ export function detectDriver(): DatabaseDriver {
   // Check if we should use local database (for batch operations)
   const useLocal = process.env.USE_LOCAL_DB === 'true';
   const dbUrl = useLocal ? process.env.LOCAL_DATABASE_URL : process.env.DATABASE_URL;
-  
+
   // PostgreSQL connection string takes precedence
   if (dbUrl?.startsWith('postgres')) {
     return 'postgres';
@@ -148,6 +149,9 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     // It should be set via SET statement_timeout = '60s' per connection if needed
   });
   
+  // Store pool reference for direct access
+  postgresPool = pool;
+  
   // Set statement timeout per connection
   pool.on('connect', async (client) => {
     try {
@@ -155,6 +159,14 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     } catch (err) {
       logger.warn('Failed to set statement_timeout', { error: err instanceof Error ? err.message : String(err) });
     }
+  });
+  
+  // Handle connection errors
+  pool.on('error', (err) => {
+    logger.error('PostgreSQL pool error', { error: err.message });
+    // Reset the pool reference so we can recreate it
+    postgresPool = null;
+    clientInstance = null;
   });
 
   // Test connection
@@ -191,9 +203,27 @@ async function createPostgresClient(): Promise<DatabaseClient> {
 
     async close(): Promise<void> {
       await pool.end();
+      postgresPool = null;
       clientInstance = null;
     },
   };
+}
+
+/**
+ * Get a fresh connection from the PostgreSQL pool
+ * Use this for operations that need a guaranteed fresh connection
+ */
+export async function getFreshPostgresConnection(): Promise<import('pg').PoolClient> {
+  if (!postgresPool) {
+    // Ensure pool exists
+    await getDbClient();
+  }
+  
+  if (!postgresPool) {
+    throw new Error('PostgreSQL pool not initialized');
+  }
+  
+  return await postgresPool.connect();
 }
 
 /**

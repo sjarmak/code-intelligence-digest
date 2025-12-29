@@ -241,7 +241,7 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
 
   const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
-  
+
   // Sanitize all text fields to remove null bytes (required for PostgreSQL)
   const sanitizedPapers: ADSPaperRecord[] = papers.map(paper => ({
     ...paper,
@@ -262,7 +262,7 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
       // PostgreSQL can handle large queries, but with body text fields, we need smaller batches
       const BATCH_SIZE = 5; // Reduced from 10 to handle very large body text fields
       let processed = 0;
-      
+
       while (processed < sanitizedPapers.length) {
         const batch = sanitizedPapers.slice(processed, processed + BATCH_SIZE);
         const values: unknown[] = [];
@@ -295,29 +295,31 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
         let lastError: Error | null = null;
         
         while (retries > 0) {
+          let pgClient: import('pg').PoolClient | null = null;
           try {
-            // Get a fresh client for each batch to avoid stale connections
-            const client = await getDbClient();
+            // Get a fresh connection from the pool for each batch
+            const { getFreshPostgresConnection } = await import('./driver');
+            pgClient = await getFreshPostgresConnection();
             
-            await client.run(
-              `INSERT INTO ads_papers (
-                bibcode, title, authors, pubdate, abstract, body,
-                year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-              ) VALUES ${placeholders.join(', ')}
-              ON CONFLICT(bibcode) DO UPDATE SET
-                title = EXCLUDED.title,
-                authors = EXCLUDED.authors,
-                pubdate = EXCLUDED.pubdate,
-                abstract = EXCLUDED.abstract,
-                body = COALESCE(EXCLUDED.body, ads_papers.body),
-                year = COALESCE(EXCLUDED.year, ads_papers.year),
-                journal = EXCLUDED.journal,
-                ads_url = EXCLUDED.ads_url,
-                arxiv_url = EXCLUDED.arxiv_url,
-                fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
-                updated_at = EXCLUDED.updated_at`,
-              values
-            );
+            // Convert placeholders and execute
+            const pgSql = `INSERT INTO ads_papers (
+              bibcode, title, authors, pubdate, abstract, body,
+              year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+            ) VALUES ${placeholders.join(', ')}
+            ON CONFLICT(bibcode) DO UPDATE SET
+              title = EXCLUDED.title,
+              authors = EXCLUDED.authors,
+              pubdate = EXCLUDED.pubdate,
+              abstract = EXCLUDED.abstract,
+              body = COALESCE(EXCLUDED.body, ads_papers.body),
+              year = COALESCE(EXCLUDED.year, ads_papers.year),
+              journal = EXCLUDED.journal,
+              ads_url = EXCLUDED.ads_url,
+              arxiv_url = EXCLUDED.arxiv_url,
+              fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
+              updated_at = EXCLUDED.updated_at`;
+            
+            await pgClient.query(pgSql, values);
             processed += batch.length;
             logger.debug(`Stored batch of ${batch.length} papers (${processed}/${sanitizedPapers.length} total)`);
             break; // Success, exit retry loop
@@ -329,7 +331,8 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
             const errorMsg = lastError.message.toLowerCase();
             const isConnectionError = errorMsg.includes('connection') || 
                                      errorMsg.includes('terminated') ||
-                                     errorMsg.includes('timeout');
+                                     errorMsg.includes('timeout') ||
+                                     errorMsg.includes('broken pipe');
             
             if (isConnectionError && retries > 0) {
               logger.warn(`Connection error on batch, retrying (${retries} retries left)`, {
@@ -337,8 +340,9 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
                 processed,
                 error: lastError.message,
               });
-              // Wait a bit before retrying
-              await new Promise(resolve => setTimeout(resolve, 1000));
+              // Wait a bit before retrying (exponential backoff)
+              const delay = (4 - retries) * 1000; // 1s, 2s, 3s
+              await new Promise(resolve => setTimeout(resolve, delay));
             } else {
               // Not a connection error or out of retries
               logger.error('Failed to store batch', {
@@ -349,6 +353,11 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
                 retriesLeft: retries,
               });
               throw lastError;
+            }
+          } finally {
+            // Always release the connection back to the pool
+            if (pgClient) {
+              pgClient.release();
             }
           }
         }
