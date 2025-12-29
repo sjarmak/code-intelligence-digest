@@ -143,8 +143,18 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     ssl: needsSSL ? { rejectUnauthorized: false } : undefined,
     max: 10, // Connection pool size
     idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-    connectionTimeoutMillis: 10000, // Return error after 10 seconds if connection cannot be established
-    statement_timeout: 60000, // 60 second statement timeout (PostgreSQL setting)
+    connectionTimeoutMillis: 20000, // Return error after 20 seconds if connection cannot be established
+    // Note: statement_timeout is a PostgreSQL server setting, not a pool setting
+    // It should be set via SET statement_timeout = '60s' per connection if needed
+  });
+  
+  // Set statement timeout per connection
+  pool.on('connect', async (client) => {
+    try {
+      await client.query("SET statement_timeout = '120s'");
+    } catch (err) {
+      logger.warn('Failed to set statement_timeout', { error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // Test connection
