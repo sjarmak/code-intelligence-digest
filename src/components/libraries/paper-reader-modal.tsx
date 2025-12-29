@@ -128,6 +128,8 @@ export function PaperReaderModal({
   } | null>(null);
 
   const contentRef = useRef<HTMLDivElement>(null);
+  const articleRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
 
   // Fetch paper content
   const fetchContent = useCallback(async () => {
@@ -315,9 +317,21 @@ export function PaperReaderModal({
 
   // Scroll to section
   const scrollToSection = useCallback((sectionId: string) => {
-    if (!contentRef.current) return;
+    // First, try to find the article element (where the actual paper content is)
+    const articleElement = articleRef.current || contentRef.current?.querySelector('article.paper-content');
+    if (!articleElement) {
+      console.warn('Article element not found for scrolling');
+      return;
+    }
 
-    // Try multiple selectors to find the section
+    // Get the scrollable container (main element)
+    const scrollContainer = mainRef.current;
+    if (!scrollContainer) {
+      console.warn('Scroll container not found');
+      return;
+    }
+
+    // Try multiple selectors to find the section within the article
     const selectors = [
       `#${sectionId}`, // Exact ID match
       `[id="${sectionId}"]`, // Attribute selector
@@ -326,30 +340,47 @@ export function PaperReaderModal({
     ];
 
     for (const selector of selectors) {
-      const element = contentRef.current.querySelector(selector);
+      const element = articleElement.querySelector(selector);
       if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Calculate position relative to scroll container
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const scrollTop = scrollContainer.scrollTop;
+        const yOffset = 20; // Offset from top of container
+        const targetScroll = scrollTop + (elementRect.top - containerRect.top) - yOffset;
+        
+        scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
         return;
       }
     }
 
-    // If no element found, try to find by section title in headings
+    // If no element found, try to find by section title in headings (only in article)
     const sectionSummary = content?.sectionSummaries?.find(s => s.sectionId === sectionId);
     if (sectionSummary) {
-      // Try to find heading with matching text
-      const headings = contentRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      // Try to find heading with matching text within the article
+      const headings = articleElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
       for (const heading of Array.from(headings)) {
-        if (heading.textContent?.trim().includes(sectionSummary.sectionTitle) || 
-            sectionSummary.sectionTitle.includes(heading.textContent?.trim() || '')) {
-          heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const headingText = heading.textContent?.trim() || '';
+        const sectionTitle = sectionSummary.sectionTitle.trim();
+        // More flexible matching
+        if (headingText.toLowerCase().includes(sectionTitle.toLowerCase()) || 
+            sectionTitle.toLowerCase().includes(headingText.toLowerCase()) ||
+            headingText === sectionTitle) {
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const elementRect = heading.getBoundingClientRect();
+          const scrollTop = scrollContainer.scrollTop;
+          const yOffset = 20;
+          const targetScroll = scrollTop + (elementRect.top - containerRect.top) - yOffset;
+          
+          scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
           return;
         }
       }
 
       // If we have character positions, try to scroll to that position
       if (sectionSummary.charStart !== undefined && content?.html) {
-        // Find the element containing the character at charStart
-        const textNodes = getTextNodes(contentRef.current);
+        // Find the element containing the character at charStart within the article
+        const textNodes = getTextNodes(articleElement);
         let charCount = 0;
         for (const node of textNodes) {
           const nodeLength = node.textContent?.length || 0;
@@ -357,7 +388,13 @@ export function PaperReaderModal({
             // Found the node, scroll to it
             const element = node.parentElement;
             if (element) {
-              element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              const containerRect = scrollContainer.getBoundingClientRect();
+              const elementRect = element.getBoundingClientRect();
+              const scrollTop = scrollContainer.scrollTop;
+              const yOffset = 20;
+              const targetScroll = scrollTop + (elementRect.top - containerRect.top) - yOffset;
+              
+              scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
               return;
             }
           }
@@ -568,6 +605,7 @@ export function PaperReaderModal({
       <div className="flex-1 flex overflow-hidden">
         {/* Content */}
         <main
+          ref={mainRef}
           className="flex-1 overflow-y-auto"
           onMouseUp={handleTextSelection}
         >
@@ -684,6 +722,7 @@ export function PaperReaderModal({
 
               {/* Paper content with section demarcations */}
               <article
+                ref={articleRef}
                 className="prose prose-lg max-w-none paper-content"
                 dangerouslySetInnerHTML={{ __html: content.html }}
               />
