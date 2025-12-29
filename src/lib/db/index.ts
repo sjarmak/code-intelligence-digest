@@ -84,8 +84,19 @@ async function initializePostgresSchema() {
     const client = await getDbClient();
     const schema = getPostgresSchema();
 
-    // Execute schema in segments (extensions, tables, indexes)
-    await client.exec(schema);
+    // Check if we're on local (no pgvector) by checking if DATABASE_URL is localhost
+    const dbUrl = getDatabaseUrl();
+    const isLocal = dbUrl?.includes('localhost') || dbUrl?.includes('127.0.0.1');
+    
+    // For local development, replace vector types with TEXT
+    let schemaToExecute = schema;
+    if (isLocal) {
+      logger.info('Local database detected, replacing vector types with TEXT');
+      schemaToExecute = schema.replace(/vector\(1536\)/gi, 'TEXT');
+    }
+
+    // Execute schema
+    await client.exec(schemaToExecute);
 
     // Add full_text column if it doesn't exist (for migration)
     try {
