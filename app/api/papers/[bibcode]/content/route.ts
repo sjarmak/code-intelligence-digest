@@ -35,7 +35,7 @@ export async function GET(
       await ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
-    
+
     // Check for force refresh parameter
     const searchParams = request.nextUrl.searchParams;
     const forceRefresh = searchParams.get('refresh') === 'true';
@@ -112,37 +112,37 @@ export async function GET(
                           attributes.match(/src\s*=\s*"([^"]+)"/i) ||
                           attributes.match(/src\s*=\s*'([^']+)'/i) ||
                           attributes.match(/src\s*=\s*([^\s>]+)/i);
-            
+
             if (!srcMatch || !srcMatch[1]) {
               return match; // No src found, return as-is
             }
-            
+
             const src = srcMatch[1];
-            
+
             // Only rewrite if it's a relative URL
             if (!src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:') && !src.startsWith('//')) {
-              const normalizedSrc = src.startsWith('/') 
+              const normalizedSrc = src.startsWith('/')
                 ? `${imageBaseUrl}${src}`
                 : `${imageBaseUrl}/${src}`;
-              
+
               // Replace the src in the attributes
               const updatedAttributes = attributes.replace(
                 srcMatch[0],
                 srcMatch[0].replace(src, normalizedSrc)
               );
-              
+
               return `<img ${updatedAttributes}>`;
             }
             return match; // Already absolute or data URL
           }
         );
-        
+
         // Also handle background-image URLs in style attributes
         htmlContent = htmlContent.replace(
           /style=["']([^"']*background[^"']*url\(["']?([^"')]+)["']?\)[^"']*)["']/gi,
           (match, styleContent, url) => {
             if (url && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('//')) {
-              const normalizedUrl = url.startsWith('/') 
+              const normalizedUrl = url.startsWith('/')
                 ? `${imageBaseUrl}${url}`
                 : `${imageBaseUrl}/${url}`;
               return `style="${styleContent.replace(url, normalizedUrl)}"`;
@@ -344,12 +344,20 @@ export async function GET(
       });
 
       // Prefer ADS body over abstract if available
-      if (paper.body && paper.body.length > 0) {
-        logger.warn('Using ADS body after fetchPaperContent failed', { bibcode });
+      if (paper.body && paper.body.length > 100) {
+        logger.warn('Using ADS body after fetchPaperContent failed', { 
+          bibcode,
+          bodyLength: paper.body.length,
+          hasAbstract: !!paper.abstract
+        });
         const { adsBodyToHtml } = await import('@/src/lib/ar5iv');
         content = adsBodyToHtml(paper.body, paper.abstract);
       } else if (paper.abstract) {
-        logger.warn('Falling back to abstract-only content', { bibcode });
+        logger.warn('Falling back to abstract-only content - no body available', { 
+          bibcode,
+          hasBody: !!paper.body,
+          bodyLength: paper.body?.length || 0
+        });
         const { abstractToHtml } = await import('@/src/lib/ar5iv');
         content = abstractToHtml(paper.abstract, paper.title);
       } else {

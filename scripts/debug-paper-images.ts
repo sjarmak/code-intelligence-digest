@@ -32,7 +32,7 @@ async function debugPaperImages(bibcode: string) {
     const imgTag = match[0];
     const srcMatch = imgTag.match(/src\s*=\s*["']?([^"'\s>]+)["']?/i);
     const images: Array<{ match: string; src?: string }> = [];
-    
+
     images.push({
       match: imgTag,
       src: srcMatch ? srcMatch[1] : undefined,
@@ -54,7 +54,7 @@ async function debugPaperImages(bibcode: string) {
   // Also check for background-image in styles
   const styleMatches = cached.htmlContent.matchAll(/style=["'][^"']*background[^"']*url\([^)]+\)[^"']*["']/gi);
   const backgroundImages: string[] = [];
-  
+
   for (const match of styleMatches) {
     const urlMatch = match[0].match(/url\(["']?([^"')]+)["']?\)/i);
     if (urlMatch) {

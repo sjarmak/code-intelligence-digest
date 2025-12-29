@@ -336,7 +336,7 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     const srcMatchDouble = figureHtml.match(/<img[^>]*src\s*=\s*"([^"]*)"[^>]*>/i);
     const srcMatchSingle = figureHtml.match(/<img[^>]*src\s*=\s*'([^']*)'[^>]*>/i);
     const srcMatchUnquoted = figureHtml.match(/<img[^>]*src\s*=\s*([^\s>]+)[^>]*>/i);
-    
+
     if (srcMatchDouble) {
       src = srcMatchDouble[1];
     } else if (srcMatchSingle) {
@@ -462,7 +462,7 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     // Rewrite image src URLs to absolute paths (before other processing)
     // This ensures images load from ar5iv.org/arxiv.org instead of our server
     const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
-    
+
     // Handle img tags with various src formats (quoted, unquoted)
     // Match the entire img tag and process attributes
     mainContent = mainContent.replace(
@@ -475,24 +475,24 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
                       attributes.match(/src\s*=\s*"([^"]+)"/i) ||
                       attributes.match(/src\s*=\s*'([^']+)'/i) ||
                       attributes.match(/src\s*=\s*([^\s>]+)/i);
-        
+
         if (!srcMatch || !srcMatch[1]) {
           return match; // No src found, return as-is
         }
-        
+
         const src = srcMatch[1];
         const normalizedSrc = normalizeImageSrc(src, imageBaseUrl);
-        
+
         // Replace the src in the attributes
         const updatedAttributes = attributes.replace(
           srcMatch[0],
           srcMatch[0].replace(src, normalizedSrc)
         );
-        
+
         return `<img ${updatedAttributes}>`;
       }
     );
-    
+
     // Also handle background-image URLs in style attributes
     mainContent = mainContent.replace(
       /style=["']([^"']*background[^"']*url\(["']?([^"')]+)["']?\)[^"']*)["']/gi,
@@ -592,10 +592,10 @@ function addSectionIds(html: string): string {
 export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperContent {
   // Import section extraction function
   const { extractSectionsFromBody } = require('../pipeline/section-summarization');
-  
+
   // Extract sections from body text
   const extractedSections = extractSectionsFromBody(body);
-  
+
   const sections: PaperSection[] = [];
   let htmlSections = '';
 
@@ -620,7 +620,7 @@ export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperConte
     for (const section of extractedSections) {
       const sectionId = section.sectionId || `section-${sections.length}`;
       const headingLevel = Math.min(section.level + 1, 6); // h2-h6
-      
+
       sections.push({
         id: sectionId,
         title: section.sectionTitle,
@@ -805,15 +805,23 @@ export async function fetchPaperContent(
     logger.info('No arXiv ID found, skipping ar5iv', { bibcode });
   }
 
-  // Fallback to ADS body
-  if (options.adsBody) {
-    logger.info('Using ADS body fallback', { bibcode });
+  // Fallback to ADS body (prefer this over abstract-only)
+  if (options.adsBody && options.adsBody.length > 100) {
+    logger.info('Using ADS body fallback', { 
+      bibcode, 
+      bodyLength: options.adsBody.length,
+      hasAbstract: !!options.abstract 
+    });
     return adsBodyToHtml(options.adsBody, options.abstract);
   }
 
-  // Final fallback: abstract only
+  // Final fallback: abstract only (only if no body available)
   if (options.abstract) {
-    logger.info('Using abstract-only fallback', { bibcode });
+    logger.warn('Using abstract-only fallback - no body text available', { 
+      bibcode,
+      hasAdsBody: !!options.adsBody,
+      adsBodyLength: options.adsBody?.length || 0
+    });
     return abstractToHtml(options.abstract, options.title);
   }
 
