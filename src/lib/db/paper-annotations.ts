@@ -52,77 +52,142 @@ export interface CreateTagInput {
 /**
  * Initialize annotation tables in database
  */
-export function initializeAnnotationTables() {
-  const db = getSqlite();
+export async function initializeAnnotationTables() {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
   try {
-    // Create paper_annotations table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS paper_annotations (
-        id TEXT PRIMARY KEY,
-        bibcode TEXT NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('note', 'highlight')),
-        content TEXT NOT NULL,
-        note TEXT,
-        start_offset INTEGER,
-        end_offset INTEGER,
-        section_id TEXT,
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
-      );
-    `);
+    if (driver === 'postgres') {
+      // PostgreSQL initialization
+      const client = await getDbClient();
+      
+      // Create paper_annotations table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS paper_annotations (
+          id TEXT PRIMARY KEY,
+          bibcode TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('note', 'highlight')),
+          content TEXT NOT NULL,
+          note TEXT,
+          start_offset INTEGER,
+          end_offset INTEGER,
+          section_id TEXT,
+          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
+        );
+      `);
 
-    // Create paper_tags table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS paper_tags (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        color TEXT,
-        created_at INTEGER DEFAULT (strftime('%s', 'now'))
-      );
-    `);
+      // Create paper_tags table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS paper_tags (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          color TEXT,
+          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+        );
+      `);
 
-    // Create paper_tag_links junction table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS paper_tag_links (
-        bibcode TEXT NOT NULL,
-        tag_id TEXT NOT NULL,
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        PRIMARY KEY (bibcode, tag_id),
-        FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE,
-        FOREIGN KEY (tag_id) REFERENCES paper_tags(id) ON DELETE CASCADE
-      );
-    `);
+      // Create paper_tag_links junction table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS paper_tag_links (
+          bibcode TEXT NOT NULL,
+          tag_id TEXT NOT NULL,
+          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          PRIMARY KEY (bibcode, tag_id),
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE,
+          FOREIGN KEY (tag_id) REFERENCES paper_tags(id) ON DELETE CASCADE
+        );
+      `);
 
-    // Add new columns to ads_papers if they don't exist
-    // SQLite doesn't support IF NOT EXISTS for columns, so we check and add
-    const tableInfo = db.prepare(`PRAGMA table_info(ads_papers)`).all() as Array<{ name: string }>;
-    const columnNames = tableInfo.map((col) => col.name);
+      // Add new columns to ads_papers if they don't exist (PostgreSQL supports IF NOT EXISTS)
+      await client.exec(`
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_content TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_fetched_at INTEGER;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_sections TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_figures TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS paper_notes TEXT;
+      `);
 
-    if (!columnNames.includes('html_content')) {
-      db.exec(`ALTER TABLE ads_papers ADD COLUMN html_content TEXT`);
-    }
-    if (!columnNames.includes('html_fetched_at')) {
-      db.exec(`ALTER TABLE ads_papers ADD COLUMN html_fetched_at INTEGER`);
-    }
-    if (!columnNames.includes('html_sections')) {
-      db.exec(`ALTER TABLE ads_papers ADD COLUMN html_sections TEXT`);
-    }
-    if (!columnNames.includes('html_figures')) {
-      db.exec(`ALTER TABLE ads_papers ADD COLUMN html_figures TEXT`);
-    }
-    if (!columnNames.includes('paper_notes')) {
-      db.exec(`ALTER TABLE ads_papers ADD COLUMN paper_notes TEXT`);
-    }
+      // Create indexes
+      await client.exec(`
+        CREATE INDEX IF NOT EXISTS idx_annotations_bibcode ON paper_annotations(bibcode);
+        CREATE INDEX IF NOT EXISTS idx_annotations_type ON paper_annotations(type);
+        CREATE INDEX IF NOT EXISTS idx_tag_links_bibcode ON paper_tag_links(bibcode);
+        CREATE INDEX IF NOT EXISTS idx_tag_links_tag ON paper_tag_links(tag_id);
+      `);
+    } else {
+      // SQLite initialization
+      const db = getSqlite();
 
-    // Create indexes
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_annotations_bibcode ON paper_annotations(bibcode);
-      CREATE INDEX IF NOT EXISTS idx_annotations_type ON paper_annotations(type);
-      CREATE INDEX IF NOT EXISTS idx_tag_links_bibcode ON paper_tag_links(bibcode);
-      CREATE INDEX IF NOT EXISTS idx_tag_links_tag ON paper_tag_links(tag_id);
-    `);
+      // Create paper_annotations table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS paper_annotations (
+          id TEXT PRIMARY KEY,
+          bibcode TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('note', 'highlight')),
+          content TEXT NOT NULL,
+          note TEXT,
+          start_offset INTEGER,
+          end_offset INTEGER,
+          section_id TEXT,
+          created_at INTEGER DEFAULT (strftime('%s', 'now')),
+          updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
+        );
+      `);
+
+      // Create paper_tags table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS paper_tags (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          color TEXT,
+          created_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+      `);
+
+      // Create paper_tag_links junction table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS paper_tag_links (
+          bibcode TEXT NOT NULL,
+          tag_id TEXT NOT NULL,
+          created_at INTEGER DEFAULT (strftime('%s', 'now')),
+          PRIMARY KEY (bibcode, tag_id),
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE,
+          FOREIGN KEY (tag_id) REFERENCES paper_tags(id) ON DELETE CASCADE
+        );
+      `);
+
+      // Add new columns to ads_papers if they don't exist
+      // SQLite doesn't support IF NOT EXISTS for columns, so we check and add
+      const tableInfo = db.prepare(`PRAGMA table_info(ads_papers)`).all() as Array<{ name: string }>;
+      const columnNames = tableInfo.map((col) => col.name);
+
+      if (!columnNames.includes('html_content')) {
+        db.exec(`ALTER TABLE ads_papers ADD COLUMN html_content TEXT`);
+      }
+      if (!columnNames.includes('html_fetched_at')) {
+        db.exec(`ALTER TABLE ads_papers ADD COLUMN html_fetched_at INTEGER`);
+      }
+      if (!columnNames.includes('html_sections')) {
+        db.exec(`ALTER TABLE ads_papers ADD COLUMN html_sections TEXT`);
+      }
+      if (!columnNames.includes('html_figures')) {
+        db.exec(`ALTER TABLE ads_papers ADD COLUMN html_figures TEXT`);
+      }
+      if (!columnNames.includes('paper_notes')) {
+        db.exec(`ALTER TABLE ads_papers ADD COLUMN paper_notes TEXT`);
+      }
+
+      // Create indexes
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_annotations_bibcode ON paper_annotations(bibcode);
+        CREATE INDEX IF NOT EXISTS idx_annotations_type ON paper_annotations(type);
+        CREATE INDEX IF NOT EXISTS idx_tag_links_bibcode ON paper_tag_links(bibcode);
+        CREATE INDEX IF NOT EXISTS idx_tag_links_tag ON paper_tag_links(tag_id);
+      `);
+    }
 
     logger.info('Annotation tables initialized');
   } catch (error) {

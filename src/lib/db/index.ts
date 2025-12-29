@@ -96,6 +96,19 @@ async function initializePostgresSchema() {
       // Column may already exist
     }
 
+    // Add missing columns to ads_papers if they don't exist (for migration)
+    try {
+      await client.exec(`
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_content TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_fetched_at INTEGER;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_sections TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_figures TEXT;
+        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS paper_notes TEXT;
+      `);
+    } catch {
+      // Columns may already exist
+    }
+
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
     logger.error("Failed to initialize PostgreSQL schema", error);

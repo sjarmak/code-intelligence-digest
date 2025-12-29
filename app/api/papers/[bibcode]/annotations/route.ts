@@ -14,10 +14,10 @@ export const dynamic = 'force-dynamic';
 
 // Initialize tables on first import
 let tablesInitialized = false;
-function ensureTablesInitialized() {
+async function ensureTablesInitialized() {
   if (!tablesInitialized) {
     try {
-      initializeAnnotationTables();
+      await initializeAnnotationTables();
       tablesInitialized = true;
     } catch (error) {
       logger.warn('Tables may already exist', { error });
@@ -35,7 +35,7 @@ export async function GET(
   { params }: { params: Promise<{ bibcode: string }> }
 ) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
     let bibcode: string;
@@ -76,7 +76,7 @@ export async function POST(
   { params }: { params: Promise<{ bibcode: string }> }
 ) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
     let bibcode: string;
@@ -154,7 +154,7 @@ export async function PATCH(
   { params }: { params: Promise<{ bibcode: string }> }
 ) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
     let bibcode: string;
@@ -207,7 +207,7 @@ export async function DELETE(
   { params }: { params: Promise<{ bibcode: string }> }
 ) {
   try {
-    ensureTablesInitialized();
+      await ensureTablesInitialized();
 
     const { bibcode: encodedBibcode } = await params;
     let bibcode: string;

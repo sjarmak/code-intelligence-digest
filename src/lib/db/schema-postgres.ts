@@ -205,6 +205,11 @@ CREATE TABLE IF NOT EXISTS ads_papers (
   ads_url TEXT,
   arxiv_url TEXT,
   fulltext_source TEXT,
+  html_content TEXT,
+  html_fetched_at INTEGER,
+  html_sections TEXT,
+  html_figures TEXT,
+  paper_notes TEXT,
   fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
