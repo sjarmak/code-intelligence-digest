@@ -87,7 +87,7 @@ async function initializePostgresSchema() {
     // Check if we're on local (no pgvector) by checking if DATABASE_URL is localhost
     const dbUrl = getDatabaseUrl();
     const isLocal = dbUrl?.includes('localhost') || dbUrl?.includes('127.0.0.1');
-    
+
     // For local development, replace vector types with TEXT
     let schemaToExecute = schema;
     if (isLocal) {
