@@ -435,12 +435,61 @@ export function PaperReaderModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose, onPrevious, onNext, hasPrevious, hasNext]);
 
+  // Extract sections from rendered HTML if not provided
+  const extractSectionsFromRenderedHtml = useCallback(() => {
+    if (!articleRef.current || (content?.sections && content.sections.length > 0)) {
+      return; // Already have sections or article not rendered
+    }
+
+    // Try to extract sections from the rendered HTML
+    const headings = articleRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    if (headings.length > 0 && (!content?.sections || content.sections.length === 0)) {
+      const extractedSections: Array<{ id: string; title: string; level: number }> = [];
+      headings.forEach((heading, index) => {
+        const level = parseInt(heading.tagName.substring(1), 10);
+        const title = heading.textContent?.trim() || '';
+        const id = heading.id || `section-${index}`;
+        
+        // Skip common non-section headings
+        if (title && 
+            !title.toLowerCase().includes('abstract') &&
+            !title.toLowerCase().includes('references') &&
+            !title.toLowerCase().includes('title') &&
+            title.length > 2) {
+          extractedSections.push({ id, title, level });
+        }
+      });
+
+      if (extractedSections.length > 0) {
+        // Update content with extracted sections
+        setContent(prev => prev ? {
+          ...prev,
+          sections: extractedSections,
+          tableOfContents: prev.tableOfContents && prev.tableOfContents.length > 0 
+            ? prev.tableOfContents 
+            : extractedSections,
+        } : null);
+      }
+    }
+  }, [content]);
+
   // Fetch data on mount
   useEffect(() => {
     fetchContent();
     fetchAnnotations();
     fetchTags();
   }, [fetchContent, fetchAnnotations, fetchTags]);
+
+  // Extract sections from rendered HTML after content loads
+  useEffect(() => {
+    if (content && articleRef.current) {
+      // Wait a bit for HTML to render
+      const timer = setTimeout(() => {
+        extractSectionsFromRenderedHtml();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [content, extractSectionsFromRenderedHtml]);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -743,8 +792,25 @@ export function PaperReaderModal({
                       {content.tableOfContents.map((section) => (
                         <button
                           key={section.id}
-                          onClick={() => scrollToSection(section.id)}
-                          className="block w-full text-left text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                          onClick={() => {
+                            scrollToSection(section.id);
+                          }}
+                          className="block w-full text-left text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors px-2 py-1 rounded"
+                          style={{ paddingLeft: `${(section.level - 1) * 12}px` }}
+                        >
+                          {section.title}
+                        </button>
+                      ))}
+                    </nav>
+                  ) : content?.sections && content.sections.length > 0 ? (
+                    <nav className="space-y-2">
+                      {content.sections.map((section) => (
+                        <button
+                          key={section.id}
+                          onClick={() => {
+                            scrollToSection(section.id);
+                          }}
+                          className="block w-full text-left text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors px-2 py-1 rounded"
                           style={{ paddingLeft: `${(section.level - 1) * 12}px` }}
                         >
                           {section.title}
@@ -752,7 +818,7 @@ export function PaperReaderModal({
                       ))}
                     </nav>
                   ) : (
-                    <p className="text-sm text-gray-500">No sections available</p>
+                    <p className="text-sm text-gray-500">No sections available. Sections will appear once the paper is processed.</p>
                   )}
                 </div>
               )}

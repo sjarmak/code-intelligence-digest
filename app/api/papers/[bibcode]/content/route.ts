@@ -85,7 +85,8 @@ export async function GET(
         // Use cached sections/figures if available, otherwise try to parse
         let sections = cached.sections || [];
         let figures = cached.figures || [];
-        let tableOfContents = cached.sections || [];
+        // Use sections as tableOfContents if available
+        let tableOfContents = cached.sections && cached.sections.length > 0 ? cached.sections : [];
 
         // If sections weren't cached, try to parse from HTML (fallback for old cache entries)
         if (sections.length === 0) {
@@ -353,6 +354,14 @@ export async function GET(
       });
     }
 
+    // Ensure tableOfContents is populated from sections if available
+    // Use tableOfContents from parsed content, or fall back to sections
+    const tableOfContents = content.tableOfContents && content.tableOfContents.length > 0
+      ? content.tableOfContents
+      : content.sections && content.sections.length > 0
+      ? content.sections
+      : [];
+
     return NextResponse.json({
       source: content.source,
       html: content.html,
@@ -361,7 +370,7 @@ export async function GET(
       abstract: content.abstract || paper.abstract,
       sections: content.sections,
       figures: content.figures,
-      tableOfContents: content.tableOfContents,
+      tableOfContents, // Use sections as fallback if tableOfContents is empty
       sectionSummaries, // Include section summaries
       bibcode,
       arxivId: extractArxivId(bibcode),
