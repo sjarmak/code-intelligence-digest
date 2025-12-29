@@ -395,22 +395,52 @@ export function PaperReaderModal({
     }
 
     // If we have character positions from section summary, try to scroll to that position
+    // Note: charStart/charEnd are relative to raw body text, but we're displaying HTML
+    // So we need to find the section by matching the section title in the HTML
     const sectionSummary = content?.sectionSummaries?.find(s => s.sectionId === sectionId);
-    if (sectionSummary && sectionSummary.charStart !== undefined && content?.html) {
-      // Find the element containing the character at charStart within the article
-      const textNodes = getTextNodes(articleElement);
-      let charCount = 0;
-      for (const node of textNodes) {
-        const nodeLength = node.textContent?.length || 0;
-        if (charCount + nodeLength >= sectionSummary.charStart) {
-          // Found the node, scroll to it
-          const element = node.parentElement;
-          if (element) {
+    if (sectionSummary && sectionSummary.sectionTitle) {
+      // Try to find the section by matching the title text in headings
+      // This is more reliable than character positions since HTML structure differs from raw text
+      const headings = articleElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      const normalizedTitle = sectionSummary.sectionTitle.trim().toLowerCase();
+      
+      // Try exact match first
+      for (const heading of Array.from(headings)) {
+        const headingText = heading.textContent?.trim() || '';
+        const normalizedHeading = headingText.toLowerCase();
+        
+        // More flexible matching
+        if (normalizedHeading === normalizedTitle ||
+            normalizedHeading.includes(normalizedTitle) ||
+            normalizedTitle.includes(normalizedHeading)) {
+          scrollToElement(heading);
+          return;
+        }
+        
+        // Also try matching after removing section numbers (e.g., "1. Introduction" -> "Introduction")
+        const headingWithoutNumber = normalizedHeading.replace(/^\d+[.:]\s*/, '').trim();
+        const titleWithoutNumber = normalizedTitle.replace(/^\d+[.:]\s*/, '').trim();
+        if (headingWithoutNumber === titleWithoutNumber && headingWithoutNumber.length > 0) {
+          scrollToElement(heading);
+          return;
+        }
+      }
+      
+      // If heading not found, try to find any element containing the section title text
+      // This handles cases where the title appears in the content but not as a heading
+      const allElements = articleElement.querySelectorAll('*');
+      for (const element of Array.from(allElements)) {
+        const elementText = element.textContent?.trim() || '';
+        if (elementText.toLowerCase().includes(normalizedTitle) && 
+            elementText.length < normalizedTitle.length * 2) { // Not too long (likely not the section content)
+          // Check if it's a heading or has a heading-like structure
+          if (element.tagName.match(/^H[1-6]$/) || 
+              element.classList.contains('section-title') ||
+              element.classList.contains('paper-section')) {
             scrollToElement(element);
             return;
           }
         }
-        charCount += nodeLength;
       }
     }
 

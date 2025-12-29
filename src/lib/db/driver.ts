@@ -148,10 +148,10 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     // Note: statement_timeout is a PostgreSQL server setting, not a pool setting
     // It should be set via SET statement_timeout = '60s' per connection if needed
   });
-  
+
   // Store pool reference for direct access
   postgresPool = pool;
-  
+
   // Set statement timeout per connection
   pool.on('connect', async (client) => {
     try {
@@ -160,7 +160,7 @@ async function createPostgresClient(): Promise<DatabaseClient> {
       logger.warn('Failed to set statement_timeout', { error: err instanceof Error ? err.message : String(err) });
     }
   });
-  
+
   // Handle connection errors
   pool.on('error', (err) => {
     logger.error('PostgreSQL pool error', { error: err.message });
@@ -218,11 +218,11 @@ export async function getFreshPostgresConnection(): Promise<import('pg').PoolCli
     // Ensure pool exists
     await getDbClient();
   }
-  
+
   if (!postgresPool) {
     throw new Error('PostgreSQL pool not initialized');
   }
-  
+
   return await postgresPool.connect();
 }
 

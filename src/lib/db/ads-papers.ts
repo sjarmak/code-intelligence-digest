@@ -293,14 +293,14 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
         // Retry logic for connection errors
         let retries = 3;
         let lastError: Error | null = null;
-        
+
         while (retries > 0) {
           let pgClient: import('pg').PoolClient | null = null;
           try {
             // Get a fresh connection from the pool for each batch
             const { getFreshPostgresConnection } = await import('./driver');
             pgClient = await getFreshPostgresConnection();
-            
+
             // Convert placeholders and execute
             const pgSql = `INSERT INTO ads_papers (
               bibcode, title, authors, pubdate, abstract, body,
@@ -318,7 +318,7 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
               arxiv_url = EXCLUDED.arxiv_url,
               fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
               updated_at = EXCLUDED.updated_at`;
-            
+
             await pgClient.query(pgSql, values);
             processed += batch.length;
             logger.debug(`Stored batch of ${batch.length} papers (${processed}/${sanitizedPapers.length} total)`);
@@ -326,14 +326,14 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
           } catch (batchError) {
             lastError = batchError instanceof Error ? batchError : new Error(String(batchError));
             retries--;
-            
+
             // Check if it's a connection error that might be recoverable
             const errorMsg = lastError.message.toLowerCase();
-            const isConnectionError = errorMsg.includes('connection') || 
+            const isConnectionError = errorMsg.includes('connection') ||
                                      errorMsg.includes('terminated') ||
                                      errorMsg.includes('timeout') ||
                                      errorMsg.includes('broken pipe');
-            
+
             if (isConnectionError && retries > 0) {
               logger.warn(`Connection error on batch, retrying (${retries} retries left)`, {
                 batchSize: batch.length,
