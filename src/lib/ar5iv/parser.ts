@@ -344,9 +344,11 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     const caption = captionMatch ? stripHtmlTags(captionMatch[1]).trim() : '';
 
     if (src) {
+      // Determine base URL based on source
+      const baseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
       figures.push({
         id: figureId,
-        src: normalizeImageSrc(src),
+        src: normalizeImageSrc(src, baseUrl),
         caption,
         alt,
       });
@@ -441,6 +443,17 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
   if (!isAbstractPage) {
     mainContent = sanitizeHtml(mainContent);
 
+    // Rewrite image src URLs to absolute paths (before other processing)
+    // This ensures images load from ar5iv.org/arxiv.org instead of our server
+    const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+    mainContent = mainContent.replace(
+      /<img([^>]*)\ssrc=["']([^"']+)["']([^>]*)>/gi,
+      (match, before, src, after) => {
+        const normalizedSrc = normalizeImageSrc(src, imageBaseUrl);
+        return `<img${before} src="${normalizedSrc}"${after}>`;
+      }
+    );
+
     // Remove navigation elements
     mainContent = mainContent.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
 
@@ -490,18 +503,21 @@ function stripHtmlTags(html: string): string {
 
 /**
  * Normalize image src URLs to absolute paths
+ * @param src - The image source URL (may be relative)
+ * @param baseUrl - Base URL for the paper source (default: 'https://ar5iv.org')
  */
-function normalizeImageSrc(src: string): string {
+function normalizeImageSrc(src: string, baseUrl: string = 'https://ar5iv.org'): string {
   if (src.startsWith('//')) {
     return `https:${src}`;
   }
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    return src; // Already absolute
+  }
   if (src.startsWith('/')) {
-    return `https://ar5iv.org${src}`;
+    return `${baseUrl}${src}`;
   }
-  if (!src.startsWith('http')) {
-    return `https://ar5iv.org/${src}`;
-  }
-  return src;
+  // Relative path without leading slash
+  return `${baseUrl}/${src}`;
 }
 
 /**
