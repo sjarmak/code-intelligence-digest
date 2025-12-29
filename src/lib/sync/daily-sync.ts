@@ -368,7 +368,8 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       // Check budget after each call with conservative threshold
       const currentBudget = await getGlobalApiBudget();
       const currentPercentUsed = Math.round((currentBudget.callsUsed / currentBudget.quotaLimit) * 100);
-      const PAUSE_THRESHOLD = Math.max(50, Math.floor(currentBudget.quotaLimit * 0.05));
+      // Use same threshold as initial check (10 calls) to allow syncs when quota is tight
+      const PAUSE_THRESHOLD = 10;
 
       if (currentBudget.remaining <= PAUSE_THRESHOLD) {
         logger.warn(`[DAILY-SYNC] Budget near limit after batch ${batchNumber} (${currentPercentUsed}% used, ${currentBudget.remaining} remaining). Pausing.`);
