@@ -18,6 +18,9 @@ const __dirname = dirname(__filename);
 // Load .env.local FIRST, before any imports that might need env vars
 dotenv.config({ path: join(__dirname, '..', '.env.local') });
 
+// Set flag to use local database for batch operations
+process.env.USE_LOCAL_DB = 'true';
+
 // Now import modules that might use env vars
 
 async function backfillPaperSections() {

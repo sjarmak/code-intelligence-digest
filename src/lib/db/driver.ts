@@ -31,10 +31,14 @@ let clientInstance: DatabaseClient | null = null;
 
 /**
  * Detect which database driver to use based on environment
+ * 
+ * For the app: Always uses DATABASE_URL (production)
+ * For batch scripts: Can use LOCAL_DATABASE_URL by setting USE_LOCAL_DB=true
  */
 export function detectDriver(): DatabaseDriver {
-  // Use LOCAL_DATABASE_URL if set (for batch operations), otherwise DATABASE_URL
-  const dbUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+  // Check if we should use local database (for batch operations)
+  const useLocal = process.env.USE_LOCAL_DB === 'true';
+  const dbUrl = useLocal ? process.env.LOCAL_DATABASE_URL : process.env.DATABASE_URL;
   
   // PostgreSQL connection string takes precedence
   if (dbUrl?.startsWith('postgres')) {
@@ -45,10 +49,12 @@ export function detectDriver(): DatabaseDriver {
 
 /**
  * Get the database connection string to use
- * Prefers LOCAL_DATABASE_URL for batch operations, falls back to DATABASE_URL
+ * For app: Uses DATABASE_URL
+ * For batch scripts: Uses LOCAL_DATABASE_URL if USE_LOCAL_DB=true
  */
 export function getDatabaseUrl(): string | undefined {
-  return process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+  const useLocal = process.env.USE_LOCAL_DB === 'true';
+  return useLocal ? process.env.LOCAL_DATABASE_URL : process.env.DATABASE_URL;
 }
 
 /**
