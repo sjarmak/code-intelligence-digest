@@ -314,8 +314,12 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
     logger.info('Papers batch stored in database', { count: papers.length });
 
     // Automatically process sections for papers with body text (async, non-blocking)
+    // processPaperSections will skip if sections already exist (unless forceRegenerate=true)
     const papersWithBody = papers.filter((p) => p.body && p.body.length >= 100);
     if (papersWithBody.length > 0) {
+      logger.info('Triggering section processing for papers with body text', {
+        count: papersWithBody.length,
+      });
       // Process in background
       processPapersSectionsAsync(papersWithBody.map((p) => p.bibcode)).catch((err) => {
         logger.warn('Background batch section processing failed', {

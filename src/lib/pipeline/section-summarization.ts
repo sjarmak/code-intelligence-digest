@@ -47,8 +47,8 @@ export function extractSectionsFromBody(
   let useMetadata = false;
   if (sectionMetadata && sectionMetadata.length > 0) {
     // Check if we have generic sections like "Abstract" and "Full Text" that need to be broken down
-    const hasGenericSections = sectionMetadata.some(m => 
-      m.title.toLowerCase().includes('full text') || 
+    const hasGenericSections = sectionMetadata.some(m =>
+      m.title.toLowerCase().includes('full text') ||
       (m.title.toLowerCase() === 'abstract' && sectionMetadata.length <= 2)
     );
 
@@ -128,13 +128,13 @@ export function extractSectionsFromBody(
       currentPos = sectionEnd;
     }
   }
-  
+
   // If we don't have sections yet (or had generic ones), try extraction from body
   if (sections.length === 0) {
     // Fallback: try to extract sections from body text by looking for section patterns
     // Look for numbered sections (1. Introduction, 2. Methodology, etc.)
     // Also look for semantic section headers (Introduction, Methodology, Results, etc.)
-    
+
     const sectionPatterns = [
       // Numbered sections: "1. Title", "1 Title", "Section 1: Title", etc.
       /^\s*(\d+)\.?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm,
@@ -146,7 +146,7 @@ export function extractSectionsFromBody(
 
     // First, try to find numbered sections
     const numberedMatches: Array<{ number: number; title: string; position: number }> = [];
-    
+
     // Pattern 1: "1. Title" or "1 Title"
     const numberedPattern1 = /^\s*(\d+)\.?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm;
     let match;
@@ -193,14 +193,14 @@ export function extractSectionsFromBody(
       for (let i = 0; i < uniqueMatches.length; i++) {
         const current = uniqueMatches[i];
         const next = uniqueMatches[i + 1];
-        
+
         const sectionStart = current.position;
         const sectionEnd = next ? next.position : body.length;
         const sectionText = body.substring(sectionStart, sectionEnd).trim();
-        
+
         // Remove the section header from the text
         const textWithoutHeader = sectionText.replace(/^\s*\d+\.?\s+[^\n]+\n?/m, '').trim();
-        
+
         if (textWithoutHeader.length > 100) {
           sections.push({
             sectionId: `section-${current.number}`,
@@ -227,14 +227,14 @@ export function extractSectionsFromBody(
       ];
 
       const foundSections: Array<{ title: string; level: number; position: number }> = [];
-      
+
       for (const semantic of semanticSections) {
         semantic.pattern.lastIndex = 0; // Reset regex
         while ((match = semantic.pattern.exec(body)) !== null) {
           // Check if this looks like a section header (not just text in a sentence)
           const before = body.substring(Math.max(0, match.index - 50), match.index);
           const after = body.substring(match.index + match[0].length, Math.min(body.length, match.index + match[0].length + 50));
-          
+
           // Section headers are usually on their own line, possibly with numbers or formatting
           if (before.match(/\n\s*$/) || before.match(/^\s*$/) || before.match(/\d+\.?\s*$/)) {
             foundSections.push({
@@ -262,11 +262,11 @@ export function extractSectionsFromBody(
         for (let i = 0; i < uniqueSemantic.length; i++) {
           const current = uniqueSemantic[i];
           const next = uniqueSemantic[i + 1];
-          
+
           const sectionStart = current.position;
           const sectionEnd = next ? next.position : body.length;
           const sectionText = body.substring(sectionStart, sectionEnd).trim();
-          
+
           if (sectionText.length > 100) {
             sections.push({
               sectionId: `section-${i}`,
