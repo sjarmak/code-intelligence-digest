@@ -18,8 +18,14 @@ async function testConnection() {
     process.exit(1);
   }
 
+  // Parse connection string manually to ensure correct format
+  const url = new URL(localUrl);
   const pool = new Pool({
-    connectionString: localUrl,
+    host: url.hostname,
+    port: parseInt(url.port || '5432', 10),
+    user: url.username,
+    password: url.password,
+    database: url.pathname.slice(1), // Remove leading /
     ssl: false,
   });
 
