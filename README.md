@@ -172,8 +172,30 @@ This project includes a `render.yaml` Blueprint for one-click deployment to [Ren
    - `ADMIN_API_TOKEN` (required in production)
    - `OPENAI_API_KEY` (optional, for LLM scoring)
 
-**Local Development:** Uses SQLite (`.data/digest.db`)
+**Local Development:** Uses PostgreSQL (via Docker Compose or local instance)
 **Production:** Uses PostgreSQL (auto-configured by Render)
+
+### Local PostgreSQL Setup
+
+For local development, we recommend using PostgreSQL to match production:
+
+1. **Start local PostgreSQL with Docker:**
+   ```bash
+   npm run db:start
+   ```
+
+2. **Configure `.env.local`:**
+   ```bash
+   DATABASE_URL=postgresql://code_intel_user:local_dev_password@localhost:5432/code_intel
+   ```
+
+3. **Sync data from production (optional):**
+   ```bash
+   # Set PRODUCTION_DATABASE_URL in .env.local first
+   npm run db:sync
+   ```
+
+The local PostgreSQL instance will be initialized automatically with the correct schema when you run the app.
 
 See [history/docs/RENDER_DEPLOYMENT.md](history/docs/RENDER_DEPLOYMENT.md) for full deployment guide.
 
