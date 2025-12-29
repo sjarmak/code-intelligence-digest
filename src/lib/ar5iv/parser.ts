@@ -446,11 +446,30 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     // Rewrite image src URLs to absolute paths (before other processing)
     // This ensures images load from ar5iv.org/arxiv.org instead of our server
     const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+    
+    // Handle img tags with various src formats (quoted, unquoted)
     mainContent = mainContent.replace(
-      /<img([^>]*)\ssrc=["']([^"']+)["']([^>]*)>/gi,
-      (match, before, src, after) => {
+      /<img([^>]*?)(?:\s+src\s*=\s*["']([^"']+)["']|src\s*=\s*([^\s>]+))([^>]*)>/gi,
+      (match, before, srcQuoted, srcUnquoted, after) => {
+        const src = srcQuoted || srcUnquoted;
+        if (!src) return match;
+        
         const normalizedSrc = normalizeImageSrc(src, imageBaseUrl);
-        return `<img${before} src="${normalizedSrc}"${after}>`;
+        // Preserve original quote style
+        const quote = srcQuoted ? (match.includes(`src="${srcQuoted}"`) ? '"' : "'") : '"';
+        return `<img${before} src=${quote}${normalizedSrc}${quote}${after}>`;
+      }
+    );
+    
+    // Also handle background-image URLs in style attributes
+    mainContent = mainContent.replace(
+      /style=["']([^"']*background[^"']*url\(["']?([^"')]+)["']?\)[^"']*)["']/gi,
+      (match, styleContent, url) => {
+        if (url && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('//')) {
+          const normalizedUrl = normalizeImageSrc(url, imageBaseUrl);
+          return `style="${styleContent.replace(url, normalizedUrl)}"`;
+        }
+        return match;
       }
     );
 
