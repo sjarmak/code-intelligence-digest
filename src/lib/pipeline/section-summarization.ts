@@ -43,10 +43,21 @@ export function extractSectionsFromBody(
     charEnd: number;
   }> = [];
 
-  // If we have section metadata from HTML parsing, use it to guide extraction
+  // If we have section metadata from HTML parsing, check if it's useful
+  let useMetadata = false;
   if (sectionMetadata && sectionMetadata.length > 0) {
-    // For now, create sections based on metadata
-    // In a full implementation, we'd extract actual text ranges from body
+    // Check if we have generic sections like "Abstract" and "Full Text" that need to be broken down
+    const hasGenericSections = sectionMetadata.some(m => 
+      m.title.toLowerCase().includes('full text') || 
+      (m.title.toLowerCase() === 'abstract' && sectionMetadata.length <= 2)
+    );
+
+    // Only use metadata if we have proper sections (not just "Abstract" and "Full Text")
+    useMetadata = !hasGenericSections || sectionMetadata.length > 3;
+  }
+
+  if (useMetadata && sectionMetadata) {
+    // Use the metadata to guide extraction
     let currentPos = 0;
     const bodyLength = body.length;
 
@@ -116,38 +127,199 @@ export function extractSectionsFromBody(
 
       currentPos = sectionEnd;
     }
-  } else {
-    // Fallback: split body into chunks by looking for common section patterns
-    // This is a simplified approach - in practice, you'd want more sophisticated parsing
-    const chunkSize = 5000; // ~5K chars per section
-    let pos = 0;
-    let sectionIndex = 0;
+  }
+  
+  // If we don't have sections yet (or had generic ones), try extraction from body
+  if (sections.length === 0) {
+    // Fallback: try to extract sections from body text by looking for section patterns
+    // Look for numbered sections (1. Introduction, 2. Methodology, etc.)
+    // Also look for semantic section headers (Introduction, Methodology, Results, etc.)
+    
+    const sectionPatterns = [
+      // Numbered sections: "1. Title", "1 Title", "Section 1: Title", etc.
+      /^\s*(\d+)\.?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm,
+      // Section headers: "Section 1: Title", "Section 1 Title"
+      /^\s*[Ss]ection\s+(\d+)[:.]?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm,
+      // Common academic section headers (case-insensitive)
+      /^\s*([A-Z][A-Za-z\s]{3,50}?)(?:\n|$)/gm, // Any capitalized line (potential header)
+    ];
 
-    while (pos < body.length) {
-      const chunkEnd = Math.min(pos + chunkSize, body.length);
-      const chunk = body.substring(pos, chunkEnd);
+    // First, try to find numbered sections
+    const numberedMatches: Array<{ number: number; title: string; position: number }> = [];
+    
+    // Pattern 1: "1. Title" or "1 Title"
+    const numberedPattern1 = /^\s*(\d+)\.?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm;
+    let match;
+    while ((match = numberedPattern1.exec(body)) !== null) {
+      const number = parseInt(match[1], 10);
+      const title = match[2].trim();
+      // Filter out false positives (dates, numbers that aren't section numbers)
+      if (number <= 20 && title.length > 3 && !title.match(/^\d{4}/)) {
+        numberedMatches.push({
+          number,
+          title,
+          position: match.index,
+        });
+      }
+    }
 
-      // Try to find a natural break point (sentence end, paragraph break)
-      let actualEnd = chunkEnd;
-      if (chunkEnd < body.length) {
-        // Look for sentence or paragraph break near the end
-        const breakMatch = chunk.match(/[.!?]\s+$/);
-        if (breakMatch) {
-          actualEnd = pos + breakMatch.index! + breakMatch[0].length;
+    // Pattern 2: "Section 1: Title"
+    const numberedPattern2 = /^\s*[Ss]ection\s+(\d+)[:.]?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm;
+    while ((match = numberedPattern2.exec(body)) !== null) {
+      const number = parseInt(match[1], 10);
+      const title = match[2].trim();
+      if (number <= 20 && title.length > 3) {
+        numberedMatches.push({
+          number,
+          title,
+          position: match.index,
+        });
+      }
+    }
+
+    // Sort by position and deduplicate
+    numberedMatches.sort((a, b) => a.position - b.position);
+    const uniqueMatches: typeof numberedMatches = [];
+    const seenNumbers = new Set<number>();
+    for (const m of numberedMatches) {
+      if (!seenNumbers.has(m.number)) {
+        seenNumbers.add(m.number);
+        uniqueMatches.push(m);
+      }
+    }
+
+    if (uniqueMatches.length >= 2) {
+      // We found numbered sections! Use them
+      for (let i = 0; i < uniqueMatches.length; i++) {
+        const current = uniqueMatches[i];
+        const next = uniqueMatches[i + 1];
+        
+        const sectionStart = current.position;
+        const sectionEnd = next ? next.position : body.length;
+        const sectionText = body.substring(sectionStart, sectionEnd).trim();
+        
+        // Remove the section header from the text
+        const textWithoutHeader = sectionText.replace(/^\s*\d+\.?\s+[^\n]+\n?/m, '').trim();
+        
+        if (textWithoutHeader.length > 100) {
+          sections.push({
+            sectionId: `section-${current.number}`,
+            sectionTitle: current.title,
+            level: 1,
+            fullText: textWithoutHeader,
+            charStart: sectionStart,
+            charEnd: sectionEnd,
+          });
+        }
+      }
+    } else {
+      // No numbered sections found, try semantic section detection
+      const semanticSections = [
+        { pattern: /^\s*(Abstract|Summary)\s*$/gmi, title: 'Abstract', level: 1 },
+        { pattern: /^\s*(Introduction|Background|Motivation)\s*$/gmi, title: 'Introduction', level: 1 },
+        { pattern: /^\s*(Related\s+Work|Literature\s+Review|Previous\s+Work|Background)\s*$/gmi, title: 'Related Work', level: 1 },
+        { pattern: /^\s*(Methodology|Methods|Approach|Method)\s*$/gmi, title: 'Methodology', level: 1 },
+        { pattern: /^\s*(Implementation|System\s+Design|Architecture)\s*$/gmi, title: 'Implementation', level: 1 },
+        { pattern: /^\s*(Results|Evaluation|Experiments|Experimental\s+Results)\s*$/gmi, title: 'Results', level: 1 },
+        { pattern: /^\s*(Discussion|Analysis)\s*$/gmi, title: 'Discussion', level: 1 },
+        { pattern: /^\s*(Conclusion|Conclusions|Summary|Future\s+Work)\s*$/gmi, title: 'Conclusion', level: 1 },
+        { pattern: /^\s*(References|Bibliography)\s*$/gmi, title: 'References', level: 1 },
+      ];
+
+      const foundSections: Array<{ title: string; level: number; position: number }> = [];
+      
+      for (const semantic of semanticSections) {
+        semantic.pattern.lastIndex = 0; // Reset regex
+        while ((match = semantic.pattern.exec(body)) !== null) {
+          // Check if this looks like a section header (not just text in a sentence)
+          const before = body.substring(Math.max(0, match.index - 50), match.index);
+          const after = body.substring(match.index + match[0].length, Math.min(body.length, match.index + match[0].length + 50));
+          
+          // Section headers are usually on their own line, possibly with numbers or formatting
+          if (before.match(/\n\s*$/) || before.match(/^\s*$/) || before.match(/\d+\.?\s*$/)) {
+            foundSections.push({
+              title: semantic.title,
+              level: semantic.level,
+              position: match.index,
+            });
+          }
         }
       }
 
-      sections.push({
-        sectionId: `chunk-${sectionIndex}`,
-        sectionTitle: `Section ${sectionIndex + 1}`,
-        level: 2,
-        fullText: body.substring(pos, actualEnd).trim(),
-        charStart: pos,
-        charEnd: actualEnd,
-      });
+      // Sort by position and deduplicate
+      foundSections.sort((a, b) => a.position - b.position);
+      const uniqueSemantic: typeof foundSections = [];
+      const seenTitles = new Set<string>();
+      for (const s of foundSections) {
+        if (!seenTitles.has(s.title) || uniqueSemantic.length === 0) {
+          seenTitles.add(s.title);
+          uniqueSemantic.push(s);
+        }
+      }
 
-      pos = actualEnd;
-      sectionIndex++;
+      if (uniqueSemantic.length >= 2) {
+        // Use semantic sections
+        for (let i = 0; i < uniqueSemantic.length; i++) {
+          const current = uniqueSemantic[i];
+          const next = uniqueSemantic[i + 1];
+          
+          const sectionStart = current.position;
+          const sectionEnd = next ? next.position : body.length;
+          const sectionText = body.substring(sectionStart, sectionEnd).trim();
+          
+          if (sectionText.length > 100) {
+            sections.push({
+              sectionId: `section-${i}`,
+              sectionTitle: current.title,
+              level: current.level,
+              fullText: sectionText,
+              charStart: sectionStart,
+              charEnd: sectionEnd,
+            });
+          }
+        }
+      } else {
+        // Last resort: split into reasonable chunks, but try to find natural breaks
+        const chunkSize = 5000; // ~5K chars per section
+        let pos = 0;
+        let sectionIndex = 0;
+
+        while (pos < body.length) {
+          const chunkEnd = Math.min(pos + chunkSize, body.length);
+          const chunk = body.substring(pos, chunkEnd);
+
+          // Try to find a natural break point (paragraph break, sentence end)
+          let actualEnd = chunkEnd;
+          if (chunkEnd < body.length) {
+            // Look for paragraph break first (double newline)
+            const paraBreak = chunk.lastIndexOf('\n\n');
+            if (paraBreak > chunk.length * 0.7) {
+              actualEnd = pos + paraBreak + 2;
+            } else {
+              // Look for sentence end near the end
+              const sentenceBreak = chunk.match(/[.!?]\s+[A-Z][^.!?]{50,}$/);
+              if (sentenceBreak && sentenceBreak.index && sentenceBreak.index > chunk.length * 0.7) {
+                actualEnd = pos + sentenceBreak.index + sentenceBreak[0].length;
+              }
+            }
+          }
+
+          const sectionText = body.substring(pos, actualEnd).trim();
+          if (sectionText.length > 100) {
+            sections.push({
+              sectionId: `chunk-${sectionIndex}`,
+              sectionTitle: sectionIndex === 0 ? 'Abstract' : sectionIndex === 1 ? 'Introduction' : `Section ${sectionIndex + 1}`,
+              level: sectionIndex === 0 ? 1 : 2,
+              fullText: sectionText,
+              charStart: pos,
+              charEnd: actualEnd,
+            });
+            sectionIndex++;
+          }
+
+          pos = actualEnd;
+        }
+      }
     }
   }
 
