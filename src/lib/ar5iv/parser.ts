@@ -331,13 +331,29 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     const figureHtml = figureMatch[2];
     const figureId = figureMatch[1] || `figure-${figureIndex}`;
 
-    // Extract image src
-    const imgMatch = figureHtml.match(/<img[^>]*src="([^"]*)"[^>]*>/i);
-    const src = imgMatch ? imgMatch[1] : '';
+    // Extract image src - handle both double quotes, single quotes, and unquoted
+    let src = '';
+    const srcMatchDouble = figureHtml.match(/<img[^>]*src\s*=\s*"([^"]*)"[^>]*>/i);
+    const srcMatchSingle = figureHtml.match(/<img[^>]*src\s*=\s*'([^']*)'[^>]*>/i);
+    const srcMatchUnquoted = figureHtml.match(/<img[^>]*src\s*=\s*([^\s>]+)[^>]*>/i);
+    
+    if (srcMatchDouble) {
+      src = srcMatchDouble[1];
+    } else if (srcMatchSingle) {
+      src = srcMatchSingle[1];
+    } else if (srcMatchUnquoted) {
+      src = srcMatchUnquoted[1];
+    }
 
-    // Extract alt text
-    const altMatch = figureHtml.match(/alt="([^"]*)"/i);
-    const alt = altMatch ? altMatch[1] : undefined;
+    // Extract alt text - handle both double and single quotes
+    let alt: string | undefined;
+    const altMatchDouble = figureHtml.match(/alt\s*=\s*"([^"]*)"/i);
+    const altMatchSingle = figureHtml.match(/alt\s*=\s*'([^']*)'/i);
+    if (altMatchDouble) {
+      alt = altMatchDouble[1];
+    } else if (altMatchSingle) {
+      alt = altMatchSingle[1];
+    }
 
     // Extract caption
     const captionMatch = figureHtml.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
