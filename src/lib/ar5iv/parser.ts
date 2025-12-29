@@ -771,10 +771,17 @@ export async function fetchPaperContent(
       const html = await fetchAr5ivHtml(arxivId);
       const parsed = parseAr5ivHtml(html);
 
-      // Verify we got meaningful content
-      // Allow papers with good HTML content even if sections aren't extracted
-      // (some papers may not have clear section structure)
-      if (parsed.html.length > 500) {
+      // Verify we got meaningful content (not just abstract page)
+      // If we got an abstract page, fall back to ADS body
+      if (parsed.source === 'abstract') {
+        logger.warn('ar5iv returned abstract page, falling back to ADS body', {
+          bibcode,
+          arxivId,
+          hasAdsBody: !!options.adsBody,
+        });
+        // Don't return - fall through to ADS body fallback
+      } else if (parsed.html.length > 500) {
+        // Good content - return it
         logger.info('ar5iv fetch successful', {
           bibcode,
           arxivId,
@@ -783,14 +790,14 @@ export async function fetchPaperContent(
           figuresCount: parsed.figures.length,
         });
         return parsed;
+      } else {
+        logger.warn('ar5iv returned minimal content, falling back', {
+          bibcode,
+          arxivId,
+          htmlLength: parsed.html.length,
+          sectionsCount: parsed.sections.length,
+        });
       }
-
-      logger.warn('ar5iv returned minimal content, falling back', {
-        bibcode,
-        arxivId,
-        htmlLength: parsed.html.length,
-        sectionsCount: parsed.sections.length,
-      });
     } catch (error) {
       logger.warn('ar5iv fetch failed, falling back', {
         bibcode,
