@@ -88,10 +88,31 @@ export async function GET(
         // Use sections as tableOfContents if available
         let tableOfContents = cached.sections && cached.sections.length > 0 ? cached.sections : [];
 
+        // Rewrite image URLs in cached HTML to absolute paths
+        // This fixes images that were cached before the URL rewrite fix
+        let htmlContent = cached.htmlContent;
+        const htmlLower = htmlContent.toLowerCase();
+        const isArxivHtml = htmlLower.includes('arxiv.org/html/') && !htmlLower.includes('arxiv.org/abs/');
+        const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+        
+        // Rewrite relative image URLs to absolute URLs
+        htmlContent = htmlContent.replace(
+          /<img([^>]*)\ssrc=["']([^"']+)["']([^>]*)>/gi,
+          (match, before, src, after) => {
+            // Only rewrite if it's a relative URL
+            if (!src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:')) {
+              const normalizedSrc = src.startsWith('/') 
+                ? `${imageBaseUrl}${src}`
+                : `${imageBaseUrl}/${src}`;
+              return `<img${before} src="${normalizedSrc}"${after}>`;
+            }
+            return match; // Already absolute or data URL
+          }
+        );
+
         // If sections weren't cached, try to parse from HTML (fallback for old cache entries)
         if (sections.length === 0) {
           try {
-            const htmlLower = cached.htmlContent.toLowerCase();
             if (htmlLower.includes('<!doctype') && htmlLower.includes('ar5iv.org')) {
               // Raw ar5iv HTML - parse it
               logger.info('Parsing raw ar5iv HTML from cache (sections not cached)', { bibcode });
@@ -153,7 +174,7 @@ export async function GET(
 
         return NextResponse.json({
           source: originalSource, // Return original source, not 'cached'
-          html: cached.htmlContent,
+          html: htmlContent, // Use rewritten HTML with absolute image URLs
           cachedAt: cached.htmlFetchedAt,
           title: paper?.title,
           authors: paper?.authors ? JSON.parse(paper.authors) : undefined,
