@@ -73,8 +73,38 @@ export async function GET(
 
     logger.info('Fetching paper content', { bibcode });
 
-    // Check for fresh cached HTML (skip if force refresh)
-    if (!forceRefresh && isCachedHtmlFresh(bibcode)) {
+    // Check if we have section summaries - if so, we may need to regenerate HTML
+    const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
+    const existingSummaries = await getSectionSummaries(bibcode);
+    const hasSectionSummaries = existingSummaries.length > 0;
+    
+    // If we have section summaries, check if cached HTML has matching sections
+    // If not, we should regenerate to ensure IDs match
+    let shouldRegenerateForSections = false;
+    if (hasSectionSummaries) {
+      const cached = getCachedHtmlContent(bibcode);
+      if (cached) {
+        // Check if cached HTML has sections that match our summaries
+        const cachedSectionIds = (cached.sections || []).map(s => s.id);
+        const summarySectionIds = existingSummaries.map(s => s.sectionId);
+        const idsMatch = cachedSectionIds.length === summarySectionIds.length &&
+          cachedSectionIds.every(id => summarySectionIds.includes(id));
+        
+        if (!idsMatch) {
+          logger.info('Cached HTML sections do not match section summaries, will regenerate', {
+            bibcode,
+            cachedCount: cachedSectionIds.length,
+            summaryCount: summarySectionIds.length,
+          });
+          shouldRegenerateForSections = true;
+        }
+      } else {
+        shouldRegenerateForSections = true;
+      }
+    }
+
+    // Check for fresh cached HTML (skip if force refresh or need to regenerate for sections)
+    if (!forceRefresh && !shouldRegenerateForSections && isCachedHtmlFresh(bibcode)) {
       const cached = getCachedHtmlContent(bibcode);
       if (cached) {
         logger.info('Returning cached HTML content', {
