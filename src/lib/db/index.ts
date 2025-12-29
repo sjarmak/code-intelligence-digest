@@ -9,7 +9,7 @@ import Database from "better-sqlite3";
 import * as path from "path";
 import * as fs from "fs";
 import { logger } from "../logger";
-import { detectDriver, getDbClient, DatabaseDriver } from "./driver";
+import { detectDriver, getDbClient, DatabaseDriver, getDatabaseUrl } from "./driver";
 import { getPostgresSchema } from "./schema-postgres";
 
 let sqlite: Database.Database | null = null;
