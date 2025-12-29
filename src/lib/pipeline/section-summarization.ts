@@ -15,9 +15,18 @@ import {
 import { logger } from '../logger';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Lazy initialization to avoid issues when env vars aren't loaded yet
+let openaiInstance: OpenAI | null = null;
+function getOpenAI(): OpenAI {
+  if (!openaiInstance) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY environment variable is not set');
+    }
+    openaiInstance = new OpenAI({ apiKey });
+  }
+  return openaiInstance;
+}
 
 /**
  * Extract sections from paper body text
@@ -348,7 +357,7 @@ Provide a concise summary (2-4 sentences) that captures:
 
 Summary:`;
 
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {

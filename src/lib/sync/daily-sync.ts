@@ -188,7 +188,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
   try {
     // Sync research from ADS instead of Inoreader
     const adsToken = process.env.ADS_API_TOKEN;
-    
+
     if (adsToken) {
       try {
         logger.info('[DAILY-SYNC] Syncing research papers from ADS...');
@@ -196,7 +196,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         researchItemsAdded = researchResult.itemsAdded;
         researchItemsScored = researchResult.itemsScored;
         logger.info(`[DAILY-SYNC] ADS research sync: ${researchItemsAdded} items added, ${researchItemsScored} scored`);
-        
+
         // Add research to categories processed
         if (researchItemsAdded > 0 && !categoriesProcessed.includes('research')) {
           categoriesProcessed.push('research');
@@ -261,24 +261,24 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
     // Determine sync time window
     let syncSinceTimestamp: number;
+    let otTimestamp: number;
     let reason: string;
 
     if (isCatchup && lookbackDays) {
       // Catch-up mode: fetch from N days ago (for manual catch-up scenarios)
       syncSinceTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
+      otTimestamp = syncSinceTimestamp; // Use same window for ot in catch-up mode
       reason = `last ${lookbackDays} days (catch-up mode)`;
     } else {
-      // Normal mode: always fetch last 4 hours (fixed window)
-      // Since we sync hourly, 4 hours provides overlap to catch items even if one sync fails
-      // This is more reliable than "newer than last sync" because:
-      // 1. Doesn't depend on sync history
-      // 2. Handles missed syncs gracefully
-      // 3. Database deduplication prevents duplicates
-      // 4. Server-side filtering (ot parameter) minimizes API calls
-      // 5. Smaller window = fewer items per sync = faster processing
-      const SYNC_WINDOW_HOURS = 4;
+      // Normal mode: fetch items that Inoreader received in the last 4 hours
+      // We use a larger ot window (7 days) to catch items published earlier but just crawled
+      // Then filter by createdAt (when Inoreader received it) client-side to get last 4 hours
+      // This ensures we catch items that were published days ago but just appeared in Inoreader
+      const SYNC_WINDOW_HOURS = 4; // Filter by createdAt: when Inoreader received the item
+      const OT_WINDOW_DAYS = 7; // ot parameter: fetch items published in last 7 days
       syncSinceTimestamp = Math.floor((Date.now() - SYNC_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
-      reason = `last ${SYNC_WINDOW_HOURS} hours (fixed window)`;
+      otTimestamp = Math.floor((Date.now() - OT_WINDOW_DAYS * 24 * 60 * 60 * 1000) / 1000);
+      reason = `last ${SYNC_WINDOW_HOURS} hours (createdAt filter), ot=${OT_WINDOW_DAYS}d window`;
     }
 
     const allItemsStreamId = `user/${userId}/state/com.google/all`;
@@ -300,13 +300,14 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       );
 
       // Fetch batch (items newer than last sync)
-      // Uses `ot` parameter (older than) to only return items newer than syncSinceTimestamp
-      // This significantly reduces API calls by filtering on server-side
+      // Use ot parameter with 7-day window to catch items published earlier but just crawled
+      // Then filter by createdAt (when Inoreader received it) client-side to get last 4 hours
+      // This ensures we catch items that were published days ago but just appeared in Inoreader
       // Note: Inoreader API caps at ~100 items per request, so n=100 is the effective limit
       const response = await client.getStreamContents(allItemsStreamId, {
         n: 100, // Inoreader API limit is ~100 items per request (n=1000 is capped)
         continuation,
-        ot: syncSinceTimestamp, // Only fetch items newer than this timestamp
+        ot: otTimestamp, // Fetch items published in last 7 days (will filter by createdAt client-side)
       });
 
       callsUsed++;
@@ -385,7 +386,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       const beforeResearchFilter = items.length;
       items = items.filter(item => item.category !== 'research');
       const afterResearchFilter = items.length;
-      
+
       if (beforeResearchFilter !== afterResearchFilter) {
         logger.debug(
           `[DAILY-SYNC] Batch ${batchNumber}: filtered out ${beforeResearchFilter - afterResearchFilter} research items (using ADS instead)`
@@ -393,9 +394,16 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       }
 
       // Filter to only items newer than sync threshold (client-side enforcement)
+      // Use createdAt (when Inoreader received/crawled the item) instead of publishedAt
+      // This ensures we include items that were published days ago but just crawled by Inoreader
       const syncThresholdDate = new Date(syncSinceTimestamp * 1000);
       const beforeFilter = items.length;
-      items = items.filter((item) => item.publishedAt.getTime() > syncThresholdDate.getTime());
+      items = items.filter((item) => {
+        // Use createdAt (when Inoreader received it) for filtering
+        // Fallback to publishedAt if createdAt is not available
+        const itemTime = item.createdAt?.getTime() ?? item.publishedAt.getTime();
+        return itemTime > syncThresholdDate.getTime();
+      });
       const afterFilter = items.length;
 
       if (beforeFilter !== afterFilter) {

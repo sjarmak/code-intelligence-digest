@@ -15,8 +15,10 @@ import { dirname, join } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Load .env.local
+// Load .env.local FIRST, before any imports that might need env vars
 dotenv.config({ path: join(__dirname, '..', '.env.local') });
+
+// Now import modules that might use env vars
 
 async function backfillPaperSections() {
   const driver = detectDriver();
@@ -24,12 +26,12 @@ async function backfillPaperSections() {
 
   // Get all papers
   let papers: Array<{ bibcode: string; body?: string }>;
-  
+
   if (driver === 'postgres') {
     const client = await getDbClient();
     const result = await client.query(`
-      SELECT bibcode, body 
-      FROM ads_papers 
+      SELECT bibcode, body
+      FROM ads_papers
       WHERE body IS NOT NULL AND LENGTH(body) >= 100
       ORDER BY created_at DESC
     `);
@@ -41,8 +43,8 @@ async function backfillPaperSections() {
     const { getSqlite } = await import('../src/lib/db/index');
     const db = getSqlite();
     const stmt = db.prepare(`
-      SELECT bibcode, body 
-      FROM ads_papers 
+      SELECT bibcode, body
+      FROM ads_papers
       WHERE body IS NOT NULL AND LENGTH(body) >= 100
       ORDER BY created_at DESC
     `);
@@ -63,21 +65,21 @@ async function backfillPaperSections() {
     try {
       // Check if sections already exist
       const existingSections = await getSectionSummaries(paper.bibcode);
-      
+
       // Check if we have generic sections that should be reprocessed
-      const hasGenericSections = existingSections.length > 0 && existingSections.some(s => 
-        s.sectionTitle.toLowerCase() === 'abstract' || 
+      const hasGenericSections = existingSections.length > 0 && existingSections.some(s =>
+        s.sectionTitle.toLowerCase() === 'abstract' ||
         s.sectionTitle.toLowerCase().includes('full text') ||
-        (existingSections.length <= 2 && existingSections.every(sec => 
-          sec.sectionTitle.toLowerCase() === 'abstract' || 
+        (existingSections.length <= 2 && existingSections.every(sec =>
+          sec.sectionTitle.toLowerCase() === 'abstract' ||
           sec.sectionTitle.toLowerCase().includes('full text') ||
           sec.sectionTitle.toLowerCase().startsWith('section ')
         ))
       );
-      
+
       if (existingSections.length > 0 && !hasGenericSections) {
-        logger.debug('Sections already exist and look good, skipping', { 
-          bibcode: paper.bibcode, 
+        logger.debug('Sections already exist and look good, skipping', {
+          bibcode: paper.bibcode,
           sectionCount: existingSections.length,
           sectionTitles: existingSections.map(s => s.sectionTitle).slice(0, 5),
         });
@@ -86,12 +88,12 @@ async function backfillPaperSections() {
       }
 
       if (hasGenericSections) {
-        logger.info('Reprocessing paper with generic sections', { 
+        logger.info('Reprocessing paper with generic sections', {
           bibcode: paper.bibcode,
           existingSections: existingSections.map(s => s.sectionTitle),
         });
       } else {
-        logger.info('Processing sections for new paper', { 
+        logger.info('Processing sections for new paper', {
           bibcode: paper.bibcode,
           bodyLength: paper.body?.length || 0,
         });
@@ -99,9 +101,9 @@ async function backfillPaperSections() {
 
       // Process sections (force regenerate to use new extraction logic)
       await processPaperSections(paper.bibcode, true);
-      
+
       processed++;
-      
+
       if (processed % 10 === 0) {
         logger.info('Progress', { processed, skipped, failed, total: papers.length });
       }
