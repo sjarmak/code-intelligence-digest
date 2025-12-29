@@ -408,7 +408,7 @@ export async function getAllTags(): Promise<PaperTag[]> {
       FROM paper_tags
       ORDER BY name ASC
     `);
-    return result.rows as PaperTag[];
+    return result.rows as unknown as PaperTag[];
   } else {
     const db = getSqlite();
     const stmt = db.prepare(`
@@ -434,7 +434,7 @@ export async function getTag(id: string): Promise<PaperTag | null> {
       FROM paper_tags
       WHERE id = $1
     `, [id]);
-    return (result.rows[0] as PaperTag) ?? null;
+    return (result.rows[0] as unknown as PaperTag) ?? null;
   } else {
     const db = getSqlite();
     const stmt = db.prepare(`
@@ -460,7 +460,7 @@ export async function getTagByName(name: string): Promise<PaperTag | null> {
       FROM paper_tags
       WHERE name = $1
     `, [name]);
-    return (result.rows[0] as PaperTag) ?? null;
+    return (result.rows[0] as unknown as PaperTag) ?? null;
   } else {
     const db = getSqlite();
     const stmt = db.prepare(`
@@ -641,7 +641,7 @@ export async function getPaperTags(bibcode: string): Promise<PaperTag[]> {
       WHERE ptl.bibcode = $1
       ORDER BY t.name ASC
     `, [bibcode]);
-    return result.rows as PaperTag[];
+    return result.rows as unknown as PaperTag[];
   } else {
     const db = getSqlite();
     const stmt = db.prepare(`
@@ -667,7 +667,7 @@ export async function getPapersWithTag(tagId: string): Promise<string[]> {
     const result = await client.query(`
       SELECT bibcode FROM paper_tag_links WHERE tag_id = $1
     `, [tagId]);
-    return result.rows.map((r: { bibcode: string }) => r.bibcode);
+    return result.rows.map((r) => (r as { bibcode: string }).bibcode);
   } else {
     const db = getSqlite();
     const stmt = db.prepare(`
@@ -787,7 +787,7 @@ export async function getFavoritePapers(): Promise<string[]> {
     const result = await client.query(`
       SELECT bibcode FROM ads_papers WHERE is_favorite = 1 ORDER BY favorited_at DESC
     `);
-    return result.rows.map((r: { bibcode: string }) => r.bibcode);
+    return result.rows.map((r) => (r as { bibcode: string }).bibcode);
   } else {
     const db = getSqlite();
     const stmt = db.prepare(`
