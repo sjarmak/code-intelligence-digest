@@ -57,6 +57,8 @@ async function syncProductionToLocal(options: SyncOptions): Promise<void> {
 
   const localPool = new Pool({
     connectionString: localUrl,
+    // Local PostgreSQL doesn't need SSL
+    ssl: false,
   });
 
   try {
