@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
                   );
 
                 if (papersToStore.length > 0) {
-                  storePapersBatch(papersToStore);
+                  await storePapersBatch(papersToStore);
                   linkPapersToLibraryBatch(libId, bibcodes);
                   logger.info(`Stored ${papersToStore.length} papers from library ${libId}`);
                 }

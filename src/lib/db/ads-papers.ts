@@ -4,6 +4,7 @@
  */
 
 import { getSqlite } from './index';
+import { detectDriver, getDbClient } from './driver';
 import { logger } from '../logger';
 
 export interface ADSPaperRecord {
@@ -94,45 +95,80 @@ export function initializeADSTables() {
 /**
  * Store or update a paper in the database
  */
-export function storePaper(paper: ADSPaperRecord): void {
-  const db = getSqlite();
+export async function storePaper(paper: ADSPaperRecord): Promise<void> {
+  const driver = detectDriver();
+  const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
 
   try {
-    // Extract year from pubdate if available
-    const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
-
-    const stmt = db.prepare(`
-      INSERT INTO ads_papers (
-        bibcode, title, authors, pubdate, abstract, body,
-        year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-      ON CONFLICT(bibcode) DO UPDATE SET
-        title = excluded.title,
-        authors = excluded.authors,
-        pubdate = excluded.pubdate,
-        abstract = excluded.abstract,
-        body = COALESCE(excluded.body, body),
-        year = COALESCE(excluded.year, year),
-        journal = excluded.journal,
-        ads_url = excluded.ads_url,
-        arxiv_url = excluded.arxiv_url,
-        fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
-        updated_at = strftime('%s', 'now')
-    `);
-
-    stmt.run(
-      paper.bibcode,
-      paper.title || null,
-      paper.authors || null,
-      paper.pubdate || null,
-      paper.abstract || null,
-      paper.body || null,
-      year || null,
-      paper.journal || null,
-      paper.adsUrl || null,
-      paper.arxivUrl || null,
-      paper.fulltextSource || null,
-    );
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const now = Math.floor(Date.now() / 1000);
+      await client.run(
+        `INSERT INTO ads_papers (
+          bibcode, title, authors, pubdate, abstract, body,
+          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT(bibcode) DO UPDATE SET
+          title = EXCLUDED.title,
+          authors = EXCLUDED.authors,
+          pubdate = EXCLUDED.pubdate,
+          abstract = EXCLUDED.abstract,
+          body = COALESCE(EXCLUDED.body, ads_papers.body),
+          year = COALESCE(EXCLUDED.year, ads_papers.year),
+          journal = EXCLUDED.journal,
+          ads_url = EXCLUDED.ads_url,
+          arxiv_url = EXCLUDED.arxiv_url,
+          fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
+          updated_at = $12`,
+        [
+          paper.bibcode,
+          paper.title || null,
+          paper.authors || null,
+          paper.pubdate || null,
+          paper.abstract || null,
+          paper.body || null,
+          year || null,
+          paper.journal || null,
+          paper.adsUrl || null,
+          paper.arxivUrl || null,
+          paper.fulltextSource || null,
+          now,
+        ]
+      );
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        INSERT INTO ads_papers (
+          bibcode, title, authors, pubdate, abstract, body,
+          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        ON CONFLICT(bibcode) DO UPDATE SET
+          title = excluded.title,
+          authors = excluded.authors,
+          pubdate = excluded.pubdate,
+          abstract = excluded.abstract,
+          body = COALESCE(excluded.body, body),
+          year = COALESCE(excluded.year, year),
+          journal = excluded.journal,
+          ads_url = excluded.ads_url,
+          arxiv_url = excluded.arxiv_url,
+          fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
+          updated_at = strftime('%s', 'now')
+      `);
+      stmt.run(
+        paper.bibcode,
+        paper.title || null,
+        paper.authors || null,
+        paper.pubdate || null,
+        paper.abstract || null,
+        paper.body || null,
+        year || null,
+        paper.journal || null,
+        paper.adsUrl || null,
+        paper.arxivUrl || null,
+        paper.fulltextSource || null,
+      );
+    }
 
     logger.info('Paper stored in database', { bibcode: paper.bibcode });
 
@@ -152,6 +188,7 @@ export function storePaper(paper: ADSPaperRecord): void {
       bibcode: paper.bibcode,
       error: error instanceof Error ? error.message : String(error),
     });
+    throw error;
   }
 }
 
@@ -174,34 +211,28 @@ async function processPaperSectionsAsync(bibcode: string): Promise<void> {
 /**
  * Store multiple papers in batch
  */
-export function storePapersBatch(papers: ADSPaperRecord[]): void {
-  const db = getSqlite();
+export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> {
+  if (papers.length === 0) {
+    return;
+  }
+
+  const driver = detectDriver();
+  const now = Math.floor(Date.now() / 1000);
 
   try {
-    const stmt = db.prepare(`
-      INSERT INTO ads_papers (
-        bibcode, title, authors, pubdate, abstract, body,
-        year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-      ON CONFLICT(bibcode) DO UPDATE SET
-        title = excluded.title,
-        authors = excluded.authors,
-        pubdate = excluded.pubdate,
-        abstract = excluded.abstract,
-        body = COALESCE(excluded.body, body),
-        year = COALESCE(excluded.year, year),
-        journal = excluded.journal,
-        ads_url = excluded.ads_url,
-        arxiv_url = excluded.arxiv_url,
-        fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
-        updated_at = strftime('%s', 'now')
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      // Use a single query with VALUES for batch insert
+      const values: unknown[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
 
-    const insertMany = db.transaction((prs: ADSPaperRecord[]) => {
-      for (const paper of prs) {
-        const year =
-          paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
-        stmt.run(
+      for (const paper of papers) {
+        const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
+        placeholders.push(
+          `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`
+        );
+        values.push(
           paper.bibcode,
           paper.title || null,
           paper.authors || null,
@@ -213,11 +244,73 @@ export function storePapersBatch(papers: ADSPaperRecord[]): void {
           paper.adsUrl || null,
           paper.arxivUrl || null,
           paper.fulltextSource || null,
+          now,
         );
       }
-    });
 
-    insertMany(papers);
+      await client.run(
+        `INSERT INTO ads_papers (
+          bibcode, title, authors, pubdate, abstract, body,
+          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+        ) VALUES ${placeholders.join(', ')}
+        ON CONFLICT(bibcode) DO UPDATE SET
+          title = EXCLUDED.title,
+          authors = EXCLUDED.authors,
+          pubdate = EXCLUDED.pubdate,
+          abstract = EXCLUDED.abstract,
+          body = COALESCE(EXCLUDED.body, ads_papers.body),
+          year = COALESCE(EXCLUDED.year, ads_papers.year),
+          journal = EXCLUDED.journal,
+          ads_url = EXCLUDED.ads_url,
+          arxiv_url = EXCLUDED.arxiv_url,
+          fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
+          updated_at = EXCLUDED.updated_at`,
+        values
+      );
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        INSERT INTO ads_papers (
+          bibcode, title, authors, pubdate, abstract, body,
+          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        ON CONFLICT(bibcode) DO UPDATE SET
+          title = excluded.title,
+          authors = excluded.authors,
+          pubdate = excluded.pubdate,
+          abstract = excluded.abstract,
+          body = COALESCE(excluded.body, body),
+          year = COALESCE(excluded.year, year),
+          journal = excluded.journal,
+          ads_url = excluded.ads_url,
+          arxiv_url = excluded.arxiv_url,
+          fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
+          updated_at = strftime('%s', 'now')
+      `);
+
+      const insertMany = db.transaction((prs: ADSPaperRecord[]) => {
+        for (const paper of prs) {
+          const year =
+            paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
+          stmt.run(
+            paper.bibcode,
+            paper.title || null,
+            paper.authors || null,
+            paper.pubdate || null,
+            paper.abstract || null,
+            paper.body || null,
+            year || null,
+            paper.journal || null,
+            paper.adsUrl || null,
+            paper.arxivUrl || null,
+            paper.fulltextSource || null,
+          );
+        }
+      });
+
+      insertMany(papers);
+    }
+
     logger.info('Papers batch stored in database', { count: papers.length });
 
     // Automatically process sections for papers with body text (async, non-blocking)
@@ -236,6 +329,7 @@ export function storePapersBatch(papers: ADSPaperRecord[]): void {
       count: papers.length,
       error: error instanceof Error ? error.message : String(error),
     });
+    throw error;
   }
 }
 

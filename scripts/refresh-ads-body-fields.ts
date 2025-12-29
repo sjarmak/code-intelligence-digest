@@ -84,7 +84,7 @@ async function refreshInvalidBodies() {
             fulltextSource: paperData.body ? 'ads_api' : undefined,
           };
 
-          storePaper(paper);
+          await storePaper(paper);
           console.log(`  ✅ ${bibcode}: ${oldBodyLength} → ${newBodyLength} chars`);
           refreshed++;
         } else {

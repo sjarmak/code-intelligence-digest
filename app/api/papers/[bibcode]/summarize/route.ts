@@ -77,7 +77,7 @@ export async function POST(
         fulltextSource: paperData.body ? 'ads_api' : undefined,
       };
 
-      storePaper(paper);
+      await storePaper(paper);
     }
 
     // Generate summary using GPT-4o
