@@ -347,18 +347,22 @@ export function PaperReaderModal({
     // Try multiple selectors to find the section within the article
     const selectors = [
       `#${sectionId}`, // Exact ID match
+      `section#${sectionId}`, // Section element with ID
       `[id="${sectionId}"]`, // Attribute selector
       `[id*="${sectionId}"]`, // Partial ID match
       `[data-section-id="${sectionId}"]`, // Data attribute
     ];
 
+    console.log('[scrollToSection] Trying ID selectors', { sectionId, selectors });
     for (const selector of selectors) {
       const element = articleElement.querySelector(selector);
       if (element) {
+        console.log('[scrollToSection] Found element by ID selector', { selector, tagName: element.tagName, id: element.id });
         scrollToElement(element);
         return;
       }
     }
+    console.log('[scrollToSection] No element found by ID selectors');
 
     // Find section by title from table of contents or section summaries
     let sectionTitle: string | undefined;
