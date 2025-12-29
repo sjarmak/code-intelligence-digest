@@ -57,11 +57,11 @@ export function extractSectionsFromBody(
       // Try to find section title in body text to get accurate boundaries
       let sectionStart = currentPos;
       let sectionEnd = bodyLength;
-      
+
       // Search for section title in body (case-insensitive, flexible matching)
       const titleLower = meta.title.toLowerCase();
       const titleSearch = body.toLowerCase().indexOf(titleLower, currentPos);
-      
+
       if (titleSearch >= currentPos) {
         sectionStart = titleSearch;
       } else {
@@ -75,7 +75,7 @@ export function extractSectionsFromBody(
           }
         }
       }
-      
+
       // Find end of section (start of next section or end of body)
       if (nextMeta) {
         const nextTitleLower = nextMeta.title.toLowerCase();

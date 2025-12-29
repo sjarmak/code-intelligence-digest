@@ -222,7 +222,7 @@ export async function GET(
             fulltextSource: paperData.body ? 'ads_api' : undefined,
           };
 
-          storePaper(paper);
+          await storePaper(paper);
           logger.info('Paper stored', {
             bibcode,
             hasBody: !!paperData.body,

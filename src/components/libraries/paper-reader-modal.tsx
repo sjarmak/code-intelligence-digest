@@ -359,7 +359,7 @@ export function PaperReaderModal({
 
     // Find section by title from table of contents or section summaries
     let sectionTitle: string | undefined;
-    
+
     // Try to find in table of contents first
     const tocSection = content?.tableOfContents?.find(s => s.id === sectionId);
     if (tocSection) {
@@ -376,11 +376,11 @@ export function PaperReaderModal({
     if (sectionTitle) {
       const headings = articleElement.querySelectorAll('h1, h2, h3, h4, h5, h6');
       const normalizedTitle = sectionTitle.trim().toLowerCase();
-      
+
       for (const heading of Array.from(headings)) {
         const headingText = heading.textContent?.trim() || '';
         const normalizedHeading = headingText.toLowerCase();
-        
+
         // More flexible matching - check if titles match or one contains the other
         if (normalizedHeading === normalizedTitle ||
             normalizedHeading.includes(normalizedTitle) ||
