@@ -131,7 +131,7 @@ export async function GET(
 
         // Determine the original source from the HTML content
         // Cached content could be from ar5iv, arxiv, ads, or abstract
-        const htmlLower = cached.htmlContent.toLowerCase();
+        // (htmlLower already declared above)
         let originalSource: 'ar5iv' | 'arxiv' | 'ads' | 'abstract' = 'abstract';
         if (htmlLower.includes('arxiv.org/html/') && !htmlLower.includes('arxiv.org/abs/')) {
           originalSource = 'arxiv';
