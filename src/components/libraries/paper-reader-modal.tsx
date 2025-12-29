@@ -296,13 +296,76 @@ export function PaperReaderModal({
     }
   };
 
-  // Scroll to section
-  const scrollToSection = (sectionId: string) => {
-    const element = contentRef.current?.querySelector(`#${sectionId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Helper to get all text nodes in order
+  const getTextNodes = useCallback((element: Node): Text[] => {
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(
+      element,
+      NodeFilter.SHOW_TEXT,
+      null
+    );
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) {
+        textNodes.push(node as Text);
+      }
     }
-  };
+    return textNodes;
+  }, []);
+
+  // Scroll to section
+  const scrollToSection = useCallback((sectionId: string) => {
+    if (!contentRef.current) return;
+
+    // Try multiple selectors to find the section
+    const selectors = [
+      `#${sectionId}`, // Exact ID match
+      `[id="${sectionId}"]`, // Attribute selector
+      `[id*="${sectionId}"]`, // Partial ID match
+      `[data-section-id="${sectionId}"]`, // Data attribute
+    ];
+
+    for (const selector of selectors) {
+      const element = contentRef.current.querySelector(selector);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+    }
+
+    // If no element found, try to find by section title in headings
+    const sectionSummary = content?.sectionSummaries?.find(s => s.sectionId === sectionId);
+    if (sectionSummary) {
+      // Try to find heading with matching text
+      const headings = contentRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      for (const heading of Array.from(headings)) {
+        if (heading.textContent?.trim().includes(sectionSummary.sectionTitle) || 
+            sectionSummary.sectionTitle.includes(heading.textContent?.trim() || '')) {
+          heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+      }
+
+      // If we have character positions, try to scroll to that position
+      if (sectionSummary.charStart !== undefined && content?.html) {
+        // Find the element containing the character at charStart
+        const textNodes = getTextNodes(contentRef.current);
+        let charCount = 0;
+        for (const node of textNodes) {
+          const nodeLength = node.textContent?.length || 0;
+          if (charCount + nodeLength >= sectionSummary.charStart) {
+            // Found the node, scroll to it
+            const element = node.parentElement;
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              return;
+            }
+          }
+          charCount += nodeLength;
+        }
+      }
+    }
+  }, [content, getTextNodes]);
 
   // Handle text selection for highlighting
   const handleTextSelection = () => {
@@ -580,10 +643,7 @@ export function PaperReaderModal({
                       style={{ marginLeft: `${(sectionSummary.level - 1) * 1.5}rem` }}
                       onClick={() => {
                         // Scroll to section in the paper content
-                        const sectionElement = contentRef.current?.querySelector(`#${sectionSummary.sectionId}`);
-                        if (sectionElement) {
-                          sectionElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
+                        scrollToSection(sectionSummary.sectionId);
                       }}
                     >
                       <h3 className="font-semibold text-blue-900 mb-2">
