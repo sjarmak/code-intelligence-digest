@@ -125,7 +125,10 @@ async function createPostgresClient(): Promise<DatabaseClient> {
   // Dynamic import pg
   const { Pool } = await import('pg');
 
-  const databaseUrl = process.env.DATABASE_URL || '';
+  const databaseUrl = getDatabaseUrl() || '';
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL or LOCAL_DATABASE_URL is required for PostgreSQL');
+  }
   // Enable SSL for Render databases (required) and production environments
   const needsSSL = process.env.NODE_ENV === 'production' || databaseUrl.includes('render.com');
 
