@@ -618,6 +618,8 @@ export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperConte
   if (extractedSections.length > 0 && extractedSections.length > 1) {
     // We have multiple sections - format them nicely
     for (const section of extractedSections) {
+      // Preserve the original sectionId (could be chunk-N, section-N, etc.)
+      // This ensures it matches the IDs used in section summaries
       const sectionId = section.sectionId || `section-${sections.length}`;
       const headingLevel = Math.min(section.level + 1, 6); // h2-h6
 
