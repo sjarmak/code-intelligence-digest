@@ -258,11 +258,9 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
 
   try {
     if (driver === 'postgres') {
-      const client = await getDbClient();
-      
       // Process in smaller batches to avoid connection timeouts and query size limits
       // PostgreSQL can handle large queries, but with body text fields, we need smaller batches
-      const BATCH_SIZE = 10;
+      const BATCH_SIZE = 5; // Reduced from 10 to handle very large body text fields
       let processed = 0;
       
       while (processed < sanitizedPapers.length) {
@@ -292,37 +290,67 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
           );
         }
 
-        try {
-          await client.run(
-            `INSERT INTO ads_papers (
-              bibcode, title, authors, pubdate, abstract, body,
-              year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-            ) VALUES ${placeholders.join(', ')}
-            ON CONFLICT(bibcode) DO UPDATE SET
-              title = EXCLUDED.title,
-              authors = EXCLUDED.authors,
-              pubdate = EXCLUDED.pubdate,
-              abstract = EXCLUDED.abstract,
-              body = COALESCE(EXCLUDED.body, ads_papers.body),
-              year = COALESCE(EXCLUDED.year, ads_papers.year),
-              journal = EXCLUDED.journal,
-              ads_url = EXCLUDED.ads_url,
-              arxiv_url = EXCLUDED.arxiv_url,
-              fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
-              updated_at = EXCLUDED.updated_at`,
-            values
-          );
-          processed += batch.length;
-          logger.debug(`Stored batch of ${batch.length} papers (${processed}/${sanitizedPapers.length} total)`);
-        } catch (batchError) {
-          logger.error('Failed to store batch', {
-            batchSize: batch.length,
-            processed,
-            total: sanitizedPapers.length,
-            error: batchError instanceof Error ? batchError.message : String(batchError),
-          });
-          // Re-throw to let caller handle
-          throw batchError;
+        // Retry logic for connection errors
+        let retries = 3;
+        let lastError: Error | null = null;
+        
+        while (retries > 0) {
+          try {
+            // Get a fresh client for each batch to avoid stale connections
+            const client = await getDbClient();
+            
+            await client.run(
+              `INSERT INTO ads_papers (
+                bibcode, title, authors, pubdate, abstract, body,
+                year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+              ) VALUES ${placeholders.join(', ')}
+              ON CONFLICT(bibcode) DO UPDATE SET
+                title = EXCLUDED.title,
+                authors = EXCLUDED.authors,
+                pubdate = EXCLUDED.pubdate,
+                abstract = EXCLUDED.abstract,
+                body = COALESCE(EXCLUDED.body, ads_papers.body),
+                year = COALESCE(EXCLUDED.year, ads_papers.year),
+                journal = EXCLUDED.journal,
+                ads_url = EXCLUDED.ads_url,
+                arxiv_url = EXCLUDED.arxiv_url,
+                fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
+                updated_at = EXCLUDED.updated_at`,
+              values
+            );
+            processed += batch.length;
+            logger.debug(`Stored batch of ${batch.length} papers (${processed}/${sanitizedPapers.length} total)`);
+            break; // Success, exit retry loop
+          } catch (batchError) {
+            lastError = batchError instanceof Error ? batchError : new Error(String(batchError));
+            retries--;
+            
+            // Check if it's a connection error that might be recoverable
+            const errorMsg = lastError.message.toLowerCase();
+            const isConnectionError = errorMsg.includes('connection') || 
+                                     errorMsg.includes('terminated') ||
+                                     errorMsg.includes('timeout');
+            
+            if (isConnectionError && retries > 0) {
+              logger.warn(`Connection error on batch, retrying (${retries} retries left)`, {
+                batchSize: batch.length,
+                processed,
+                error: lastError.message,
+              });
+              // Wait a bit before retrying
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+              // Not a connection error or out of retries
+              logger.error('Failed to store batch', {
+                batchSize: batch.length,
+                processed,
+                total: sanitizedPapers.length,
+                error: lastError.message,
+                retriesLeft: retries,
+              });
+              throw lastError;
+            }
+          }
         }
       }
     } else {
