@@ -68,7 +68,7 @@ async function loadSyncState(): Promise<SyncStateRow | null> {
       return null;
     }
 
-    const row = result.rows[0] as SyncStateRow;
+    const row = result.rows[0] as unknown as SyncStateRow;
     return row;
   } catch (error) {
     logger.error('[DAILY-SYNC] Failed to load sync state', error);
