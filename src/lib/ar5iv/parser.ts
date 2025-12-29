@@ -579,8 +579,8 @@ export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperConte
       // Format section content with proper heading
       const sectionHtml = section.fullText
         .split(/\n\n+/)
-        .filter(p => p.trim())
-        .map(p => {
+        .filter((p: string) => p.trim())
+        .map((p: string) => {
           // Check if paragraph looks like a heading (short, all caps, or ends with colon)
           const trimmed = p.trim();
           if (trimmed.length < 100 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
