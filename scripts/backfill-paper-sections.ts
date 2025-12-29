@@ -64,19 +64,38 @@ async function backfillPaperSections() {
       // Check if sections already exist
       const existingSections = await getSectionSummaries(paper.bibcode);
       
-      if (existingSections.length > 0) {
-        logger.debug('Sections already exist, skipping', { 
+      // Check if we have generic sections that should be reprocessed
+      const hasGenericSections = existingSections.length > 0 && existingSections.some(s => 
+        s.sectionTitle.toLowerCase() === 'abstract' || 
+        s.sectionTitle.toLowerCase().includes('full text') ||
+        (existingSections.length <= 2 && existingSections.every(sec => 
+          sec.sectionTitle.toLowerCase() === 'abstract' || 
+          sec.sectionTitle.toLowerCase().includes('full text') ||
+          sec.sectionTitle.toLowerCase().startsWith('section ')
+        ))
+      );
+      
+      if (existingSections.length > 0 && !hasGenericSections) {
+        logger.debug('Sections already exist and look good, skipping', { 
           bibcode: paper.bibcode, 
-          sectionCount: existingSections.length 
+          sectionCount: existingSections.length,
+          sectionTitles: existingSections.map(s => s.sectionTitle).slice(0, 5),
         });
         skipped++;
         continue;
       }
 
-      logger.info('Processing sections', { 
-        bibcode: paper.bibcode,
-        bodyLength: paper.body?.length || 0,
-      });
+      if (hasGenericSections) {
+        logger.info('Reprocessing paper with generic sections', { 
+          bibcode: paper.bibcode,
+          existingSections: existingSections.map(s => s.sectionTitle),
+        });
+      } else {
+        logger.info('Processing sections for new paper', { 
+          bibcode: paper.bibcode,
+          bodyLength: paper.body?.length || 0,
+        });
+      }
 
       // Process sections (force regenerate to use new extraction logic)
       await processPaperSections(paper.bibcode, true);
