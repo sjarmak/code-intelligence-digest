@@ -123,14 +123,6 @@ export async function GET(request: NextRequest) {
     } else {
       periodDays = PERIOD_DAYS[period];
 
-      // Special handling for newsletters: use most recent item's timestamp as reference
-      // Show items from the last 24 hours relative to the most recent item
-      // This ensures that if it's Sunday and the most recent item is from Friday,
-      // we'll show Friday's items (24 hours relative to Friday)
-      if (category === "newsletters" && period === "day") {
-        periodDays = 1; // Will be adjusted based on most recent item
-      }
-
       // For research and product_news, use created_at for day period to show recently received items
       // This ensures items show up even if they were published earlier but received recently
       if ((category === "research" || category === "product_news") && period === "day") {
@@ -161,57 +153,55 @@ export async function GET(request: NextRequest) {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
 
-      // Special handling for newsletters day period: use current time - 24 hours
-      // This ensures the daily view always shows items from the last 24 hours,
-      // not items from 24 hours before an old most recent item
+      // Calculate cutoff time and date column based on category and period
       let cutoffTime: number;
       let useCreatedAt: boolean;
       let dateColumn: string;
 
-      if (category === "newsletters" && period === "day") {
-        // Use current time - 24 hours for daily view
-        // This ensures users see items from the last 24 hours, not items from days ago
-        cutoffTime = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
-        useCreatedAt = true;
-        dateColumn = 'created_at';
-        logger.info(`[API] Newsletters day period: using current time - 24 hours, cutoff: ${new Date(cutoffTime * 1000).toISOString()}`);
-      } else {
-        // Standard logic for other categories/periods
-        cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-        // For research:
-        // - Daily/Weekly/Monthly: All show top-ranked results (no date filtering for backfilled papers)
-        //   New papers added after backfill will have recent created_at and show in daily/weekly
-        // - All-time: Filter by published_at (last 3 years)
-        if (category === 'research') {
-          if (period === 'all') {
-            // Research all-time: limit to last 3 years using published_at
-            const threeYearsAgo = Math.floor((Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000);
-            cutoffTime = threeYearsAgo;
-            useCreatedAt = false;
-            dateColumn = 'published_at';
-            logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
-          } else {
-            // Research daily/weekly/monthly: no date filtering, just show top ranked results
-            // This treats all backfilled papers as "current" and shows most relevant
-            // New papers added after backfill will have recent created_at and show in daily/weekly
-            useCreatedAt = false; // Not used since we're not filtering
-            dateColumn = 'created_at'; // For ordering, but no cutoff
-            logger.info(`[API] Research ${period} period: no date filtering, showing top ranked results`);
-          }
+      // Standard logic for all categories/periods
+      cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+
+      // For research:
+      // - Daily/Weekly/Monthly: All show top-ranked results (no date filtering for backfilled papers)
+      //   New papers added after backfill will have recent created_at and show in daily/weekly
+      // - All-time: Filter by published_at (last 3 years)
+      if (category === 'research') {
+        if (period === 'all') {
+          // Research all-time: limit to last 3 years using published_at
+          const threeYearsAgo = Math.floor((Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000);
+          cutoffTime = threeYearsAgo;
+          useCreatedAt = false;
+          dateColumn = 'published_at';
+          logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
         } else {
-          // For other categories: use created_at for day period, published_at for others
-          useCreatedAt = period === 'day';
-          dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+          // Research daily/weekly/monthly: no date filtering, just show top ranked results
+          // This treats all backfilled papers as "current" and shows most relevant
+          // New papers added after backfill will have recent created_at and show in daily/weekly
+          useCreatedAt = false; // Not used since we're not filtering
+          dateColumn = 'created_at'; // For ordering, but no cutoff
+          logger.info(`[API] Research ${period} period: no date filtering, showing top ranked results`);
+        }
+      } else {
+        // For newsletters and other categories: use created_at for day period, published_at for others
+        // This ensures items show up based on when they were received (created_at) for daily view
+        useCreatedAt = period === 'day';
+        dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+        if (category === "newsletters" && period === "day") {
+          logger.info(`[API] Newsletters day period: using ${periodDays} day window (${new Date(cutoffTime * 1000).toISOString()}), dateColumn=${dateColumn}`);
         }
       }
 
-      // For newsletters, only get decomposed articles (have -article- in ID)
+      // For newsletters, get both decomposed articles (have -article- in ID) and single-article newsletters (no -article-)
+      // Single-article newsletters don't get the -article- suffix during decomposition
       // For research day/week/month: no date filtering, just get top items by relevance (via ranking)
       let whereClause: string;
       let queryParams: any[];
 
       if (category === "newsletters") {
-        whereClause = `category = ? AND id LIKE '%-article-%' AND ${dateColumn} >= ?`;
+        // Include both decomposed articles (with -article- in ID) and single-article newsletters (without -article-)
+        // Single-article newsletters don't get the -article- suffix, so we need to include items that either
+        // have -article- in ID OR are from newsletter sources without -article- in ID
+        whereClause = `category = ? AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
       } else if (category === "research" && period !== "all") {
         // Research day/week/month: no date filter, just get all research items (limited for performance)

@@ -137,7 +137,11 @@ async function saveSyncState(data: {
 async function clearSyncState(): Promise<void> {
   try {
     const client = await getDbClient();
-    await client.run('DELETE FROM sync_state WHERE id = $1', [SYNC_ID]);
+    const driver = detectDriver();
+    const sql = driver === 'postgres'
+      ? 'DELETE FROM sync_state WHERE id = $1'
+      : 'DELETE FROM sync_state WHERE id = ?';
+    await client.run(sql, [SYNC_ID]);
     logger.info('[DAILY-SYNC] Cleared sync state (sync complete)');
   } catch (error) {
     logger.warn('[DAILY-SYNC] Could not clear sync state', error as Record<string, unknown>);
@@ -213,8 +217,10 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     const percentUsed = Math.round((budget.callsUsed / budget.quotaLimit) * 100);
     logger.info(`[DAILY-SYNC] Global API budget: ${budget.callsUsed}/${budget.quotaLimit} calls used (${percentUsed}%)`);
 
-    // Conservative pause thresholds: pause at 5% remaining (50 calls for 1000 quota)
-    const PAUSE_THRESHOLD = Math.max(50, Math.floor(budget.quotaLimit * 0.05));
+    // Pause threshold: only pause if we don't have enough quota for at least one sync
+    // A single sync typically needs 1-2 calls, so we pause only when we have less than 10 calls remaining
+    // This prevents wasting the last few calls while still allowing syncs when quota is tight
+    const PAUSE_THRESHOLD = 10;
     if (budget.remaining <= PAUSE_THRESHOLD) {
       logger.warn(`[DAILY-SYNC] Only ${budget.remaining} calls remaining (${Math.round((budget.remaining / budget.quotaLimit) * 100)}%). Pausing to protect daily limit.`);
       return {
@@ -241,20 +247,66 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     let userId: string | null = await getCachedUserId();
 
     if (!userId) {
-      logger.debug('[DAILY-SYNC] User ID not cached. Fetching from API...');
-      const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
-      userId = (userInfo?.userId || userInfo?.id) as string | null;
-
-      if (!userId) {
-        throw new Error('Could not determine user ID from Inoreader');
+      // Check budget BEFORE attempting to fetch user info
+      // This prevents wasting API calls if quota is exhausted
+      const budgetBeforeUserInfo = await getGlobalApiBudget();
+      if (budgetBeforeUserInfo.remaining <= 0) {
+        const errorMsg = `Cannot fetch user info: API quota exhausted (${budgetBeforeUserInfo.callsUsed}/${budgetBeforeUserInfo.quotaLimit} calls used). Please wait until quota resets.`;
+        logger.error(`[DAILY-SYNC] ${errorMsg}`);
+        await saveSyncState({
+          continuationToken: continuation,
+          itemsProcessed: totalItemsAdded,
+          callsUsed,
+          status: 'paused',
+          error: errorMsg,
+        });
+        return {
+          success: false,
+          itemsAdded: totalItemsAdded,
+          apiCallsUsed: callsUsed,
+          categoriesProcessed,
+          resumed,
+          paused: true,
+          error: errorMsg,
+        };
       }
 
-      // Cache it for future syncs
-      await setCachedUserId(userId);
-      logger.info('[DAILY-SYNC] Cached user ID for future syncs');
+      logger.debug('[DAILY-SYNC] User ID not cached. Fetching from API...');
+      try {
+        const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
+        userId = (userInfo?.userId || userInfo?.id) as string | null;
 
-      callsUsed++;
-      // Note: API call is automatically tracked by InoreaderClient
+        if (!userId) {
+          throw new Error('Could not determine user ID from Inoreader');
+        }
+
+        // Cache it for future syncs
+        await setCachedUserId(userId);
+        logger.info('[DAILY-SYNC] Cached user ID for future syncs');
+
+        callsUsed++;
+        // Note: API call is automatically tracked by InoreaderClient
+      } catch (error) {
+        // If getUserInfo fails (e.g., 429 error), don't waste more quota
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`[DAILY-SYNC] Failed to fetch user info: ${errorMsg}`);
+        await saveSyncState({
+          continuationToken: continuation,
+          itemsProcessed: totalItemsAdded,
+          callsUsed,
+          status: 'paused',
+          error: `Failed to fetch user info: ${errorMsg}`,
+        });
+        return {
+          success: false,
+          itemsAdded: totalItemsAdded,
+          apiCallsUsed: callsUsed,
+          categoriesProcessed,
+          resumed,
+          paused: true,
+          error: `Failed to fetch user info: ${errorMsg}`,
+        };
+      }
     } else {
       logger.debug('[DAILY-SYNC] Using cached user ID');
     }
