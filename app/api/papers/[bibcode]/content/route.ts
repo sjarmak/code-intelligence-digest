@@ -77,7 +77,7 @@ export async function GET(
     const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
     const existingSummaries = await getSectionSummaries(bibcode);
     const hasSectionSummaries = existingSummaries.length > 0;
-    
+
     // If we have section summaries, check if cached HTML has matching sections
     // If not, we should regenerate to ensure IDs match
     let shouldRegenerateForSections = false;
@@ -89,7 +89,7 @@ export async function GET(
         const summarySectionIds = existingSummaries.map(s => s.sectionId);
         const idsMatch = cachedSectionIds.length === summarySectionIds.length &&
           cachedSectionIds.every(id => summarySectionIds.includes(id));
-        
+
         if (!idsMatch) {
           logger.info('Cached HTML sections do not match section summaries, will regenerate', {
             bibcode,
@@ -362,15 +362,15 @@ export async function GET(
       // Check if we have section summaries - if so, we should regenerate HTML to match section IDs
       const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
       const existingSummaries = await getSectionSummaries(bibcode);
-      const shouldRegenerateHtml = existingSummaries.length > 0 && 
+      const shouldRegenerateHtml = existingSummaries.length > 0 &&
         (!isCachedHtmlFresh(bibcode) || // Cache is stale
         forceRefresh); // Force refresh requested
 
       // If we have section summaries but HTML is stale, regenerate it
       if (shouldRegenerateHtml && paper.body && paper.body.length > 100) {
-        logger.info('Regenerating HTML to match section summaries', { 
-          bibcode, 
-          summaryCount: existingSummaries.length 
+        logger.info('Regenerating HTML to match section summaries', {
+          bibcode,
+          summaryCount: existingSummaries.length
         });
         // Use adsBodyToHtml directly to ensure section IDs match
         const { adsBodyToHtml } = await import('@/src/lib/ar5iv');
@@ -393,7 +393,7 @@ export async function GET(
 
       // Prefer ADS body over abstract if available
       if (paper.body && paper.body.length > 100) {
-        logger.warn('Using ADS body after fetchPaperContent failed', { 
+        logger.warn('Using ADS body after fetchPaperContent failed', {
           bibcode,
           bodyLength: paper.body.length,
           hasAbstract: !!paper.abstract
@@ -401,7 +401,7 @@ export async function GET(
         const { adsBodyToHtml } = await import('@/src/lib/ar5iv');
         content = adsBodyToHtml(paper.body, paper.abstract);
       } else if (paper.abstract) {
-        logger.warn('Falling back to abstract-only content - no body available', { 
+        logger.warn('Falling back to abstract-only content - no body available', {
           bibcode,
           hasBody: !!paper.body,
           bodyLength: paper.body?.length || 0
