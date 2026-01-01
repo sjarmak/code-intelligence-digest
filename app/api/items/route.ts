@@ -126,9 +126,9 @@ export async function GET(request: NextRequest) {
       // For research and product_news, use created_at for day period to show recently received items
       // This ensures items show up even if they were published earlier but received recently
       if ((category === "research" || category === "product_news") && period === "day") {
-        // Use 3 days for day period to catch items that were synced recently
-        periodDays = 3;
-        logger.info(`[API] Using 3 day window for ${category} day period to show recently received items`);
+        // Use 1 day for day period (today only)
+        periodDays = 1;
+        logger.info(`[API] Using 1 day window for ${category} day period to show recently received items`);
       }
     }
 

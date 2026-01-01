@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Bookmark } from 'lucide-react';
 import ItemRelevanceBadge, { ItemRelevanceRating } from '@/src/components/tuning/item-relevance-badge';
 import { useAdminSettings } from '@/src/hooks/useAdminSettings';
 
@@ -72,18 +73,54 @@ function getCategoryColor(category: string): string {
 
 
 
+// Extract bibcode from arXiv URL or ADS URL
+function extractBibcodeFromUrl(url: string): string | null {
+  // Match ADS URLs: https://ui.adsabs.harvard.edu/abs/BIBCODE or https://adsabs.harvard.edu/abs/BIBCODE
+  const adsMatch = url.match(/adsabs\.harvard\.edu\/abs\/([^\/\?&#]+)/);
+  if (adsMatch) {
+    return decodeURIComponent(adsMatch[1]);
+  }
+
+  // Match arXiv URLs: https://arxiv.org/abs/YYMM.NNNNN or https://arxiv.org/pdf/YYMM.NNNNN.pdf
+  const arxivMatch = url.match(/arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/);
+  if (arxivMatch) {
+    const arxivId = arxivMatch[1];
+    // Convert arXiv ID to bibcode format: YYMM.NNNNN -> YYYYarXivYYMMNNNNNL
+    // Example: 2501.00123 -> 2025arXiv250100123A
+    const [yymm, nnnnn] = arxivId.split('.');
+    const yearSuffix = yymm.substring(0, 2);
+    const month = yymm.substring(2, 4);
+    // Determine full year: assume 2000s for now (20-99 -> 2020-2099)
+    const fullYear = 2000 + parseInt(yearSuffix);
+
+    // Format: YYYYarXivYYMMNNNNNL (L is a letter, we'll use 'A' as default)
+    // Pad nnnnn to 5 digits (left-pad with zeros)
+    const paddedNumber = nnnnn.padStart(5, '0');
+    return `${fullYear}arXiv${yearSuffix}${month}${paddedNumber}A`;
+  }
+
+  return null;
+}
+
 export default function ItemCard({ item, rank, period }: ItemCardProps) {
   const { settings, loading } = useAdminSettings();
   const [currentRating, setCurrentRating] = useState<ItemRelevanceRating>(null);
   const [isStarred, setIsStarred] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const bibcode = item.category === 'research' ? extractBibcodeFromUrl(item.url) : null;
 
-  // Load stored rating and starred status on mount
+  // Load stored rating, starred status, and favorite status on mount
   useEffect(() => {
     const loadMetadata = async () => {
       try {
-        const response = await fetch(`/api/admin/item-relevance?itemId=${encodeURIComponent(item.id)}`);
-        if (response.ok) {
-          const data = await response.json();
+        const [relevanceRes, favoriteRes] = await Promise.all([
+          fetch(`/api/admin/item-relevance?itemId=${encodeURIComponent(item.id)}`),
+          bibcode ? fetch(`/api/papers/${encodeURIComponent(bibcode)}/favorite`) : Promise.resolve(null),
+        ]);
+
+        if (relevanceRes?.ok) {
+          const data = await relevanceRes.json();
           if (data.rating !== undefined) {
             setCurrentRating(data.rating);
           }
@@ -91,13 +128,18 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
             setIsStarred(data.starred);
           }
         }
+
+        if (favoriteRes?.ok) {
+          const data = await favoriteRes.json();
+          setIsFavorite(data.isFavorite || false);
+        }
       } catch (error) {
         console.error('Error loading item metadata:', error);
       }
     };
 
     loadMetadata();
-  }, [item.id]);
+  }, [item.id, bibcode]);
 
   const handleRateItem = async (
     itemId: string,
@@ -121,6 +163,43 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
     } catch (error) {
       console.error('Error rating item:', error);
       throw error;
+    }
+  };
+
+  const handleToggleFavorite = async () => {
+    if (!bibcode) {
+      console.warn('Cannot favorite: no bibcode extracted from URL', item.url);
+      return;
+    }
+
+    setFavoriteLoading(true);
+    const wasFavorite = isFavorite;
+    try {
+      const method = isFavorite ? 'DELETE' : 'POST';
+      const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/favorite`, {
+        method,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('Failed to toggle favorite:', errorData);
+        return;
+      }
+
+      const data = await response.json();
+      setIsFavorite(data.isFavorite || false);
+
+      // Trigger section processing if favoriting (not unfavoriting)
+      if (!wasFavorite && data.isFavorite) {
+        // The favorite endpoint already triggers section processing, but we can also call it explicitly
+        fetch(`/api/papers/${encodeURIComponent(bibcode)}/process-sections`, {
+          method: 'POST',
+        }).catch(err => console.error('Failed to trigger section processing:', err));
+      }
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
+    } finally {
+      setFavoriteLoading(false);
     }
   };
 
@@ -182,6 +261,20 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
               {/* Date - use createdAt for day period or research day/week/month, otherwise use publishedAt */}
               <span>{formatDate(((period === 'day' || (item.category === 'research' && period !== 'all')) && item.createdAt) ? item.createdAt : item.publishedAt)}</span>
             </div>
+
+            {/* Favorite button for research papers - right aligned */}
+            {item.category === 'research' && bibcode && (
+              <button
+                onClick={handleToggleFavorite}
+                disabled={favoriteLoading}
+                className={`p-1.5 rounded transition-colors ${
+                  isFavorite ? 'text-yellow-600 bg-yellow-50' : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                } disabled:opacity-50`}
+                title={isFavorite ? 'Remove bookmark' : 'Bookmark paper'}
+              >
+                <Bookmark className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
+              </button>
+            )}
 
             {/* Rating button - right aligned */}
             {!loading && settings.enableItemRelevanceTuning && (

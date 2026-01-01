@@ -516,19 +516,47 @@ export async function getPaper(bibcode: string): Promise<ADSPaperRecord | null> 
 /**
  * Get papers in a library
  */
-export function getLibraryPapers(libraryId: string, limit = 100, offset = 0): ADSPaperRecord[] {
-  const db = getSqlite();
+export async function getLibraryPapers(libraryId: string, limit = 100, offset = 0): Promise<ADSPaperRecord[]> {
+  const driver = detectDriver();
 
   try {
-    const stmt = db.prepare(`
-      SELECT p.* FROM ads_papers p
-      JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
-      WHERE lp.library_id = ?
-      ORDER BY p.fetched_at DESC
-      LIMIT ? OFFSET ?
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT p.* FROM ads_papers p
+         JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+         WHERE lp.library_id = $1
+         ORDER BY p.fetched_at DESC
+         LIMIT $2 OFFSET $3`,
+        [libraryId, limit, offset]
+      );
 
-    return stmt.all(libraryId, limit, offset) as ADSPaperRecord[];
+      // Map PostgreSQL column names to camelCase
+      return result.rows.map((row: Record<string, unknown>) => ({
+        bibcode: row.bibcode as string,
+        title: (row.title as string | null) || undefined,
+        authors: (row.authors as string | null) || undefined,
+        pubdate: (row.pubdate as string | null) || undefined,
+        abstract: (row.abstract as string | null) || undefined,
+        body: (row.body as string | null) || undefined,
+        year: (row.year as number | null) || undefined,
+        journal: (row.journal as string | null) || undefined,
+        adsUrl: (row.ads_url as string | null) || undefined,
+        arxivUrl: (row.arxiv_url as string | null) || undefined,
+        fulltextSource: (row.fulltext_source as string | null) || undefined,
+      }));
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        SELECT p.* FROM ads_papers p
+        JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+        WHERE lp.library_id = ?
+        ORDER BY p.fetched_at DESC
+        LIMIT ? OFFSET ?
+      `);
+
+      return stmt.all(libraryId, limit, offset) as ADSPaperRecord[];
+    }
   } catch (error) {
     logger.error('Failed to get library papers', {
       libraryId,
@@ -564,23 +592,48 @@ export function linkPaperToLibrary(libraryId: string, bibcode: string): void {
 /**
  * Link multiple papers to a library in batch
  */
-export function linkPapersToLibraryBatch(libraryId: string, bibcodes: string[]): void {
-  const db = getSqlite();
+export async function linkPapersToLibraryBatch(libraryId: string, bibcodes: string[]): Promise<void> {
+  if (bibcodes.length === 0) {
+    return;
+  }
+
+  const driver = detectDriver();
 
   try {
-    const stmt = db.prepare(`
-      INSERT INTO ads_library_papers (library_id, bibcode)
-      VALUES (?, ?)
-      ON CONFLICT(library_id, bibcode) DO NOTHING
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      // Use a single query with VALUES for batch insert
+      const values: unknown[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
 
-    const linkMany = db.transaction((codes: string[]) => {
-      for (const bibcode of codes) {
-        stmt.run(libraryId, bibcode);
+      for (const bibcode of bibcodes) {
+        placeholders.push(`($${paramIndex++}, $${paramIndex++})`);
+        values.push(libraryId, bibcode);
       }
-    });
 
-    linkMany(bibcodes);
+      await client.run(
+        `INSERT INTO ads_library_papers (library_id, bibcode)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT(library_id, bibcode) DO NOTHING`,
+        values
+      );
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        INSERT INTO ads_library_papers (library_id, bibcode)
+        VALUES (?, ?)
+        ON CONFLICT(library_id, bibcode) DO NOTHING
+      `);
+
+      const linkMany = db.transaction((codes: string[]) => {
+        for (const bibcode of codes) {
+          stmt.run(libraryId, bibcode);
+        }
+      });
+
+      linkMany(bibcodes);
+    }
     logger.info('Papers linked to library', { libraryId, count: bibcodes.length });
   } catch (error) {
     logger.error('Failed to link papers to library', {

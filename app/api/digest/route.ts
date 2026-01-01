@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
 
     // Map period to days
     const periodDaysMap: Record<string, { days: number; label: string }> = {
-      day: { days: 2, label: "Daily" }, // Last 48 hours
+      day: { days: 1, label: "Daily" }, // Last 24 hours (today)
       week: { days: 7, label: "Weekly" },
       month: { days: 30, label: "Monthly" },
     };

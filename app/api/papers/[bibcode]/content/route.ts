@@ -181,19 +181,31 @@ export async function GET(
           }
         );
 
-        // If sections weren't cached, try to parse from HTML (fallback for old cache entries)
-        if (sections.length === 0) {
+        // If sections or figures weren't cached, try to parse from HTML (fallback for old cache entries)
+        if (sections.length === 0 || figures.length === 0) {
           try {
-            if (htmlLower.includes('<!doctype') && htmlLower.includes('ar5iv.org')) {
-              // Raw ar5iv HTML - parse it
-              logger.info('Parsing raw ar5iv HTML from cache (sections not cached)', { bibcode });
+            if (htmlLower.includes('<!doctype') && (htmlLower.includes('ar5iv.org') || htmlLower.includes('arxiv.org/html'))) {
+              // Raw ar5iv/arxiv HTML - parse it
+              logger.info('Parsing raw HTML from cache (sections/figures not cached)', {
+                bibcode,
+                hasSections: sections.length > 0,
+                hasFigures: figures.length > 0
+              });
               const parsed = parseAr5ivHtml(cached.htmlContent);
-              sections = parsed.sections;
-              figures = parsed.figures;
-              tableOfContents = parsed.tableOfContents;
+              if (sections.length === 0) {
+                sections = parsed.sections;
+                tableOfContents = parsed.tableOfContents;
+              }
+              if (figures.length === 0) {
+                figures = parsed.figures;
+              }
+              // Update cache with newly parsed figures/sections
+              if (figures.length > 0 || sections.length > 0) {
+                await cacheHtmlContent(bibcode, cached.htmlContent, sections, figures);
+              }
             }
           } catch (error) {
-            logger.warn('Failed to parse cached HTML for sections', {
+            logger.warn('Failed to parse cached HTML for sections/figures', {
               bibcode,
               error: error instanceof Error ? error.message : String(error),
             });
@@ -258,6 +270,20 @@ export async function GET(
           }
         }
 
+        // Extract tables from cached HTML if not already cached
+        let tables: Array<{ id: string; html: string; caption?: string }> = [];
+        if (htmlLower.includes('<!doctype') && (htmlLower.includes('ar5iv.org') || htmlLower.includes('arxiv.org/html/'))) {
+          try {
+            const parsed = parseAr5ivHtml(cached.htmlContent);
+            tables = parsed.tables || [];
+          } catch (error) {
+            logger.warn('Failed to parse tables from cached HTML', {
+              bibcode,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         return NextResponse.json({
           source: originalSource, // Return original source, not 'cached'
           html: htmlContent, // Use rewritten HTML with absolute image URLs
@@ -267,6 +293,7 @@ export async function GET(
           abstract: paper?.abstract,
           sections,
           figures,
+          tables,
           tableOfContents,
           sectionSummaries, // Include section summaries
           bibcode,
@@ -428,10 +455,11 @@ export async function GET(
       }
     }
 
-    // Cache the HTML content along with sections and figures
+    // Cache the HTML content along with sections, figures, and tables
     // Cache ar5iv, arxiv, and ads sources (but not abstract-only)
     if (content.html && (content.source === 'ar5iv' || content.source === 'arxiv' || content.source === 'ads')) {
       await cacheHtmlContent(bibcode, content.html, content.sections, content.figures);
+      // Note: tables are extracted from HTML on-demand, so we don't need to cache them separately
     }
 
     logger.info('Paper content fetched', {
@@ -518,6 +546,7 @@ export async function GET(
       abstract: content.abstract || paper.abstract,
       sections: content.sections,
       figures: content.figures,
+      tables: content.tables || [],
       tableOfContents, // Use sections as fallback if tableOfContents is empty
       sectionSummaries, // Include section summaries
       bibcode,

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Plus, BookOpen, FileText, Tag } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, BookOpen, FileText, Tag, Bookmark } from 'lucide-react';
 import { PaperReaderModal } from './paper-reader-modal';
 
 interface LibraryItemMetadata {
@@ -209,11 +209,97 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
     }
   };
 
+  // Fetch bookmarked papers
+  const fetchBookmarkedPapers = useCallback(async () => {
+    try {
+      const response = await fetch('/api/papers/favorites');
+      if (response.ok) {
+        const data = await response.json();
+        const bibcodes = data.bibcodes || [];
+
+        // Fetch paper details for each bibcode
+        const papers = await Promise.all(
+          bibcodes.map(async (bibcode: string) => {
+            try {
+              // First try to get paper metadata from the paper API endpoint
+              const paperResponse = await fetch(`/api/papers/${encodeURIComponent(bibcode)}`);
+              if (paperResponse.ok) {
+                const paperData = await paperResponse.json();
+                if (paperData.title) {
+                  return {
+                    bibcode,
+                    title: paperData.title,
+                    authors: paperData.authors,
+                    pubdate: paperData.pubdate,
+                    abstract: paperData.abstract,
+                    adsUrl: paperData.adsUrl,
+                    arxivUrl: paperData.arxivUrl,
+                  };
+                }
+              }
+
+              // Fallback: try content API (might have title from parsed HTML)
+              const contentResponse = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/content`);
+              if (contentResponse.ok) {
+                const contentData = await contentResponse.json();
+                if (contentData.title) {
+                  return {
+                    bibcode,
+                    title: contentData.title,
+                    authors: contentData.authors,
+                    pubdate: undefined,
+                    abstract: contentData.abstract,
+                    adsUrl: contentData.adsUrl,
+                    arxivUrl: contentData.arxivUrl,
+                  };
+                }
+              }
+            } catch (err) {
+              console.error(`Failed to fetch paper ${bibcode}:`, err);
+            }
+            return {
+              bibcode,
+              title: undefined,
+              adsUrl: `https://ui.adsabs.harvard.edu/abs/${bibcode}`,
+            };
+          })
+        );
+
+        return {
+          library: {
+            id: 'bookmarked',
+            name: 'Bookmarked',
+            numPapers: papers.length,
+            description: 'Your saved papers for reading later',
+          },
+          items: papers,
+          pagination: {
+            start: 0,
+            rows: papers.length,
+            total: papers.length,
+            hasMore: false,
+          },
+        };
+      }
+    } catch (err) {
+      console.error('Failed to fetch bookmarked papers:', err);
+    }
+    return null;
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
         await fetchAllLibraries();
+        // Also fetch bookmarked papers
+        const bookmarked = await fetchBookmarkedPapers();
+        if (bookmarked) {
+          setLibraryData(prev => ({
+            ...prev,
+            'Bookmarked': bookmarked,
+          }));
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
@@ -221,7 +307,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       }
     };
     init();
-  }, []);
+  }, [fetchBookmarkedPapers]);
 
   if (loading) {
     return (
@@ -242,8 +328,123 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
     );
   }
 
+  // Get bookmarked library if it exists
+  const bookmarkedLibrary = libraryData['Bookmarked'];
+  const hasBookmarked = bookmarkedLibrary && bookmarkedLibrary.items.length > 0;
+
   return (
     <div className="space-y-4">
+      {/* Bookmarked Library - Show first if it exists */}
+      {hasBookmarked && (
+        <div className="border border-yellow-300 rounded-lg overflow-hidden bg-yellow-50/30">
+          <div className="flex items-center justify-between p-4 hover:bg-yellow-50/50 transition-colors group">
+            <button
+              onClick={() => handleLibraryClick('Bookmarked')}
+              className="flex items-center gap-3 flex-1 text-left"
+            >
+              {expandedLibrary === 'Bookmarked' ? (
+                <ChevronDown className="w-5 h-5 text-black flex-shrink-0" />
+              ) : (
+                <ChevronRight className="w-5 h-5 text-black flex-shrink-0" />
+              )}
+              <BookOpen className="w-5 h-5 text-yellow-600 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-black">Bookmarked</h3>
+                <p className="text-sm text-muted mt-0.5">
+                  {bookmarkedLibrary.items.length} saved {bookmarkedLibrary.items.length === 1 ? 'paper' : 'papers'}
+                </p>
+              </div>
+            </button>
+            {onSelectLibraryForQA && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectLibraryForQA({
+                    id: 'bookmarked',
+                    name: 'Bookmarked',
+                    numPapers: bookmarkedLibrary.items.length,
+                  });
+                }}
+                className="px-3 py-1.5 text-sm bg-black text-white rounded hover:bg-gray-800 transition-colors"
+              >
+                Use for Q&A
+              </button>
+            )}
+          </div>
+
+          {expandedLibrary === 'Bookmarked' && (
+            <div className="border-t border-yellow-300 p-4 bg-white">
+              <div className="space-y-2">
+                {bookmarkedLibrary.items.map((item) => (
+                  <div
+                    key={item.bibcode}
+                    className="flex items-start justify-between p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-colors group"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <button
+                        onClick={() => openReader(item.bibcode, item.title)}
+                        className="text-left w-full"
+                      >
+                        <h4 className="font-medium text-black hover:text-gray-700 transition-colors line-clamp-2">
+                          {item.title || item.bibcode}
+                        </h4>
+                        {item.authors && item.authors.length > 0 && (
+                          <p className="text-sm text-muted mt-1">
+                            {item.authors.slice(0, 3).join(', ')}
+                            {item.authors.length > 3 && ' et al.'}
+                          </p>
+                        )}
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2 ml-4">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const response = await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/favorite`, {
+                              method: 'DELETE',
+                            });
+                            if (response.ok) {
+                              // Refresh bookmarked papers
+                              const updated = await fetchBookmarkedPapers();
+                              if (updated) {
+                                setLibraryData(prev => ({
+                                  ...prev,
+                                  'Bookmarked': updated,
+                                }));
+                                if (expandedLibrary === 'Bookmarked') {
+                                  setExpandedLibrary(null);
+                                  setTimeout(() => setExpandedLibrary('Bookmarked'), 100);
+                                }
+                              }
+                            }
+                          } catch (err) {
+                            console.error('Failed to remove bookmark:', err);
+                          }
+                        }}
+                        className="p-1.5 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-100 rounded transition-colors"
+                        title="Remove bookmark"
+                      >
+                        <Bookmark className="w-4 h-4 fill-current" />
+                      </button>
+                      {onAddPaperToQA && (
+                        <button
+                          onClick={() => onAddPaperToQA({ bibcode: item.bibcode, title: item.title })}
+                          className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors opacity-0 group-hover:opacity-100"
+                          title="Add to Q&A"
+                        >
+                          Add
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Libraries List */}
       <div className="space-y-2">
         {allLibraries.map((lib) => {
@@ -364,6 +565,42 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                   )}
                                   <div className="flex gap-2">
                                     <button
+                                      onClick={async () => {
+                                        try {
+                                          // Check if already favorited
+                                          const checkResponse = await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/favorite`);
+                                          const isFavorite = checkResponse.ok ? (await checkResponse.json()).isFavorite : false;
+
+                                          const response = await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/favorite`, {
+                                            method: isFavorite ? 'DELETE' : 'POST',
+                                          });
+                                          if (response.ok) {
+                                            // Trigger section processing if favoriting (not unfavoriting)
+                                            if (!isFavorite) {
+                                              // Process sections in background
+                                              fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/process-sections`, {
+                                                method: 'POST',
+                                              }).catch(err => console.error('Failed to trigger section processing:', err));
+                                            }
+                                            // Refresh bookmarked papers
+                                            const updated = await fetchBookmarkedPapers();
+                                            if (updated) {
+                                              setLibraryData(prev => ({
+                                                ...prev,
+                                                'Bookmarked': updated,
+                                              }));
+                                            }
+                                          }
+                                        } catch (err) {
+                                          console.error('Failed to toggle bookmark:', err);
+                                        }
+                                      }}
+                                      title="Bookmark paper"
+                                      className="p-1.5 text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 rounded transition-colors"
+                                    >
+                                      <Bookmark className="w-4 h-4" />
+                                    </button>
+                                    <button
                                       onClick={() => openReader(item.bibcode, item.title)}
                                       title="Open in reader"
                                       className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors whitespace-nowrap flex items-center gap-1"
@@ -371,14 +608,16 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                       <FileText className="w-3 h-3" />
                                       Read
                                     </button>
-                                    <button
-                                      onClick={() => onAddPaperToQA?.({ bibcode: item.bibcode, title: item.title })}
-                                      title="Add to Q&A context"
-                                      className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap"
-                                    >
-                                      <Plus className="w-3 h-3 inline mr-1" />
-                                      Add
-                                    </button>
+                                    {onAddPaperToQA && (
+                                      <button
+                                        onClick={() => onAddPaperToQA?.({ bibcode: item.bibcode, title: item.title })}
+                                        title="Add to Q&A context"
+                                        className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap"
+                                      >
+                                        <Plus className="w-3 h-3 inline mr-1" />
+                                        Add
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() => generateSummary(item.bibcode)}
                                       disabled={processingBibcode === item.bibcode}

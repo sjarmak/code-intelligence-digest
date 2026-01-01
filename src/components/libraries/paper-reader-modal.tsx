@@ -34,6 +34,12 @@ interface PaperFigure {
   alt?: string;
 }
 
+interface PaperTable {
+  id: string;
+  html: string;
+  caption?: string;
+}
+
 interface PaperAnnotation {
   id: string;
   bibcode: string;
@@ -71,6 +77,7 @@ interface PaperContent {
   abstract?: string;
   sections?: PaperSection[];
   figures?: PaperFigure[];
+  tables?: PaperTable[];
   tableOfContents?: PaperSection[];
   sectionSummaries?: PaperSectionSummary[];
   bibcode: string;
@@ -89,7 +96,7 @@ interface PaperReaderModalProps {
   hasNext?: boolean;
 }
 
-type SidebarPanel = 'toc' | 'annotations' | 'tags' | null;
+type SidebarPanel = 'toc' | 'annotations' | 'tags' | 'figures' | null;
 
 interface ProcessSectionsButtonProps {
   bibcode: string;
@@ -183,6 +190,10 @@ export function PaperReaderModal({
   const [newTagName, setNewTagName] = useState('');
   const [showTagInput, setShowTagInput] = useState(false);
 
+  // Favorite state
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
+
   // UI state
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>(null);
   const [fontSize, setFontSize] = useState(18);
@@ -253,6 +264,38 @@ export function PaperReaderModal({
       console.error('Failed to fetch tags:', err);
     }
   }, [bibcode]);
+
+  // Fetch favorite status
+  const fetchFavoriteStatus = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/favorite`);
+      if (response.ok) {
+        const data = await response.json();
+        setIsFavorite(data.isFavorite || false);
+      }
+    } catch (err) {
+      console.error('Failed to fetch favorite status:', err);
+    }
+  }, [bibcode]);
+
+  // Toggle favorite
+  const toggleFavorite = async () => {
+    setFavoriteLoading(true);
+    try {
+      const method = isFavorite ? 'DELETE' : 'POST';
+      const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/favorite`, {
+        method,
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setIsFavorite(data.isFavorite || false);
+      }
+    } catch (err) {
+      console.error('Failed to toggle favorite:', err);
+    } finally {
+      setFavoriteLoading(false);
+    }
+  };
 
   // Save paper notes
   const savePaperNotes = async () => {
@@ -580,13 +623,61 @@ export function PaperReaderModal({
     console.warn('[scrollToSection] Could not find section to scroll to', { sectionId, sectionTitle, sectionSummaryTitle: sectionSummary?.sectionTitle });
   }, [content, getTextNodes]);
 
-  // Handle text selection for highlighting
+  // Handle text selection - show highlight button on selection
+  const [selectedText, setSelectedText] = useState<string>('');
+  const [selectionRange, setSelectionRange] = useState<Range | null>(null);
+  const [showHighlightButton, setShowHighlightButton] = useState(false);
+  const [highlightButtonPosition, setHighlightButtonPosition] = useState({ x: 0, y: 0 });
+
   const handleTextSelection = () => {
     const selection = window.getSelection();
     if (selection && selection.toString().trim().length > 0) {
       const text = selection.toString().trim();
-      // For now, just add as a note. Could expand to show a popover
-      addAnnotation('highlight', text);
+      // Only show button if selection is meaningful (at least 10 chars)
+      if (text.length >= 10) {
+        setSelectedText(text);
+        setSelectionRange(selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null);
+
+        // Get position for button (above selection)
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const scrollContainer = mainRef.current;
+        if (scrollContainer) {
+          const containerRect = scrollContainer.getBoundingClientRect();
+          setHighlightButtonPosition({
+            x: rect.left - containerRect.left + rect.width / 2,
+            y: rect.top - containerRect.top - 10,
+          });
+        }
+        setShowHighlightButton(true);
+      } else {
+        setShowHighlightButton(false);
+      }
+    } else {
+      setShowHighlightButton(false);
+    }
+  };
+
+  const handleCreateHighlight = async () => {
+    if (selectedText) {
+      await addAnnotation('highlight', selectedText);
+      setShowHighlightButton(false);
+      setSelectedText('');
+      if (selectionRange) {
+        const selection = window.getSelection();
+        if (selection) {
+          selection.removeAllRanges();
+        }
+      }
+    }
+  };
+
+  const handleCancelHighlight = () => {
+    setShowHighlightButton(false);
+    setSelectedText('');
+    setSelectionRange(null);
+    const selection = window.getSelection();
+    if (selection) {
       selection.removeAllRanges();
     }
   };
@@ -604,12 +695,18 @@ export function PaperReaderModal({
         setFontSize((prev) => Math.min(prev + 2, 28));
       } else if (e.key === '-') {
         setFontSize((prev) => Math.max(prev - 2, 12));
+      } else if (e.key === 'h' || e.key === 'H') {
+        // Create highlight from current selection
+        if (showHighlightButton && selectedText) {
+          e.preventDefault();
+          handleCreateHighlight();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onPrevious, onNext, hasPrevious, hasNext]);
+  }, [onClose, onPrevious, onNext, hasPrevious, hasNext, showHighlightButton, selectedText]);
 
   // Extract sections from rendered HTML if not provided
   const extractSectionsFromRenderedHtml = useCallback(() => {
@@ -654,7 +751,8 @@ export function PaperReaderModal({
     fetchContent();
     fetchAnnotations();
     fetchTags();
-  }, [fetchContent, fetchAnnotations, fetchTags]);
+    fetchFavoriteStatus();
+  }, [fetchContent, fetchAnnotations, fetchTags, fetchFavoriteStatus]);
 
   // Extract sections from rendered HTML after content loads
   useEffect(() => {
@@ -784,6 +882,32 @@ export function PaperReaderModal({
                   </span>
                 )}
               </button>
+              <button
+                onClick={toggleFavorite}
+                disabled={favoriteLoading}
+                className={`p-2 rounded-lg transition-colors ${
+                  isFavorite ? 'text-yellow-600 bg-yellow-50' : 'hover:bg-gray-100'
+                } disabled:opacity-50`}
+                title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                <Bookmark className={`w-5 h-5 ${isFavorite ? 'fill-current' : ''}`} />
+              </button>
+              {(content?.figures && content.figures.length > 0) || (content?.tables && content.tables.length > 0) ? (
+                <button
+                  onClick={() => setSidebarPanel(sidebarPanel === 'figures' ? null : 'figures')}
+                  className={`p-2 rounded-lg transition-colors relative ${
+                    sidebarPanel === 'figures' ? 'bg-gray-200' : 'hover:bg-gray-100'
+                  }`}
+                  title="Figures & Tables"
+                >
+                  <ZoomIn className="w-5 h-5" />
+                  {(content?.figures?.length || 0) + (content?.tables?.length || 0) > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-xs w-4 h-4 rounded-full flex items-center justify-center">
+                      {(content?.figures?.length || 0) + (content?.tables?.length || 0)}
+                    </span>
+                  )}
+                </button>
+              ) : null}
             </div>
 
             {/* External links */}
@@ -831,9 +955,42 @@ export function PaperReaderModal({
         {/* Content */}
         <main
           ref={mainRef}
-          className="flex-1 overflow-y-auto"
+          className="flex-1 overflow-y-auto relative"
           onMouseUp={handleTextSelection}
+          onClick={(e) => {
+            // Close highlight button if clicking outside selection
+            if (showHighlightButton && !(e.target as HTMLElement).closest('.highlight-button-container')) {
+              handleCancelHighlight();
+            }
+          }}
         >
+          {/* Highlight button popover */}
+          {showHighlightButton && selectedText && (
+            <div
+              className="highlight-button-container fixed z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-2 flex items-center gap-2"
+              style={{
+                left: `${highlightButtonPosition.x}px`,
+                top: `${highlightButtonPosition.y}px`,
+                transform: 'translateX(-50%) translateY(-100%)',
+              }}
+            >
+              <button
+                onClick={handleCreateHighlight}
+                className="px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 transition-colors text-sm font-medium flex items-center gap-1"
+                title="Create highlight (or press H)"
+              >
+                <Bookmark className="w-4 h-4" />
+                Highlight
+              </button>
+              <button
+                onClick={handleCancelHighlight}
+                className="px-2 py-1.5 text-gray-600 hover:text-gray-800 transition-colors"
+                title="Cancel (Esc)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
@@ -1091,6 +1248,87 @@ export function PaperReaderModal({
                       Add Note
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* Figures & Tables */}
+              {sidebarPanel === 'figures' && (
+                <div>
+                  <h2 className="font-semibold mb-4">Figures & Tables</h2>
+
+                  {/* Figures */}
+                  {content?.figures && content.figures.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-sm font-medium text-gray-500 mb-2">Figures ({content.figures.length})</h3>
+                      <div className="space-y-4">
+                        {content.figures.map((figure) => (
+                          <div
+                            key={figure.id}
+                            className="bg-white rounded-lg border border-gray-200 p-3 hover:border-gray-300 transition-colors"
+                          >
+                            <img
+                              src={figure.src}
+                              alt={figure.alt || figure.caption || `Figure ${figure.id}`}
+                              className="w-full h-auto rounded mb-2"
+                              loading="lazy"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                const src = target.src;
+
+                                // Hide the broken image
+                                target.style.display = 'none';
+                                const parent = target.parentElement;
+
+                                // Show fallback with link
+                                if (parent && !parent.querySelector('.image-fallback')) {
+                                  const fallback = document.createElement('div');
+                                  fallback.className = 'image-fallback text-sm text-gray-500 p-4 text-center border border-gray-200 rounded bg-gray-50';
+                                  fallback.innerHTML = `
+                                    <p class="mb-2 text-gray-600">Image unavailable</p>
+                                    <a href="${src}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:underline text-xs inline-block">
+                                      Open image in new tab →
+                                    </a>
+                                  `;
+                                  parent.appendChild(fallback);
+                                }
+                              }}
+                            />
+                            {figure.caption && (
+                              <p className="text-xs text-gray-600 mt-2">{figure.caption}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tables */}
+                  {content?.tables && content.tables.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500 mb-2">Tables ({content.tables.length})</h3>
+                      <div className="space-y-4">
+                        {content.tables.map((table) => (
+                          <div
+                            key={table.id}
+                            className="bg-white rounded-lg border border-gray-200 p-3 hover:border-gray-300 transition-colors overflow-x-auto"
+                          >
+                            <div
+                              dangerouslySetInnerHTML={{ __html: table.html }}
+                              className="paper-content table-container"
+                            />
+                            {table.caption && (
+                              <p className="text-xs text-gray-600 mt-2 font-medium">{table.caption}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(!content?.figures || content.figures.length === 0) &&
+                   (!content?.tables || content.tables.length === 0) && (
+                    <p className="text-sm text-gray-500">No figures or tables available</p>
+                  )}
                 </div>
               )}
 

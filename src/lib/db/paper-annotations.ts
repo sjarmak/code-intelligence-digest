@@ -682,6 +682,7 @@ export async function getPapersWithTag(tagId: string): Promise<string[]> {
 
 /**
  * Mark a paper as favorite
+ * Creates the paper record if it doesn't exist
  */
 export async function markPaperAsFavorite(bibcode: string): Promise<boolean> {
   const { detectDriver, getDbClient } = await import('./driver');
@@ -691,19 +692,27 @@ export async function markPaperAsFavorite(bibcode: string): Promise<boolean> {
   try {
     if (driver === 'postgres') {
       const client = await getDbClient();
+      // Use INSERT ... ON CONFLICT to ensure paper exists, then update favorite status
       await client.run(`
-        UPDATE ads_papers
-        SET is_favorite = 1, favorited_at = $1, updated_at = $1
-        WHERE bibcode = $2
-      `, [now, bibcode]);
+        INSERT INTO ads_papers (bibcode, is_favorite, favorited_at, created_at, updated_at)
+        VALUES ($1, 1, $2, $2, $2)
+        ON CONFLICT(bibcode) DO UPDATE SET
+          is_favorite = 1,
+          favorited_at = $2,
+          updated_at = $2
+      `, [bibcode, now]);
     } else {
       const db = getSqlite();
-      const stmt = db.prepare(`
-        UPDATE ads_papers
-        SET is_favorite = 1, favorited_at = ?, updated_at = ?
-        WHERE bibcode = ?
-      `);
-      stmt.run(now, now, bibcode);
+      // Use INSERT OR REPLACE to create if doesn't exist, or update if exists
+      // This ensures the paper exists and is marked as favorite
+      db.prepare(`
+        INSERT INTO ads_papers (bibcode, is_favorite, favorited_at, created_at, updated_at)
+        VALUES (?, 1, ?, ?, ?)
+        ON CONFLICT(bibcode) DO UPDATE SET
+          is_favorite = 1,
+          favorited_at = ?,
+          updated_at = ?
+      `).run(bibcode, now, now, now, now, now);
     }
     logger.info('Paper marked as favorite', { bibcode });
     return true;

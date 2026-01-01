@@ -297,7 +297,7 @@ export function extractSectionsFromBody(
           const chunkEnd = Math.min(pos + chunkSize, body.length);
           const chunk = body.substring(pos, chunkEnd);
 
-          // Try to find a natural break point (paragraph break, sentence end)
+          // Try to find a natural break point (paragraph break, sentence end, word boundary)
           let actualEnd = chunkEnd;
           if (chunkEnd < body.length) {
             // Look for paragraph break first (double newline)
@@ -309,6 +309,12 @@ export function extractSectionsFromBody(
               const sentenceBreak = chunk.match(/[.!?]\s+[A-Z][^.!?]{50,}$/);
               if (sentenceBreak && sentenceBreak.index && sentenceBreak.index > chunk.length * 0.7) {
                 actualEnd = pos + sentenceBreak.index + sentenceBreak[0].length;
+              } else {
+                // Fallback: find word boundary (space) near the end
+                const lastSpace = chunk.lastIndexOf(' ');
+                if (lastSpace > chunk.length * 0.9) {
+                  actualEnd = pos + lastSpace + 1;
+                }
               }
             }
           }
@@ -538,9 +544,21 @@ export async function buildSectionContext(
 
     // Include full text for top sections if requested
     if (includeFullText && idx < 2 && section.fullText) {
-      const fullText = section.fullText.length > maxFullTextLength
-        ? section.fullText.substring(0, maxFullTextLength) + '\n[... truncated ...]'
-        : section.fullText;
+      let fullText = section.fullText;
+      if (fullText.length > maxFullTextLength) {
+        // Truncate at word boundary to avoid cutting words
+        const truncated = fullText.substring(0, maxFullTextLength);
+        const lastSpace = truncated.lastIndexOf(' ');
+        const lastNewline = truncated.lastIndexOf('\n');
+        const breakPoint = Math.max(lastSpace, lastNewline);
+        if (breakPoint > maxFullTextLength * 0.9) {
+          // Only use word boundary if it's reasonably close to the limit
+          fullText = truncated.substring(0, breakPoint) + '\n[... truncated ...]';
+        } else {
+          // Fallback: just truncate if no good break point
+          fullText = truncated + '\n[... truncated ...]';
+        }
+      }
       sectionContext += `\n\nFull Text:\n${fullText}`;
     }
 

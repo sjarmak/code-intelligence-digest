@@ -226,29 +226,55 @@ function parseGPTResponse(
       tags: string[];
     }>;
 
-    if (!Array.isArray(parsed) || parsed.length !== items.length) {
-      throw new Error(
-        `Expected ${items.length} results, got ${parsed.length}`
+    if (!Array.isArray(parsed)) {
+      throw new Error("Response is not a JSON array");
+    }
+
+    // Handle mismatched array lengths gracefully
+    // LLM might return fewer or more results than requested
+    const expectedCount = items.length;
+    const actualCount = parsed.length;
+
+    if (actualCount !== expectedCount) {
+      logger.warn(
+        `LLM returned ${actualCount} results for ${expectedCount} items. Using available results and assigning neutral scores to missing items.`
       );
     }
 
     // Map results back to item IDs
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const score = parsed[i];
 
-      results[item.id] = {
-        id: item.id,
-        relevance: Math.min(10, Math.max(0, score.relevance || 5)),
-        usefulness: Math.min(10, Math.max(0, score.usefulness || 5)),
-        tags: Array.isArray(score.tags) ? score.tags : [],
-      };
+      // Use result if available, otherwise use neutral scores
+      if (i < parsed.length) {
+        const score = parsed[i];
+        results[item.id] = {
+          id: item.id,
+          relevance: Math.min(10, Math.max(0, score.relevance || 5)),
+          usefulness: Math.min(10, Math.max(0, score.usefulness || 5)),
+          tags: Array.isArray(score.tags) ? score.tags : [],
+        };
+      } else {
+        // Missing result - assign neutral scores
+        logger.debug(`No LLM score for item ${i + 1}/${items.length}: "${item.title}". Using neutral scores.`);
+        results[item.id] = {
+          id: item.id,
+          relevance: 5,
+          usefulness: 5,
+          tags: [],
+        };
+      }
+    }
+
+    // If LLM returned extra results, log but ignore them
+    if (actualCount > expectedCount) {
+      logger.warn(`LLM returned ${actualCount - expectedCount} extra results (ignored)`);
     }
 
     return results;
   } catch (error) {
-    logger.error("Failed to parse GPT response", { error, response });
-    // Fallback: return neutral scores
+    logger.error("Failed to parse GPT response", { error, response: response.substring(0, 500) });
+    // Fallback: return neutral scores for all items
     return items.reduce(
       (acc, item) => {
         acc[item.id] = {
