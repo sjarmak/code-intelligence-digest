@@ -38,7 +38,7 @@ export async function GET(
             await storePaper({
               bibcode,
               title: paperMeta.title?.[0],
-              authors: paperMeta.author ? JSON.stringify(paperMeta.author) : undefined,
+              authors: paperMeta.authors ? JSON.stringify(paperMeta.authors) : undefined,
               pubdate: paperMeta.pubdate,
               abstract: paperMeta.abstract,
               body: paperMeta.body,
