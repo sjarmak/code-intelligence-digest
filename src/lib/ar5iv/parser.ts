@@ -22,6 +22,12 @@ export interface PaperFigure {
   alt?: string;
 }
 
+export interface PaperTable {
+  id: string;
+  html: string;
+  caption?: string;
+}
+
 export interface ParsedPaperContent {
   source: 'ar5iv' | 'arxiv' | 'ads' | 'abstract';
   html: string; // Cleaned HTML content
@@ -30,6 +36,7 @@ export interface ParsedPaperContent {
   abstract?: string;
   sections: PaperSection[];
   figures: PaperFigure[];
+  tables: PaperTable[];
   tableOfContents: PaperSection[];
   rawHtml?: string; // Original HTML for debugging
 }
@@ -187,6 +194,7 @@ function sanitizeHtml(html: string): string {
 export function parseAr5ivHtml(html: string): ParsedPaperContent {
   const sections: PaperSection[] = [];
   const figures: PaperFigure[] = [];
+  const tables: PaperTable[] = [];
   const tableOfContents: PaperSection[] = [];
 
   // Check if this is an abstract page (arxiv.org/abs/) rather than full HTML paper
@@ -322,11 +330,13 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     }
   }
 
-  // Extract figures
+  // Extract figures - try both <figure> tags and standalone images with captions
   const figureRegex = /<figure[^>]*(?:id="([^"]*)")?[^>]*>([\s\S]*?)<\/figure>/gi;
   let figureMatch;
   let figureIndex = 0;
+  const processedImageSrcs = new Set<string>(); // Track processed images to avoid duplicates
 
+  // First, extract figures from <figure> tags
   while ((figureMatch = figureRegex.exec(html)) !== null) {
     const figureHtml = figureMatch[2];
     const figureId = figureMatch[1] || `figure-${figureIndex}`;
@@ -362,14 +372,148 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     if (src) {
       // Determine base URL based on source
       const baseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+      const normalizedSrc = normalizeImageSrc(src, baseUrl);
+      processedImageSrcs.add(normalizedSrc);
       figures.push({
         id: figureId,
-        src: normalizeImageSrc(src, baseUrl),
+        src: normalizedSrc,
         caption,
         alt,
       });
       figureIndex++;
     }
+  }
+
+  // Also extract standalone images that might be figures (images with captions nearby)
+  // Look for images followed by captions or in figure-like contexts
+  // ar5iv often uses <div class="ltx_figure"> or similar structures
+  const figureDivRegex = /<div[^>]*class="[^"]*ltx_figure[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+  let figureDivMatch;
+  let divFigureIndex = 0;
+
+  while ((figureDivMatch = figureDivRegex.exec(html)) !== null) {
+    const figureDivHtml = figureDivMatch[1];
+
+    // Extract image from within the div
+    let src = '';
+    const srcMatchDouble = figureDivHtml.match(/<img[^>]*src\s*=\s*"([^"]*)"[^>]*>/i);
+    const srcMatchSingle = figureDivHtml.match(/<img[^>]*src\s*=\s*'([^']*)'[^>]*>/i);
+    const srcMatchUnquoted = figureDivHtml.match(/<img[^>]*src\s*=\s*([^\s>]+)[^>]*>/i);
+
+    if (srcMatchDouble) {
+      src = srcMatchDouble[1];
+    } else if (srcMatchSingle) {
+      src = srcMatchSingle[1];
+    } else if (srcMatchUnquoted) {
+      src = srcMatchUnquoted[1];
+    }
+
+    if (src && !processedImageSrcs.has(src)) {
+      // Extract caption from div (could be in <p class="ltx_caption"> or similar)
+      const captionMatch = figureDivHtml.match(/<p[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/p>/i) ||
+                          figureDivHtml.match(/<span[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/span>/i) ||
+                          figureDivHtml.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
+      const caption = captionMatch ? stripHtmlTags(captionMatch[1]).trim() : '';
+
+      // Extract alt text
+      const imgTagMatch = figureDivHtml.match(/<img[^>]*>/i);
+      const altMatch = imgTagMatch ? (imgTagMatch[0].match(/alt\s*=\s*"([^"]*)"/i) || imgTagMatch[0].match(/alt\s*=\s*'([^']*)'/i)) : null;
+      const alt = altMatch ? altMatch[1] : undefined;
+
+      const baseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+      const normalizedSrc = normalizeImageSrc(src, baseUrl);
+      processedImageSrcs.add(normalizedSrc);
+      figures.push({
+        id: `figure-div-${divFigureIndex}`,
+        src: normalizedSrc,
+        caption,
+        alt,
+      });
+      divFigureIndex++;
+    }
+  }
+
+  // Also extract standalone images that might be figures (images with captions nearby)
+  // Look for images followed by captions or in figure-like contexts
+  const standaloneImageRegex = /<img[^>]*src\s*=\s*"([^"]*)"[^>]*>/gi;
+  let imgMatch;
+  let standaloneIndex = 0;
+
+  while ((imgMatch = standaloneImageRegex.exec(html)) !== null) {
+    const src = imgMatch[1];
+    if (!src || processedImageSrcs.has(src)) {
+      continue; // Skip if already processed or empty
+    }
+
+    // Check if this image is likely a figure (has caption nearby or is in a figure-like context)
+    const imgStartPos = imgMatch.index;
+    const contextStart = Math.max(0, imgStartPos - 500); // Look 500 chars before
+    const contextEnd = Math.min(html.length, imgStartPos + 1000); // Look 1000 chars after
+    const context = html.substring(contextStart, contextEnd);
+
+    // Check for caption patterns near the image (including ltx_caption class)
+    const hasCaption = /(?:figure|caption|fig\.|figure\s+\d+|ltx_caption)/i.test(context);
+    const isInFigureContext = /<figure|class="[^"]*figure[^"]*"|class="[^"]*ltx_figure[^"]*"/i.test(context);
+
+    // Only extract if it looks like a figure and isn't a small icon/logo
+    if ((hasCaption || isInFigureContext) && !src.match(/(?:icon|logo|avatar|button|arrow|spacer)/i)) {
+      // Try to extract caption from nearby text (including ltx_caption)
+      const captionMatch = context.match(/(?:<figcaption[^>]*>([\s\S]*?)<\/figcaption>|<p[^>]*class="[^"]*caption[^"]*"[^>]*>([\s\S]*?)<\/p>|<p[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/p>|<span[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/span>)/i);
+      const caption = captionMatch ? stripHtmlTags(captionMatch[1] || captionMatch[2] || captionMatch[3] || captionMatch[4]).trim() : '';
+
+      // Extract alt text
+      const fullImgTag = imgMatch[0];
+      const altMatch = fullImgTag.match(/alt\s*=\s*"([^"]*)"/i) || fullImgTag.match(/alt\s*=\s*'([^']*)'/i);
+      const alt = altMatch ? altMatch[1] : undefined;
+
+      const baseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+      const normalizedSrc = normalizeImageSrc(src, baseUrl);
+      processedImageSrcs.add(normalizedSrc);
+      figures.push({
+        id: `figure-standalone-${standaloneIndex}`,
+        src: normalizedSrc,
+        caption,
+        alt,
+      });
+      standaloneIndex++;
+    }
+  }
+
+  // Extract tables
+  const tableRegex = /<table[^>]*(?:id="([^"]*)")?[^>]*>([\s\S]*?)<\/table>/gi;
+  let tableMatch;
+  let tableIndex = 0;
+
+  while ((tableMatch = tableRegex.exec(html)) !== null) {
+    const tableHtml = tableMatch[2];
+    const tableId = tableMatch[1] || `table-${tableIndex}`;
+
+    // Extract caption (could be in <caption> tag or nearby)
+    let caption: string | undefined;
+    const captionMatch = tableHtml.match(/<caption[^>]*>([\s\S]*?)<\/caption>/i);
+    if (captionMatch) {
+      caption = stripHtmlTags(captionMatch[1]).trim();
+    } else {
+      // Try to find caption in nearby elements (ar5iv sometimes puts captions outside table)
+      const afterTable = html.substring(tableMatch.index + tableMatch[0].length, tableMatch.index + tableMatch[0].length + 200);
+      const nearbyCaption = afterTable.match(/<caption[^>]*>([\s\S]*?)<\/caption>/i) ||
+                           afterTable.match(/<p[^>]*class="[^"]*caption[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
+      if (nearbyCaption) {
+        caption = stripHtmlTags(nearbyCaption[1]).trim();
+      }
+    }
+
+    // Clean up table HTML (remove scripts, keep structure)
+    let cleanTableHtml = tableHtml
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/on\w+\s*=\s*["'][^"']*["']/gi, '');
+
+    tables.push({
+      id: tableId,
+      html: `<table>${cleanTableHtml}</table>`,
+      caption,
+    });
+    tableIndex++;
   }
 
   // Extract main article content
@@ -537,6 +681,7 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     abstract,
     sections,
     figures,
+    tables,
     tableOfContents,
     rawHtml: html,
   };
@@ -693,6 +838,7 @@ export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperConte
     abstract,
     sections,
     figures: [],
+    tables: [],
     tableOfContents: sections,
   };
 }
@@ -727,6 +873,7 @@ export function abstractToHtml(abstract: string, title?: string): ParsedPaperCon
       level: 2,
     }],
     figures: [],
+    tables: [],
     tableOfContents: [{
       id: 'abstract',
       title: 'Abstract',

@@ -256,22 +256,24 @@ export function isNewsletterSource(sourceTitle: string): boolean {
  * Otherwise preserves the feed's category from Inoreader folder (ai_news, product_news, etc.)
  */
 function recategorizeDecomposedArticle(item: FeedItem): Category {
-  // If the item is already in a specific category (not "newsletters"), keep it
-  // This preserves the category from the Inoreader folder (ai_news, product_news, etc.)
-  if (item.category !== "newsletters") {
-    logger.debug(`Keeping original category "${item.category}" for article "${item.title}" (from Inoreader folder)`);
-    return item.category;
-  }
-
-  // CRITICAL: Keep items from newsletter sources in "newsletters" category
+  // CRITICAL: ALWAYS keep items from newsletter sources in "newsletters" category
+  // This check must come FIRST, before any other category logic
   // This ensures they show up in the newsletters view even if they're also relevant to other categories
-  // The user expects to see Elevate, Byte Byte Go, etc. items in newsletters
+  // The user expects to see Elevate, Byte Byte Go, TLDR, etc. items in newsletters
   if (isNewsletterSource(item.sourceTitle)) {
     logger.debug(`Keeping "newsletters" category for article "${item.title}" from newsletter source "${item.sourceTitle}"`);
     return "newsletters";
   }
 
-  // Only re-categorize if it's from a generic "newsletters" folder
+  // If the item is already in a specific category (not "newsletters"), keep it
+  // This preserves the category from the Inoreader folder (ai_news, product_news, etc.)
+  // BUT only if it's NOT from a newsletter source (checked above)
+  if (item.category !== "newsletters") {
+    logger.debug(`Keeping original category "${item.category}" for article "${item.title}" (from Inoreader folder)`);
+    return item.category;
+  }
+
+  // Only re-categorize if it's from a generic "newsletters" folder (not a known newsletter source)
   // Use content-based patterns to determine the correct category
   const url = item.url.toLowerCase();
   const title = (item.title || "").toLowerCase();

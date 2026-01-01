@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
 
         for (const libId of effectiveLibraryIds) {
           // First try to get papers from database
-          let libPapers = getLibraryPapers(libId, limit);
+          let libPapers = await getLibraryPapers(libId, limit);
 
           // If no papers in database, fetch from ADS API
           if (libPapers.length === 0 && token) {
@@ -151,12 +151,12 @@ export async function POST(request: NextRequest) {
 
                 if (papersToStore.length > 0) {
                   await storePapersBatch(papersToStore);
-                  linkPapersToLibraryBatch(libId, bibcodes);
+                  await linkPapersToLibraryBatch(libId, bibcodes);
                   logger.info(`Stored ${papersToStore.length} papers from library ${libId}`);
                 }
 
                 // Now get papers from database
-                libPapers = getLibraryPapers(libId, limit);
+                libPapers = await getLibraryPapers(libId, limit);
               }
             } catch (error) {
               logger.error(`Failed to fetch papers from ADS API for library ${libId}`, {

@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
       // Store papers in database
       if (papersToStore.length > 0) {
         await storePapersBatch(papersToStore);
-        linkPapersToLibraryBatch(library.id, bibcodes);
+        await linkPapersToLibraryBatch(library.id, bibcodes);
       }
 
       items = bibcodes.map((bibcode) => ({
