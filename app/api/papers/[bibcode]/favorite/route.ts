@@ -111,7 +111,7 @@ export async function POST(
             await storePaper({
               bibcode,
               title: paperMeta.title?.[0] || paper.title,
-              authors: paperMeta.author ? JSON.stringify(paperMeta.author) : paper.authors,
+              authors: paperMeta.authors ? JSON.stringify(paperMeta.authors) : paper.authors,
               pubdate: paperMeta.pubdate || paper.pubdate,
               abstract: paperMeta.abstract || paper.abstract,
               body: paperMeta.body || paper.body,
