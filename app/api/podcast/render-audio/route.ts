@@ -365,7 +365,7 @@ export async function POST(
         logger.info("Duplicate transcript hash detected (race condition), fetching existing record", {
           transcriptHash,
         });
-        
+
         // Fetch the existing record
         const existing = await getPodcastAudioByHash(transcriptHash);
         if (existing) {
@@ -373,7 +373,7 @@ export async function POST(
             id: existing.id,
             audioUrl: existing.audioUrl,
           });
-          
+
           // Return the existing record instead
           const response: RenderAudioEndpointResponse = {
             id: existing.id,
@@ -392,12 +392,12 @@ export async function POST(
               multiVoice: useMultiVoice,
             },
           };
-          
+
           await recordUsage(request, '/api/podcast/render-audio');
           return NextResponse.json(response);
         }
       }
-      
+
       // If it's not a duplicate key error, or we couldn't fetch existing, re-throw
       logger.error("Failed to save audio to database", {
         error: errorMessage,
