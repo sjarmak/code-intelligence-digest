@@ -23,6 +23,7 @@ export interface PodcastAudioRecord {
 
 /**
  * Save generated audio metadata to database
+ * Uses ON CONFLICT to handle race conditions gracefully
  */
 export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void> {
   const driver = detectDriver();
@@ -30,12 +31,22 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
 
   if (driver === 'postgres') {
     const client = await getDbClient();
-    await client.run(`
-      INSERT INTO generated_podcast_audio (
-        id, podcast_id, transcript_hash, provider, voice, format,
-        duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    `, [
+    // Use ON CONFLICT to handle duplicate transcript_hash (race condition)
+    // If conflict occurs, update the existing record with new audio URL/bytes
+    // This handles cases where the same transcript is rendered multiple times concurrently
+    try {
+      await client.run(`
+        INSERT INTO generated_podcast_audio (
+          id, podcast_id, transcript_hash, provider, voice, format,
+          duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (transcript_hash) DO UPDATE SET
+          audio_url = EXCLUDED.audio_url,
+          bytes = EXCLUDED.bytes,
+          duration = EXCLUDED.duration,
+          duration_seconds = EXCLUDED.duration_seconds,
+          generated_at = EXCLUDED.generated_at
+      `, [
       audio.id,
       audio.podcastId || null,
       audio.transcriptHash,
@@ -49,8 +60,20 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
       audio.bytes,
       generatedAt
     ]);
+    } catch (error) {
+      // Even with ON CONFLICT, if there's still an error, re-throw it
+      // This might happen if the constraint name is different or other DB issues
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("duplicate key") || errorMessage.includes("UNIQUE constraint")) {
+        // Re-throw with consistent error message for route handler
+        throw new Error(`duplicate key value violates unique constraint "generated_podcast_audio_transcript_hash_key"`);
+      }
+      throw error;
+    }
   } else {
     const sqlite = getSqlite();
+    // SQLite: Try to insert, will throw if transcript_hash already exists (unique constraint)
+    // The caller should catch this and fetch the existing record
     const stmt = sqlite.prepare(`
       INSERT INTO generated_podcast_audio (
         id, podcast_id, transcript_hash, provider, voice, format,
@@ -58,20 +81,30 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    stmt.run(
-      audio.id,
-      audio.podcastId || null,
-      audio.transcriptHash,
-      audio.provider,
-      audio.voice || null,
-      audio.format,
-      audio.duration || null,
-      audio.durationSeconds || null,
-      audio.audioUrl,
-      audio.segmentAudio ? JSON.stringify(audio.segmentAudio) : null,
-      audio.bytes,
-      generatedAt
-    );
+    try {
+      stmt.run(
+        audio.id,
+        audio.podcastId || null,
+        audio.transcriptHash,
+        audio.provider,
+        audio.voice || null,
+        audio.format,
+        audio.duration || null,
+        audio.durationSeconds || null,
+        audio.audioUrl,
+        audio.segmentAudio ? JSON.stringify(audio.segmentAudio) : null,
+        audio.bytes,
+        generatedAt
+      );
+    } catch (error) {
+      // SQLite throws error with message containing "UNIQUE constraint failed"
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("UNIQUE constraint") || errorMessage.includes("duplicate")) {
+        // Re-throw as a more specific error that the route handler can catch
+        throw new Error(`duplicate key value violates unique constraint "generated_podcast_audio_transcript_hash_key"`);
+      }
+      throw error;
+    }
   }
 }
 

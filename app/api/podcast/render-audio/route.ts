@@ -304,16 +304,16 @@ export async function POST(
     // Step 5: Store audio
     const storage = getLocalStorage();
     const audioKey = `podcasts/${uuid()}.${req.format}`;
-    
+
     logger.info("Storing audio file", {
       key: audioKey,
       bufferSize: audioBuffer.length,
       format: req.format,
     });
-    
+
     let audioUrl: string;
     let fileBytes: number;
-    
+
     try {
       const storageResult = await storage.putObject(
         audioKey,
@@ -322,11 +322,11 @@ export async function POST(
       );
       audioUrl = storageResult.url;
       fileBytes = storageResult.bytes;
-      
+
       if (!audioUrl) {
         throw new Error("Storage returned empty URL");
       }
-      
+
       logger.info("Audio stored successfully", {
         url: audioUrl,
         bytes: fileBytes,
@@ -346,17 +346,65 @@ export async function POST(
     const audioId = `aud-${uuid()}`;
     const duration = formatDuration(durationSeconds);
 
-    await savePodcastAudio({
-      id: audioId,
-      transcriptHash,
-      provider: req.provider,
-      voice: voiceKey,
-      format: req.format,
-      duration,
-      durationSeconds,
-      audioUrl,
-      bytes: fileBytes,
-    });
+    try {
+      await savePodcastAudio({
+        id: audioId,
+        transcriptHash,
+        provider: req.provider,
+        voice: voiceKey,
+        format: req.format,
+        duration,
+        durationSeconds,
+        audioUrl,
+        bytes: fileBytes,
+      });
+    } catch (error) {
+      // Handle duplicate key error (race condition - another request already saved this)
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("duplicate key") || errorMessage.includes("UNIQUE constraint")) {
+        logger.info("Duplicate transcript hash detected (race condition), fetching existing record", {
+          transcriptHash,
+        });
+        
+        // Fetch the existing record
+        const existing = await getPodcastAudioByHash(transcriptHash);
+        if (existing) {
+          logger.info("Using existing audio record", {
+            id: existing.id,
+            audioUrl: existing.audioUrl,
+          });
+          
+          // Return the existing record instead
+          const response: RenderAudioEndpointResponse = {
+            id: existing.id,
+            generatedAt: new Date((existing.createdAt || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+            provider: existing.provider as AudioProvider,
+            format: existing.format as AudioFormat,
+            voice: existing.voice || voiceKey,
+            duration: existing.duration || duration,
+            audioUrl: existing.audioUrl,
+            segmentAudio: existing.segmentAudio,
+            generationMetadata: {
+              providerLatency: `${providerLatency}s`,
+              bytes: existing.bytes,
+              transcriptHash,
+              cached: true, // Mark as cached since we used existing record
+              multiVoice: useMultiVoice,
+            },
+          };
+          
+          await recordUsage(request, '/api/podcast/render-audio');
+          return NextResponse.json(response);
+        }
+      }
+      
+      // If it's not a duplicate key error, or we couldn't fetch existing, re-throw
+      logger.error("Failed to save audio to database", {
+        error: errorMessage,
+        transcriptHash,
+      });
+      throw error;
+    }
 
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
 
