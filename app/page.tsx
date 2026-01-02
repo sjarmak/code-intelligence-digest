@@ -121,7 +121,7 @@ export default function Home() {
       <div className="h-[140px] sm:h-28" aria-hidden="true"></div>
 
       {/* Main Tabs */}
-      <div className="border-b border-surface-border bg-surface sticky top-[140px] sm:top-28 z-10">
+      <div className="border-b border-surface-border bg-surface sticky top-[140px] sm:top-28 z-30">
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 py-2 sm:py-0">
             {/* Navigation tabs row */}
