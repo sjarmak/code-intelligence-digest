@@ -139,6 +139,11 @@ export async function renderAudio(
       // Stitch audio chunks together
       const stitchedAudio = stitchAudioBuffers(audioBuffers);
 
+      // Validate stitched audio has content
+      if (!stitchedAudio || stitchedAudio.length === 0) {
+        throw new Error("Stitched audio buffer is empty");
+      }
+
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
       logger.info("Chunked audio render completed", {
         provider: ttsProvider.getName(),
@@ -281,6 +286,9 @@ async function renderSpeakerTurn(
         format,
         voice,
       });
+      if (!result.bytes || result.bytes.length === 0) {
+        throw new Error("Speaker turn chunk produced empty audio buffer");
+      }
       audioBuffers.push(result.bytes);
     }
 
@@ -293,6 +301,10 @@ async function renderSpeakerTurn(
     format,
     voice,
   });
+
+  if (!result.bytes || result.bytes.length === 0) {
+    throw new Error("Speaker turn produced empty audio buffer");
+  }
 
   return result.bytes;
 }
@@ -354,6 +366,9 @@ export async function renderMultiVoiceAudio(
       });
 
       const buffer = await renderSpeakerTurn(turn, provider, voice, format, ttsProvider);
+      if (!buffer || buffer.length === 0) {
+        throw new Error(`Turn ${i + 1}/${turns.length} produced empty audio buffer`);
+      }
       audioBuffers.push(buffer);
 
       // Estimate duration (150 wpm)
@@ -362,6 +377,11 @@ export async function renderMultiVoiceAudio(
     }
 
     const stitchedAudio = stitchAudioBuffers(audioBuffers);
+
+    // Validate stitched audio has content
+    if (!stitchedAudio || stitchedAudio.length === 0) {
+      throw new Error("Multi-voice stitched audio buffer is empty");
+    }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
     logger.info("Multi-voice render completed", {

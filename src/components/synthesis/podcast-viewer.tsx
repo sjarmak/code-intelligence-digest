@@ -241,6 +241,15 @@ export function PodcastViewer({
       }
 
       const data = await response.json();
+      
+      // Debug logging
+      console.log("Audio render response:", data);
+      
+      if (!data.audioUrl) {
+        console.error("No audioUrl in response:", data);
+        throw new Error("Server returned success but no audio URL");
+      }
+      
       setAudioState(prev => ({
         ...prev,
         isLoading: false,

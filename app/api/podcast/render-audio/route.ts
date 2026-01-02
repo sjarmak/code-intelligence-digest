@@ -265,9 +265,33 @@ export async function POST(
       const result = await Promise.race([renderPromise, timeoutPromise]);
       audioBuffer = result.bytes;
       durationSeconds = result.durationSeconds || estimateDurationFromTranscript(sanitized);
+
+      // Validate audio buffer has content
+      if (!audioBuffer || audioBuffer.length === 0) {
+        logger.error("Audio render produced empty buffer", {
+          provider: req.provider,
+          transcriptLength: sanitized.length,
+        });
+        return NextResponse.json(
+          { error: "Audio render produced empty buffer. Please check provider configuration and try again." },
+          { status: 500 }
+        );
+      }
+
+      // Validate minimum size (MP3 files should have headers, minimum ~1KB for valid audio)
+      const MIN_AUDIO_SIZE = 1024;
+      if (audioBuffer.length < MIN_AUDIO_SIZE) {
+        logger.warn("Audio buffer suspiciously small", {
+          provider: req.provider,
+          bytes: audioBuffer.length,
+          transcriptLength: sanitized.length,
+        });
+        // Continue anyway, might be valid for very short transcripts
+      }
     } catch (error) {
       logger.error("Audio render failed", {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
       return NextResponse.json(
         { error: `Failed to render audio: ${error instanceof Error ? error.message : "Unknown error"}` },
@@ -280,11 +304,43 @@ export async function POST(
     // Step 5: Store audio
     const storage = getLocalStorage();
     const audioKey = `podcasts/${uuid()}.${req.format}`;
-    const { url: audioUrl, bytes: fileBytes } = await storage.putObject(
-      audioKey,
-      audioBuffer,
-      `audio/${req.format}`
-    );
+    
+    logger.info("Storing audio file", {
+      key: audioKey,
+      bufferSize: audioBuffer.length,
+      format: req.format,
+    });
+    
+    let audioUrl: string;
+    let fileBytes: number;
+    
+    try {
+      const storageResult = await storage.putObject(
+        audioKey,
+        audioBuffer,
+        `audio/${req.format}`
+      );
+      audioUrl = storageResult.url;
+      fileBytes = storageResult.bytes;
+      
+      if (!audioUrl) {
+        throw new Error("Storage returned empty URL");
+      }
+      
+      logger.info("Audio stored successfully", {
+        url: audioUrl,
+        bytes: fileBytes,
+      });
+    } catch (error) {
+      logger.error("Failed to store audio", {
+        error: error instanceof Error ? error.message : String(error),
+        key: audioKey,
+      });
+      return NextResponse.json(
+        { error: `Failed to store audio: ${error instanceof Error ? error.message : "Unknown error"}` },
+        { status: 500 }
+      );
+    }
 
     // Step 6: Save to database
     const audioId = `aud-${uuid()}`;
@@ -329,6 +385,12 @@ export async function POST(
         multiVoice: useMultiVoice,
       },
     };
+
+    logger.info("Sending audio render response", {
+      id: audioId,
+      audioUrl,
+      bytes: fileBytes,
+    });
 
     // Record successful usage
     await recordUsage(request, '/api/podcast/render-audio');
