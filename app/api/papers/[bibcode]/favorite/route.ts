@@ -16,7 +16,7 @@ async function ensureTablesInitialized() {
   if (!tablesInitialized) {
     try {
       // Ensure ads_papers table exists first
-      initializeADSTables();
+      await initializeADSTables();
       await initializeAnnotationTables();
       tablesInitialized = true;
     } catch (error) {
