@@ -1,5 +1,7 @@
 'use client';
 
+import { useState, useEffect } from 'react';
+import { Bookmark } from 'lucide-react';
 import { SearchResult } from '@/src/lib/pipeline/search';
 
 interface SearchResultsProps {
@@ -42,6 +44,62 @@ export default function SearchResults({
   error,
   itemsSearched,
 }: SearchResultsProps) {
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [loadingBibcodes, setLoadingBibcodes] = useState<Set<string>>(new Set());
+
+  // Load favorites on mount
+  useEffect(() => {
+    async function loadFavorites() {
+      try {
+        const response = await fetch('/api/papers/favorites');
+        if (response.ok) {
+          const data = await response.json();
+          setFavorites(new Set(data.bibcodes || []));
+        }
+      } catch (error) {
+        console.error('Failed to load favorites', error);
+      }
+    }
+    loadFavorites();
+  }, []);
+
+  const toggleFavorite = async (bibcode: string) => {
+    if (!bibcode) return;
+
+    const isFavorite = favorites.has(bibcode);
+    setLoadingBibcodes((prev) => new Set(prev).add(bibcode));
+
+    try {
+      const response = await fetch('/api/papers/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bibcode, favorite: !isFavorite }),
+      });
+
+      if (response.ok) {
+        if (isFavorite) {
+          setFavorites((prev) => {
+            const next = new Set(prev);
+            next.delete(bibcode);
+            return next;
+          });
+        } else {
+          setFavorites((prev) => new Set(prev).add(bibcode));
+        }
+      } else {
+        console.error('Failed to update favorite status');
+      }
+    } catch (error) {
+      console.error('Error toggling favorite', error);
+    } finally {
+      setLoadingBibcodes((prev) => {
+        const next = new Set(prev);
+        next.delete(bibcode);
+        return next;
+      });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="text-center py-12">
@@ -97,6 +155,23 @@ export default function SearchResults({
                  </a>
                 <p className="text-sm text-muted mt-1">{result.sourceTitle}</p>
               </div>
+              {/* Bookmark icon for research papers */}
+              {result.bibcode && (
+                <button
+                  onClick={() => toggleFavorite(result.bibcode!)}
+                  disabled={loadingBibcodes.has(result.bibcode!)}
+                  className={`flex-shrink-0 p-2 rounded-lg transition-colors ${
+                    favorites.has(result.bibcode!)
+                      ? 'text-yellow-600 hover:text-yellow-700 bg-yellow-50'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  title={favorites.has(result.bibcode!) ? 'Remove from favorites' : 'Add to favorites'}
+                >
+                  <Bookmark
+                    className={`w-5 h-5 ${favorites.has(result.bibcode!) ? 'fill-current' : ''}`}
+                  />
+                </button>
+              )}
             </div>
 
             {/* Metadata */}

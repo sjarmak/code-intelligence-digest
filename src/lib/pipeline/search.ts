@@ -16,6 +16,7 @@ import { generateEmbedding, generateEmbeddingsBatch, topKSimilar, cosineSimilari
 import { getEmbeddingsBatch, saveEmbeddingsBatch } from "../db/embeddings";
 import { logger } from "../logger";
 import { decodeHtmlEntities } from "../utils/html-entities";
+import { extractBibcodeFromUrl } from "../ads/client";
 
 export interface SearchResult {
   id: string;
@@ -30,6 +31,7 @@ export interface SearchResult {
   similarity: number; // 0-1 final score (hybrid)
   bm25Score?: number; // Raw BM25 score
   semanticScore?: number; // Raw semantic similarity
+  bibcode?: string; // For research papers (extracted from URL)
 }
 
 /**
@@ -328,6 +330,9 @@ export async function semanticSearch(
         throw new Error(`Item ${match.id} not found`);
       }
 
+      // Extract bibcode from URL if this is a research paper
+      const bibcode = extractBibcodeFromUrl(item.url);
+
       return {
         id: item.id,
         title: decodeHtmlEntities(item.title), // Decode HTML entities in title
@@ -339,6 +344,7 @@ export async function semanticSearch(
         contentSnippet: item.contentSnippet,
         category: item.category,
         similarity: Math.round(match.score * 1000) / 1000, // Round to 3 decimals
+        bibcode: bibcode || undefined,
       };
     });
 
@@ -413,18 +419,24 @@ export async function keywordSearch(
 
   logger.info(`Keyword search returned ${scored.length} results with query: "${query}" from ${items.length} items`);
 
-  return scored.map((x) => ({
-    id: x.item.id,
-    title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
-    url: x.item.url,
-    sourceTitle: x.item.sourceTitle,
-    publishedAt: x.item.publishedAt.toISOString(),
-    createdAt: x.item.createdAt?.toISOString() || null,
-    summary: x.item.summary,
-    contentSnippet: x.item.contentSnippet,
-    category: x.item.category,
-    similarity: Math.min(1.0, Math.round((x.score / 100) * 1000) / 1000), // Normalize to [0, 1]
-  }));
+  return scored.map((x) => {
+    // Extract bibcode from URL if this is a research paper
+    const bibcode = extractBibcodeFromUrl(x.item.url);
+
+    return {
+      id: x.item.id,
+      title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
+      url: x.item.url,
+      sourceTitle: x.item.sourceTitle,
+      publishedAt: x.item.publishedAt.toISOString(),
+      createdAt: x.item.createdAt?.toISOString() || null,
+      summary: x.item.summary,
+      contentSnippet: x.item.contentSnippet,
+      category: x.item.category,
+      similarity: Math.min(1.0, Math.round((x.score / 100) * 1000) / 1000), // Normalize to [0, 1]
+      bibcode: bibcode || undefined,
+    };
+  });
 }
 
 /**
@@ -475,18 +487,24 @@ function termBasedSearch(
 
   logger.info(`Term-based search returned ${scored.length} results with query: "${query}" from ${items.length} items`);
 
-  return scored.map((x) => ({
-    id: x.item.id,
-    title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
-    url: x.item.url,
-    sourceTitle: x.item.sourceTitle,
-    publishedAt: x.item.publishedAt.toISOString(),
-    createdAt: x.item.createdAt?.toISOString() || null,
-    summary: x.item.summary,
-    contentSnippet: x.item.contentSnippet,
-    category: x.item.category,
-    similarity: Math.round((x.score / 100) * 1000) / 1000, // Normalize score
-  }));
+  return scored.map((x) => {
+    // Extract bibcode from URL if this is a research paper
+    const bibcode = extractBibcodeFromUrl(x.item.url);
+
+    return {
+      id: x.item.id,
+      title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
+      url: x.item.url,
+      sourceTitle: x.item.sourceTitle,
+      publishedAt: x.item.publishedAt.toISOString(),
+      createdAt: x.item.createdAt?.toISOString() || null,
+      summary: x.item.summary,
+      contentSnippet: x.item.contentSnippet,
+      category: x.item.category,
+      similarity: Math.round((x.score / 100) * 1000) / 1000, // Normalize score
+      bibcode: bibcode || undefined,
+    };
+  });
 }
 
 /**
