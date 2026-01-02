@@ -522,11 +522,13 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
   try {
     if (driver === 'postgres') {
       const client = await getDbClient();
+      // Use COALESCE to handle NULL fetched_at values, fallback to created_at or added_at
       const result = await client.query(
-        `SELECT p.* FROM ads_papers p
+        `SELECT p.*, lp.added_at
+         FROM ads_papers p
          JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
          WHERE lp.library_id = $1
-         ORDER BY p.fetched_at DESC
+         ORDER BY COALESCE(p.fetched_at, p.created_at, lp.added_at, 0) DESC
          LIMIT $2 OFFSET $3`,
         [libraryId, limit, offset]
       );
@@ -551,7 +553,7 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
         SELECT p.* FROM ads_papers p
         JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
         WHERE lp.library_id = ?
-        ORDER BY p.fetched_at DESC
+        ORDER BY COALESCE(p.fetched_at, p.created_at, lp.added_at, 0) DESC
         LIMIT ? OFFSET ?
       `);
 
@@ -561,6 +563,7 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
     logger.error('Failed to get library papers', {
       libraryId,
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return [];
   }

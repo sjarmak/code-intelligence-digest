@@ -285,3 +285,32 @@ export function getArxivUrl(bibcode: string): string | null {
   const arxivId = `${part1}${part2}.${part3}`;
   return `https://arxiv.org/abs/${arxivId}`;
 }
+
+/**
+ * Extract bibcode from a URL (reverse of getADSUrl and getArxivUrl)
+ * Supports:
+ * - ADS URLs: https://ui.adsabs.harvard.edu/abs/2025arXiv251212730D
+ * - arXiv URLs: https://arxiv.org/abs/2512.12730 (requires lookup or pattern matching)
+ * Returns null if URL doesn't match known patterns
+ */
+export function extractBibcodeFromUrl(url: string): string | null {
+  if (!url) return null;
+
+  // Try ADS URL pattern: ui.adsabs.harvard.edu/abs/BIBCODE
+  const adsMatch = url.match(/ui\.adsabs\.harvard\.edu\/abs\/([^\/\?#]+)/);
+  if (adsMatch) {
+    return decodeURIComponent(adsMatch[1]);
+  }
+
+  // Try arXiv URL pattern: arxiv.org/abs/YYYY.MMMMM
+  // Note: This doesn't give us the bibcode directly, but we can try to construct it
+  // For now, return null for arXiv URLs - we'd need to query ADS API to get bibcode
+  const arxivMatch = url.match(/arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/);
+  if (arxivMatch) {
+    // We can't reliably convert arXiv ID to bibcode without ADS API
+    // Return null - caller can handle this case
+    return null;
+  }
+
+  return null;
+}

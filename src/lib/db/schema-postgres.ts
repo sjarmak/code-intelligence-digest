@@ -217,6 +217,27 @@ CREATE TABLE IF NOT EXISTS ads_papers (
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 
+-- ADS library papers junction table: links papers to libraries
+CREATE TABLE IF NOT EXISTS ads_library_papers (
+  library_id TEXT NOT NULL,
+  bibcode TEXT NOT NULL,
+  added_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  PRIMARY KEY (library_id, bibcode),
+  FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
+);
+
+-- ADS libraries cache table
+CREATE TABLE IF NOT EXISTS ads_libraries (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  num_documents INTEGER NOT NULL DEFAULT 0,
+  is_public INTEGER NOT NULL DEFAULT 0,
+  fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
 -- Paper sections table for section-based retrieval
 CREATE TABLE IF NOT EXISTS paper_sections (
   id TEXT PRIMARY KEY,
@@ -287,6 +308,10 @@ CREATE INDEX IF NOT EXISTS idx_usage_quota_reset ON usage_quota(reset_at);
 -- ADS papers indexes
 CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
 CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
+
+-- ADS library papers indexes
+CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
+CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
 
 -- Paper sections indexes
 CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode ON paper_sections(bibcode);

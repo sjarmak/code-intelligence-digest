@@ -401,8 +401,10 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                         onClick={async (e) => {
                           e.stopPropagation();
                           try {
-                            const response = await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/favorite`, {
-                              method: 'DELETE',
+                            const response = await fetch('/api/papers/favorites', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ bibcode: item.bibcode, favorite: false }),
                             });
                             if (response.ok) {
                               // Refresh bookmarked papers
@@ -571,8 +573,10 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                           const checkResponse = await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/favorite`);
                                           const isFavorite = checkResponse.ok ? (await checkResponse.json()).isFavorite : false;
 
-                                          const response = await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/favorite`, {
-                                            method: isFavorite ? 'DELETE' : 'POST',
+                                          const response = await fetch('/api/papers/favorites', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ bibcode: item.bibcode, favorite: !isFavorite }),
                                           });
                                           if (response.ok) {
                                             // Trigger section processing if favoriting (not unfavoriting)
