@@ -73,38 +73,9 @@ export async function GET(
 
     logger.info('Fetching paper content', { bibcode });
 
-    // Check if we have section summaries - if so, we may need to regenerate HTML
-    const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
-    const existingSummaries = await getSectionSummaries(bibcode);
-    const hasSectionSummaries = existingSummaries.length > 0;
-
-    // If we have section summaries, check if cached HTML has matching sections
-    // If not, we should regenerate to ensure IDs match
-    let shouldRegenerateForSections = false;
-    if (hasSectionSummaries) {
-      const cached = await getCachedHtmlContent(bibcode);
-      if (cached) {
-        // Check if cached HTML has sections that match our summaries
-        const cachedSectionIds = (cached.sections || []).map(s => s.id);
-        const summarySectionIds = existingSummaries.map(s => s.sectionId);
-        const idsMatch = cachedSectionIds.length === summarySectionIds.length &&
-          cachedSectionIds.every(id => summarySectionIds.includes(id));
-
-        if (!idsMatch) {
-          logger.info('Cached HTML sections do not match section summaries, will regenerate', {
-            bibcode,
-            cachedCount: cachedSectionIds.length,
-            summaryCount: summarySectionIds.length,
-          });
-          shouldRegenerateForSections = true;
-        }
-      } else {
-        shouldRegenerateForSections = true;
-      }
-    }
-
-    // Check for fresh cached HTML (skip if force refresh or need to regenerate for sections)
-    if (!forceRefresh && !shouldRegenerateForSections && await isCachedHtmlFresh(bibcode)) {
+    // Check for fresh cached HTML (prefer ar5iv HTML when available)
+    // Skip cache only if force refresh is requested
+    if (!forceRefresh && await isCachedHtmlFresh(bibcode)) {
       const cached = await getCachedHtmlContent(bibcode);
       if (cached) {
         logger.info('Returning cached HTML content', {
@@ -391,6 +362,7 @@ export async function GET(
     }
 
     // Fetch content (ar5iv with fallbacks)
+    // Always prefer ar5iv HTML for arXiv papers to get native sections, figures, and tables
     logger.info('Fetching paper content', {
       bibcode,
       hasAdsBody: !!paper.body,
@@ -401,30 +373,14 @@ export async function GET(
 
     let content;
     try {
-      // Check if we have section summaries - if so, we should regenerate HTML to match section IDs
-      const { getSectionSummaries } = await import('@/src/lib/db/paper-sections');
-      const existingSummaries = await getSectionSummaries(bibcode);
-      const shouldRegenerateHtml = existingSummaries.length > 0 &&
-        (!(await isCachedHtmlFresh(bibcode)) || // Cache is stale
-        forceRefresh); // Force refresh requested
-
-      // If we have section summaries but HTML is stale, regenerate it
-      if (shouldRegenerateHtml && paper.body && paper.body.length > 100) {
-        logger.info('Regenerating HTML to match section summaries', {
-          bibcode,
-          summaryCount: existingSummaries.length
-        });
-        // Use adsBodyToHtml directly to ensure section IDs match
-        const { adsBodyToHtml } = await import('@/src/lib/ar5iv');
-        content = adsBodyToHtml(paper.body, paper.abstract);
-      } else {
-        content = await fetchPaperContent(bibcode, {
-          adsBody: paper.body,
-          abstract: paper.abstract,
-          title: paper.title,
-          arxivUrl: paper.arxivUrl ?? undefined,
-        });
-      }
+      // Always try to fetch ar5iv HTML first for arXiv papers (or use cached if fresh)
+      // This gives us the actual paper HTML with native sections, figures, and tables
+      content = await fetchPaperContent(bibcode, {
+        adsBody: paper.body,
+        abstract: paper.abstract,
+        title: paper.title,
+        arxivUrl: paper.arxivUrl ?? undefined,
+      });
     } catch (error) {
       logger.error('Failed to fetch paper content', {
         bibcode,
