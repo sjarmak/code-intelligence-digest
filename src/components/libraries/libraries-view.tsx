@@ -365,9 +365,11 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                     numPapers: bookmarkedLibrary.items.length,
                   });
                 }}
-                className="px-3 py-1.5 text-sm bg-black text-white rounded hover:bg-gray-800 transition-colors"
+                title="Add all papers from this library to Q&A context"
+                className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap flex items-center gap-1"
               >
-                Use for Q&A
+                <BookOpen className="w-3 h-3" />
+                Add Library to Context
               </button>
             )}
           </div>
