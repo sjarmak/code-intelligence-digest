@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
 
       // Initialize ADS tables if needed
       try {
-        initializeADSTables();
+        await initializeADSTables();
       } catch {
         // Tables may already exist, safe to ignore
       }

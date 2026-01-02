@@ -23,70 +23,141 @@ export interface ADSPaperRecord {
 
 /**
  * Initialize ADS tables in database
+ * Works for both SQLite and PostgreSQL
  */
-export function initializeADSTables() {
-  const db = getSqlite();
+export async function initializeADSTables() {
+  const driver = detectDriver();
 
   try {
-    // Create ads_papers table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ads_papers (
-        bibcode TEXT PRIMARY KEY,
-        title TEXT,
-        authors TEXT,
-        pubdate TEXT,
-        abstract TEXT,
-        body TEXT,
-        year INTEGER,
-        journal TEXT,
-        ads_url TEXT,
-        arxiv_url TEXT,
-        fulltext_source TEXT,
-        is_favorite INTEGER DEFAULT 0,
-        favorited_at INTEGER,
-        fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-      );
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
 
-    // Create ads_library_papers junction table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ads_library_papers (
-        library_id TEXT NOT NULL,
-        bibcode TEXT NOT NULL,
-        added_at INTEGER DEFAULT (strftime('%s', 'now')),
-        PRIMARY KEY (library_id, bibcode),
-        FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
-      );
-    `);
+      // Create ads_papers table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS ads_papers (
+          bibcode TEXT PRIMARY KEY,
+          title TEXT,
+          authors TEXT,
+          pubdate TEXT,
+          abstract TEXT,
+          body TEXT,
+          year INTEGER,
+          journal TEXT,
+          ads_url TEXT,
+          arxiv_url TEXT,
+          fulltext_source TEXT,
+          html_content TEXT,
+          html_fetched_at INTEGER,
+          html_sections TEXT,
+          html_figures TEXT,
+          paper_notes TEXT,
+          is_favorite INTEGER DEFAULT 0,
+          favorited_at INTEGER,
+          fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+        );
+      `);
 
-    // Create ads_libraries cache table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ads_libraries (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        num_documents INTEGER NOT NULL DEFAULT 0,
-        is_public INTEGER NOT NULL DEFAULT 0,
-        fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-      );
-    `);
+      // Create ads_library_papers junction table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS ads_library_papers (
+          library_id TEXT NOT NULL,
+          bibcode TEXT NOT NULL,
+          added_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          PRIMARY KEY (library_id, bibcode),
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
+        );
+      `);
 
-    // Create indexes
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
-      CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
-      CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
-      CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
-    `);
+      // Create ads_libraries cache table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS ads_libraries (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          num_documents INTEGER NOT NULL DEFAULT 0,
+          is_public INTEGER NOT NULL DEFAULT 0,
+          fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+        );
+      `);
 
-    logger.info('ADS database tables initialized');
+      // Create indexes
+      await client.exec(`
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
+      `);
+
+      logger.info('ADS database tables initialized (PostgreSQL)');
+    } else {
+      const db = getSqlite();
+
+      // Create ads_papers table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ads_papers (
+          bibcode TEXT PRIMARY KEY,
+          title TEXT,
+          authors TEXT,
+          pubdate TEXT,
+          abstract TEXT,
+          body TEXT,
+          year INTEGER,
+          journal TEXT,
+          ads_url TEXT,
+          arxiv_url TEXT,
+          fulltext_source TEXT,
+          is_favorite INTEGER DEFAULT 0,
+          favorited_at INTEGER,
+          fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
+          created_at INTEGER DEFAULT (strftime('%s', 'now')),
+          updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+      `);
+
+      // Create ads_library_papers junction table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ads_library_papers (
+          library_id TEXT NOT NULL,
+          bibcode TEXT NOT NULL,
+          added_at INTEGER DEFAULT (strftime('%s', 'now')),
+          PRIMARY KEY (library_id, bibcode),
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
+        );
+      `);
+
+      // Create ads_libraries cache table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ads_libraries (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          num_documents INTEGER NOT NULL DEFAULT 0,
+          is_public INTEGER NOT NULL DEFAULT 0,
+          fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
+          created_at INTEGER DEFAULT (strftime('%s', 'now')),
+          updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+      `);
+
+      // Create indexes
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
+      `);
+
+      logger.info('ADS database tables initialized (SQLite)');
+    }
   } catch (error) {
     logger.error('Failed to initialize ADS tables', {
+      driver,
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     throw error;
   }
@@ -522,6 +593,26 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
   try {
     if (driver === 'postgres') {
       const client = await getDbClient();
+
+      // First check if the library has any linked papers
+      const countResult = await client.query(
+        `SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = $1`,
+        [libraryId]
+      );
+      const linkCount = parseInt(countResult.rows[0]?.count as string || '0', 10);
+
+      logger.info('Getting library papers', {
+        libraryId,
+        linkedPapersCount: linkCount,
+        limit,
+        offset,
+      });
+
+      if (linkCount === 0) {
+        logger.warn('No papers linked to library', { libraryId });
+        return [];
+      }
+
       // Use COALESCE to handle NULL fetched_at values, fallback to created_at or added_at
       const result = await client.query(
         `SELECT p.*, lp.added_at
@@ -532,6 +623,12 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
          LIMIT $2 OFFSET $3`,
         [libraryId, limit, offset]
       );
+
+      logger.info('Retrieved library papers', {
+        libraryId,
+        requested: limit,
+        returned: result.rows.length,
+      });
 
       // Map PostgreSQL column names to camelCase
       return result.rows.map((row: Record<string, unknown>) => ({
@@ -549,6 +646,24 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
       }));
     } else {
       const db = getSqlite();
+
+      // Check count first
+      const countStmt = db.prepare(`SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = ?`);
+      const countResult = countStmt.get(libraryId) as { count: number } | undefined;
+      const linkCount = countResult?.count || 0;
+
+      logger.info('Getting library papers', {
+        libraryId,
+        linkedPapersCount: linkCount,
+        limit,
+        offset,
+      });
+
+      if (linkCount === 0) {
+        logger.warn('No papers linked to library', { libraryId });
+        return [];
+      }
+
       const stmt = db.prepare(`
         SELECT p.* FROM ads_papers p
         JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
@@ -557,11 +672,20 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
         LIMIT ? OFFSET ?
       `);
 
-      return stmt.all(libraryId, limit, offset) as ADSPaperRecord[];
+      const results = stmt.all(libraryId, limit, offset) as ADSPaperRecord[];
+
+      logger.info('Retrieved library papers', {
+        libraryId,
+        requested: limit,
+        returned: results.length,
+      });
+
+      return results;
     }
   } catch (error) {
     logger.error('Failed to get library papers', {
       libraryId,
+      driver,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -615,12 +739,18 @@ export async function linkPapersToLibraryBatch(libraryId: string, bibcodes: stri
         values.push(libraryId, bibcode);
       }
 
-      await client.run(
+      const result = await client.run(
         `INSERT INTO ads_library_papers (library_id, bibcode)
          VALUES ${placeholders.join(', ')}
          ON CONFLICT(library_id, bibcode) DO NOTHING`,
         values
       );
+
+      logger.info('Linked papers to library', {
+        libraryId,
+        bibcodesCount: bibcodes.length,
+        inserted: result.changes,
+      });
     } else {
       const db = getSqlite();
       const stmt = db.prepare(`
@@ -630,14 +760,24 @@ export async function linkPapersToLibraryBatch(libraryId: string, bibcodes: stri
       `);
 
       const linkMany = db.transaction((codes: string[]) => {
+        let inserted = 0;
         for (const bibcode of codes) {
-          stmt.run(libraryId, bibcode);
+          const result = stmt.run(libraryId, bibcode);
+          if (result.changes > 0) {
+            inserted++;
+          }
         }
+        return inserted;
       });
 
-      linkMany(bibcodes);
+      const inserted = linkMany(bibcodes);
+
+      logger.info('Linked papers to library', {
+        libraryId,
+        bibcodesCount: bibcodes.length,
+        inserted,
+      });
     }
-    logger.info('Papers linked to library', { libraryId, count: bibcodes.length });
   } catch (error) {
     logger.error('Failed to link papers to library', {
       libraryId,

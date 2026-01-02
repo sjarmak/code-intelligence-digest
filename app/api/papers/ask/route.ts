@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
 
                 // Initialize tables if needed
                 try {
-                  initializeADSTables();
+                  await initializeADSTables();
                 } catch {
                   // Tables may already exist
                 }
