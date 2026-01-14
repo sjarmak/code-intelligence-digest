@@ -94,6 +94,13 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
       insertMany(items);
     }
     logger.info(`Saved ${items.length} items to database`);
+
+    // Trigger async full text extraction for new items (background processing)
+    if (process.env.ENABLE_AUTO_FULLTEXT !== 'false') {
+      extractFullTextForNewItems(items).catch(error => {
+        logger.error('Background full text extraction failed', { error });
+      });
+    }
   } catch (error) {
     logger.error("Failed to save items to database", error);
     throw error;
@@ -684,24 +691,95 @@ export async function updateItemsCacheMetadata(periodDays: number, count: number
 }
 
 /**
+ * Background full text extraction for new items
+ * Runs asynchronously after items are saved
+ */
+async function extractFullTextForNewItems(items: FeedItem[]): Promise<void> {
+  // Only extract if enabled
+  if (process.env.ENABLE_AUTO_FULLTEXT === 'false') {
+    return;
+  }
+
+  // Filter items that need full text
+  const needsText = items.filter(item =>
+    !item.fullText || (item.fullText?.length ?? 0) < 100
+  );
+
+  if (needsText.length === 0) {
+    return;
+  }
+
+  logger.info(`[AUTO-FULLTEXT] Extracting full text for ${needsText.length} items`);
+
+  try {
+    // Import here to avoid circular dependencies
+    const { fetchFullTextBatch } = await import('../pipeline/fulltext');
+
+    // Process in small batches to avoid overwhelming
+    const batchSize = parseInt(process.env.FULLTEXT_BATCH_SIZE || '10', 10);
+    const maxConcurrent = parseInt(process.env.FULLTEXT_MAX_CONCURRENT || '3', 10);
+
+    for (let i = 0; i < needsText.length; i += batchSize) {
+      const batch = needsText.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(needsText.length / batchSize);
+
+      logger.info(`[AUTO-FULLTEXT] Processing batch ${batchNum}/${totalBatches} (${batch.length} items)`);
+
+      const results = await fetchFullTextBatch(batch, maxConcurrent);
+
+      // Save results
+      for (const [itemId, result] of results.entries()) {
+        if (result.source !== 'error' && result.text.length > 100) {
+          await saveFullText(itemId, result.text, result.source);
+        }
+      }
+
+      // Rate limit between batches
+      if (i + batchSize < needsText.length) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    logger.info(`[AUTO-FULLTEXT] Completed extraction for ${needsText.length} items`);
+  } catch (error) {
+    logger.error('[AUTO-FULLTEXT] Background extraction failed', { error });
+    // Don't throw - this is background processing
+  }
+}
+
+/**
  * Save full text for an item
  */
 export async function saveFullText(
   itemId: string,
   fullText: string,
-  source: "web_scrape" | "arxiv" | "error"
+  source: "web_scrape" | "arxiv" | "ads_api" | "error"
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
-    sqlite.prepare(`
-      UPDATE items
-      SET full_text = ?,
-          full_text_fetched_at = strftime('%s', 'now'),
-          full_text_source = ?,
-          updated_at = strftime('%s', 'now')
-      WHERE id = ?
-    `).run(fullText || null, source, itemId);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`
+        UPDATE items
+        SET full_text = $1,
+            full_text_fetched_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
+            full_text_source = $2,
+            updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
+        WHERE id = $3
+      `, [fullText || null, source, itemId]);
+    } else {
+      const sqlite = getSqlite();
+      sqlite.prepare(`
+        UPDATE items
+        SET full_text = ?,
+            full_text_fetched_at = strftime('%s', 'now'),
+            full_text_source = ?,
+            updated_at = strftime('%s', 'now')
+        WHERE id = ?
+      `).run(fullText || null, source, itemId);
+    }
 
     logger.info(`Saved full text for item ${itemId} (${fullText?.length || 0} chars, source: ${source})`);
   } catch (error) {
