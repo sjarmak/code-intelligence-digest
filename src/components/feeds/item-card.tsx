@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Bookmark } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Bookmark, FileHeart, FolderHeart, FileText } from 'lucide-react';
 import ItemRelevanceBadge, { ItemRelevanceRating } from '@/src/components/tuning/item-relevance-badge';
 import { useAdminSettings } from '@/src/hooks/useAdminSettings';
+import { useAppConfig } from '@/src/hooks/useAppConfig';
+import { FullTextViewer } from '@/src/components/common/fulltext-viewer';
 
 interface LLMScore {
   relevance: number;
@@ -104,42 +106,183 @@ function extractBibcodeFromUrl(url: string): string | null {
 
 export default function ItemCard({ item, rank, period }: ItemCardProps) {
   const { settings, loading } = useAdminSettings();
+  const { config } = useAppConfig();
   const [currentRating, setCurrentRating] = useState<ItemRelevanceRating>(null);
   const [isStarred, setIsStarred] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [inSavedItems, setInSavedItems] = useState(false);
+  const [inDigestItems, setInDigestItems] = useState(false);
+  const [hasFullText, setHasFullText] = useState(false);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [showFullText, setShowFullText] = useState(false);
   const bibcode = item.category === 'research' ? extractBibcodeFromUrl(item.url) : null;
 
-  // Load stored rating, starred status, and favorite status on mount
+  // Load stored rating, starred status, favorite status, and library membership on mount
+  // Always check database state, not just local state
   useEffect(() => {
+    let isMounted = true;
+
     const loadMetadata = async () => {
       try {
-        const [relevanceRes, favoriteRes] = await Promise.all([
-          fetch(`/api/admin/item-relevance?itemId=${encodeURIComponent(item.id)}`),
+        // Always fetch library status from database to ensure accurate state
+        // Add timestamp to prevent caching issues
+        const libraryUrl = `/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`;
+        const libraryRes = await fetch(libraryUrl);
+        
+        if (!isMounted) return;
+
+        if (libraryRes?.ok) {
+          const data = await libraryRes.json();
+          // Always set from database response, ensuring accurate state
+          if (isMounted) {
+            const savedBool = Boolean(data.inSavedItems);
+            const digestBool = Boolean(data.inDigestItems);
+            setInSavedItems(savedBool);
+            setInDigestItems(digestBool);
+          }
+        } else {
+          // If API call fails, reset to false
+          if (isMounted) {
+            setInSavedItems(false);
+            setInDigestItems(false);
+          }
+        }
+
+        // Load other metadata in parallel
+        const [relevanceRes, favoriteRes, fulltextRes] = await Promise.all([
+          config.adminUIEnabled ? fetch(`/api/admin/item-relevance?itemId=${encodeURIComponent(item.id)}`) : Promise.resolve(null),
           bibcode ? fetch(`/api/papers/${encodeURIComponent(bibcode)}/favorite`) : Promise.resolve(null),
+          fetch(`/api/items/${encodeURIComponent(item.id)}/fulltext`),
         ]);
+
+        if (!isMounted) return;
 
         if (relevanceRes?.ok) {
           const data = await relevanceRes.json();
-          if (data.rating !== undefined) {
+          if (data.rating !== undefined && isMounted) {
             setCurrentRating(data.rating);
           }
-          if (data.starred !== undefined) {
+          if (data.starred !== undefined && isMounted) {
             setIsStarred(data.starred);
           }
         }
 
-        if (favoriteRes?.ok) {
+        if (favoriteRes?.ok && isMounted) {
           const data = await favoriteRes.json();
           setIsFavorite(data.isFavorite || false);
         }
+
+        if (fulltextRes?.ok && isMounted) {
+          const data = await fulltextRes.json();
+          setHasFullText(data.hasFullText || false);
+        }
       } catch (error) {
         console.error('Error loading item metadata:', error);
+        // On error, still try to check library status
+        if (isMounted) {
+          try {
+            const libraryRes = await fetch(`/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`);
+            if (libraryRes?.ok) {
+              const data = await libraryRes.json();
+              setInSavedItems(Boolean(data.inSavedItems));
+              setInDigestItems(Boolean(data.inDigestItems));
+            }
+          } catch (libraryError) {
+            console.error('Error loading library status:', libraryError);
+          }
+        }
       }
     };
 
     loadMetadata();
-  }, [item.id, bibcode]);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [item.id, bibcode, config.adminUIEnabled]);
+
+  // Force library status check when component becomes visible again (handles navigation back)
+  // This ensures we always check the database state, even if useEffect dependencies haven't changed
+  useEffect(() => {
+    const checkLibraryStatus = async () => {
+      try {
+        const libraryRes = await fetch(`/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`);
+        if (libraryRes?.ok) {
+          const data = await libraryRes.json();
+          setInSavedItems(Boolean(data.inSavedItems));
+          setInDigestItems(Boolean(data.inDigestItems));
+        }
+      } catch (error) {
+        console.error('Error checking library status on visibility:', error);
+      }
+    };
+
+    // Check immediately when component mounts or becomes visible
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkLibraryStatus();
+      }
+    };
+
+    // Check on focus (when user switches back to tab/window)
+    const handleFocus = () => {
+      checkLibraryStatus();
+    };
+
+    // Check immediately when component mounts (handles remount after navigation)
+    checkLibraryStatus();
+
+    // Also check when the page is loaded/visible
+    if (document.visibilityState === 'visible') {
+      checkLibraryStatus();
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [item.id]);
+
+  // Also check library status when component becomes visible (handles navigation back)
+  useEffect(() => {
+    const checkLibraryStatus = async () => {
+      try {
+        const libraryRes = await fetch(`/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`);
+        if (libraryRes?.ok) {
+          const data = await libraryRes.json();
+          setInSavedItems(Boolean(data.inSavedItems));
+          setInDigestItems(Boolean(data.inDigestItems));
+        }
+      } catch (error) {
+        console.error('Error checking library status on visibility:', error);
+      }
+    };
+
+    // Check when page becomes visible (user navigates back)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkLibraryStatus();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Also check on focus (when user switches back to tab)
+    const handleFocus = () => {
+      checkLibraryStatus();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [item.id]);
 
   const handleRateItem = async (
     itemId: string,
@@ -203,8 +346,118 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
     }
   };
 
+  const handleToggleSavedItems = async () => {
+    setLibraryLoading(true);
+    try {
+      const method = inSavedItems ? 'DELETE' : 'POST';
+      const response = await fetch(`/api/saved-items${method === 'DELETE' ? `?itemId=${encodeURIComponent(item.id)}` : ''}`, {
+        method,
+        headers: method === 'POST' ? { 'Content-Type': 'application/json' } : {},
+        body: method === 'POST' ? JSON.stringify({ itemId: item.id }) : undefined,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to toggle saved items');
+      }
+
+      // Dispatch custom event to notify other components
+      window.dispatchEvent(new CustomEvent('saved-items-changed'));
+
+      // Reload library status to ensure it's in sync with the server
+      const libraryRes = await fetch(`/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`);
+      if (libraryRes?.ok) {
+        const data = await libraryRes.json();
+        setInSavedItems(Boolean(data.inSavedItems));
+        setInDigestItems(Boolean(data.inDigestItems));
+      } else {
+        // Fallback to optimistic update if reload fails
+        setInSavedItems(!inSavedItems);
+      }
+    } catch (error) {
+      console.error('Error toggling saved items:', error);
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
+  const handleToggleDigestItems = async () => {
+    setLibraryLoading(true);
+    try {
+      const method = inDigestItems ? 'DELETE' : 'POST';
+      const response = await fetch(`/api/digest-items${method === 'DELETE' ? `?itemId=${encodeURIComponent(item.id)}` : ''}`, {
+        method,
+        headers: method === 'POST' ? { 'Content-Type': 'application/json' } : {},
+        body: method === 'POST' ? JSON.stringify({ itemId: item.id }) : undefined,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to toggle digest items');
+      }
+
+      // Dispatch custom event to notify other components
+      window.dispatchEvent(new CustomEvent('digest-items-changed'));
+
+      // Reload library status to ensure it's in sync with the server
+      const libraryRes = await fetch(`/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`);
+      if (libraryRes?.ok) {
+        const data = await libraryRes.json();
+        setInSavedItems(Boolean(data.inSavedItems));
+        setInDigestItems(Boolean(data.inDigestItems));
+      } else {
+        // Fallback to optimistic update if reload fails
+        setInDigestItems(!inDigestItems);
+      }
+    } catch (error) {
+      console.error('Error toggling digest items:', error);
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
+  // Use a ref to track the container element for intersection observer
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Check library status when component becomes visible in viewport
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+
+    const checkLibraryStatus = async () => {
+      try {
+        const libraryRes = await fetch(`/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`);
+        if (libraryRes?.ok) {
+          const data = await libraryRes.json();
+          setInSavedItems(Boolean(data.inSavedItems));
+          setInDigestItems(Boolean(data.inDigestItems));
+        }
+      } catch (error) {
+        console.error('Error checking library status on intersection:', error);
+      }
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            checkLibraryStatus();
+          }
+        });
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [item.id]);
+
   return (
-    <div className="border border-surface-border rounded-lg p-4 hover:border-gray-400 hover:bg-surface/80 transition-all hover:shadow-md">
+    <div 
+      ref={containerRef}
+      className="border border-surface-border rounded-lg p-4 hover:border-gray-400 hover:bg-surface/80 transition-all hover:shadow-md"
+    >
        {/* Main row with rank, score, and title */}
        <div className="flex items-start gap-4">
          {/* Rank number */}
@@ -262,31 +515,69 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
               <span>{formatDate(((period === 'day' || (item.category === 'research' && period !== 'all')) && item.createdAt) ? item.createdAt : item.publishedAt)}</span>
             </div>
 
-            {/* Favorite button for research papers - right aligned */}
-            {item.category === 'research' && bibcode && (
-              <button
-                onClick={handleToggleFavorite}
-                disabled={favoriteLoading}
-                className={`p-1.5 rounded transition-colors ${
-                  isFavorite ? 'text-yellow-600 bg-yellow-50' : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
-                } disabled:opacity-50`}
-                title={isFavorite ? 'Remove bookmark' : 'Bookmark paper'}
-              >
-                <Bookmark className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
-              </button>
-            )}
+            {/* Action buttons - right aligned */}
+            <div className="flex items-center gap-1">
+              {/* Full text icon */}
+              {hasFullText && (
+                <button
+                  onClick={() => setShowFullText(true)}
+                  className="p-1.5 rounded transition-colors text-gray-400 hover:text-gray-700 hover:bg-gray-50"
+                  title="View full text"
+                >
+                  <FileText className="w-4 h-4" />
+                </button>
+              )}
 
-            {/* Rating button - right aligned */}
-            {!loading && settings.enableItemRelevanceTuning && (
-              <ItemRelevanceBadge
-                itemId={item.id}
-                currentRating={currentRating}
-                onRatingChange={handleRateItem}
-                starred={isStarred}
-                onStarChange={(starred) => setIsStarred(starred)}
-                readOnly={false}
-              />
-            )}
+              {/* Saved items library (folder-heart) - for all item types */}
+              <button
+                onClick={handleToggleSavedItems}
+                disabled={libraryLoading}
+                className={`p-1.5 rounded transition-colors ${
+                  inSavedItems ? 'text-yellow-600 bg-yellow-50' : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                } disabled:opacity-50`}
+                title={inSavedItems ? 'Remove from saved items' : 'Add to saved items'}
+              >
+                <FolderHeart className="w-4 h-4" />
+              </button>
+
+              {/* Digest items library (file-heart) */}
+              <button
+                onClick={handleToggleDigestItems}
+                disabled={libraryLoading}
+                className={`p-1.5 rounded transition-colors ${
+                  inDigestItems ? 'text-yellow-600 bg-yellow-50' : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                } disabled:opacity-50`}
+                title={inDigestItems ? 'Remove from digest items' : 'Add to digest items'}
+              >
+                <FileHeart className="w-4 h-4" />
+              </button>
+
+              {/* Bookmark button for research papers only (ADS library) */}
+              {item.category === 'research' && bibcode && (
+                <button
+                  onClick={handleToggleFavorite}
+                  disabled={favoriteLoading}
+                  className={`p-1.5 rounded transition-colors ${
+                    isFavorite ? 'text-yellow-600 bg-yellow-50' : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                  } disabled:opacity-50`}
+                  title={isFavorite ? 'Remove from bookmarked library' : 'Add to bookmarked library'}
+                >
+                  <Bookmark className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
+                </button>
+              )}
+
+              {/* Rating button - only in dev mode */}
+              {!loading && config.adminUIEnabled && settings.enableItemRelevanceTuning && (
+                <ItemRelevanceBadge
+                  itemId={item.id}
+                  currentRating={currentRating}
+                  onRatingChange={handleRateItem}
+                  starred={isStarred}
+                  onStarChange={(starred) => setIsStarred(starred)}
+                  readOnly={false}
+                />
+              )}
+            </div>
           </div>
 
           {/* Category badge */}
@@ -310,6 +601,14 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
           </svg>
         </a>
       </div>
+
+      {/* Full text viewer modal */}
+      <FullTextViewer
+        itemId={item.id}
+        itemTitle={item.title}
+        isOpen={showFullText}
+        onClose={() => setShowFullText(false)}
+      />
     </div>
   );
 }
