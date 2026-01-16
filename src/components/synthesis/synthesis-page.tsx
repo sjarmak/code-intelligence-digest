@@ -129,7 +129,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   React.useEffect(() => {
     if (hasLoadedFromStorage.current) return; // Only load once
     hasLoadedFromStorage.current = true;
-    
+
     try {
       const saved = localStorage.getItem(`synthesis-result-${type}`);
       if (saved) {
@@ -191,7 +191,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       console.log('=== STARTING STREAMING REQUEST ===');
       console.log('Endpoint:', endpoint + '?stream=true');
       console.log('Request body:', JSON.stringify(requestBody, null, 2));
-      
+
       fetch(endpoint + '?stream=true', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -245,14 +245,14 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
               for (const eventText of events) {
                 if (eventText.trim() === '') continue;
-                
+
                 console.log('Processing SSE event text:', eventText.substring(0, 200));
-                
+
                 // Parse SSE format: "event: eventname\ndata: {...}"
                 const lines = eventText.split('\n');
                 let eventName = '';
                 let dataStr = '';
-                
+
                 for (const line of lines) {
                   if (line.startsWith('event: ')) {
                     eventName = line.substring(7).trim();
@@ -260,9 +260,9 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
                     dataStr = line.substring(6).trim();
                   }
                 }
-                
+
                 console.log('Parsed event:', eventName, 'data length:', dataStr.length);
-                
+
                 if (eventName && dataStr) {
                   try {
                     const parsed = JSON.parse(dataStr);
@@ -282,7 +282,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
                       console.log('Has id:', 'id' in parsed);
                       console.log('Has duration:', 'duration' in parsed);
                       console.log('Has transcript:', 'transcript' in parsed);
-                      
+
                       clearInterval(inactivityTimer);
                       clearInterval(progressInterval);
                       setLoadingProgress(100);
@@ -297,14 +297,14 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
                         generatedAt: newResult.generatedAt,
                         transcriptLength: 'transcript' in newResult ? newResult.transcript.length : 0
                       });
-                      
+
                       // Verify the result has all required fields
                       if (!newResult.id || !newResult.generatedAt) {
                         console.error('Invalid result from complete event:', newResult);
                         reject(new Error('Received incomplete result from server'));
                         return;
                       }
-                      
+
                       resultRef.current = newResult;
                       // Force clear old result first, then set new one to ensure React updates
                       console.log('Clearing old result...');
@@ -364,7 +364,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
     setLoadingProgress(0);
     setProgressMessage('Initializing...');
     setResult(null); // Clear previous result when starting new generation
-    
+
     // Force a synchronous check after state update
     setTimeout(() => {
       console.log('After state update, isLoading should be true. Current state:', isLoading);
@@ -383,7 +383,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
     // Progress messages should reflect what's actually happening based on sourceMode
     const isDigestLibrary = params.sourceMode === "auto";
     const isManualSelection = params.sourceMode === "manual";
-    
+
     if (isDigestLibrary) {
       setProgressMessage('Loading items from digest library...');
     } else if (isManualSelection) {
@@ -391,7 +391,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
     } else {
       setProgressMessage('Retrieving items from database...');
     }
-    
+
     const progressInterval = setInterval(() => {
       setLoadingProgress(prev => {
         // Only increment if we haven't reached a high progress yet
@@ -401,7 +401,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
         }
         const increment = Math.random() * 10; // Smaller increments
         const newProgress = Math.min(prev + increment, 90);
-        
+
         // Update progress message based on sourceMode and progress
         if (isDigestLibrary) {
           if (newProgress < 40) {
@@ -535,8 +535,8 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
           const effectiveType = params.type || type;
           // For streaming, timeout means inactivity (no progress updates)
           if (effectiveType === "audio-digest" || type === "audio-digest") {
-            message = err.message.includes("inactivity") 
-              ? err.message 
+            message = err.message.includes("inactivity")
+              ? err.message
               : `No progress updates received. Generation may have stalled. Please check server logs or try again.`;
           } else {
             message = `Request timed out. ${typeLabel} generation is taking too long. Try reducing the item limit or period.`;
@@ -588,177 +588,8 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
                 : "Generate an audio digest with highlights from articles and research papers"}
             </p>
           </div>
-          {/* Recovery/Clear buttons */}
-          {isHydrated && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  try {
-                    const saved = localStorage.getItem(`synthesis-result-${type}`);
-                    const info: string[] = [];
-                    
-                    if (saved) {
-                      const parsed = JSON.parse(saved);
-                      info.push(`LocalStorage Result:`);
-                      info.push(`  ID: ${parsed.id}`);
-                      info.push(`  Title: ${parsed.title}`);
-                      info.push(`  Duration: ${'duration' in parsed ? parsed.duration : 'N/A'}`);
-                      info.push(`  Generated: ${parsed.generatedAt}`);
-                      info.push(`  Transcript length: ${'transcript' in parsed ? parsed.transcript.length : 'N/A'} chars`);
-                    } else {
-                      info.push('No result in localStorage');
-                    }
-                    
-                    if (result) {
-                      info.push(`\nDisplayed Result:`);
-                      info.push(`  ID: ${result.id}`);
-                      info.push(`  Title: ${result.title}`);
-                      info.push(`  Duration: ${'duration' in result ? result.duration : 'N/A'}`);
-                      info.push(`  Generated: ${result.generatedAt}`);
-                      info.push(`  Transcript length: ${'transcript' in result ? result.transcript.length : 'N/A'} chars`);
-                    } else {
-                      info.push('\nNo result displayed');
-                    }
-                    
-                    console.log('=== Debug Info ===');
-                    console.log(info.join('\n'));
-                    if (saved) {
-                      const parsed = JSON.parse(saved);
-                      console.log('Full localStorage result:', parsed);
-                    }
-                    if (result) {
-                      console.log('Full displayed result:', result);
-                    }
-                    
-                    alert(info.join('\n') + '\n\nCheck console for full objects');
-                  } catch (e) {
-                    console.error('Failed to check localStorage:', e);
-                    alert('Error checking localStorage. See console.');
-                  }
-                }}
-                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded transition-colors"
-                title="Check what's in localStorage vs displayed"
-              >
-                Debug
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm('Clear saved result from localStorage? This will remove the cached result.')) {
-                    try {
-                      localStorage.removeItem(`synthesis-result-${type}`);
-                      setResult(null);
-                      alert('Cleared! The page will now show no result.');
-                    } catch (e) {
-                      console.error('Failed to clear localStorage:', e);
-                    }
-                  }
-                }}
-                className="px-3 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded transition-colors"
-                title="Clear cached result"
-              >
-                Clear Cache
-              </button>
-              <button
-                onClick={() => {
-                  // Force reload from localStorage
-                  try {
-                    const saved = localStorage.getItem(`synthesis-result-${type}`);
-                    if (saved) {
-                      const parsed = JSON.parse(saved);
-                      console.log('Reloading from localStorage:', parsed.id);
-                      setResult(parsed);
-                      alert(`Reloaded result: ${parsed.id}\nDuration: ${'duration' in parsed ? parsed.duration : 'N/A'}`);
-                    } else {
-                      alert('No result in localStorage to reload');
-                    }
-                  } catch (e) {
-                    console.error('Failed to reload:', e);
-                    alert('Error reloading. See console.');
-                  }
-                }}
-                className="px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded transition-colors"
-                title="Reload from localStorage"
-              >
-                Reload
-              </button>
-            </div>
-          )}
         </div>
       </div>
-
-      {/* Debug Panel - shows localStorage info */}
-      {isHydrated && (
-        <div className="bg-gray-100 border border-gray-300 rounded-lg p-4 mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-semibold text-gray-900">Debug Info</p>
-            <button
-              onClick={() => {
-                try {
-                  const saved = localStorage.getItem(`synthesis-result-${type}`);
-                  const info: string[] = [];
-                  
-                  if (saved) {
-                    const parsed = JSON.parse(saved);
-                    info.push(`LocalStorage:`);
-                    info.push(`  ID: ${parsed.id}`);
-                    info.push(`  Title: ${parsed.title}`);
-                    info.push(`  Duration: ${'duration' in parsed ? parsed.duration : 'N/A'}`);
-                    info.push(`  Generated: ${new Date(parsed.generatedAt).toLocaleString()}`);
-                    info.push(`  Transcript: ${'transcript' in parsed ? parsed.transcript.length : 'N/A'} chars`);
-                  } else {
-                    info.push('No result in localStorage');
-                  }
-                  
-                  if (result) {
-                    info.push(`\nDisplayed:`);
-                    info.push(`  ID: ${result.id}`);
-                    info.push(`  Title: ${result.title}`);
-                    info.push(`  Duration: ${'duration' in result ? result.duration : 'N/A'}`);
-                    info.push(`  Generated: ${new Date(result.generatedAt).toLocaleString()}`);
-                    info.push(`  Transcript: ${'transcript' in result ? result.transcript.length : 'N/A'} chars`);
-                  } else {
-                    info.push('\nNo result displayed');
-                  }
-                  
-                  alert(info.join('\n'));
-                } catch (e) {
-                  alert('Error: ' + (e instanceof Error ? e.message : String(e)));
-                }
-              }}
-              className="px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
-            >
-              Check
-            </button>
-          </div>
-          <div className="text-xs text-gray-700 space-y-1">
-            {(() => {
-              try {
-                const saved = localStorage.getItem(`synthesis-result-${type}`);
-                if (saved) {
-                  const parsed = JSON.parse(saved);
-                  return (
-                    <>
-                      <p><strong>LocalStorage:</strong> {parsed.id} - {parsed.title}</p>
-                      <p>Duration: {'duration' in parsed ? parsed.duration : 'N/A'}</p>
-                      <p>Generated: {new Date(parsed.generatedAt).toLocaleString()}</p>
-                    </>
-                  );
-                }
-                return <p>No result in localStorage</p>;
-              } catch {
-                return <p>Error reading localStorage</p>;
-              }
-            })()}
-            {result && (
-              <>
-                <p className="mt-2"><strong>Displayed:</strong> {result.id} - {result.title}</p>
-                <p>Duration: {'duration' in result ? result.duration : 'N/A'}</p>
-                <p>Generated: {new Date(result.generatedAt).toLocaleString()}</p>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Error Alert */}
       {error && (
@@ -825,7 +656,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
                   {/* Debug info - remove in production */}
                   {process.env.NODE_ENV === 'development' && (
                     <div className="mb-4 p-2 bg-gray-100 text-xs">
-                      Result ID: {(result as AudioDigestResult).id}, 
+                      Result ID: {(result as AudioDigestResult).id},
                       Duration: {(result as AudioDigestResult).duration},
                       Generated: {(result as AudioDigestResult).generatedAt}
                     </div>
