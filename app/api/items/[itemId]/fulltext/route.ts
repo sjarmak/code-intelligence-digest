@@ -55,7 +55,7 @@ export async function GET(
     }
 
     // Check if full text contains Inoreader login page (bad cached content)
-    if (hasFullText && (item.fullText.includes('Sign in | Inoreader') || item.fullText.includes('inoreader-logo'))) {
+    if (hasFullText && item.fullText && (item.fullText.includes('Sign in | Inoreader') || item.fullText.includes('inoreader-logo'))) {
       logger.warn(`[FULLTEXT] Item ${itemId} has Inoreader login page in cached full text - clearing cache and re-fetching`);
       // Clear the bad cached full text
       await clearBadFullText(itemId).catch(err => {

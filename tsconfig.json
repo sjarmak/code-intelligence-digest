@@ -38,6 +38,9 @@
   ],
   "exclude": [
     "node_modules",
-    "scripts/investigate-paper-content.ts"
+    "scripts/investigate-paper-content.ts",
+    "scripts/backfill-ads-items-to-items-table.ts",
+    "scripts/update-existing-items-fulltext-from-ads.ts",
+    "scripts/cleanup-invalid-urls.ts"
   ]
 }
