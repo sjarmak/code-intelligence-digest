@@ -7,7 +7,7 @@
 import { FeedItem } from "../model";
 import { logger } from "../logger";
 import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { extractBibcodeFromUrl } from "../ads/client";
 
 export interface FullTextResult {
@@ -24,6 +24,12 @@ export interface FullTextResult {
 async function fetchWebPage(url: string): Promise<string> {
   const maxRetries = 3;
   const timeout = 10000; // 10 seconds
+
+  // Check if this is a known problematic URL that won't have extractable content
+  const isGoogleNews = isGoogleNewsRedirect(url);
+  const isKnownProblematic = isGoogleNews ||
+    /podcasters\.spotify\.com/i.test(url) ||
+    /cursor-changelog\.com\/versions/i.test(url);
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -50,6 +56,11 @@ async function fetchWebPage(url: string): Promise<string> {
       const text = await extractTextFromHTML(html, url);
 
       if (text.length < 100) {
+        // For known problematic URLs, this is expected - don't retry
+        if (isKnownProblematic) {
+          logger.debug(`URL has no extractable content (expected): ${url.substring(0, 80)}...`);
+          throw new Error("No extractable content (expected for this URL type)");
+        }
         throw new Error("Extracted text too short");
       }
 
@@ -57,9 +68,23 @@ async function fetchWebPage(url: string): Promise<string> {
       return text;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.warn(
-        `Attempt ${attempt}/${maxRetries} failed for ${url}: ${errorMsg}`
-      );
+
+      // For known problematic URLs, use debug level instead of warn
+      if (isKnownProblematic && errorMsg.includes("expected")) {
+        // Don't log warnings for expected failures - they're not real errors
+        if (attempt === 1) {
+          logger.debug(`Skipping full text extraction for ${url.substring(0, 60)}... (no extractable content)`);
+        }
+      } else {
+        logger.warn(
+          `Attempt ${attempt}/${maxRetries} failed for ${url.substring(0, 80)}...: ${errorMsg}`
+        );
+      }
+
+      // Don't retry known problematic URLs
+      if (isKnownProblematic) {
+        break;
+      }
 
       if (attempt < maxRetries) {
         // Exponential backoff: 1s, 2s, 4s
@@ -79,7 +104,30 @@ async function extractTextFromHTML(html: string, url?: string): Promise<string> 
   // Try Readability first for better extraction (removes nav, ads, sidebars)
   if (url) {
     try {
-      const dom = new JSDOM(html, { url });
+      // Create a virtual console that suppresses CSS parsing errors
+      // We only need text content, not CSS rendering
+      const virtualConsole = new VirtualConsole();
+
+      // Suppress CSS parsing errors - they're not critical for text extraction
+      virtualConsole.on('error', (error: Error) => {
+        const message = error.message || String(error);
+        // Filter out CSS parsing errors silently
+        if (message.includes('Could not parse CSS stylesheet') ||
+            message.includes('css style sheet') ||
+            message.includes('CSSStyleSheet')) {
+          return; // Suppress CSS parsing errors
+        }
+        // Log other errors for debugging
+        logger.debug('JSDOM error (non-critical):', { error: message });
+      });
+
+      const dom = new JSDOM(html, {
+        url,
+        virtualConsole,
+        // Skip resource loading (stylesheets, images, etc.) - faster and avoids CSS errors
+        resources: 'usable',
+      });
+
       const reader = new Readability(dom.window.document);
       const article = reader.parse();
 
@@ -88,9 +136,15 @@ async function extractTextFromHTML(html: string, url?: string): Promise<string> 
         return article.textContent.trim();
       }
     } catch (error) {
-      logger.debug("Readability extraction failed, using fallback", {
-        error: error instanceof Error ? error.message : String(error)
-      });
+      // Suppress CSS parsing errors - they're not critical for text extraction
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (errorMsg.includes('CSS') || errorMsg.includes('stylesheet')) {
+        logger.debug("CSS parsing error (non-critical), using fallback");
+      } else {
+        logger.debug("Readability extraction failed, using fallback", {
+          error: errorMsg
+        });
+      }
     }
   }
 
@@ -112,6 +166,62 @@ async function extractTextFromHTML(html: string, url?: string): Promise<string> 
     .trim();
 
   return text;
+}
+
+/**
+ * Fetch README from GitHub repository
+ * Converts GitHub repo URLs to raw README.md content
+ */
+async function fetchFromGitHub(url: string): Promise<string | null> {
+  try {
+    // Match GitHub repo URLs: https://github.com/owner/repo or https://github.com/owner/repo/tree/branch
+    const githubMatch = url.match(/github\.com\/([^\/]+)\/([^\/\?#]+)(?:\/(?:tree|blob)\/([^\/\?#]+))?/);
+    if (!githubMatch) {
+      return null; // Not a GitHub repo URL
+    }
+
+    const [, owner, repo, branchOrPath] = githubMatch;
+
+    // Default branch is usually 'main' or 'master', try both
+    const branches = branchOrPath ? [branchOrPath] : ['main', 'master'];
+
+    for (const branch of branches) {
+      // Try README.md first (most common)
+      const readmeUrls = [
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`,
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/readme.md`,
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/Readme.md`,
+      ];
+
+      for (const readmeUrl of readmeUrls) {
+        try {
+          const response = await fetch(readmeUrl, {
+            signal: AbortSignal.timeout(5000),
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Code Intelligence Digest)",
+              "Accept": "text/plain,text/markdown,*/*",
+            },
+          });
+
+          if (response.ok) {
+            const text = await response.text();
+            if (text && text.length > 100) {
+              logger.info(`Fetched GitHub README from ${readmeUrl} (${text.length} chars)`);
+              return text;
+            }
+          }
+        } catch (err) {
+          // Try next URL
+          continue;
+        }
+      }
+    }
+
+    return null; // No README found
+  } catch (error) {
+    logger.debug("GitHub README fetch failed", { error });
+    return null;
+  }
 }
 
 /**
@@ -239,12 +349,56 @@ async function getFullTextFromADS(url: string): Promise<string | null> {
 }
 
 /**
+ * Check if URL is a Google News RSS redirect (not a real article URL)
+ * These redirect pages don't contain extractable content
+ */
+function isGoogleNewsRedirect(url: string): boolean {
+  return /news\.google\.com\/rss\/articles\//i.test(url);
+}
+
+/**
+ * Check if URL is likely to have extractable content
+ */
+function isLikelyExtractable(url: string): boolean {
+  // Skip known redirect/aggregator URLs that don't have extractable content
+  const skipPatterns = [
+    /news\.google\.com\/rss\/articles\//i, // Google News RSS redirects
+    /podcasters\.spotify\.com/i, // Spotify podcast pages (no transcript)
+    /cursor-changelog\.com\/versions/i, // Changelog index pages
+  ];
+
+  return !skipPatterns.some(pattern => pattern.test(url));
+}
+
+/**
  * Fetch full text from a URL
  * Returns the full text of an article
  * Priority: 1. ADS database, 2. arXiv API, 3. Web scraping
  */
 export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   const { url } = item;
+
+  // CRITICAL: Skip Inoreader URLs - they don't contain extractable article content
+  if (url.includes("inoreader.com")) {
+    logger.warn(`Skipping full text extraction for Inoreader URL: ${url} (item: ${item.title})`);
+    return {
+      text: "",
+      source: "error",
+      length: 0,
+      fetchedAt: new Date(),
+    };
+  }
+
+  // Skip URLs that are known to not have extractable content
+  if (!isLikelyExtractable(url)) {
+    logger.debug(`Skipping full text extraction for redirect/aggregator URL: ${url}`);
+    return {
+      text: "",
+      source: "error",
+      length: 0,
+      fetchedAt: new Date(),
+    };
+  }
 
   logger.info(`Fetching full text for: ${item.title} (${url})`);
 
@@ -257,6 +411,23 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
       length: adsBody.length,
       fetchedAt: new Date(),
     };
+  }
+
+  // Try GitHub README if URL is a GitHub repository
+  if (url.includes("github.com")) {
+    try {
+      const text = await fetchFromGitHub(url);
+      if (text) {
+        return {
+          text,
+          source: "web_scrape", // GitHub README is still web content
+          length: text.length,
+          fetchedAt: new Date(),
+        };
+      }
+    } catch (error) {
+      logger.debug("GitHub README fetch failed, falling back to web scrape");
+    }
   }
 
   // Try arXiv API if URL looks like arXiv

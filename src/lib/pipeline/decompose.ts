@@ -528,14 +528,22 @@ function extractArticlesFromHtml(html: string): Array<{
           const base64 = base64Match[1].replace(/-/g, "+").replace(/_/g, "/");
           const decoded = Buffer.from(base64, "base64").toString("utf-8");
           const payload = JSON.parse(decoded);
-          if (payload.e && typeof payload.e === "string" && isValidAbsoluteUrl(payload.e)) {
-            const decodedUrl = payload.e;
-            // Check if decoded URL is a subscription page and skip if so
-            if (shouldExcludeUrl(decodedUrl)) {
-              logger.debug(`Filtered out decoded Substack subscription URL: ${decodedUrl}`);
-              continue;
-            }
-            url = decodedUrl;
+            if (payload.e && typeof payload.e === "string" && isValidAbsoluteUrl(payload.e)) {
+              const decodedUrl = payload.e;
+              // Check if decoded URL is a subscription page and skip if so
+              const decodedUrlLower = decodedUrl.toLowerCase();
+              const isSubscribeUrl = decodedUrlLower.includes('/subscribe') ||
+                                    decodedUrlLower.includes('subscribe?') ||
+                                    decodedUrlLower.includes('?subscribe') ||
+                                    decodedUrlLower.includes('utm_campaign=email-subscribe') ||
+                                    decodedUrlLower.includes('utm_source=email-subscribe') ||
+                                    decodedUrlLower.includes('action=subscribe');
+
+              if (shouldExcludeUrl(decodedUrl) || isSubscribeUrl) {
+                logger.debug(`Filtered out decoded Substack subscription URL: ${decodedUrl}`);
+                continue;
+              }
+              url = decodedUrl;
           } else {
             // Invalid decoded URL, skip
             continue;

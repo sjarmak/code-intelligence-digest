@@ -18,10 +18,23 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
     if (driver === 'postgres') {
       const client = await getDbClient();
       for (const item of items) {
+        const now = Math.floor(Date.now() / 1000);
+        // Determine full_text_source based on item properties
+        let fullTextSource: string | null = null;
+        if (item.fullText) {
+          if (item.category === 'research') {
+            fullTextSource = 'ads_api';
+          } else if (item.url?.includes('arxiv.org')) {
+            fullTextSource = 'arxiv';
+          } else {
+            fullTextSource = 'web_scrape';
+          }
+        }
+
         await client.run(`
           INSERT INTO items
-          (id, stream_id, source_title, title, url, author, published_at, created_at, summary, content_snippet, categories, category, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, EXTRACT(EPOCH FROM NOW())::INTEGER)
+          (id, stream_id, source_title, title, url, author, published_at, created_at, summary, content_snippet, categories, category, full_text, full_text_fetched_at, full_text_source, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, EXTRACT(EPOCH FROM NOW())::INTEGER)
           ON CONFLICT (id) DO UPDATE SET
             stream_id = EXCLUDED.stream_id,
             source_title = EXCLUDED.source_title,
@@ -34,6 +47,9 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             content_snippet = EXCLUDED.content_snippet,
             categories = EXCLUDED.categories,
             category = EXCLUDED.category,
+            full_text = COALESCE(EXCLUDED.full_text, items.full_text),
+            full_text_fetched_at = COALESCE(EXCLUDED.full_text_fetched_at, items.full_text_fetched_at),
+            full_text_source = COALESCE(EXCLUDED.full_text_source, items.full_text_source),
             updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
         `, [
           item.id,
@@ -47,7 +63,10 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
           item.summary || null,
           item.contentSnippet || null,
           JSON.stringify(item.categories),
-          item.category
+          item.category,
+          item.fullText || null,
+          item.fullText ? now : null,
+          fullTextSource
         ]);
       }
     } else {
@@ -55,8 +74,8 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
 
       const stmt = sqlite.prepare(`
         INSERT INTO items
-        (id, stream_id, source_title, title, url, author, published_at, created_at, summary, content_snippet, categories, category, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        (id, stream_id, source_title, title, url, author, published_at, created_at, summary, content_snippet, categories, category, full_text, full_text_fetched_at, full_text_source, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
         ON CONFLICT (id) DO UPDATE SET
           stream_id = EXCLUDED.stream_id,
           source_title = EXCLUDED.source_title,
@@ -69,11 +88,27 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
           content_snippet = EXCLUDED.content_snippet,
           categories = EXCLUDED.categories,
           category = EXCLUDED.category,
+          full_text = COALESCE(EXCLUDED.full_text, items.full_text),
+          full_text_fetched_at = COALESCE(EXCLUDED.full_text_fetched_at, items.full_text_fetched_at),
+          full_text_source = COALESCE(EXCLUDED.full_text_source, items.full_text_source),
           updated_at = strftime('%s', 'now')
       `);
 
       const insertMany = sqlite.transaction((items: FeedItem[]) => {
         for (const item of items) {
+          const now = Math.floor(Date.now() / 1000);
+          // Determine full_text_source based on item properties
+          let fullTextSource: string | null = null;
+          if (item.fullText) {
+            if (item.category === 'research') {
+              fullTextSource = 'ads_api';
+            } else if (item.url?.includes('arxiv.org')) {
+              fullTextSource = 'arxiv';
+            } else {
+              fullTextSource = 'web_scrape';
+            }
+          }
+
           stmt.run(
             item.id,
             item.streamId,
@@ -86,7 +121,10 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             item.summary || null,
             item.contentSnippet || null,
             JSON.stringify(item.categories),
-            item.category
+            item.category,
+            item.fullText || null,
+            item.fullText ? now : null,
+            fullTextSource
           );
         }
       });
@@ -434,6 +472,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       categories: string;
       category: string;
       extracted_url: string | null;
+      full_text: string | null;
     };
 
     let row: ItemRow | undefined;
@@ -442,16 +481,91 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       const client = await getDbClient();
       const result = await client.query(
         `SELECT id, stream_id, source_title, title, url, author, published_at,
-                summary, content_snippet, categories, category, extracted_url
+                summary, content_snippet, categories, category, extracted_url, full_text
          FROM items WHERE id = $1`,
         [itemId]
       );
-      row = result.rows[0] as ItemRow | undefined;
+      const rawRow = result.rows[0] as Record<string, unknown> | undefined;
+      // Explicitly map the row to ensure full_text is preserved
+      // CRITICAL: Handle PostgreSQL TEXT columns which may be returned as strings, null, or objects
+      if (rawRow) {
+        let fullTextValue: string | null = null;
+        const rawFullText = rawRow['full_text'] ?? rawRow.full_text;
+
+        // Handle null/undefined first (typeof null === 'object' in JavaScript!)
+        if (rawFullText === null || rawFullText === undefined) {
+          fullTextValue = null;
+        } else if (typeof rawFullText === 'string') {
+          // Already a string, use it directly
+          fullTextValue = rawFullText.length > 0 ? rawFullText : null;
+        } else {
+          // PostgreSQL TEXT columns can be returned as objects (Buffers, etc.)
+          // Convert to string using toString() or String()
+          try {
+            if (typeof rawFullText === 'object' && rawFullText !== null) {
+              // Check if it's a Buffer-like object
+              if ('toString' in rawFullText && typeof rawFullText.toString === 'function') {
+                const converted = rawFullText.toString();
+                fullTextValue = converted.length > 0 ? converted : null;
+              } else {
+                const converted = String(rawFullText);
+                fullTextValue = converted.length > 0 && converted !== 'null' ? converted : null;
+              }
+            } else {
+              const converted = String(rawFullText);
+              fullTextValue = converted.length > 0 && converted !== 'null' ? converted : null;
+            }
+          } catch (e) {
+            fullTextValue = null;
+          }
+        }
+        row = {
+          id: rawRow.id as string,
+          stream_id: rawRow.stream_id as string,
+          source_title: rawRow.source_title as string,
+          title: rawRow.title as string,
+          url: rawRow.url as string,
+          author: rawRow.author as string | null,
+          published_at: rawRow.published_at as number,
+          summary: rawRow.summary as string | null,
+          content_snippet: rawRow.content_snippet as string | null,
+          categories: rawRow.categories as string,
+          category: rawRow.category as string,
+          extracted_url: rawRow.extracted_url as string | null,
+          full_text: fullTextValue,
+        } as ItemRow;
+      } else {
+        row = undefined;
+      }
     } else {
       const sqlite = getSqlite();
-      row = sqlite
-        .prepare(`SELECT * FROM items WHERE id = ?`)
-        .get(itemId) as ItemRow | undefined;
+      // CRITICAL FIX: Use explicit column selection and access raw row properties directly
+      // better-sqlite3 returns column names exactly as they appear in the SELECT
+      const rawRow = sqlite.prepare(`SELECT id, stream_id, source_title, title, url, author, published_at, created_at, summary, content_snippet, categories, category, extracted_url, full_text, full_text_fetched_at, full_text_source FROM items WHERE id = ?`).get(itemId) as Record<string, unknown> | undefined;
+
+      // Map raw row to ItemRow, ensuring full_text is properly extracted
+      if (rawRow) {
+        // CRITICAL: Extract full_text using multiple methods to ensure we get it
+        const fullTextValue = rawRow['full_text'] ?? rawRow.full_text ?? null;
+
+        row = {
+          id: rawRow.id as string,
+          stream_id: rawRow.stream_id as string,
+          source_title: rawRow.source_title as string,
+          title: rawRow.title as string,
+          url: rawRow.url as string,
+          author: rawRow.author as string | null,
+          published_at: rawRow.published_at as number,
+          summary: rawRow.summary as string | null,
+          content_snippet: rawRow.content_snippet as string | null,
+          categories: rawRow.categories as string,
+          category: rawRow.category as string,
+          extracted_url: rawRow.extracted_url as string | null,
+          full_text: typeof fullTextValue === 'string' && fullTextValue.length > 0 ? fullTextValue : (fullTextValue === null ? null : (typeof fullTextValue === 'string' ? fullTextValue : null)), // Ensure we preserve the value
+        } as ItemRow;
+      } else {
+        row = undefined;
+      }
     }
 
     if (!row) {
@@ -479,6 +593,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       createdAt: new Date(row.published_at * 1000), // Use published_at as fallback
       summary: row.summary || undefined,
       contentSnippet: row.content_snippet || undefined,
+      fullText: (row.full_text && typeof row.full_text === 'string' && row.full_text.length > 0) ? row.full_text : undefined,
       categories: parsedCategories,
       category,
       raw: {},
@@ -757,13 +872,56 @@ async function extractFullTextForNewItems(items: FeedItem[]): Promise<void> {
 }
 
 /**
+ * Clear bad cached full text (e.g., Inoreader login page content)
+ */
+export async function clearBadFullText(itemId: string): Promise<void> {
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`
+        UPDATE items
+        SET full_text = NULL,
+            full_text_fetched_at = NULL,
+            full_text_source = NULL,
+            updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
+        WHERE id = $1
+      `, [itemId]);
+    } else {
+      const sqlite = getSqlite();
+      sqlite.prepare(`
+        UPDATE items
+        SET full_text = NULL,
+            full_text_fetched_at = NULL,
+            full_text_source = NULL,
+            updated_at = strftime('%s', 'now')
+        WHERE id = ?
+      `).run(itemId);
+    }
+
+    logger.info(`Cleared bad cached full text for item ${itemId}`);
+  } catch (error) {
+    logger.error(`Failed to clear bad full text for item ${itemId}`, { error });
+    throw error;
+  }
+}
+
+/**
  * Save full text for an item
+ * Validates that full text doesn't contain Inoreader login page content
  */
 export async function saveFullText(
   itemId: string,
   fullText: string,
   source: "web_scrape" | "arxiv" | "ads_api" | "error"
 ): Promise<void> {
+  // Don't save if full text contains Inoreader login page content
+  if (fullText && (fullText.includes('Sign in | Inoreader') || fullText.includes('inoreader-logo'))) {
+    logger.warn(`Rejecting full text for item ${itemId} - contains Inoreader login page content`);
+    return; // Don't save bad content
+  }
+
   try {
     const driver = detectDriver();
 
