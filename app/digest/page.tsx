@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import Link from 'next/link';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { DigestItemsView } from '@/src/components/digest/digest-items-view';
 import { SynthesisPage } from '@/src/components/synthesis/synthesis-page';
@@ -9,7 +9,15 @@ import { SynthesisPage } from '@/src/components/synthesis/synthesis-page';
 type DigestType = 'newsletter' | 'podcast' | null;
 
 export default function DigestPage() {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [activeType, setActiveType] = useState<DigestType>(null);
+
+  const handleBack = () => {
+    startTransition(() => {
+      router.push('/');
+    });
+  };
 
   if (activeType) {
     return (
@@ -35,13 +43,14 @@ export default function DigestPage() {
             {/* Title with back button */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 mb-2">
-                <Link
-                  href="/"
-                  className="p-1 rounded-md transition-colors hover:bg-gray-100 text-gray-600 hover:text-black"
+                <button
+                  onClick={handleBack}
+                  disabled={isPending}
+                  className="p-1 rounded-md transition-colors hover:bg-gray-100 text-gray-600 hover:text-black disabled:opacity-50 disabled:cursor-not-allowed"
                   title="Back to home"
                 >
                   <ArrowLeft className="w-5 h-5" />
-                </Link>
+                </button>
                 <h1 className="text-2xl sm:text-3xl font-bold">Generate Digest</h1>
               </div>
               <p className="text-muted mt-2 text-sm sm:text-base ml-9">
