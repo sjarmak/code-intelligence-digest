@@ -11,7 +11,7 @@ import { DateRangePicker, DateRange } from '@/src/components/common/date-range-p
 export const dynamic = 'force-dynamic';
 
 type Period = 'day' | 'week' | 'month' | 'all' | 'custom';
-type TabType = 'resources' | 'search' | 'ask' | 'starred';
+type TabType = 'resources' | 'search' | 'ask' | 'digest' | 'libraries' | 'starred';
 
 function Loading() {
   return <div className="text-center py-12 text-muted">Loading...</div>;
@@ -64,20 +64,6 @@ export default function Home() {
 
             {/* Action buttons - upper right */}
             <div className="flex shrink-0 items-center gap-2">
-              <a
-                href="/synthesis/newsletter"
-                className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
-                title="Generate newsletters"
-              >
-                Generate Newsletter
-              </a>
-              <a
-                href="/synthesis/podcast"
-                className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
-                title="Generate podcast episodes"
-              >
-                Generate Podcast
-              </a>
               {/* Starred button - only in dev */}
               {config.features.starred && (
                 <button
@@ -92,13 +78,6 @@ export default function Home() {
                   Starred
                 </button>
               )}
-              <a
-                href="/libraries"
-                className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50 whitespace-nowrap"
-                title="View ADS research libraries"
-              >
-                Libraries
-              </a>
               {/* Settings icon - only in dev */}
               {config.adminUIEnabled && (
                 <a
@@ -125,7 +104,7 @@ export default function Home() {
         <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-3 py-2 sm:py-0">
             {/* Navigation tabs row */}
-            <nav className="flex overflow-x-auto gap-4 sm:gap-6 -mx-4 sm:mx-0 px-4 sm:px-0" role="tablist">
+            <nav className="flex overflow-x-auto gap-4 sm:gap-6 -mx-4 sm:mx-0 px-4 sm:px-0 scrollbar-hide" role="tablist" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               <button
                   onClick={() => setActiveTab('resources')}
                   className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
@@ -162,6 +141,36 @@ export default function Home() {
                >
                  Ask
                </button>
+               <button
+                 onClick={() => {
+                   setActiveTab('digest');
+                   window.location.href = '/digest';
+                 }}
+                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                   activeTab === 'digest'
+                     ? 'border-black text-black'
+                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
+                 }`}
+                 role="tab"
+                 aria-selected={activeTab === 'digest'}
+               >
+                 Generate Digest
+               </button>
+               <button
+                 onClick={() => {
+                   setActiveTab('libraries');
+                   window.location.href = '/libraries';
+                 }}
+                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                   activeTab === 'libraries'
+                     ? 'border-black text-black'
+                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
+                 }`}
+                 role="tab"
+                 aria-selected={activeTab === 'libraries'}
+               >
+                 Libraries
+               </button>
              </nav>
           </div>
         </div>
@@ -173,7 +182,7 @@ export default function Home() {
           <div className="w-full px-4 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-3 py-2 sm:py-0">
               {/* Category tabs row */}
-              <nav className="flex overflow-x-auto gap-2 -mx-4 sm:mx-0 px-4 sm:px-0" role="tablist">
+              <nav className="flex overflow-x-auto gap-2 -mx-4 sm:mx-0 px-4 sm:px-0 scrollbar-hide" role="tablist" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                 {categories.map((cat) => (
                    <button
                       key={cat.id}
@@ -262,7 +271,7 @@ export default function Home() {
        )}
 
       {/* Content */}
-      <main className={`px-4 sm:px-6 lg:px-8 py-8 ${activeTab === 'resources' ? 'w-full' : 'max-w-7xl mx-auto'}`}>
+      <main className={`px-4 sm:px-6 lg:px-8 py-8 w-full max-w-7xl mx-auto overflow-x-hidden`}>
         {activeTab === 'resources' && (
           <Suspense fallback={<Loading />}>
             <ItemsGrid
