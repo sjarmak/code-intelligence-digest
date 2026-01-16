@@ -462,7 +462,13 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
     const finalUrl = (row.url && !row.url.includes("inoreader.com"))
       ? row.url
       : (row.extracted_url || row.url);
-    return {
+    let parsedCategories: string[];
+    try {
+      parsedCategories = JSON.parse(row.categories);
+    } catch (e) {
+      parsedCategories = ['research']; // Default for synthetic items
+    }
+    const feedItem = {
       id: row.id,
       streamId: row.stream_id,
       sourceTitle: row.source_title,
@@ -470,12 +476,14 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       url: finalUrl,
       author: row.author || undefined,
       publishedAt: new Date(row.published_at * 1000),
+      createdAt: new Date(row.published_at * 1000), // Use published_at as fallback
       summary: row.summary || undefined,
       contentSnippet: row.content_snippet || undefined,
-      categories: JSON.parse(row.categories),
+      categories: parsedCategories,
       category,
       raw: {},
     };
+    return feedItem;
   } catch (error) {
     logger.error(`Failed to load item ${itemId} from database`, error);
     throw error;
@@ -857,14 +865,25 @@ export async function getFullTextCacheStats(): Promise<{
  */
 export async function saveExtractedUrl(itemId: string, extractedUrl: string): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
-    sqlite.prepare(`
-      UPDATE items
-      SET extracted_url = ?,
-          updated_at = strftime('%s', 'now')
-      WHERE id = ?
-    `).run(extractedUrl, itemId);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`
+        UPDATE items
+        SET extracted_url = $1,
+            updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
+        WHERE id = $2
+      `, [extractedUrl, itemId]);
+    } else {
+      const sqlite = getSqlite();
+      sqlite.prepare(`
+        UPDATE items
+        SET extracted_url = ?,
+            updated_at = strftime('%s', 'now')
+        WHERE id = ?
+      `).run(extractedUrl, itemId);
+    }
 
     logger.debug(`Saved extracted URL for item ${itemId}: ${extractedUrl}`);
   } catch (error) {
@@ -897,5 +916,194 @@ export async function saveExtractedUrls(urlMap: Record<string, string>): Promise
   } catch (error) {
     logger.error("Failed to save extracted URLs", error);
     throw error;
+  }
+}
+
+/**
+ * Ensure an item exists in the items table
+ * For synthetic itemIds (ads:bibcode), creates a minimal item from ADS papers table
+ */
+export async function ensureItemExists(itemId: string): Promise<void> {
+  // Check if item already exists
+  const driver = detectDriver();
+  let exists = false;
+
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(
+      'SELECT 1 FROM items WHERE id = $1 LIMIT 1',
+      [itemId]
+    );
+    exists = result.rows.length > 0;
+  } else {
+    const sqlite = getSqlite();
+    const result = sqlite.prepare('SELECT 1 FROM items WHERE id = ? LIMIT 1').get(itemId);
+    exists = !!result;
+  }
+
+  if (exists) {
+    return; // Item already exists
+  }
+
+  // For synthetic itemIds (ads:bibcode), try to create from ADS papers
+  if (itemId.startsWith('ads:')) {
+    const bibcode = itemId.substring(4); // Remove 'ads:' prefix
+    await createItemFromBibcode(bibcode, itemId);
+  }
+}
+
+/**
+ * Create a minimal item from a bibcode using ADS papers table
+ */
+async function createItemFromBibcode(bibcode: string, itemId: string): Promise<void> {
+  try {
+    const driver = detectDriver();
+    const now = Math.floor(Date.now() / 1000);
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      // Try to get paper metadata from ads_papers
+      const paperResult = await client.query(
+        'SELECT title, arxiv_url, ads_url, pubdate, abstract FROM ads_papers WHERE bibcode = $1 LIMIT 1',
+        [bibcode]
+      );
+
+      if (paperResult.rows.length > 0) {
+        const paper = paperResult.rows[0] as {
+          title?: string;
+          arxiv_url?: string;
+          ads_url?: string;
+          pubdate?: string;
+          abstract?: string;
+        };
+
+        const url = paper.arxiv_url || paper.ads_url || `https://ui.adsabs.harvard.edu/abs/${bibcode}`;
+        const title = paper.title || bibcode;
+        // Parse pubdate safely - handle various formats and invalid dates
+        let publishedAt = now;
+        if (paper.pubdate) {
+          try {
+            const date = new Date(paper.pubdate);
+            if (!isNaN(date.getTime())) {
+              publishedAt = date.getTime() / 1000;
+            }
+          } catch (e) {
+            // Invalid date format, use current time
+          }
+        }
+
+        // Create minimal item
+        await client.run(`
+          INSERT INTO items
+          (id, stream_id, source_title, title, url, published_at, created_at, summary, categories, category, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $7)
+          ON CONFLICT (id) DO NOTHING
+        `, [
+          itemId,
+          'ads:research', // Synthetic stream ID
+          'ADS Research Library',
+          title,
+          url,
+          Math.floor(publishedAt),
+          now,
+          paper.abstract || null,
+          JSON.stringify(['research']),
+          'research'
+        ]);
+      } else {
+        // Paper not in database, create minimal item with just bibcode
+        const url = `https://ui.adsabs.harvard.edu/abs/${bibcode}`;
+        await client.run(`
+          INSERT INTO items
+          (id, stream_id, source_title, title, url, published_at, created_at, categories, category, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $7)
+          ON CONFLICT (id) DO NOTHING
+        `, [
+          itemId,
+          'ads:research',
+          'ADS Research Library',
+          bibcode,
+          url,
+          now,
+          now,
+          JSON.stringify(['research']),
+          'research'
+        ]);
+      }
+    } else {
+      const sqlite = getSqlite();
+      // Try to get paper metadata from ads_papers
+      const paper = sqlite.prepare(
+        'SELECT title, arxiv_url, ads_url, pubdate, abstract FROM ads_papers WHERE bibcode = ? LIMIT 1'
+      ).get(bibcode) as {
+        title?: string;
+        arxiv_url?: string;
+        ads_url?: string;
+        pubdate?: string;
+        abstract?: string;
+      } | undefined;
+
+      if (paper) {
+        const url = paper.arxiv_url || paper.ads_url || `https://ui.adsabs.harvard.edu/abs/${bibcode}`;
+        const title = paper.title || bibcode;
+        // Parse pubdate safely - handle various formats and invalid dates
+        let publishedAt = now;
+        if (paper.pubdate) {
+          try {
+            const date = new Date(paper.pubdate);
+            if (!isNaN(date.getTime())) {
+              publishedAt = date.getTime() / 1000;
+            }
+          } catch (e) {
+            // Invalid date format, use current time
+          }
+        }
+
+        sqlite.prepare(`
+          INSERT INTO items
+          (id, stream_id, source_title, title, url, published_at, created_at, summary, categories, category, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (id) DO NOTHING
+        `).run(
+          itemId,
+          'ads:research',
+          'ADS Research Library',
+          title,
+          url,
+          Math.floor(publishedAt),
+          now,
+          paper.abstract || null,
+          JSON.stringify(['research']),
+          'research',
+          now
+        );
+      } else {
+        // Paper not in database, create minimal item
+        const url = `https://ui.adsabs.harvard.edu/abs/${bibcode}`;
+        sqlite.prepare(`
+          INSERT INTO items
+          (id, stream_id, source_title, title, url, published_at, created_at, categories, category, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (id) DO NOTHING
+        `).run(
+          itemId,
+          'ads:research',
+          'ADS Research Library',
+          bibcode,
+          url,
+          now,
+          now,
+          JSON.stringify(['research']),
+          'research',
+          now
+        );
+      }
+    }
+
+    logger.debug(`Created synthetic item ${itemId} from bibcode ${bibcode}`);
+  } catch (error) {
+    logger.error(`Failed to create item from bibcode ${bibcode}`, error);
+    // Don't throw - allow the operation to continue even if item creation fails
+    // The foreign key constraint will catch it if needed
   }
 }
