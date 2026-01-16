@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import ItemCard from '@/src/components/feeds/item-card';
-import { FolderHeart, RefreshCw } from 'lucide-react';
+import { FolderHeart, RefreshCw, CheckSquare, Square, Trash2, X } from 'lucide-react';
 
 interface SavedItemsViewProps {
   selectedItemIds?: Set<string>;
@@ -38,6 +38,9 @@ interface SavedItem {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [internalSelectedIds, setInternalSelectedIds] = useState<Set<string>>(externalSelectedIds || new Set());
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [deleteSelectedIds, setDeleteSelectedIds] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -150,6 +153,96 @@ interface SavedItem {
     onSelectionChange?.(newSelection);
   };
 
+  const handleToggleDeleteMode = () => {
+    setDeleteMode(!deleteMode);
+    if (deleteMode) {
+      setDeleteSelectedIds(new Set());
+    }
+  };
+
+  const handleToggleDeleteSelection = (itemId: string) => {
+    const newSelection = new Set(deleteSelectedIds);
+    if (newSelection.has(itemId)) {
+      newSelection.delete(itemId);
+    } else {
+      newSelection.add(itemId);
+    }
+    setDeleteSelectedIds(newSelection);
+  };
+
+  const handleSelectAllForDelete = () => {
+    setDeleteSelectedIds(new Set(items.map(item => item.id)));
+  };
+
+  const handleDeselectAllForDelete = () => {
+    setDeleteSelectedIds(new Set());
+  };
+
+  const handleDeleteSelected = async () => {
+    if (deleteSelectedIds.size === 0) return;
+
+    if (!confirm(`Are you sure you want to delete ${deleteSelectedIds.size} item(s) from the saved items library?`)) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const itemIdsArray = Array.from(deleteSelectedIds);
+      const response = await fetch('/api/saved-items', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemIds: itemIdsArray }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete items');
+      }
+
+      // Refresh items and clear selection
+      setDeleteSelectedIds(new Set());
+      setDeleteMode(false);
+      await fetchItems();
+
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('saved-items-changed'));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete items';
+      setError(message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleRemoveAll = async () => {
+    if (!confirm(`Are you sure you want to remove ALL ${items.length} items from the saved items library? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const response = await fetch('/api/saved-items?all=true', {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to remove all items');
+      }
+
+      // Refresh items and clear selection
+      setDeleteSelectedIds(new Set());
+      setDeleteMode(false);
+      await fetchItems();
+
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('saved-items-changed'));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to remove all items';
+      setError(message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-12">
@@ -185,34 +278,101 @@ interface SavedItem {
           <h3 className="text-lg font-semibold text-black">
             Saved Items ({items.length})
           </h3>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing || loading}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-colors bg-white border border-gray-300 text-black hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
-            title="Refresh saved items"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            {deleteMode && (
+              <>
+                <button
+                  onClick={deleteSelectedIds.size === items.length ? handleDeselectAllForDelete : handleSelectAllForDelete}
+                  disabled={items.length === 0 || deleting}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-white border border-gray-300 text-black hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                  title={deleteSelectedIds.size === items.length ? 'Deselect all' : 'Select all'}
+                >
+                  {deleteSelectedIds.size === items.length ? (
+                    <>
+                      <CheckSquare className="w-3.5 h-3.5" />
+                      Deselect All
+                    </>
+                  ) : (
+                    <>
+                      <Square className="w-3.5 h-3.5" />
+                      Select All
+                    </>
+                  )}
+                </button>
+                {deleteSelectedIds.size > 0 && (
+                  <button
+                    onClick={handleDeleteSelected}
+                    disabled={deleting}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-red-50 border border-red-300 text-red-700 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                    title={`Delete ${deleteSelectedIds.size} selected item(s)`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Selected ({deleteSelectedIds.size})
+                  </button>
+                )}
+                <button
+                  onClick={handleRemoveAll}
+                  disabled={items.length === 0 || deleting}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-red-50 border border-red-300 text-red-700 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                  title="Remove all items"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Remove All
+                </button>
+              </>
+            )}
+            {!showCheckboxes && (
+              <button
+                onClick={handleToggleDeleteMode}
+                disabled={items.length === 0 || deleting}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors bg-white border border-gray-300 text-black hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                title={deleteMode ? 'Exit delete mode' : 'Enter delete mode'}
+              >
+                {deleteMode ? (
+                  <>
+                    <X className="w-4 h-4" />
+                    Cancel
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </>
+                )}
+              </button>
+            )}
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing || loading || deleting}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium transition-colors bg-white border border-gray-300 text-black hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+              title="Refresh saved items"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
         </div>
         <p className="text-sm text-muted">
-          {showCheckboxes 
-            ? `Select items from your saved items library (${internalSelectedIds.size} selected).`
-            : 'Your saved items library. Select items from here when generating newsletters or podcasts in Manual mode.'}
+          {deleteMode
+            ? `Select items to delete. ${deleteSelectedIds.size} of ${items.length} selected.`
+            : showCheckboxes
+              ? `Select items from your saved items library (${internalSelectedIds.size} selected).`
+              : 'Your saved items library. Select items from here when generating newsletters or podcasts in Manual mode.'}
         </p>
       </div>
       {items.map((item, index) => (
         <div key={item.id} className="flex items-start gap-3">
-          {showCheckboxes && (
+          {(showCheckboxes || deleteMode) && (
             <input
               type="checkbox"
-              checked={internalSelectedIds.has(item.id)}
-              onChange={() => handleToggleSelection(item.id)}
+              checked={showCheckboxes ? internalSelectedIds.has(item.id) : deleteSelectedIds.has(item.id)}
+              onChange={() => showCheckboxes ? handleToggleSelection(item.id) : handleToggleDeleteSelection(item.id)}
+              disabled={deleting}
               className="mt-4 rounded border-surface-border accent-black focus:ring-black bg-surface"
             />
           )}
           <div className="flex-1">
-            <ItemCard item={item} rank={showCheckboxes ? undefined : index + 1} />
+            <ItemCard item={item} rank={(showCheckboxes || deleteMode) ? undefined : index + 1} />
           </div>
         </div>
       ))}

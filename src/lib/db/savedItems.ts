@@ -74,6 +74,60 @@ export async function removeFromSavedItems(itemId: string): Promise<void> {
 }
 
 /**
+ * Remove multiple items from saved items library
+ */
+export async function removeMultipleFromSavedItems(itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) {
+    return;
+  }
+
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+      await client.run(`
+        DELETE FROM saved_items WHERE item_id IN (${placeholders})
+      `, itemIds);
+    } else {
+      const sqlite = getSqlite();
+      const placeholders = itemIds.map(() => '?').join(',');
+      sqlite.prepare(`
+        DELETE FROM saved_items WHERE item_id IN (${placeholders})
+      `).run(...itemIds);
+    }
+
+    logger.debug(`Removed ${itemIds.length} items from saved items library`);
+  } catch (error) {
+    logger.error(`Failed to remove items from saved items library`, error);
+    throw error;
+  }
+}
+
+/**
+ * Remove all items from saved items library
+ */
+export async function removeAllFromSavedItems(): Promise<void> {
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`DELETE FROM saved_items`);
+    } else {
+      const sqlite = getSqlite();
+      sqlite.prepare(`DELETE FROM saved_items`).run();
+    }
+
+    logger.debug(`Removed all items from saved items library`);
+  } catch (error) {
+    logger.error(`Failed to remove all items from saved items library`, error);
+    throw error;
+  }
+}
+
+/**
  * Check if item is in saved items library
  */
 export async function isInSavedItems(itemId: string): Promise<boolean> {
@@ -114,7 +168,7 @@ export async function getSavedItems(limit?: number, offset?: number): Promise<Fe
         ORDER BY saved_at DESC
       `;
       const params: unknown[] = [];
-      
+
       if (limit) {
         sql += ` LIMIT $${params.length + 1}`;
         params.push(limit);

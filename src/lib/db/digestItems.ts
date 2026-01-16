@@ -74,6 +74,60 @@ export async function removeFromDigestItems(itemId: string): Promise<void> {
 }
 
 /**
+ * Remove multiple items from digest items library
+ */
+export async function removeMultipleFromDigestItems(itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) {
+    return;
+  }
+
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+      await client.run(`
+        DELETE FROM digest_items WHERE item_id IN (${placeholders})
+      `, itemIds);
+    } else {
+      const sqlite = getSqlite();
+      const placeholders = itemIds.map(() => '?').join(',');
+      sqlite.prepare(`
+        DELETE FROM digest_items WHERE item_id IN (${placeholders})
+      `).run(...itemIds);
+    }
+
+    logger.debug(`Removed ${itemIds.length} items from digest items library`);
+  } catch (error) {
+    logger.error(`Failed to remove items from digest items library`, error);
+    throw error;
+  }
+}
+
+/**
+ * Remove all items from digest items library
+ */
+export async function removeAllFromDigestItems(): Promise<void> {
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      await client.run(`DELETE FROM digest_items`);
+    } else {
+      const sqlite = getSqlite();
+      sqlite.prepare(`DELETE FROM digest_items`).run();
+    }
+
+    logger.debug(`Removed all items from digest items library`);
+  } catch (error) {
+    logger.error(`Failed to remove all items from digest items library`, error);
+    throw error;
+  }
+}
+
+/**
  * Check if item is in digest items library
  */
 export async function isInDigestItems(itemId: string): Promise<boolean> {
@@ -114,7 +168,7 @@ export async function getDigestItems(limit?: number, offset?: number): Promise<F
         ORDER BY added_at DESC
       `;
       const params: unknown[] = [];
-      
+
       if (limit) {
         sql += ` LIMIT $${params.length + 1}`;
         params.push(limit);
