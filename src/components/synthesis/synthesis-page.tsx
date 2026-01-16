@@ -8,6 +8,7 @@ import React, { useState } from "react";
 import { SynthesisForm, type SynthesisParams } from "./synthesis-form";
 import { NewsletterViewer } from "./newsletter-viewer";
 import { PodcastViewer } from "./podcast-viewer";
+import { AudioDigestViewer } from "./audio-digest-viewer";
 
 interface NewsletterResult {
   id: string;
@@ -65,10 +66,42 @@ interface PodcastResult {
   };
 }
 
-type SynthesisResult = NewsletterResult | PodcastResult;
+interface AudioDigestResult {
+  id: string;
+  title: string;
+  generatedAt: string;
+  categories: string[];
+  period: string;
+  duration: string;
+  itemsRetrieved: number;
+  itemsIncluded: number;
+  transcript: string;
+  segments: Array<{
+    title: string;
+    startTime: string;
+    endTime: string;
+    duration: number;
+    itemsReferenced: Array<{
+      id: string;
+      title: string;
+      url: string;
+      sourceTitle: string;
+    }>;
+    highlights: string[];
+  }>;
+  showNotes: string;
+  generationMetadata: {
+    promptUsed: string;
+    modelUsed: string;
+    duration: string;
+    promptProfile?: Record<string, unknown>;
+  };
+}
+
+type SynthesisResult = NewsletterResult | PodcastResult | AudioDigestResult;
 
 interface SynthesisPageProps {
-  type: "newsletter" | "podcast";
+  type: "newsletter" | "podcast" | "audio-digest";
 }
 
 export function SynthesisPage({ type }: SynthesisPageProps) {
@@ -77,24 +110,55 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   const [result, setResult] = useState<SynthesisResult | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
+  const resultRef = React.useRef<SynthesisResult | null>(null); // Ref to track result in stream handler
+  const isLoadingRef = React.useRef(false); // Ref to track loading state
+
+  // Debug: Log when isLoading changes
+  React.useEffect(() => {
+    isLoadingRef.current = isLoading;
+    console.log('isLoading state changed:', isLoading);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:122',message:'isLoading state changed in useEffect',data:{isLoading,isLoadingRef:isLoadingRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+  }, [isLoading]);
 
   // Load from localStorage on mount (client-side only)
+  // Only load on initial mount, not when type changes (to avoid overwriting new results)
+  const hasLoadedFromStorage = React.useRef(false);
   React.useEffect(() => {
+    if (hasLoadedFromStorage.current) return; // Only load once
+    hasLoadedFromStorage.current = true;
+    
     try {
       const saved = localStorage.getItem(`synthesis-result-${type}`);
       if (saved) {
-        setResult(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        console.log('Loaded result from localStorage on mount:', {
+          id: parsed.id,
+          title: parsed.title,
+          duration: 'duration' in parsed ? parsed.duration : 'N/A',
+          generatedAt: parsed.generatedAt,
+          type: type
+        });
+        setResult(parsed);
       }
     } catch (e) {
       console.warn("Failed to load from localStorage:", e);
     }
     setIsHydrated(true);
-  }, [type]);
+  }, []); // Only run once on mount
 
   // Persist result to localStorage on change (client-side only)
   React.useEffect(() => {
     if (isHydrated && result) {
       try {
+        console.log('Saving result to localStorage:', {
+          id: result.id,
+          title: result.title,
+          duration: 'duration' in result ? result.duration : 'N/A',
+          generatedAt: result.generatedAt
+        });
         localStorage.setItem(`synthesis-result-${type}`, JSON.stringify(result));
       } catch (e) {
         console.warn("Failed to save to localStorage:", e);
@@ -102,44 +166,340 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
     }
   }, [result, type, isHydrated]);
 
+  const handleStreamingGeneration = async (
+    endpoint: string,
+    params: SynthesisParams,
+    effectiveType: string,
+    progressInterval: NodeJS.Timeout
+  ) => {
+    return new Promise<void>((resolve, reject) => {
+      // Build request body
+      const requestBody = {
+        sourceMode: params.sourceMode,
+        ...(params.categories && { categories: params.categories }),
+        ...(params.period && { period: params.period }),
+        ...(params.limit && { limit: params.limit }),
+        ...(params.selectedItemIds && { selectedItemIds: params.selectedItemIds }),
+        ...(params.prompt && { prompt: params.prompt }),
+        ...(effectiveType === "audio-digest" && params.duration && { duration: params.duration }),
+        ...(params.period === "custom" && params.customDateRange && {
+          customDateRange: params.customDateRange,
+        }),
+      };
+
+      // POST to create the stream, then use EventSource
+      console.log('=== STARTING STREAMING REQUEST ===');
+      console.log('Endpoint:', endpoint + '?stream=true');
+      console.log('Request body:', JSON.stringify(requestBody, null, 2));
+      
+      fetch(endpoint + '?stream=true', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      }).then(response => {
+        console.log('Response status:', response.status, response.statusText);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.body;
+      }).then(body => {
+        if (!body) {
+          throw new Error("No response body");
+        }
+        console.log('Stream body received, starting to read...');
+
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let lastProgressTime = Date.now();
+        const INACTIVITY_TIMEOUT = 5 * 60 * 1000; // 5 minutes of inactivity
+
+        const inactivityTimer = setInterval(() => {
+          const timeSinceLastProgress = Date.now() - lastProgressTime;
+          if (timeSinceLastProgress > INACTIVITY_TIMEOUT) {
+            clearInterval(inactivityTimer);
+            reader.cancel();
+            reject(new Error(`No progress updates for ${INACTIVITY_TIMEOUT / 1000 / 60} minutes. Generation may have stalled.`));
+          }
+        }, 30000); // Check every 30 seconds
+
+        const processStream = async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                console.log('Stream ended, result:', resultRef.current);
+                // If stream ends without complete event, something went wrong
+                if (!resultRef.current) {
+                  clearInterval(inactivityTimer);
+                  clearInterval(progressInterval);
+                  reject(new Error('Stream ended unexpectedly without completion'));
+                }
+                break;
+              }
+
+              buffer += decoder.decode(value, { stream: true });
+              // SSE events are separated by double newlines
+              const events = buffer.split('\n\n');
+              buffer = events.pop() || ''; // Keep incomplete event in buffer
+
+              for (const eventText of events) {
+                if (eventText.trim() === '') continue;
+                
+                console.log('Processing SSE event text:', eventText.substring(0, 200));
+                
+                // Parse SSE format: "event: eventname\ndata: {...}"
+                const lines = eventText.split('\n');
+                let eventName = '';
+                let dataStr = '';
+                
+                for (const line of lines) {
+                  if (line.startsWith('event: ')) {
+                    eventName = line.substring(7).trim();
+                  } else if (line.startsWith('data: ')) {
+                    dataStr = line.substring(6).trim();
+                  }
+                }
+                
+                console.log('Parsed event:', eventName, 'data length:', dataStr.length);
+                
+                if (eventName && dataStr) {
+                  try {
+                    const parsed = JSON.parse(dataStr);
+                    lastProgressTime = Date.now();
+
+                    if (eventName === 'progress') {
+                      setProgressMessage(parsed.message || 'Processing...');
+                      if (parsed.progress !== undefined) {
+                        setLoadingProgress(parsed.progress);
+                      } else {
+                        // Increment progress slightly if not specified
+                        setLoadingProgress(prev => Math.min(prev + 1, 90));
+                      }
+                    } else if (eventName === 'complete') {
+                      console.log('=== COMPLETE EVENT RECEIVED ===');
+                      console.log('Raw parsed data:', parsed);
+                      console.log('Has id:', 'id' in parsed);
+                      console.log('Has duration:', 'duration' in parsed);
+                      console.log('Has transcript:', 'transcript' in parsed);
+                      
+                      clearInterval(inactivityTimer);
+                      clearInterval(progressInterval);
+                      setLoadingProgress(100);
+                      setProgressMessage('Generation complete!');
+                      // Set result - this will trigger localStorage save via useEffect
+                      // Cast to the result type - the complete event contains the full AudioDigestResponse
+                      const newResult = parsed as SynthesisResult;
+                      console.log('Setting result from complete event:', {
+                        id: newResult.id,
+                        title: newResult.title,
+                        duration: 'duration' in newResult ? newResult.duration : 'N/A',
+                        generatedAt: newResult.generatedAt,
+                        transcriptLength: 'transcript' in newResult ? newResult.transcript.length : 0
+                      });
+                      
+                      // Verify the result has all required fields
+                      if (!newResult.id || !newResult.generatedAt) {
+                        console.error('Invalid result from complete event:', newResult);
+                        reject(new Error('Received incomplete result from server'));
+                        return;
+                      }
+                      
+                      resultRef.current = newResult;
+                      // Force clear old result first, then set new one to ensure React updates
+                      console.log('Clearing old result...');
+                      setResult(null);
+                      // Use requestAnimationFrame to ensure DOM update
+                      requestAnimationFrame(() => {
+                        console.log('Setting new result in requestAnimationFrame:', newResult.id);
+                        setResult(newResult);
+                        setIsLoading(false);
+                        console.log('New result set, should be visible now. ID:', newResult.id);
+                        // Double-check it was set
+                        setTimeout(() => {
+                          console.log('After 100ms, result state:', resultRef.current?.id);
+                        }, 100);
+                        resolve();
+                      });
+                      return;
+                    } else if (eventName === 'error') {
+                      clearInterval(inactivityTimer);
+                      clearInterval(progressInterval);
+                      reject(new Error(parsed.error || 'Unknown error'));
+                      return;
+                    }
+                  } catch (e) {
+                    console.warn('Failed to parse SSE event:', e, eventText);
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            clearInterval(inactivityTimer);
+            clearInterval(progressInterval);
+            reject(error);
+          }
+        };
+
+        processStream();
+      }).catch(error => {
+        clearInterval(progressInterval);
+        reject(error);
+      });
+    });
+  };
+
   const handleGenerate = async (params: SynthesisParams) => {
+    console.log('=== handleGenerate called ===', { type, paramsType: params.type, sourceMode: params.sourceMode });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:349',message:'handleGenerate entry',data:{type,paramsType:params.type,sourceMode:params.sourceMode,isLoadingBefore:isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    console.log('Setting isLoading to true...');
+    // Use React.startTransition or flushSync to ensure immediate update, but simpler: just set it
     setIsLoading(true);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:353',message:'setIsLoading(true) called',data:{isLoadingRefBefore:isLoadingRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     setError(null);
     setLoadingProgress(0);
+    setProgressMessage('Initializing...');
+    setResult(null); // Clear previous result when starting new generation
+    
+    // Force a synchronous check after state update
+    setTimeout(() => {
+      console.log('After state update, isLoading should be true. Current state:', isLoading);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:361',message:'setTimeout check',data:{isLoading,isLoadingRef:isLoadingRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    }, 0);
+    // Clear localStorage for this type to avoid showing stale results
+    try {
+      localStorage.removeItem(`synthesis-result-${type}`);
+    } catch (e) {
+      // Ignore localStorage errors
+    }
 
-    // Simulate progress updates while waiting
+    // Simulate progress updates while waiting (for non-streaming)
+    // Progress messages should reflect what's actually happening based on sourceMode
+    const isDigestLibrary = params.sourceMode === "auto";
+    const isManualSelection = params.sourceMode === "manual";
+    
+    if (isDigestLibrary) {
+      setProgressMessage('Loading items from digest library...');
+    } else if (isManualSelection) {
+      setProgressMessage('Loading selected items...');
+    } else {
+      setProgressMessage('Retrieving items from database...');
+    }
+    
     const progressInterval = setInterval(() => {
-      setLoadingProgress(prev => Math.min(prev + Math.random() * 15, 90));
+      setLoadingProgress(prev => {
+        // Only increment if we haven't reached a high progress yet
+        // This prevents jumping to 90% and then going backwards
+        if (prev >= 90) {
+          return prev; // Don't go above 90% until we get real progress updates
+        }
+        const increment = Math.random() * 10; // Smaller increments
+        const newProgress = Math.min(prev + increment, 90);
+        
+        // Update progress message based on sourceMode and progress
+        if (isDigestLibrary) {
+          if (newProgress < 40) {
+            setProgressMessage('Loading items from digest library...');
+          } else if (newProgress < 80) {
+            setProgressMessage('Generating content...');
+          } else {
+            setProgressMessage('Finalizing...');
+          }
+        } else if (isManualSelection) {
+          if (newProgress < 40) {
+            setProgressMessage('Loading selected items...');
+          } else if (newProgress < 80) {
+            setProgressMessage('Generating content...');
+          } else {
+            setProgressMessage('Finalizing...');
+          }
+        } else {
+          // Categories mode - actual retrieval and ranking happens
+          if (newProgress < 20) {
+            setProgressMessage('Retrieving items from database...');
+          } else if (newProgress < 50) {
+            setProgressMessage('Ranking and selecting items...');
+          } else if (newProgress < 80) {
+            setProgressMessage('Generating content...');
+          } else {
+            setProgressMessage('Finalizing...');
+          }
+        }
+        return newProgress;
+      });
     }, 1000);
 
+    let timeoutId: NodeJS.Timeout | null = null;
+    let controller: AbortController | null = null;
+
     try {
+      // Use params.type (which may be "audio-digest" if podcast mode is "highlights")
+      const effectiveType = params.type || type;
       const endpoint =
-        type === "newsletter"
+        effectiveType === "newsletter"
           ? "/api/newsletter/generate"
-          : "/api/podcast/generate";
+          : effectiveType === "podcast"
+          ? "/api/podcast/generate"
+          : "/api/audio-digest/generate";
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min timeout
+      // For audio-digest, use SSE streaming for progress updates
+      if (effectiveType === "audio-digest" || type === "audio-digest") {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:404',message:'Using streaming for audio-digest',data:{effectiveType,type,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        await handleStreamingGeneration(endpoint, params, effectiveType, progressInterval);
+        return; // Exit early after streaming completes
+      }
 
+      // For other types, use regular fetch
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:408',message:'Using regular fetch (non-streaming)',data:{effectiveType,endpoint,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      setProgressMessage('Sending request...');
+      controller = new AbortController();
+      const timeoutDuration = 10 * 60 * 1000; // 10 min for non-audio-digest
+      timeoutId = setTimeout(() => {
+        controller?.abort();
+        console.warn(`Request timeout after ${timeoutDuration / 1000 / 60} minutes`);
+      }, timeoutDuration);
+
+      console.log('Starting fetch request to:', endpoint);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:418',message:'Before fetch',data:{endpoint,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+      setProgressMessage('Processing request...');
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          categories: params.categories,
-          period: params.period,
-          limit: params.limit,
+          sourceMode: params.sourceMode,
+          ...(params.categories && { categories: params.categories }),
+          ...(params.period && { period: params.period }),
+          ...(params.limit && { limit: params.limit }),
+          ...(params.selectedItemIds && { selectedItemIds: params.selectedItemIds }),
           ...(params.prompt && { prompt: params.prompt }),
-          ...(type === "podcast" && { voiceStyle: params.voiceStyle }),
+          ...(effectiveType === "podcast" && params.voiceStyle && { voiceStyle: params.voiceStyle }),
+          // Note: audio-digest is handled above with streaming, so duration not needed here
           ...(params.period === "custom" && params.customDateRange && {
             customDateRange: params.customDateRange,
           }),
         }),
-        signal: controller.signal,
+        signal: controller!.signal,
       });
 
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       clearInterval(progressInterval);
       setLoadingProgress(95);
+      setProgressMessage('Processing response...');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:461',message:'Response received, setting progress to 95%',data:{isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
 
       if (!response.ok) {
         let errorMessage = `API error: ${response.statusText}`;
@@ -154,21 +514,49 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
       const data = await response.json();
       setLoadingProgress(100);
+      setProgressMessage('Complete!');
       setResult(data);
     } catch (err) {
+      console.error('=== Generation error caught ===', err);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:456',message:'Error caught',data:{errorName:err instanceof Error?err.name:'unknown',errorMessage:err instanceof Error?err.message:String(err),isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       clearInterval(progressInterval);
+      if (timeoutId) clearTimeout(timeoutId);
       let message = "Unknown error occurred";
       if (err instanceof Error) {
-        if (err.name === "AbortError") {
-          message = `Request timed out. ${type === "newsletter" ? "Newsletter" : "Podcast"} generation is taking too long. Try reducing the item limit or period.`;
+        console.error('Error details:', {
+          name: err.name,
+          message: err.message,
+          stack: err.stack
+        });
+        if (err.name === "AbortError" || err.message.includes("aborted")) {
+          const typeLabel = type === "newsletter" ? "Newsletter" : type === "podcast" ? "Podcast" : "Audio Digest";
+          const effectiveType = params.type || type;
+          // For streaming, timeout means inactivity (no progress updates)
+          if (effectiveType === "audio-digest" || type === "audio-digest") {
+            message = err.message.includes("inactivity") 
+              ? err.message 
+              : `No progress updates received. Generation may have stalled. Please check server logs or try again.`;
+          } else {
+            message = `Request timed out. ${typeLabel} generation is taking too long. Try reducing the item limit or period.`;
+          }
         } else {
           message = err.message;
         }
       }
       setError(message);
+      setProgressMessage(null);
       console.error("Generation error:", err);
     } finally {
+      console.log('=== finally block: setting isLoading to false ===');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:470',message:'Finally block: setting isLoading to false',data:{isLoadingBefore:isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       setIsLoading(false);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:473',message:'After setIsLoading(false)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
       setLoadingProgress(0);
     }
   };
@@ -187,15 +575,190 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
       {/* Header */}
       <div className="space-y-2 mb-6">
-        <h1 className="text-3xl font-bold text-white">
-           {type === "newsletter" ? "Newsletter" : "Podcast"} Generator
-         </h1>
-        <p className="text-muted">
-          {type === "newsletter"
-            ? "Generate a curated newsletter from your selected content categories"
-            : "Generate a podcast episode transcript from your selected content"}
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-white">
+               {type === "newsletter" ? "Newsletter" : type === "podcast" ? "Podcast" : "Audio Digest"} Generator
+             </h1>
+            <p className="text-muted">
+              {type === "newsletter"
+                ? "Generate a curated newsletter from your selected content categories"
+                : type === "podcast"
+                ? "Generate a podcast episode transcript from your selected content"
+                : "Generate an audio digest with highlights from articles and research papers"}
+            </p>
+          </div>
+          {/* Recovery/Clear buttons */}
+          {isHydrated && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  try {
+                    const saved = localStorage.getItem(`synthesis-result-${type}`);
+                    const info: string[] = [];
+                    
+                    if (saved) {
+                      const parsed = JSON.parse(saved);
+                      info.push(`LocalStorage Result:`);
+                      info.push(`  ID: ${parsed.id}`);
+                      info.push(`  Title: ${parsed.title}`);
+                      info.push(`  Duration: ${'duration' in parsed ? parsed.duration : 'N/A'}`);
+                      info.push(`  Generated: ${parsed.generatedAt}`);
+                      info.push(`  Transcript length: ${'transcript' in parsed ? parsed.transcript.length : 'N/A'} chars`);
+                    } else {
+                      info.push('No result in localStorage');
+                    }
+                    
+                    if (result) {
+                      info.push(`\nDisplayed Result:`);
+                      info.push(`  ID: ${result.id}`);
+                      info.push(`  Title: ${result.title}`);
+                      info.push(`  Duration: ${'duration' in result ? result.duration : 'N/A'}`);
+                      info.push(`  Generated: ${result.generatedAt}`);
+                      info.push(`  Transcript length: ${'transcript' in result ? result.transcript.length : 'N/A'} chars`);
+                    } else {
+                      info.push('\nNo result displayed');
+                    }
+                    
+                    console.log('=== Debug Info ===');
+                    console.log(info.join('\n'));
+                    if (saved) {
+                      const parsed = JSON.parse(saved);
+                      console.log('Full localStorage result:', parsed);
+                    }
+                    if (result) {
+                      console.log('Full displayed result:', result);
+                    }
+                    
+                    alert(info.join('\n') + '\n\nCheck console for full objects');
+                  } catch (e) {
+                    console.error('Failed to check localStorage:', e);
+                    alert('Error checking localStorage. See console.');
+                  }
+                }}
+                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded transition-colors"
+                title="Check what's in localStorage vs displayed"
+              >
+                Debug
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm('Clear saved result from localStorage? This will remove the cached result.')) {
+                    try {
+                      localStorage.removeItem(`synthesis-result-${type}`);
+                      setResult(null);
+                      alert('Cleared! The page will now show no result.');
+                    } catch (e) {
+                      console.error('Failed to clear localStorage:', e);
+                    }
+                  }
+                }}
+                className="px-3 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded transition-colors"
+                title="Clear cached result"
+              >
+                Clear Cache
+              </button>
+              <button
+                onClick={() => {
+                  // Force reload from localStorage
+                  try {
+                    const saved = localStorage.getItem(`synthesis-result-${type}`);
+                    if (saved) {
+                      const parsed = JSON.parse(saved);
+                      console.log('Reloading from localStorage:', parsed.id);
+                      setResult(parsed);
+                      alert(`Reloaded result: ${parsed.id}\nDuration: ${'duration' in parsed ? parsed.duration : 'N/A'}`);
+                    } else {
+                      alert('No result in localStorage to reload');
+                    }
+                  } catch (e) {
+                    console.error('Failed to reload:', e);
+                    alert('Error reloading. See console.');
+                  }
+                }}
+                className="px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded transition-colors"
+                title="Reload from localStorage"
+              >
+                Reload
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Debug Panel - shows localStorage info */}
+      {isHydrated && (
+        <div className="bg-gray-100 border border-gray-300 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-semibold text-gray-900">Debug Info</p>
+            <button
+              onClick={() => {
+                try {
+                  const saved = localStorage.getItem(`synthesis-result-${type}`);
+                  const info: string[] = [];
+                  
+                  if (saved) {
+                    const parsed = JSON.parse(saved);
+                    info.push(`LocalStorage:`);
+                    info.push(`  ID: ${parsed.id}`);
+                    info.push(`  Title: ${parsed.title}`);
+                    info.push(`  Duration: ${'duration' in parsed ? parsed.duration : 'N/A'}`);
+                    info.push(`  Generated: ${new Date(parsed.generatedAt).toLocaleString()}`);
+                    info.push(`  Transcript: ${'transcript' in parsed ? parsed.transcript.length : 'N/A'} chars`);
+                  } else {
+                    info.push('No result in localStorage');
+                  }
+                  
+                  if (result) {
+                    info.push(`\nDisplayed:`);
+                    info.push(`  ID: ${result.id}`);
+                    info.push(`  Title: ${result.title}`);
+                    info.push(`  Duration: ${'duration' in result ? result.duration : 'N/A'}`);
+                    info.push(`  Generated: ${new Date(result.generatedAt).toLocaleString()}`);
+                    info.push(`  Transcript: ${'transcript' in result ? result.transcript.length : 'N/A'} chars`);
+                  } else {
+                    info.push('\nNo result displayed');
+                  }
+                  
+                  alert(info.join('\n'));
+                } catch (e) {
+                  alert('Error: ' + (e instanceof Error ? e.message : String(e)));
+                }
+              }}
+              className="px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
+            >
+              Check
+            </button>
+          </div>
+          <div className="text-xs text-gray-700 space-y-1">
+            {(() => {
+              try {
+                const saved = localStorage.getItem(`synthesis-result-${type}`);
+                if (saved) {
+                  const parsed = JSON.parse(saved);
+                  return (
+                    <>
+                      <p><strong>LocalStorage:</strong> {parsed.id} - {parsed.title}</p>
+                      <p>Duration: {'duration' in parsed ? parsed.duration : 'N/A'}</p>
+                      <p>Generated: {new Date(parsed.generatedAt).toLocaleString()}</p>
+                    </>
+                  );
+                }
+                return <p>No result in localStorage</p>;
+              } catch {
+                return <p>Error reading localStorage</p>;
+              }
+            })()}
+            {result && (
+              <>
+                <p className="mt-2"><strong>Displayed:</strong> {result.id} - {result.title}</p>
+                <p>Duration: {'duration' in result ? result.duration : 'N/A'}</p>
+                <p>Generated: {new Date(result.generatedAt).toLocaleString()}</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Error Alert */}
       {error && (
@@ -210,7 +773,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
         <div className="bg-gray-100 border border-black rounded-lg p-4">
           <p className="text-sm font-semibold text-black">Success</p>
           <p className="text-sm text-black mt-1">
-            {type === "newsletter" ? "Newsletter" : "Podcast"} generated successfully!
+            {type === "newsletter" ? "Newsletter" : type === "podcast" ? "Podcast" : "Audio Digest"} generated successfully!
           </p>
         </div>
       )}
@@ -219,7 +782,9 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       {isLoading && (
         <div className="bg-surface rounded-lg border border-surface-border p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium text-foreground">Generating {type}...</p>
+            <p className="text-sm font-medium text-foreground">
+              {progressMessage || `Generating ${type}...`}
+            </p>
             <p className="text-xs text-muted">{Math.round(loadingProgress)}%</p>
           </div>
           <div className="w-full bg-surface-border rounded-full h-2 overflow-hidden">
@@ -228,6 +793,9 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
               style={{ width: `${loadingProgress}%` }}
             />
           </div>
+          {progressMessage && (
+            <p className="text-xs text-muted mt-2">{progressMessage}</p>
+          )}
         </div>
       )}
 
@@ -248,10 +816,22 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
         <div className="lg:col-span-2">
           {result ? (
             <>
-              {type === "newsletter" ? (
+              {result && 'markdown' in result ? (
                 <NewsletterViewer {...(result as NewsletterResult)} />
-              ) : (
+              ) : result && 'voiceStyle' in (result as any).generationMetadata ? (
                 <PodcastViewer {...(result as PodcastResult)} />
+              ) : (
+                <>
+                  {/* Debug info - remove in production */}
+                  {process.env.NODE_ENV === 'development' && (
+                    <div className="mb-4 p-2 bg-gray-100 text-xs">
+                      Result ID: {(result as AudioDigestResult).id}, 
+                      Duration: {(result as AudioDigestResult).duration},
+                      Generated: {(result as AudioDigestResult).generatedAt}
+                    </div>
+                  )}
+                  <AudioDigestViewer {...(result as AudioDigestResult)} />
+                </>
               )}
             </>
           ) : (
@@ -259,7 +839,9 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
               <p className="text-muted">
                 {type === "newsletter"
                   ? "Configure your newsletter settings and click 'Generate Newsletter' to get started"
-                  : "Configure your podcast and click 'Generate Podcast' to get started"}
+                  : type === "podcast"
+                  ? "Configure your podcast and click 'Generate Podcast' to get started"
+                  : "Configure your audio digest settings and click 'Generate Audio Digest' to get started"}
               </p>
             </div>
           )}

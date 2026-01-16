@@ -153,9 +153,7 @@ input[type="date"]::-moz-calendar-picker-indicator {
 .react-datepicker__day:hover {
   background-color: var(--surface);
   border-radius: 0.25rem;
-}
-
-.react-datepicker__day--selected,
+}.react-datepicker__day--selected,
 .react-datepicker__day--keyboard-selected {
   background-color: black !important;
   color: white !important;
@@ -251,4 +249,43 @@ input[type="checkbox"]:focus {
 
 .scrollbar-hide::-webkit-scrollbar {
   display: none;  /* Chrome, Safari and Opera */
+}
+
+/* Prevent content cutoff */
+body {
+  overflow-x: hidden;
+}
+
+/* Ensure proper container widths */
+.max-w-7xl {
+  max-width: 80rem;
+}
+
+/* Fix sticky header spacing */
+.sticky {
+  position: sticky;
+}
+
+/* Ensure navigation tabs don't get cut off */
+nav[role="tablist"] {
+  min-width: 100%;
+  width: 100%;
+}
+
+/* Fix responsive breakpoints for better mobile support */
+@media (max-width: 640px) {
+  .sm\:px-6 {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* Custom select dropdown arrow - prevents text cutoff */
+select.custom-select-arrow {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22currentColor%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpolyline points=%226 9 12 15 18 9%22%3E%3C/polyline%3E%3C/svg%3E");
+  background-size: 1em 1em;
+  background-position: right 0.75rem center;
+  background-repeat: no-repeat;
+  padding-right: 2.5rem;
 }

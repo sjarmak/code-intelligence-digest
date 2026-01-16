@@ -122,6 +122,9 @@ async function initializePostgresSchema() {
       // Columns may already exist
     }
 
+    // Tables are created via schema SQL, but ensure they exist for migrations
+    // The schema SQL already includes saved_items and digest_items tables
+
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
     logger.error("Failed to initialize PostgreSQL schema", error);
@@ -284,6 +287,30 @@ async function initializeSqliteSchema() {
         relevance_rating INTEGER,
         notes TEXT,
         rated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create saved_items table: general bookmark/save library for any item type
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS saved_items (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL UNIQUE,
+        saved_at INTEGER NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+      );
+    `);
+
+    // Create digest_items table: items specifically marked for digest generation
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS digest_items (
+        id TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL UNIQUE,
+        added_at INTEGER NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
         updated_at INTEGER DEFAULT (strftime('%s', 'now')),
         FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
       );

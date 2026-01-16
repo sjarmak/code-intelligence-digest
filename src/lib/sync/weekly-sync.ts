@@ -17,7 +17,8 @@ import { categorizeItems } from '../pipeline/categorize';
 import { saveItems } from '../db/items';
 import { logger } from '../logger';
 import { Category } from '../model';
-import { getSqlite, getGlobalApiBudget, incrementGlobalApiCalls, getCachedUserId, setCachedUserId } from '../db/index';
+import { getSqlite, getGlobalApiBudget, getCachedUserId, setCachedUserId } from '../db/index';
+import { incrementApiCalls } from '../db/api-budget';
 
 interface SyncStateRow {
   id: string;
@@ -167,7 +168,7 @@ export async function runWeeklySync(): Promise<{
       logger.info('[WEEKLY-SYNC] Cached user ID for future syncs');
 
       callsUsed++;
-      // Note: API call is automatically tracked by InoreaderClient
+      await incrementApiCalls(1);
     } else {
       logger.debug('[WEEKLY-SYNC] Using cached user ID');
     }
@@ -199,7 +200,7 @@ export async function runWeeklySync(): Promise<{
       });
 
       callsUsed++;
-      // Note: API call is automatically tracked by InoreaderClient
+      await incrementApiCalls(1);
 
       if (!response.items || response.items.length === 0) {
         logger.info('[WEEKLY-SYNC] No more items to fetch');

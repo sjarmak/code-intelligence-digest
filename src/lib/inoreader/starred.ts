@@ -5,6 +5,7 @@
 
 import { createInoreaderClient } from "./client";
 import { logger } from "../logger";
+import { incrementApiCalls } from "../db/api-budget";
 
 export interface StarredItemMetadata {
   id: string; // Inoreader item ID
@@ -31,9 +32,9 @@ export async function fetchStarredItems(
 }> {
   try {
     const client = createInoreaderClient();
-    
+
     const streamId = "user/-/state/com.google/starred";
-    
+
     logger.info("Fetching starred items from Inoreader", {
       streamId,
       limit,
@@ -44,6 +45,9 @@ export async function fetchStarredItems(
       n: limit,
       continuation,
     });
+
+    // Track API call in budget
+    await incrementApiCalls(1);
 
     if (!response.items) {
       logger.warn("No items in starred response");

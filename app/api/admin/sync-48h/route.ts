@@ -26,6 +26,7 @@ import { categorizeItems } from '@/src/lib/pipeline/categorize';
 import { decomposeFeedItems } from '@/src/lib/pipeline/decompose';
 import { saveItems } from '@/src/lib/db/items';
 import { getSqlite } from '@/src/lib/db/index';
+import { incrementApiCalls } from '@/src/lib/db/api-budget';
 import { Category } from '@/src/lib/model';
 import { blockInProduction } from '@/src/lib/auth/guards';
 
@@ -63,6 +64,7 @@ export async function POST() {
     }
 
     callsUsed++;
+    await incrementApiCalls(1);
 
     // Set sync window to last 48 hours
     const syncSinceTimestamp = Math.floor((Date.now() - 48 * 60 * 60 * 1000) / 1000);
@@ -92,6 +94,7 @@ export async function POST() {
       });
 
       callsUsed++;
+      await incrementApiCalls(1);
 
       if (!response.items || response.items.length === 0) {
         logger.info('[SYNC-48H] No more items to fetch');

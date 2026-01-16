@@ -30,7 +30,25 @@ const ALLOWED_PROVIDERS: AudioProvider[] = ["openai", "elevenlabs", "nemo"];
 const ALLOWED_FORMATS: AudioFormat[] = ["mp3", "wav"];
 const DEFAULT_VOICE = "alloy";
 const DEFAULT_FORMAT: AudioFormat = "mp3";
-const TIMEOUT_MS = 120_000; // 2 minutes for full render
+const BASE_TIMEOUT_MS = 120_000; // 2 minutes base timeout
+const TIMEOUT_PER_MINUTE_MS = 60_000; // 60 seconds per minute of estimated audio (was 30, increased for longer transcripts)
+
+/**
+ * Calculate dynamic timeout based on transcript length
+ * Estimates ~150 words per minute, adds buffer for processing
+ */
+function calculateTimeout(transcript: string): number {
+  // Estimate words (rough approximation)
+  const wordCount = transcript.split(/\s+/).length;
+  // Estimate duration in minutes (150 wpm)
+  const estimatedMinutes = Math.ceil(wordCount / 150);
+  // Calculate timeout: base + (estimated minutes * per-minute buffer)
+  // Add extra buffer for long transcripts (chunking overhead)
+  const timeout = BASE_TIMEOUT_MS + (estimatedMinutes * TIMEOUT_PER_MINUTE_MS);
+  // Cap at 60 minutes to allow for very long transcripts with chunking overhead
+  const maxTimeout = 60 * 60 * 1000; // 60 minutes (was 30, increased for longer content)
+  return Math.min(timeout, maxTimeout);
+}
 
 interface ValidatedRequest {
   transcript: string;
@@ -230,14 +248,23 @@ export async function POST(
       return NextResponse.json(response);
     }
 
-    // Step 4: Render audio (with timeout)
+    // Step 4: Render audio (with dynamic timeout based on transcript length)
     let audioBuffer: Buffer;
     let durationSeconds: number;
     const renderStartTime = Date.now();
 
+    // Calculate dynamic timeout based on transcript length
+    const dynamicTimeout = calculateTimeout(req.transcript);
+    logger.info("Audio render timeout calculated", {
+      transcriptLength: req.transcript.length,
+      estimatedMinutes: Math.ceil(req.transcript.split(/\s+/).length / 150),
+      timeoutMs: dynamicTimeout,
+      timeoutMinutes: Math.round(dynamicTimeout / 60000),
+    });
+
     try {
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Audio render timeout")), TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Audio render timeout after ${Math.round(dynamicTimeout / 60000)} minutes`)), dynamicTimeout)
       );
 
       const renderPromise = (async () => {
@@ -289,12 +316,27 @@ export async function POST(
         // Continue anyway, might be valid for very short transcripts
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isTimeout = errorMessage.includes("timeout") || errorMessage.includes("terminated") || errorMessage.includes("abort");
+      
       logger.error("Audio render failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
         stack: error instanceof Error ? error.stack : undefined,
+        transcriptLength: req.transcript.length,
+        estimatedMinutes: Math.ceil(req.transcript.split(/\s+/).length / 150),
+        timeoutMs: dynamicTimeout,
+        provider: req.provider,
       });
+      
+      // Provide more helpful error message for timeouts
+      let userMessage = `Failed to render audio: ${errorMessage}`;
+      if (isTimeout) {
+        const estimatedMinutes = Math.ceil(req.transcript.split(/\s+/).length / 150);
+        userMessage = `Audio rendering timed out. The transcript is very long (estimated ${estimatedMinutes} minutes of audio). This may be due to a long transcript with many items. Consider using a smaller selection or splitting the content into multiple parts.`;
+      }
+      
       return NextResponse.json(
-        { error: `Failed to render audio: ${error instanceof Error ? error.message : "Unknown error"}` },
+        { error: userMessage },
         { status: 500 }
       );
     }

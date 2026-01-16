@@ -39,9 +39,11 @@ function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
 }
 
 interface NewsletterRequest {
-  categories: string[];
-  period: "week" | "month" | "all" | "custom";
-  limit: number;
+  sourceMode: "auto" | "manual" | "categories";
+  categories?: string[];
+  period?: "week" | "month" | "all" | "custom";
+  limit?: number;
+  selectedItemIds?: string[];
   prompt?: string;
   customDateRange?: {
     startDate: string;
@@ -88,66 +90,140 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
   const req = body as Record<string, unknown>;
 
-  // Validate categories
-  if (!Array.isArray(req.categories) || req.categories.length === 0) {
-    return { valid: false, error: "categories must be non-empty array" };
-  }
-
-  const categories = req.categories as string[];
-  for (const cat of categories) {
-    if (!ALLOWED_CATEGORIES.includes(cat as Category)) {
-      return { valid: false, error: `Invalid category: ${cat}` };
-    }
-  }
-
-  // Validate period
-  const period = req.period as string;
-  if (!["week", "month", "all", "custom"].includes(period)) {
-    return { valid: false, error: 'period must be "week", "month", "all", or "custom"' };
-  }
-
-  // Validate custom date range if period is custom
-  if (period === "custom") {
-    const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
-    if (!customRange || !customRange.startDate || !customRange.endDate) {
-      return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
-    }
-    const startDate = new Date(customRange.startDate);
-    const endDate = new Date(customRange.endDate);
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-      return { valid: false, error: "Invalid date format in customDateRange" };
-    }
-    if (startDate > endDate) {
-      return { valid: false, error: "startDate must be before endDate" };
-    }
-    if (endDate > new Date()) {
-      return { valid: false, error: "endDate cannot be in the future" };
-    }
-  }
-
-  // Validate limit
-  const limit = typeof req.limit === "number" ? req.limit : 20;
-  if (limit < 1 || limit > 50) {
-    return { valid: false, error: "limit must be between 1 and 50" };
+  // Validate sourceMode
+  const sourceMode = req.sourceMode as string;
+  if (!sourceMode || !["auto", "manual", "categories"].includes(sourceMode)) {
+    return { valid: false, error: 'sourceMode must be "auto", "manual", or "categories"' };
   }
 
   // Normalize prompt
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
 
-  // Build return data - after validation, if period is "custom", req.customDateRange is guaranteed to exist
   const data: NewsletterRequest = {
-    categories: categories as Category[],
-    period: period as "week" | "month" | "all" | "custom",
-    limit,
-    prompt,
+    sourceMode: sourceMode as "auto" | "manual" | "categories",
+    prompt: prompt || undefined,
   };
 
-  // Add customDateRange if period is custom (already validated above)
-  if (period === "custom" && req.customDateRange) {
-    data.customDateRange = {
-      startDate: (req.customDateRange as { startDate: string; endDate: string }).startDate,
-      endDate: (req.customDateRange as { startDate: string; endDate: string }).endDate,
-    };
+  if (sourceMode === "categories") {
+    // Categories mode: validate categories, period, limit (required)
+    if (!Array.isArray(req.categories) || req.categories.length === 0) {
+      return { valid: false, error: "categories must be non-empty array in categories mode" };
+    }
+
+    const categories = req.categories as string[];
+    for (const cat of categories) {
+      if (!ALLOWED_CATEGORIES.includes(cat as Category)) {
+        return { valid: false, error: `Invalid category: ${cat}` };
+      }
+    }
+
+    const period = req.period as string;
+    if (!["week", "month", "all", "custom"].includes(period)) {
+      return { valid: false, error: 'period must be "week", "month", "all", or "custom" in categories mode' };
+    }
+
+    // Validate custom date range if period is custom
+    if (period === "custom") {
+      const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+      if (!customRange || !customRange.startDate || !customRange.endDate) {
+        return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
+      }
+      const startDate = new Date(customRange.startDate);
+      const endDate = new Date(customRange.endDate);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return { valid: false, error: "Invalid date format in customDateRange" };
+      }
+      if (startDate > endDate) {
+        return { valid: false, error: "startDate must be before endDate" };
+      }
+      if (endDate > new Date()) {
+        return { valid: false, error: "endDate cannot be in the future" };
+      }
+    }
+
+    const limit = typeof req.limit === "number" ? req.limit : 20;
+    if (limit < 1 || limit > 50) {
+      return { valid: false, error: "limit must be between 1 and 50" };
+    }
+
+    data.categories = categories as Category[];
+    data.period = period as "week" | "month" | "all" | "custom";
+    data.limit = limit;
+
+    if (period === "custom" && req.customDateRange) {
+      data.customDateRange = {
+        startDate: (req.customDateRange as { startDate: string; endDate: string }).startDate,
+        endDate: (req.customDateRange as { startDate: string; endDate: string }).endDate,
+      };
+    }
+  } else if (sourceMode === "auto") {
+    // Auto mode: using digest library, categories/period/limit are optional (not used for filtering)
+    // Only validate if provided
+    if (req.categories !== undefined) {
+      if (!Array.isArray(req.categories) || req.categories.length === 0) {
+        return { valid: false, error: "categories must be non-empty array if provided" };
+      }
+      const categories = req.categories as string[];
+      for (const cat of categories) {
+        if (!ALLOWED_CATEGORIES.includes(cat as Category)) {
+          return { valid: false, error: `Invalid category: ${cat}` };
+        }
+      }
+      data.categories = categories as Category[];
+    }
+
+    if (req.period !== undefined) {
+      const period = req.period as string;
+      if (!["week", "month", "all", "custom"].includes(period)) {
+        return { valid: false, error: 'period must be "week", "month", "all", or "custom" if provided' };
+      }
+      data.period = period as "week" | "month" | "all" | "custom";
+
+      // Validate custom date range if period is custom
+      if (period === "custom") {
+        const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+        if (!customRange || !customRange.startDate || !customRange.endDate) {
+          return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
+        }
+        const startDate = new Date(customRange.startDate);
+        const endDate = new Date(customRange.endDate);
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+          return { valid: false, error: "Invalid date format in customDateRange" };
+        }
+        if (startDate > endDate) {
+          return { valid: false, error: "startDate must be before endDate" };
+        }
+        if (endDate > new Date()) {
+          return { valid: false, error: "endDate cannot be in the future" };
+        }
+        data.customDateRange = {
+          startDate: customRange.startDate,
+          endDate: customRange.endDate,
+        };
+      }
+    }
+
+    if (req.limit !== undefined) {
+      const limit = typeof req.limit === "number" ? req.limit : 20;
+      if (limit < 1 || limit > 50) {
+        return { valid: false, error: "limit must be between 1 and 50" };
+      }
+      data.limit = limit;
+    }
+  } else {
+    // Manual mode: validate selectedItemIds
+    if (!Array.isArray(req.selectedItemIds) || req.selectedItemIds.length === 0) {
+      return { valid: false, error: "selectedItemIds must be non-empty array in manual mode" };
+    }
+
+    const selectedItemIds = req.selectedItemIds as string[];
+    for (const id of selectedItemIds) {
+      if (typeof id !== "string") {
+        return { valid: false, error: "All selectedItemIds must be strings" };
+      }
+    }
+
+    data.selectedItemIds = selectedItemIds;
   }
 
   return {
@@ -176,74 +252,168 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     const req = validation.data!;
 
-    // Calculate period days or use custom date range
-    let periodDays: number;
-    let startDate: Date | undefined;
-    let endDate: Date | undefined;
-
-    if (req.period === "custom" && req.customDateRange) {
-      startDate = new Date(req.customDateRange.startDate);
-      endDate = new Date(req.customDateRange.endDate);
-      // Calculate days for ranking purposes (use the range span)
-      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-    } else {
-      periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 60;  // Reduced from 90
-    }
-
     // Check request size limits
-    const itemCount = req.categories.length * 50; // Rough estimate
+    const itemCount = req.sourceMode === "auto" 
+      ? (req.categories?.length || 0) * 50 
+      : (req.selectedItemIds?.length || 0);
     const sizeCheck = checkRequestSize('/api/newsletter/generate', itemCount);
     if (!sizeCheck.allowed) {
       return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
     }
 
-    logger.info(`Newsletter request: categories=${req.categories.join(",")}, period=${req.period}, prompt="${(req.prompt || "").substring(0, 50)}..."${req.period === "custom" ? `, dateRange=${req.customDateRange?.startDate} to ${req.customDateRange?.endDate}` : ""}`);
+    // Calculate period days for auto mode (needed for ranking)
+    let periodDays: number = 7;
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (req.sourceMode === "auto" && req.period) {
+      if (req.period === "custom" && req.customDateRange) {
+        startDate = new Date(req.customDateRange.startDate);
+        endDate = new Date(req.customDateRange.endDate);
+        periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+      } else {
+        periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 60;
+      }
+    }
+
+    logger.info(`Newsletter request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library` : `selectedItemIds=${req.selectedItemIds?.length} items`}, prompt="${(req.prompt || "").substring(0, 50)}..."`);
 
     // Step 1: Retrieve candidates
-    const allItems: FeedItem[] = [];
-    for (const category of req.categories) {
-      let items: FeedItem[];
-      if (req.period === "custom" && startDate && endDate) {
-        items = await loadItemsByCategoryWithDateRange(category, startDate, endDate);
-      } else {
-        items = await loadItemsByCategory(category, periodDays);
+    let allItems: FeedItem[] = [];
+
+    if (req.sourceMode === "auto") {
+      // Auto mode: load from digest_items
+      // In source mode, do NOT filter by category/period - use all items from digest library
+      const { getDigestItems } = await import("@/src/lib/db/digestItems");
+      allItems = await getDigestItems();
+      logger.info(`Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`);
+    } else {
+      // Manual mode: load selected items from saved_items
+      const { loadItem } = await import("@/src/lib/db/items");
+      for (const itemId of req.selectedItemIds || []) {
+        const item = await loadItem(itemId);
+        if (item) {
+          allItems.push(item);
+        }
       }
-      allItems.push(...items);
+      logger.info(`Loaded ${allItems.length} items from selectedItemIds`);
     }
 
-    // Step 2: Rank candidates (sequential processing to reduce peak memory)
-    const rankedPerCategory: Array<{ category: string; items: RankedItem[] }> = [];
-
-    for (const category of req.categories) {
-      logger.info(`Processing category: ${category}`);
-      const categoryItems = allItems.filter((item) => item.category === category);
-      const ranked = await rankCategory(categoryItems, category as Category, periodDays);
-      rankedPerCategory.push({ category, items: ranked });
-
-      // Allow GC between categories
-      if (global.gc) {
-        global.gc();
-      }
-    }
-
-    logger.info(`Completed processing ${rankedPerCategory.length} categories`);
-
-    // Merge ALL ranked items from all categories (no pre-filtering)
+    // Step 2: Rank candidates
     let mergedItems: RankedItem[] = [];
-    for (const { items } of rankedPerCategory) {
-      mergedItems.push(...items);
-    }
 
-    // Deduplicate by ID (keep highest-ranked)
-    const deduped = new Map<string, RankedItem>();
-    for (const item of mergedItems) {
-      if (!deduped.has(item.id)) {
-        deduped.set(item.id, item);
+    if (req.sourceMode === "auto") {
+      // Auto mode: rank all items without category/period filtering
+      // Use all categories found in the digest library
+      const categories = [...new Set(allItems.map(item => item.category))];
+      const rankedPerCategory: Array<{ category: string; items: RankedItem[] }> = [];
+      // Use a default periodDays for ranking purposes (doesn't affect filtering)
+      const periodDays = 60; // Default to all-time for ranking
+
+      for (const category of categories) {
+        logger.info(`Processing category: ${category}`);
+        const categoryItems = allItems.filter((item) => item.category === category);
+        const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+        rankedPerCategory.push({ category, items: ranked });
+
+        // Allow GC between categories
+        if (global.gc) {
+          global.gc();
+        }
       }
-    }
-    mergedItems = Array.from(deduped.values());
 
-    logger.info(`Retrieved ${mergedItems.length} candidate items from all categories`);
+      logger.info(`Completed processing ${rankedPerCategory.length} categories`);
+
+      // Merge ALL ranked items from all categories
+      for (const { items } of rankedPerCategory) {
+        mergedItems.push(...items);
+      }
+
+      // Deduplicate by ID (keep highest-ranked)
+      const deduped = new Map<string, RankedItem>();
+      for (const item of mergedItems) {
+        if (!deduped.has(item.id)) {
+          deduped.set(item.id, item);
+        }
+      }
+      mergedItems = Array.from(deduped.values());
+    } else if (req.sourceMode === "categories") {
+      // Categories mode: load items by category and period from database
+      if (!req.categories || !req.period) {
+        return NextResponse.json({ error: "categories and period are required in categories mode" }, { status: 400 });
+      }
+
+      let periodDays: number;
+      let startDate: Date | undefined;
+      let endDate: Date | undefined;
+
+      if (req.period === "custom" && req.customDateRange) {
+        startDate = new Date(req.customDateRange.startDate);
+        endDate = new Date(req.customDateRange.endDate);
+        periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+      } else {
+        periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 60;
+      }
+
+      // Load items by category and period
+      for (const category of req.categories) {
+        let categoryItems: FeedItem[];
+        if (req.period === "custom" && startDate && endDate) {
+          categoryItems = await loadItemsByCategoryWithDateRange(
+            category as Category,
+            startDate,
+            endDate
+          );
+        } else {
+          categoryItems = await loadItemsByCategory(category as Category, periodDays);
+        }
+        allItems.push(...categoryItems);
+      }
+
+      logger.info(`Loaded ${allItems.length} items from categories mode (${req.categories.join(",")}, ${req.period})`);
+
+      // Rank by category
+      const rankedPerCategory: Array<{ category: string; items: RankedItem[] }> = [];
+      for (const category of req.categories) {
+        logger.info(`Processing category: ${category}`);
+        const categoryItems = allItems.filter((item) => item.category === category);
+        const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+        rankedPerCategory.push({ category, items: ranked });
+
+        // Allow GC between categories
+        if (global.gc) {
+          global.gc();
+        }
+      }
+
+      logger.info(`Completed processing ${rankedPerCategory.length} categories`);
+
+      // Merge ALL ranked items from all categories
+      for (const { items } of rankedPerCategory) {
+        mergedItems.push(...items);
+      }
+
+      // Deduplicate by ID (keep highest-ranked)
+      const deduped = new Map<string, RankedItem>();
+      for (const item of mergedItems) {
+        if (!deduped.has(item.id)) {
+          deduped.set(item.id, item);
+        }
+      }
+      mergedItems = Array.from(deduped.values());
+    } else {
+      // Manual mode: convert FeedItems to RankedItems (minimal ranking, just use items as-is)
+      mergedItems = allItems.map((item) => ({
+        ...item,
+        bm25Score: 0,
+        llmScore: { relevance: 0, usefulness: 0, tags: [] },
+        recencyScore: 0,
+        finalScore: 1,
+        reasoning: "Selected from saved items library",
+      }));
+    }
+
+    logger.info(`Retrieved ${mergedItems.length} candidate items`);
 
     // Step 3: Filter out oversized content FIRST (before selection)
     // Articles >50KB are likely newsletters, podcasts, or spam; skip them
@@ -279,8 +449,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     // When no prompt is provided, use highest relevance items (sorted by finalScore)
     // When prompt is provided, apply diversity constraints
     let selectedItems: RankedItem[];
+    // For auto (digest library) and manual modes, use ALL items. For categories mode, use the requested limit.
+    const limit = req.sourceMode === "manual" || req.sourceMode === "auto" ? mergedItems.length : (req.limit || 20);
     const decompositionFactor = 1.3; // Typical expansion from newsletter decomposition
-    const adjustedLimit = Math.ceil(req.limit / decompositionFactor);
+    const adjustedLimit = Math.ceil(limit / decompositionFactor);
 
     if (!req.prompt || req.prompt.length === 0) {
       // No prompt: Sort by finalScore (highest first) and take top N
@@ -294,12 +466,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     } else {
       // With prompt: Apply diversity constraints
       const maxPerSource = req.period === "week" ? 2 : 3;
-      const selection = selectWithDiversity(mergedItems, req.categories[0] as Category, maxPerSource, adjustedLimit);
+      const category = req.categories?.[0] || "tech_articles";
+      const selection = selectWithDiversity(mergedItems, category as Category, maxPerSource, adjustedLimit);
       selectedItems = selection.items;
       logger.info(`Selected ${selectedItems.length} items (with prompt, diversity constraints applied, adjusted limit: ${adjustedLimit})`);
     }
 
-    logger.info(`Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${req.limit})`);
+    logger.info(`Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${limit})`);
 
     // Log newsletter items being selected
     const selectedNewsletters = selectedItems.filter(item => item.sourceTitle.includes("TLDR") || item.sourceTitle.includes("Byte Byte Go") || item.sourceTitle.includes("Elevate") || item.sourceTitle.includes("Pointer"));
@@ -331,8 +504,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     // Step 7: Synthesize newsletter from digests (Pass 2)
     const { summary, themes, markdown, html } = await generateNewsletterFromDigests(
       validDigests,
-      req.period,
-      req.categories as Category[],
+      req.period || "all",
+      req.categories as Category[] || [],
       profile,
       req.prompt
     );
@@ -346,10 +519,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     const response: NewsletterResponse = {
       id,
-      title: `Code Intelligence Digest – ${req.period === "week" ? "Week" : "Month"} of ${new Date().toLocaleDateString()}`,
+      title: req.sourceMode === "manual" 
+        ? `Code Intelligence Digest – Curated Selection`
+        : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : "All Time"} of ${new Date().toLocaleDateString()}`,
       generatedAt: new Date().toISOString(),
-      categories: req.categories,
-      period: req.period,
+      categories: req.categories || [],
+      period: req.period || "all",
       itemsRetrieved: mergedItems.length,
       itemsIncluded: validDigests.length,
       summary,

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Plus, BookOpen, FileText, Tag, Bookmark } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, BookOpen, FileText, Bookmark, FolderHeart, FileHeart } from 'lucide-react';
 import { PaperReaderModal } from './paper-reader-modal';
 
 interface LibraryItemMetadata {
@@ -55,6 +55,11 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(new Set());
   const [processingBibcode, setProcessingBibcode] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
+
+  // Library status for saved/digest items
+  const [itemIdMap, setItemIdMap] = useState<Map<string, string>>(new Map()); // bibcode -> itemId
+  const [libraryStatus, setLibraryStatus] = useState<Map<string, { inSavedItems: boolean; inDigestItems: boolean }>>(new Map()); // itemId -> status
+  const [libraryLoading, setLibraryLoading] = useState<Set<string>>(new Set()); // itemId -> loading
 
   // Reader modal state
   const [readerOpen, setReaderOpen] = useState(false);
@@ -160,6 +165,9 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           },
         },
       }));
+
+      // Load library status for papers
+      await loadLibraryStatusForPapers(allItems);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -206,6 +214,228 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       if (!libraryData[libraryName]) {
         await fetchLibraryItems(libraryName);
       }
+    }
+  };
+
+  // Find itemId for a paper by URL
+  const findItemIdForPaper = useCallback(async (paper: LibraryItemMetadata): Promise<string | null> => {
+    // Try arxivUrl first, then adsUrl
+    const urls = [paper.arxivUrl, paper.adsUrl].filter(Boolean) as string[];
+    
+    for (const url of urls) {
+      try {
+        const response = await fetch(`/api/items/find-by-url?url=${encodeURIComponent(url)}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.itemId) {
+            return data.itemId;
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to find itemId for ${url}:`, err);
+      }
+    }
+    return null;
+  }, []);
+
+  // Load library status for papers
+  const loadLibraryStatusForPapers = useCallback(async (papers: LibraryItemMetadata[]) => {
+    const newItemIdMap = new Map<string, string>();
+    const statusMap = new Map<string, { inSavedItems: boolean; inDigestItems: boolean }>();
+
+    // Find itemIds for all papers
+    const itemIdPromises = papers.map(async (paper) => {
+      const itemId = await findItemIdForPaper(paper);
+      if (itemId) {
+        newItemIdMap.set(paper.bibcode, itemId);
+        return { bibcode: paper.bibcode, itemId };
+      }
+      // Use bibcode as synthetic itemId if no feed item found
+      return { bibcode: paper.bibcode, itemId: `ads:${paper.bibcode}` };
+    });
+
+    const itemIdResults = await Promise.all(itemIdPromises);
+
+    // Load library status for all itemIds (both real and synthetic)
+    const statusPromises = itemIdResults.map(async ({ itemId }) => {
+      try {
+        const response = await fetch(`/api/items/${encodeURIComponent(itemId)}/libraries`);
+        if (response.ok) {
+          const data = await response.json();
+          statusMap.set(itemId, {
+            inSavedItems: Boolean(data.inSavedItems),
+            inDigestItems: Boolean(data.inDigestItems),
+          });
+        }
+      } catch (err) {
+        // For synthetic itemIds, the API might return 404, which is fine
+        // Just set default status
+        if (!itemId.startsWith('ads:')) {
+          console.error(`Failed to load library status for ${itemId}:`, err);
+        }
+      }
+    });
+
+    await Promise.all(statusPromises);
+
+    setItemIdMap((prev) => {
+      const next = new Map(prev);
+      itemIdResults.forEach(({ bibcode, itemId }) => {
+        // Only store real itemIds in the map, not synthetic ones
+        if (!itemId.startsWith('ads:')) {
+          next.set(bibcode, itemId);
+        }
+      });
+      return next;
+    });
+    setLibraryStatus((prev) => {
+      const next = new Map(prev);
+      statusMap.forEach((status, itemId) => next.set(itemId, status));
+      return next;
+    });
+  }, [findItemIdForPaper]);
+
+  // Toggle saved items
+  const handleToggleSavedItems = async (bibcode: string) => {
+    // Use existing itemId if found, otherwise use bibcode as synthetic itemId
+    const itemId = itemIdMap.get(bibcode) || `ads:${bibcode}`;
+
+    const status = libraryStatus.get(itemId);
+    const inSavedItems = status?.inSavedItems || false;
+    
+    setLibraryLoading((prev) => new Set(prev).add(itemId));
+    try {
+      const method = inSavedItems ? 'DELETE' : 'POST';
+      const response = await fetch(`/api/saved-items${method === 'DELETE' ? `?itemId=${encodeURIComponent(itemId)}` : ''}`, {
+        method,
+        headers: method === 'POST' ? { 'Content-Type': 'application/json' } : {},
+        body: method === 'POST' ? JSON.stringify({ itemId }) : undefined,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || 'Failed to toggle saved items');
+      }
+
+      // Dispatch custom event to notify other components
+      window.dispatchEvent(new CustomEvent('saved-items-changed'));
+
+      // Reload library status
+      const libraryRes = await fetch(`/api/items/${encodeURIComponent(itemId)}/libraries`);
+      if (libraryRes?.ok) {
+        const libData = await libraryRes.json();
+        setLibraryStatus((prev) => {
+          const next = new Map(prev);
+          next.set(itemId, {
+            inSavedItems: Boolean(libData.inSavedItems),
+            inDigestItems: Boolean(libData.inDigestItems),
+          });
+          return next;
+        });
+      } else {
+        // Fallback to optimistic update
+        setLibraryStatus((prev) => {
+          const next = new Map(prev);
+          const current = next.get(itemId) || { inSavedItems: false, inDigestItems: false };
+          next.set(itemId, { ...current, inSavedItems: !inSavedItems });
+          return next;
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Error toggling saved items:', errorMessage);
+      // Show user-friendly error
+      alert(`Failed to add/remove from saved items: ${errorMessage}`);
+    } finally {
+      setLibraryLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  };
+
+  // Toggle digest items
+  const handleToggleDigestItems = async (bibcode: string) => {
+    // Use existing itemId if found, otherwise use bibcode as synthetic itemId
+    const itemId = itemIdMap.get(bibcode) || `ads:${bibcode}`;
+
+    const status = libraryStatus.get(itemId);
+    const inDigestItems = status?.inDigestItems || false;
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:356',message:'handleToggleDigestItems entry',data:{bibcode,itemId,inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
+    // #endregion
+    
+    setLibraryLoading((prev) => new Set(prev).add(itemId));
+    try {
+      const method = inDigestItems ? 'DELETE' : 'POST';
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:365',message:'before API call',data:{itemId,method},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
+      // #endregion
+      const response = await fetch(`/api/digest-items${method === 'DELETE' ? `?itemId=${encodeURIComponent(itemId)}` : ''}`, {
+        method,
+        headers: method === 'POST' ? { 'Content-Type': 'application/json' } : {},
+        body: method === 'POST' ? JSON.stringify({ itemId }) : undefined,
+      });
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:370',message:'API response',data:{itemId,method,ok:response.ok,status:response.status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
+      // #endregion
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || 'Failed to toggle digest items');
+      }
+
+      // Dispatch custom event to notify other components
+      window.dispatchEvent(new CustomEvent('digest-items-changed'));
+
+      // Reload library status
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:373',message:'reloading library status',data:{itemId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
+      const libraryRes = await fetch(`/api/items/${encodeURIComponent(itemId)}/libraries`);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:375',message:'library status response',data:{itemId,ok:libraryRes?.ok,status:libraryRes?.status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
+      if (libraryRes?.ok) {
+        const libData = await libraryRes.json();
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:378',message:'library status data',data:{itemId,inSavedItems:libData.inSavedItems,inDigestItems:libData.inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'G'})}).catch(()=>{});
+        // #endregion
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:381',message:'updating status from API response',data:{itemId,inSavedItems:libData.inSavedItems,inDigestItems:libData.inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
+        // #endregion
+        setLibraryStatus((prev) => {
+          const next = new Map(prev);
+          next.set(itemId, {
+            inSavedItems: Boolean(libData.inSavedItems),
+            inDigestItems: Boolean(libData.inDigestItems),
+          });
+          return next;
+        });
+      } else {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:392',message:'library status failed, using optimistic update',data:{itemId,inDigestItems,newValue:!inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
+        // #endregion
+        // Fallback to optimistic update
+        setLibraryStatus((prev) => {
+          const next = new Map(prev);
+          const current = next.get(itemId) || { inSavedItems: false, inDigestItems: false };
+          next.set(itemId, { ...current, inDigestItems: !inDigestItems });
+          return next;
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Error toggling digest items:', errorMessage);
+      // Show user-friendly error
+      alert(`Failed to add/remove from digest items: ${errorMessage}`);
+    } finally {
+      setLibraryLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
     }
   };
 
@@ -265,7 +495,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           })
         );
 
-        return {
+        const result = {
           library: {
             id: 'bookmarked',
             name: 'Bookmarked',
@@ -280,12 +510,17 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
             hasMore: false,
           },
         };
+        
+        // Load library status for bookmarked papers
+        await loadLibraryStatusForPapers(papers);
+        
+        return result;
       }
     } catch (err) {
       console.error('Failed to fetch bookmarked papers:', err);
     }
     return null;
-  }, []);
+  }, [loadLibraryStatusForPapers]);
 
   useEffect(() => {
     const init = async () => {
@@ -299,6 +534,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
             ...prev,
             'Bookmarked': bookmarked,
           }));
+          // Load library status for bookmarked papers
+          await loadLibraryStatusForPapers(bookmarked.items);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
@@ -307,7 +544,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       }
     };
     init();
-  }, [fetchBookmarkedPapers]);
+  }, [fetchBookmarkedPapers, loadLibraryStatusForPapers]);
 
   if (loading) {
     return (
@@ -334,6 +571,14 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
 
   return (
     <div className="space-y-4">
+      {/* Research Libraries Sub-header */}
+      <div className="mb-4">
+        <h3 className="text-xl font-semibold text-black">Research Libraries</h3>
+        <p className="text-sm text-muted mt-1">
+          Curated research papers from ADS/SciX libraries
+        </p>
+      </div>
+
       {/* Bookmarked Library - Show first if it exists */}
       {hasBookmarked && (
         <div className="border border-yellow-300 rounded-lg overflow-hidden bg-yellow-50/30">
@@ -399,6 +644,38 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                       </button>
                     </div>
                     <div className="flex items-center gap-2 ml-4">
+                      {/* Saved items library button - always show for research papers */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleSavedItems(item.bibcode);
+                        }}
+                        disabled={libraryLoading.has(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)}
+                        className={`p-1.5 rounded transition-colors ${
+                          libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inSavedItems
+                            ? 'text-yellow-600 bg-yellow-50'
+                            : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        title={libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inSavedItems ? 'Remove from saved items' : 'Add to saved items'}
+                      >
+                        <FolderHeart className="w-4 h-4" />
+                      </button>
+                      {/* Digest items library button - always show for research papers */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleDigestItems(item.bibcode);
+                        }}
+                        disabled={libraryLoading.has(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)}
+                        className={`p-1.5 rounded transition-colors ${
+                          libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inDigestItems
+                            ? 'text-yellow-600 bg-yellow-50'
+                            : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        title={libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inDigestItems ? 'Remove from digest items' : 'Add to digest items'}
+                      >
+                        <FileHeart className="w-4 h-4" />
+                      </button>
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
@@ -568,6 +845,32 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                     </span>
                                   )}
                                   <div className="flex gap-2">
+                                    {/* Saved items library button - always show for research papers */}
+                                    <button
+                                      onClick={() => handleToggleSavedItems(item.bibcode)}
+                                      disabled={libraryLoading.has(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)}
+                                      className={`p-1.5 rounded transition-colors ${
+                                        libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inSavedItems
+                                          ? 'text-yellow-600 bg-yellow-50'
+                                          : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                      title={libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inSavedItems ? 'Remove from saved items' : 'Add to saved items'}
+                                    >
+                                      <FolderHeart className="w-4 h-4" />
+                                    </button>
+                                    {/* Digest items library button - always show for research papers */}
+                                    <button
+                                      onClick={() => handleToggleDigestItems(item.bibcode)}
+                                      disabled={libraryLoading.has(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)}
+                                      className={`p-1.5 rounded transition-colors ${
+                                        libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inDigestItems
+                                          ? 'text-yellow-600 bg-yellow-50'
+                                          : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                      title={libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inDigestItems ? 'Remove from digest items' : 'Add to digest items'}
+                                    >
+                                      <FileHeart className="w-4 h-4" />
+                                    </button>
                                     <button
                                       onClick={async () => {
                                         try {

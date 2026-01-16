@@ -55,7 +55,7 @@ export default function SearchBox({ onSearch, isLoading }: SearchBoxProps) {
       </div>
 
       {/* Filters */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="space-y-4">
         {/* Category Filter */}
         <div>
           <label htmlFor="search-category" className="block text-sm font-medium mb-2">
@@ -65,7 +65,7 @@ export default function SearchBox({ onSearch, isLoading }: SearchBoxProps) {
             id="search-category"
             value={category || ''}
             onChange={(e) => setCategory((e.target.value as Category) || null)}
-            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent custom-select-arrow"
             disabled={isLoading}
             >
             <option value="">All Categories</option>
@@ -86,7 +86,7 @@ export default function SearchBox({ onSearch, isLoading }: SearchBoxProps) {
             id="search-period"
             value={period}
             onChange={(e) => setPeriod(e.target.value as 'week' | 'month' | 'custom')}
-            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent custom-select-arrow"
             disabled={isLoading}
           >
             <option value="week">This Week</option>

@@ -465,3 +465,369 @@ export async function rankCategory(
 
   return nonOffTopicItems;
 }
+
+/**
+ * Rank items for a given category without recency component
+ * Uses formula: finalScore = (LLM_norm * 0.60) + (BM25_norm * 0.40)
+ * This prioritizes relevance over recency for audio digest generation
+ */
+export async function rankCategoryWithoutRecency(
+  items: FeedItem[],
+  category: Category,
+  periodDays: number,
+  period?: string
+): Promise<RankedItem[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  logger.info(`Ranking ${items.length} items for category: ${category} (without recency)`);
+
+  const config = getCategoryConfig(category);
+
+  // Filter to items within time window and with valid URLs (same as rankCategory)
+  const now = Date.now();
+  const windowMs = periodDays * 24 * 60 * 60 * 1000;
+  const useCreatedAt = periodDays <= 3;
+  const skipDateFilter = (period === "day" && (category === "newsletters" || category === "product_news")) ||
+                         (category === "research");
+
+  // Patterns for low-quality items that should be filtered out (same as rankCategory)
+  const BAD_TITLE_PATTERNS = [
+    /^unsubscribe$/i,
+    /^terms of service$/i,
+    /^powered by/i,
+    /^signup$/i,
+    /^work with us$/i,
+    /^follow on/i,
+    /^track your referrals/i,
+    /^apply here$/i,
+    /^create your own role$/i,
+    /^advertise with us$/i,
+    /^view online$/i,
+    /^click to open/i,
+    /^watch this$/i,
+    /^twitter$/i,
+    /^releases$/i,
+    /^app platform$/i,
+    /^lands$/i,
+    /^introduces$/i,
+    /^rolled out$/i,
+    /^drops$/i,
+    /^brings$/i,
+    /^released$/i,
+    /^read the paper$/i,
+    /^awesome$/i,
+    /^decent$/i,
+    /^not great$/i,
+    /^spotify$/i,
+    /^watch it!$/i,
+    /^\.$/i,
+    /^partner with us$/i,
+    /^try the demo$/i,
+    /^star on github/i,
+    /^explore now$/i,
+    /^access bloom$/i,
+    /^test the code$/i,
+    /^test$/i,
+    /^debug$/i,
+    /^test article$/i,
+    /^test post$/i,
+    /^test entry$/i,
+    /\(sponsor\)/i,
+    /\(sponsored\)/i,
+    /sponsor:/i,
+    /^sponsor$/i,
+    /promotional content/i,
+    /advertisement/i,
+    /^ad$/i,
+    /^advert$/i,
+    /craving more/i,
+    /in your inbox/i,
+    /^book a demo$/i,
+    /^register now$/i,
+    /^register$/i,
+  ];
+
+  const BAD_URL_PATTERNS = [
+    /unsubscribe/i,
+    /terms/i,
+    /signup/i,
+    /beehiiv/i,
+    /sparklp\.co/i,
+    /refer\.tldr/i,
+    /advertise\.tldr/i,
+    /jobs\.ashbyhq\.com\/tldr/i,
+    /linkedin\.com\/in\//i,
+    /twitter\.com\/[^/]+$/i,
+    /awstrack\.me/i,
+  ];
+
+  const recentItems = items.filter((item) => {
+    let withinWindow: boolean = true;
+    if (!skipDateFilter) {
+      if (useCreatedAt) {
+        if (!item.createdAt) {
+          logger.warn(`[rankCategoryWithoutRecency] Item ${item.id} missing createdAt for day period - filtering out`);
+          return false;
+        }
+        const createdAtAgeMs = now - item.createdAt.getTime();
+        if (createdAtAgeMs > windowMs) {
+          logger.debug(`[rankCategoryWithoutRecency] Filtering out item ${item.id} - createdAt is ${Math.floor(createdAtAgeMs / (24 * 60 * 60 * 1000))} days ago`);
+          return false;
+        }
+        withinWindow = createdAtAgeMs <= windowMs;
+      } else {
+        const ageMs = now - item.publishedAt.getTime();
+        withinWindow = ageMs <= windowMs;
+      }
+    }
+
+    const hasValidUrl = item.url &&
+      (item.url.startsWith('http://') || item.url.startsWith('https://'));
+    const isNotLocalhost = !item.url.includes('localhost') && !item.url.includes('127.0.0.1');
+
+    if (!hasValidUrl || !isNotLocalhost) {
+      logger.debug(`Filtering out item with invalid URL: "${item.title}" (URL: ${item.url})`);
+      return false;
+    }
+
+    const titleLower = item.title.toLowerCase().trim();
+    for (const pattern of BAD_TITLE_PATTERNS) {
+      if (pattern.test(titleLower)) {
+        logger.debug(`Filtering out low-quality item by title: "${item.title}"`);
+        return false;
+      }
+    }
+
+    if (titleLower.includes('(sponsor') || titleLower.includes('sponsor)') ||
+        titleLower.includes('(sponsored') || titleLower.includes('sponsored)') ||
+        titleLower.includes('craving more') || titleLower.includes('in your inbox') ||
+        (titleLower.includes('sponsor') && titleLower.length < 50)) {
+      logger.debug(`Filtering out sponsored/promotional item: "${item.title}"`);
+      return false;
+    }
+
+    const urlLower = item.url.toLowerCase();
+    for (const pattern of BAD_URL_PATTERNS) {
+      if (pattern.test(urlLower)) {
+        logger.debug(`Filtering out low-quality item by URL: "${item.title}" (URL: ${item.url})`);
+        return false;
+      }
+    }
+
+    if (item.title.trim().length < 10) {
+      logger.debug(`Filtering out item with very short title: "${item.title}"`);
+      return false;
+    }
+
+    const { shouldFilterNonEnglish } = require("@/src/lib/utils/language-detection");
+    if (shouldFilterNonEnglish(item)) {
+      logger.debug(`Filtering out non-English item: "${item.title}"`);
+      return false;
+    }
+
+    return withinWindow;
+  });
+
+  logger.info(`${recentItems.length} items within ${periodDays} day window`);
+
+  if (recentItems.length === 0) {
+    return [];
+  }
+
+  // Pre-filter to reduce items before expensive operations
+  logger.info(`Starting early filtering for ${recentItems.length} items`);
+
+  const minContentLength = 50;
+  const contentFiltered = recentItems.filter(item => {
+    const contentLength = (item.title + (item.summary || "") + (item.contentSnippet || "")).length;
+    if (contentLength < minContentLength) {
+      logger.debug(`Pre-filtering insufficient content: "${item.title}"`);
+      return false;
+    }
+    return true;
+  });
+
+  logger.info(`Content pre-filter: ${recentItems.length} → ${contentFiltered.length} items`);
+
+  const itemIds = contentFiltered.map(item => item.id);
+  logger.debug(`[RANK] Loading scores for ${itemIds.length} items`);
+  const preComputedScores = await loadScoresForItems(itemIds);
+  logger.debug(`[RANK] Loaded scores for ${Object.keys(preComputedScores).length} items`);
+
+  const categoryMinRelevance = getCategoryConfig(category).minRelevance;
+  const qualityThreshold = periodDays === 3
+    ? 2
+    : Math.max(3, categoryMinRelevance - 1);
+
+  const qualityFiltered = contentFiltered.filter(item => {
+    const score = preComputedScores[item.id];
+    if (score) {
+      if (score.llm_tags.includes("off-topic")) {
+        logger.debug(`Pre-filtering off-topic: "${item.title}"`);
+        return false;
+      }
+      if (score.llm_relevance < qualityThreshold) {
+        logger.debug(`Pre-filtering low relevance: "${item.title}" (${score.llm_relevance} < ${qualityThreshold})`);
+        return false;
+      }
+    }
+    return true;
+  });
+
+  logger.info(`Quality pre-filter: ${contentFiltered.length} → ${qualityFiltered.length} items`);
+
+  // Build BM25 index
+  const bm25 = new BM25Index();
+  bm25.addDocuments(qualityFiltered);
+  const queryTerms = config.query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+  const bm25Scores = bm25.score(queryTerms);
+  const bm25Normalized = bm25.normalizeScores(bm25Scores);
+
+  // Convert to LLMScoreResult format
+  const llmScores: Record<string, { relevance: number; usefulness: number; tags: string[] }> = {};
+  for (const itemId of itemIds) {
+    const score = preComputedScores[itemId];
+    if (score) {
+      llmScores[itemId] = {
+        relevance: score.llm_relevance,
+        usefulness: score.llm_usefulness,
+        tags: score.llm_tags,
+      };
+    }
+  }
+
+  // Compute all scores and combine (NO RECENCY)
+  const rankedItems: RankedItem[] = qualityFiltered.map((item) => {
+    const preComputedScore = preComputedScores[item.id];
+    const bm25Score = preComputedScore?.bm25_score !== undefined
+      ? preComputedScore.bm25_score
+      : (bm25Normalized.get(item.id) ?? 0);
+
+    const llmResult = llmScores[item.id];
+    // Compute LLM score from pre-computed relevance and usefulness
+    const llmScore = llmResult
+      ? (0.7 * llmResult.relevance + 0.3 * llmResult.usefulness) / 10 // Normalize to [0, 1]
+      : bm25Score; // Use BM25 as fallback when no LLM score
+
+    // Apply boosts for domain-specific terms (same as rankCategory)
+    let boostMultiplier = 1.0;
+    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
+    const boostTags: string[] = [];
+
+    if (category === "product_news") {
+      const productNames = [
+        'augment code',
+        'claude code',
+        'cursor',
+        'windsurf',
+        'warp',
+        'greptile',
+        'coderabbit',
+        'codex',
+        'gemini cli',
+        'github copilot',
+        'kilo',
+      ];
+
+      const matchingProducts = productNames.filter(product =>
+        contentToSearch.includes(product)
+      );
+
+      if (matchingProducts.length > 0) {
+        boostMultiplier = matchingProducts.length >= 2 ? 4.0 : 3.0;
+        boostTags.push(...matchingProducts);
+        logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${matchingProducts.join(", ")}: "${item.title}"`);
+      }
+    }
+
+    const hasSourcegraph = contentToSearch.includes('sourcegraph');
+    const coreTerms = [
+      'deep search',
+      'code search',
+      'code intelligence',
+      'coding agent',
+      'codebase understanding',
+      'information retrieval',
+      'context management',
+      'context window',
+      'software engineering',
+      'benchmark',
+      'evaluation',
+      'developer productivity',
+      'ai tooling',
+    ];
+
+    if (hasSourcegraph) {
+      boostMultiplier = 5.0;
+      boostTags.push('sourcegraph');
+      logger.debug(`Applied 5x SOURCEGRAPH BOOST: "${item.title}"`);
+    } else {
+      const matchingCoreTerms = coreTerms.filter(term => contentToSearch.includes(term)).length;
+      const hasAgent = contentToSearch.includes('agent') || contentToSearch.includes('agentic') || contentToSearch.includes('coding agent');
+      const hasCodeContext = coreTerms.slice(1, 8).some(term => contentToSearch.includes(term));
+
+      if (matchingCoreTerms >= 3) {
+        boostMultiplier = 3.0;
+        logger.debug(`Applied 3x boost (${matchingCoreTerms} core terms): "${item.title}"`);
+      } else if (matchingCoreTerms === 2) {
+        boostMultiplier = 2.0;
+        logger.debug(`Applied 2x boost (2 core terms): "${item.title}"`);
+      } else if (hasAgent && hasCodeContext) {
+        boostMultiplier = 2.5;
+        logger.debug(`Applied 2.5x boost (agent + code context): "${item.title}"`);
+      } else if (matchingCoreTerms === 1) {
+        boostMultiplier = 1.5;
+        logger.debug(`Applied 1.5x boost (1 core term): "${item.title}"`);
+      }
+    }
+
+    // Compute final score WITHOUT RECENCY: LLM 60%, BM25 40%
+    const baseScore = 0.60 * llmScore + 0.40 * bm25Score;
+    const finalScore = baseScore * boostMultiplier;
+
+    // Build reasoning string (no recency mentioned)
+    const reasoning = [
+      `LLM: relevance=${llmResult?.relevance.toFixed(1)}, usefulness=${llmResult?.usefulness.toFixed(1)}`,
+      `BM25=${bm25Score.toFixed(2)}`,
+      boostMultiplier > 1.0 ? `[BOOST] ${boostMultiplier}x (core domain terms)` : '',
+      `Tags: ${llmResult?.tags.join(", ") || "none"}`,
+      `[NO RECENCY]`,
+    ].filter(Boolean).join(" | ");
+
+    return {
+      ...item,
+      bm25Score,
+      llmScore: {
+        relevance: llmResult?.relevance ?? Math.round((bm25Score * 10)),
+        usefulness: llmResult?.usefulness ?? Math.round((bm25Score * 10)),
+        tags: [...(llmResult?.tags ?? []), ...boostTags],
+      },
+      recencyScore: 0, // Set to 0 since it's not used
+      finalScore,
+      reasoning,
+    };
+  });
+
+  // Sort by final score
+  rankedItems.sort((a, b) => b.finalScore - a.finalScore);
+
+  // Filter out off-topic items
+  const nonOffTopicItems = rankedItems.filter((item) => {
+    const isOffTopic = item.llmScore.tags.includes("off-topic");
+    if (isOffTopic) {
+      logger.debug(`Filtering out off-topic item: ${item.title}`);
+    }
+    return !isOffTopic;
+  });
+
+  logger.info(
+    `Ranked to ${nonOffTopicItems.length} valid items without recency (filtered ${rankedItems.length - nonOffTopicItems.length} off-topic items)`
+  );
+
+  return nonOffTopicItems;
+}

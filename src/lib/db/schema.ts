@@ -237,3 +237,25 @@ export const paperTagLinks = sqliteTable(
     pk: primaryKey({ columns: [table.bibcode, table.tagId] }),
   })
 );
+
+/**
+ * Saved items table: general bookmark/save library for any item type
+ */
+export const savedItems = sqliteTable("saved_items", {
+  id: text("id").primaryKey(),
+  itemId: text("item_id").notNull().unique(), // Reference to items table
+  savedAt: integer("saved_at").notNull(), // When item was saved
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
+});
+
+/**
+ * Digest items table: items specifically marked for digest generation
+ */
+export const digestItems = sqliteTable("digest_items", {
+  id: text("id").primaryKey(),
+  itemId: text("item_id").notNull().unique(), // Reference to items table
+  addedAt: integer("added_at").notNull(), // When item was added to digest library
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
+});

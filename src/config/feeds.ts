@@ -174,6 +174,10 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     const client = createInoreaderClient();
     const subscriptionList = await client.getSubscriptions();
 
+    // Track API call in budget
+    const { incrementApiCalls } = await import('../lib/db/api-budget');
+    await incrementApiCalls(1);
+
     const feeds: FeedConfig[] = [];
 
     if (subscriptionList.subscriptions && Array.isArray(subscriptionList.subscriptions)) {

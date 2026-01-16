@@ -27,6 +27,7 @@ import { logger } from '../logger';
 import { Category, FeedItem } from '../model';
 import { getDbClient, detectDriver, nowTimestamp } from '../db/driver';
 import { getCachedUserId, setCachedUserId } from '../db/index';
+import { incrementApiCalls } from '../db/api-budget';
 import { syncResearchFromADS } from './ads-research-sync';
 
 interface SyncStateRow {
@@ -156,7 +157,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
   const client = createInoreaderClient();
   let totalItemsAdded = 0;
-  let callsUsed = 0; // Just for logging/reporting, not used for rate limiting
+  let callsUsed = 0; // Tracked locally and in database budget
   const categoriesProcessed: Category[] = [];
   const isCatchup = !!options?.lookbackDays;
   const lookbackDays = options?.lookbackDays;
@@ -208,6 +209,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         logger.info('[DAILY-SYNC] Cached user ID for future syncs');
 
         callsUsed++;
+        await incrementApiCalls(1);
       } catch (error) {
         // If getUserInfo fails (e.g., 429 error), pause and resume later
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -286,6 +288,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         });
 
         callsUsed++;
+        await incrementApiCalls(1);
 
         if (!response.items || response.items.length === 0) {
           logger.info('[DAILY-SYNC] No more items to fetch (empty response)');

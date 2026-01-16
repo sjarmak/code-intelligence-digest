@@ -4,22 +4,26 @@
 
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { type Category } from "@/src/lib/model";
+import { SavedItemsView } from "@/src/components/digest/saved-items-view";
 
 interface SynthesisFormProps {
   onGenerate: (params: SynthesisParams) => Promise<void>;
   isLoading?: boolean;
-  type: "newsletter" | "podcast";
+  type: "newsletter" | "podcast" | "audio-digest";
 }
 
 export interface SynthesisParams {
-  type: "newsletter" | "podcast";
-  categories: Category[];
-  period: "week" | "month" | "all" | "custom";
-  limit: number;
+  type: "newsletter" | "podcast" | "audio-digest";
+  sourceMode: "auto" | "manual" | "categories";
+  categories?: Category[];
+  period?: "week" | "month" | "all" | "custom";
+  limit?: number;
+  selectedItemIds?: string[];
   prompt?: string;
   voiceStyle?: "conversational" | "technical" | "executive";
+  duration?: number; // Duration in minutes (for audio-digest)
   customDateRange?: {
     startDate: string; // ISO date string (YYYY-MM-DD)
     endDate: string; // ISO date string (YYYY-MM-DD)
@@ -51,6 +55,13 @@ export function SynthesisForm({
   isLoading = false,
   type,
 }: SynthesisFormProps) {
+  // Debug: Log when isLoading prop changes
+  React.useEffect(() => {
+    console.log('SynthesisForm: isLoading prop changed to:', isLoading);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:58',message:'isLoading prop changed in form',data:{isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+  }, [isLoading]);
   const [selectedCategories, setSelectedCategories] = useState<Category[]>(
     ALLOWED_CATEGORIES
   );
@@ -66,6 +77,27 @@ export function SynthesisForm({
   const [voiceStyle, setVoiceStyle] = useState<"conversational" | "technical" | "executive">(
     "conversational"
   );
+  const [duration, setDuration] = useState(30); // Duration in minutes for audio-digest
+  const [podcastMode, setPodcastMode] = useState<"conversational" | "highlights">("conversational"); // For podcast type
+  const [sourceMode, setSourceMode] = useState<"auto" | "manual" | "categories">("auto");
+  const [digestItemsCount, setDigestItemsCount] = useState(0);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+
+  // Load digest items count on mount
+  useEffect(() => {
+    const loadDigestCount = async () => {
+      try {
+        const response = await fetch('/api/digest-items');
+        if (response.ok) {
+          const data = await response.json();
+          setDigestItemsCount(data.count || 0);
+        }
+      } catch (error) {
+        console.error('Failed to load digest items count:', error);
+      }
+    };
+    loadDigestCount();
+  }, []);
 
   const handleCategoryToggle = (category: Category) => {
     setSelectedCategories((prev) =>
@@ -77,38 +109,97 @@ export function SynthesisForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:107',message:'handleSubmit called',data:{sourceMode,digestItemsCount,selectedItemIdsSize:selectedItemIds.size,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
 
-    if (selectedCategories.length === 0) {
-      alert("Please select at least one category");
-      return;
+    if (sourceMode === "auto") {
+      if (digestItemsCount === 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:112',message:'Early return: no digest items',data:{digestItemsCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        alert("No items in digest library. Please add items to your digest library first.");
+        return;
+      }
+    } else {
+      // Manual mode
+      if (selectedItemIds.size === 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:118',message:'Early return: no selected items',data:{selectedItemIdsSize:selectedItemIds.size},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        alert("Please select at least one item from your saved items library");
+        return;
+      }
     }
 
-    if (period === "custom") {
-      // Validate custom date range
-      if (!customDateRange.startDate || !customDateRange.endDate) {
-        alert("Please select both start and end dates for custom range");
+    // Validation based on source mode
+    if (sourceMode === "categories") {
+      // Categories mode: validate categories, period, limit
+      if (selectedCategories.length === 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:127',message:'Early return: no categories',data:{selectedCategoriesLength:selectedCategories.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        alert("Please select at least one category");
         return;
       }
-      const start = new Date(customDateRange.startDate);
-      const end = new Date(customDateRange.endDate);
-      if (start > end) {
-        alert("Start date must be before end date");
-        return;
-      }
-      if (end > new Date()) {
-        alert("End date cannot be in the future");
-        return;
+
+      if (period === "custom") {
+        // Validate custom date range
+        if (!customDateRange.startDate || !customDateRange.endDate) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:134',message:'Early return: missing dates',data:{hasStartDate:!!customDateRange.startDate,hasEndDate:!!customDateRange.endDate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          alert("Please select both start and end dates for custom range");
+          return;
+        }
+        const start = new Date(customDateRange.startDate);
+        const end = new Date(customDateRange.endDate);
+        if (start > end) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:140',message:'Early return: invalid date range',data:{start:customDateRange.startDate,end:customDateRange.endDate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          alert("Start date must be before end date");
+          return;
+        }
+        if (end > new Date()) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:144',message:'Early return: future date',data:{end:customDateRange.endDate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+          alert("End date cannot be in the future");
+          return;
+        }
       }
     }
+
+    // If podcast mode is "highlights", route to audio-digest
+    const effectiveType = (type === "podcast" && podcastMode === "highlights") ? "audio-digest" : type;
+
+    console.log('Form: About to call onGenerate with:', {
+      effectiveType,
+      sourceMode,
+      selectedItemIds: sourceMode === "manual" ? Array.from(selectedItemIds).length : undefined,
+      categories: sourceMode === "categories" ? selectedCategories : undefined,
+    });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:160',message:'Calling onGenerate',data:{effectiveType,sourceMode,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     await onGenerate({
-      type,
-      categories: selectedCategories,
-      period,
-      limit,
+      type: effectiveType,
+      sourceMode,
+      ...(sourceMode === "manual" ? {
+        selectedItemIds: Array.from(selectedItemIds),
+      } : sourceMode === "categories" ? {
+        categories: selectedCategories,
+        period,
+        limit,
+        ...(period === "custom" && { customDateRange }),
+      } : {
+        // Auto mode: no additional params needed, uses all items from digest library
+      }),
       prompt: prompt || undefined,
-      ...(type === "podcast" && { voiceStyle }),
-      ...(period === "custom" && { customDateRange }),
+      ...(effectiveType === "podcast" && { voiceStyle }),
+      ...(effectiveType === "audio-digest" && { duration }),
     });
   };
 
@@ -116,17 +207,100 @@ export function SynthesisForm({
     <div className="bg-surface rounded-lg border border-surface-border shadow-sm">
       <div className="border-b border-surface-border px-6 py-4">
         <h2 className="text-lg font-bold text-black">
-          {type === "newsletter" ? "Generate Newsletter" : "Generate Podcast"}
+          {type === "newsletter" ? "Generate Newsletter" : type === "podcast" ? "Generate Podcast" : "Generate Audio Digest"}
         </h2>
         <p className="text-sm text-muted mt-1">
           {type === "newsletter"
             ? "Create a curated newsletter from selected content categories"
-            : "Create an episode transcript from selected content"}
+            : type === "podcast"
+            ? "Create an episode transcript from selected content"
+            : "Generate an audio digest with highlights from articles and research papers"}
         </p>
       </div>
       <div className="px-6 py-4">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Categories */}
+          {/* Source Mode Selector */}
+          <div>
+            <label className="block text-sm font-semibold text-black mb-3">Source Mode</label>
+            <div className="space-y-2">
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="auto"
+                  name="sourceMode"
+                  value="auto"
+                  checked={sourceMode === "auto"}
+                  onChange={(e) => setSourceMode(e.target.value as "auto" | "manual" | "categories")}
+                  disabled={isLoading}
+                  className="accent-black focus:ring-black"
+                />
+                <label htmlFor="auto" className="ml-2 text-sm text-foreground cursor-pointer">
+                  Auto (use all Digest Library items)
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="manual"
+                  name="sourceMode"
+                  value="manual"
+                  checked={sourceMode === "manual"}
+                  onChange={(e) => setSourceMode(e.target.value as "auto" | "manual" | "categories")}
+                  disabled={isLoading}
+                  className="accent-black focus:ring-black"
+                />
+                <label htmlFor="manual" className="ml-2 text-sm text-foreground cursor-pointer">
+                  Manual (select from Saved Items Library)
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="categories"
+                  name="sourceMode"
+                  value="categories"
+                  checked={sourceMode === "categories"}
+                  onChange={(e) => setSourceMode(e.target.value as "auto" | "manual" | "categories")}
+                  disabled={isLoading}
+                  className="accent-black focus:ring-black"
+                />
+                <label htmlFor="categories" className="ml-2 text-sm text-foreground cursor-pointer">
+                  Categories & Time Period
+                </label>
+              </div>
+            </div>
+            {sourceMode === "auto" && (
+              <p className="text-xs text-muted mt-2">
+                {digestItemsCount === 0
+                  ? "No items in digest library. Add items to your digest library first."
+                  : `Using ${digestItemsCount} item${digestItemsCount !== 1 ? 's' : ''} from digest library.`}
+              </p>
+            )}
+            {sourceMode === "manual" && (
+              <p className="text-xs text-muted mt-2">
+                Select items from your saved items library below.
+              </p>
+            )}
+            {sourceMode === "categories" && (
+              <p className="text-xs text-muted mt-2">
+                Select categories, time period, and item limit to filter items.
+              </p>
+            )}
+          </div>
+
+          {/* Manual Mode: Saved Items Selection */}
+          {sourceMode === "manual" && (
+            <div className="border border-surface-border rounded-lg p-4 max-h-96 overflow-y-auto">
+              <SavedItemsView 
+                selectedItemIds={selectedItemIds}
+                onSelectionChange={setSelectedItemIds}
+                showCheckboxes={true}
+              />
+            </div>
+          )}
+
+          {/* Categories - only show in categories mode */}
+          {sourceMode === "categories" && (
           <div>
             <label className="block text-sm font-semibold text-black mb-3">Content Categories</label>
             <div className="grid grid-cols-2 gap-3">
@@ -150,8 +324,10 @@ export function SynthesisForm({
               ))}
             </div>
           </div>
+          )}
 
-          {/* Period */}
+          {/* Period - only show in categories mode */}
+          {sourceMode === "categories" && (
           <div>
             <label className="block text-sm font-semibold text-black mb-3">Time Period</label>
             <div className="space-y-2">
@@ -249,8 +425,10 @@ export function SynthesisForm({
               </div>
             )}
           </div>
+          )}
 
-          {/* Limit */}
+          {/* Limit - only show in categories mode */}
+          {sourceMode === "categories" && (
           <div>
             <label htmlFor="limit" className="block text-sm font-semibold text-black mb-2">
               Item Limit
@@ -267,9 +445,34 @@ export function SynthesisForm({
             />
             <p className="text-xs text-muted mt-1">Max items to retrieve (1-50)</p>
           </div>
+          )}
 
-          {/* Voice Style (Podcast only) */}
+          {/* Mode Selector (Podcast only) */}
           {type === "podcast" && (
+            <div>
+              <label htmlFor="podcastMode" className="block text-sm font-semibold text-black mb-2">
+                Mode
+              </label>
+              <select
+                id="podcastMode"
+                value={podcastMode}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setPodcastMode(e.target.value as "conversational" | "highlights")}
+                disabled={isLoading}
+                className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-black"
+              >
+                <option value="conversational">Conversational</option>
+                <option value="highlights">Read Highlights</option>
+              </select>
+              <p className="text-xs text-muted mt-1">
+                {podcastMode === "conversational"
+                  ? "Generate a conversational podcast episode"
+                  : "Generate an audio digest reading highlights from articles and papers"}
+              </p>
+            </div>
+          )}
+
+          {/* Voice Style (Podcast only, conversational mode) */}
+          {type === "podcast" && podcastMode === "conversational" && (
             <div>
               <label htmlFor="voiceStyle" className="block text-sm font-semibold text-black mb-2">
                 Voice Style
@@ -288,6 +491,27 @@ export function SynthesisForm({
             </div>
           )}
 
+          {/* Duration (Podcast highlights mode or audio-digest) */}
+          {(type === "audio-digest" || (type === "podcast" && podcastMode === "highlights")) && (
+            <div>
+              <label htmlFor="duration" className="block text-sm font-semibold text-black mb-2">
+                Target Duration (minutes)
+              </label>
+              <input
+                id="duration"
+                type="number"
+                min="15"
+                max="120"
+                value={duration}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDuration(Math.max(15, Math.min(120, parseInt(e.target.value) || 30)))}
+                disabled={isLoading}
+                className="block w-24 px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-black"
+              />
+              <p className="text-xs text-muted mt-1">Target duration: 15-120 minutes</p>
+            </div>
+          )}
+
+
           {/* Prompt */}
           <div>
             <label htmlFor="prompt" className="block text-sm font-semibold text-black mb-2">
@@ -298,7 +522,9 @@ export function SynthesisForm({
               placeholder={
                 type === "newsletter"
                   ? "e.g., Focus on code search and developer productivity. Emphasize actionable takeaways."
-                  : "e.g., Create an engaging episode about AI agents for code review. Target tech leads."
+                  : type === "podcast"
+                  ? "e.g., Create an engaging episode about AI agents for code review. Target tech leads."
+                  : "e.g., Focus on code search, context management for agents, and information retrieval. Prioritize research papers and technical articles."
               }
               value={prompt}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrompt(e.target.value)}
@@ -307,7 +533,7 @@ export function SynthesisForm({
               className="block w-full px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black resize-none bg-surface text-black placeholder-muted"
             />
             <p className="text-xs text-muted mt-1">
-              Leave empty for a comprehensive {type === "newsletter" ? "digest" : "episode"}
+              Leave empty for a comprehensive {type === "newsletter" ? "digest" : type === "podcast" ? "episode" : "audio digest"}
             </p>
           </div>
 
@@ -315,7 +541,7 @@ export function SynthesisForm({
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-2 px-4 bg-black hover:bg-gray-800 disabled:bg-gray-400 text-white font-medium rounded-md text-sm transition-colors"
+            className="w-full py-2 px-4 text-white font-medium rounded-md text-sm transition-colors bg-black hover:bg-gray-800 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isLoading ? (
               <>
@@ -323,7 +549,7 @@ export function SynthesisForm({
               </>
             ) : (
               <>
-                {type === "newsletter" ? "Generate Newsletter" : "Generate Podcast"}
+                {type === "newsletter" ? "Generate Newsletter" : type === "podcast" ? "Generate Podcast" : "Generate Audio Digest"}
               </>
             )}
           </button>

@@ -254,6 +254,24 @@ CREATE TABLE IF NOT EXISTS paper_sections (
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   UNIQUE(bibcode, section_id)
 );
+
+-- Saved items table: general bookmark/save library for any item type
+CREATE TABLE IF NOT EXISTS saved_items (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
+  saved_at INTEGER NOT NULL,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
+-- Digest items table: items specifically marked for digest generation
+CREATE TABLE IF NOT EXISTS digest_items (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
+  added_at INTEGER NOT NULL,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
 `;
 
 /**
@@ -318,6 +336,14 @@ CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode ON paper_sections(bibcode)
 -- Vector similarity index for section embeddings
 CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding ON paper_sections
   USING hnsw (embedding vector_cosine_ops);
+
+-- Saved items indexes
+CREATE INDEX IF NOT EXISTS idx_saved_items_item_id ON saved_items(item_id);
+CREATE INDEX IF NOT EXISTS idx_saved_items_saved_at ON saved_items(saved_at);
+
+-- Digest items indexes
+CREATE INDEX IF NOT EXISTS idx_digest_items_item_id ON digest_items(item_id);
+CREATE INDEX IF NOT EXISTS idx_digest_items_added_at ON digest_items(added_at);
 `;
 
 /**

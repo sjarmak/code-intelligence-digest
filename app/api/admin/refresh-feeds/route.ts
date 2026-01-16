@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createInoreaderClient } from "@/src/lib/inoreader/client";
 import { logger } from "@/src/lib/logger";
+import { incrementApiCalls } from "@/src/lib/db/api-budget";
 import * as fs from "fs";
 import * as path from "path";
 import { blockInProduction } from "@/src/lib/auth/guards";
@@ -41,6 +42,7 @@ export async function POST() {
 
     const client = createInoreaderClient();
     const subscriptionList = await client.getSubscriptions();
+    await incrementApiCalls(1); // Track getSubscriptions call
 
     const feeds: FeedConfig[] = [];
 
