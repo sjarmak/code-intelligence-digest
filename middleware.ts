@@ -20,6 +20,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow access to refresh-feeds endpoint (for cron/deploy automation)
+  if (pathname.startsWith('/api/admin/refresh-feeds')) {
+    return NextResponse.next();
+  }
+
   // Check for authentication cookie
   const authCookie = request.cookies.get('ui-auth');
   const isAuthenticated = authCookie?.value === 'authenticated';
