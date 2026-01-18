@@ -24,12 +24,12 @@ export async function GET(request: NextRequest) {
     const client = await getDbClient();
     // Try exact match first, then try with extracted_url
     const result = await client.query(
-      `SELECT id FROM items 
-       WHERE url = ? OR extracted_url = ? 
+      `SELECT id FROM items
+       WHERE url = ? OR extracted_url = ?
        LIMIT 1`,
       [url, url]
     );
-    
+
     let itemId: string | null = null;
     if (result.rows.length > 0) {
       itemId = (result.rows[0] as { id: string }).id;

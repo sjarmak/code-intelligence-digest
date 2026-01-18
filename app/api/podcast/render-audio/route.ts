@@ -318,7 +318,7 @@ export async function POST(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const isTimeout = errorMessage.includes("timeout") || errorMessage.includes("terminated") || errorMessage.includes("abort");
-      
+
       logger.error("Audio render failed", {
         error: errorMessage,
         stack: error instanceof Error ? error.stack : undefined,
@@ -327,14 +327,14 @@ export async function POST(
         timeoutMs: dynamicTimeout,
         provider: req.provider,
       });
-      
+
       // Provide more helpful error message for timeouts
       let userMessage = `Failed to render audio: ${errorMessage}`;
       if (isTimeout) {
         const estimatedMinutes = Math.ceil(req.transcript.split(/\s+/).length / 150);
         userMessage = `Audio rendering timed out. The transcript is very long (estimated ${estimatedMinutes} minutes of audio). This may be due to a long transcript with many items. Consider using a smaller selection or splitting the content into multiple parts.`;
       }
-      
+
       return NextResponse.json(
         { error: userMessage },
         { status: 500 }

@@ -74,9 +74,9 @@ export default function LibrariesPage() {
         {/* Resource Libraries Section */}
         <div>
           <h2 className="text-2xl font-bold mb-4">Resource Libraries</h2>
-          <ResourceLibrariesView 
-            onAddItemToQA={handleAddItemToQA} 
-            onSelectLibraryForQA={handleSelectResourceLibrary} 
+          <ResourceLibrariesView
+            onAddItemToQA={handleAddItemToQA}
+            onSelectLibraryForQA={handleSelectResourceLibrary}
           />
         </div>
       </main>

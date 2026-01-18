@@ -1,13 +1,15 @@
 /**
- * Database driver abstraction for SQLite (dev) and PostgreSQL (prod)
+ * Database driver abstraction for PostgreSQL (required)
  *
- * This module provides a unified interface that:
- * - Uses better-sqlite3 in development (no DATABASE_URL)
- * - Uses pg in production (DATABASE_URL set)
+ * This module provides a unified interface for PostgreSQL in both development and production:
+ * - PostgreSQL is required for both development and production
+ * - Local development uses LOCAL_DATABASE_URL (typically via Docker Compose)
+ * - Production uses DATABASE_URL (from environment)
+ * - Falls back to SQLite only if no PostgreSQL connection string is provided (legacy, not recommended)
  *
- * MIGRATION STATUS: This is a transitional file.
- * Once PostgreSQL support is fully implemented, the SQLite code path
- * can be removed for production builds.
+ * To use PostgreSQL locally:
+ * 1. Start PostgreSQL: npm run db:start
+ * 2. Set LOCAL_DATABASE_URL in .env.local (see docker-compose.yml for connection details)
  */
 
 import { logger } from '../logger';
@@ -33,29 +35,46 @@ let postgresPool: import('pg').Pool | null = null;
 /**
  * Detect which database driver to use based on environment
  *
- * For the app: Always uses DATABASE_URL (production)
- * For batch scripts: Can use LOCAL_DATABASE_URL by setting USE_LOCAL_DB=true
+ * Priority:
+ * 1. If USE_LOCAL_DB=true, use LOCAL_DATABASE_URL (for batch scripts)
+ * 2. Otherwise, check LOCAL_DATABASE_URL first (for local development)
+ * 3. Then check DATABASE_URL (for production)
+ * 4. Fall back to SQLite only if no PostgreSQL connection string is found
  */
 export function detectDriver(): DatabaseDriver {
   // Check if we should use local database (for batch operations)
   const useLocal = process.env.USE_LOCAL_DB === 'true';
-  const dbUrl = useLocal ? process.env.LOCAL_DATABASE_URL : process.env.DATABASE_URL;
+
+  // Priority: USE_LOCAL_DB flag > LOCAL_DATABASE_URL > DATABASE_URL
+  let dbUrl: string | undefined;
+  if (useLocal) {
+    dbUrl = process.env.LOCAL_DATABASE_URL;
+  } else {
+    // For normal app usage, prefer LOCAL_DATABASE_URL for local dev, then DATABASE_URL for production
+    dbUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+  }
 
   // PostgreSQL connection string takes precedence
   if (dbUrl?.startsWith('postgres')) {
     return 'postgres';
   }
+
+  // Fall back to SQLite only if no PostgreSQL URL is configured (legacy, not recommended)
+  // PostgreSQL is required for both development and production
   return 'sqlite';
 }
 
 /**
  * Get the database connection string to use
- * For app: Uses DATABASE_URL
- * For batch scripts: Uses LOCAL_DATABASE_URL if USE_LOCAL_DB=true
+ * Priority: USE_LOCAL_DB flag > LOCAL_DATABASE_URL > DATABASE_URL
  */
 export function getDatabaseUrl(): string | undefined {
   const useLocal = process.env.USE_LOCAL_DB === 'true';
-  return useLocal ? process.env.LOCAL_DATABASE_URL : process.env.DATABASE_URL;
+  if (useLocal) {
+    return process.env.LOCAL_DATABASE_URL;
+  }
+  // For normal app usage, prefer LOCAL_DATABASE_URL for local dev, then DATABASE_URL for production
+  return process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
 }
 
 /**

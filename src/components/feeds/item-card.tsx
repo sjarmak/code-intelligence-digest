@@ -124,12 +124,13 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
     let isMounted = true;
 
     const loadMetadata = async () => {
+      console.log(`[ItemCard] Loading metadata for item: ${item.id} - ${item.title.substring(0, 50)}...`);
       try {
         // Always fetch library status from database to ensure accurate state
         // Add timestamp to prevent caching issues
         const libraryUrl = `/api/items/${encodeURIComponent(item.id)}/libraries?t=${Date.now()}`;
         const libraryRes = await fetch(libraryUrl);
-        
+
         if (!isMounted) return;
 
         if (libraryRes?.ok) {
@@ -150,11 +151,14 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
         }
 
         // Load other metadata in parallel
+        const fulltextUrl = `/api/items/${encodeURIComponent(item.id)}/fulltext`;
+
         const [relevanceRes, favoriteRes, fulltextRes] = await Promise.all([
           config.adminUIEnabled ? fetch(`/api/admin/item-relevance?itemId=${encodeURIComponent(item.id)}`) : Promise.resolve(null),
           bibcode ? fetch(`/api/papers/${encodeURIComponent(bibcode)}/favorite`) : Promise.resolve(null),
-          fetch(`/api/items/${encodeURIComponent(item.id)}/fulltext`),
+          fetch(fulltextUrl),
         ]);
+
 
         if (!isMounted) return;
 
@@ -174,8 +178,27 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
         }
 
         if (fulltextRes?.ok && isMounted) {
-          const data = await fulltextRes.json();
-          setHasFullText(data.hasFullText || false);
+          try {
+            const data = await fulltextRes.json();
+            const hasFullTextValue = data.hasFullText || false;
+            setHasFullText(hasFullTextValue);
+            if (hasFullTextValue) {
+              console.log(`[ItemCard] ✅ Full text available for: ${item.title.substring(0, 50)}...`);
+            } else {
+              console.log(`[ItemCard] ❌ No full text for: ${item.title.substring(0, 50)}... (hasFullText: ${data.hasFullText})`);
+            }
+          } catch (parseError) {
+            console.error('Error parsing fulltext response:', parseError);
+            setHasFullText(false);
+          }
+        } else if (fulltextRes && !fulltextRes.ok && isMounted) {
+          // API call failed, ensure hasFullText is false
+          console.warn(`[ItemCard] Fulltext API failed for ${item.id}: ${fulltextRes.status}`);
+          setHasFullText(false);
+        } else if (!fulltextRes && isMounted) {
+          // No response (network error, etc.)
+          console.warn(`[ItemCard] Fulltext API call failed (no response) for ${item.id}`);
+          setHasFullText(false);
         }
       } catch (error) {
         console.error('Error loading item metadata:', error);
@@ -270,12 +293,12 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    
+
     // Also check on focus (when user switches back to tab)
     const handleFocus = () => {
       checkLibraryStatus();
     };
-    
+
     window.addEventListener('focus', handleFocus);
 
     return () => {
@@ -454,7 +477,7 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
   }, [item.id]);
 
   return (
-    <div 
+    <div
       ref={containerRef}
       className="border border-surface-border rounded-lg p-4 hover:border-gray-400 hover:bg-surface/80 transition-all hover:shadow-md"
     >
@@ -521,12 +544,20 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
               {hasFullText && (
                 <button
                   onClick={() => setShowFullText(true)}
-                  className="p-1.5 rounded transition-colors text-gray-400 hover:text-gray-700 hover:bg-gray-50"
+                  className="p-1.5 rounded transition-colors text-blue-600 hover:text-blue-700 hover:bg-blue-50 border border-blue-200"
                   title="View full text"
                 >
                   <FileText className="w-4 h-4" />
                 </button>
               )}
+              {/* Debug: Always show a small indicator to verify component is rendering */}
+              <span
+                className="text-xs opacity-30"
+                title={`hasFullText: ${hasFullText}, itemId: ${item.id}, state: ${hasFullText ? 'YES' : 'NO'}`}
+                style={{ fontSize: '8px', marginLeft: '2px' }}
+              >
+                {hasFullText ? '✓' : '✗'}
+              </span>
 
               {/* Saved items library (folder-heart) - for all item types */}
               <button

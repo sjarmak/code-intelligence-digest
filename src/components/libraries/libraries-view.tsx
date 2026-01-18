@@ -221,7 +221,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const findItemIdForPaper = useCallback(async (paper: LibraryItemMetadata): Promise<string | null> => {
     // Try arxivUrl first, then adsUrl
     const urls = [paper.arxivUrl, paper.adsUrl].filter(Boolean) as string[];
-    
+
     for (const url of urls) {
       try {
         const response = await fetch(`/api/items/find-by-url?url=${encodeURIComponent(url)}`);
@@ -302,7 +302,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
 
     const status = libraryStatus.get(itemId);
     const inSavedItems = status?.inSavedItems || false;
-    
+
     setLibraryLoading((prev) => new Set(prev).add(itemId));
     try {
       const method = inSavedItems ? 'DELETE' : 'POST';
@@ -362,24 +362,15 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
 
     const status = libraryStatus.get(itemId);
     const inDigestItems = status?.inDigestItems || false;
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:356',message:'handleToggleDigestItems entry',data:{bibcode,itemId,inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
-    // #endregion
-    
+
     setLibraryLoading((prev) => new Set(prev).add(itemId));
     try {
       const method = inDigestItems ? 'DELETE' : 'POST';
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:365',message:'before API call',data:{itemId,method},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
-      // #endregion
       const response = await fetch(`/api/digest-items${method === 'DELETE' ? `?itemId=${encodeURIComponent(itemId)}` : ''}`, {
         method,
         headers: method === 'POST' ? { 'Content-Type': 'application/json' } : {},
         body: method === 'POST' ? JSON.stringify({ itemId }) : undefined,
       });
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:370',message:'API response',data:{itemId,method,ok:response.ok,status:response.status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
-      // #endregion
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -390,21 +381,9 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       window.dispatchEvent(new CustomEvent('digest-items-changed'));
 
       // Reload library status
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:373',message:'reloading library status',data:{itemId},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'G'})}).catch(()=>{});
-      // #endregion
       const libraryRes = await fetch(`/api/items/${encodeURIComponent(itemId)}/libraries`);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:375',message:'library status response',data:{itemId,ok:libraryRes?.ok,status:libraryRes?.status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'G'})}).catch(()=>{});
-      // #endregion
       if (libraryRes?.ok) {
         const libData = await libraryRes.json();
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:378',message:'library status data',data:{itemId,inSavedItems:libData.inSavedItems,inDigestItems:libData.inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'G'})}).catch(()=>{});
-        // #endregion
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:381',message:'updating status from API response',data:{itemId,inSavedItems:libData.inSavedItems,inDigestItems:libData.inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
-        // #endregion
         setLibraryStatus((prev) => {
           const next = new Map(prev);
           next.set(itemId, {
@@ -414,9 +393,6 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           return next;
         });
       } else {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'libraries-view.tsx:392',message:'library status failed, using optimistic update',data:{itemId,inDigestItems,newValue:!inDigestItems},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'I'})}).catch(()=>{});
-        // #endregion
         // Fallback to optimistic update
         setLibraryStatus((prev) => {
           const next = new Map(prev);
@@ -510,10 +486,10 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
             hasMore: false,
           },
         };
-        
+
         // Load library status for bookmarked papers
         await loadLibraryStatusForPapers(papers);
-        
+
         return result;
       }
     } catch (err) {
@@ -588,11 +564,11 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
               className="flex items-center gap-3 flex-1 text-left"
             >
               {expandedLibrary === 'Bookmarked' ? (
-                <ChevronDown className="w-5 h-5 text-black flex-shrink-0" />
+                <ChevronDown className="w-5 h-5 text-black shrink-0" />
               ) : (
-                <ChevronRight className="w-5 h-5 text-black flex-shrink-0" />
+                <ChevronRight className="w-5 h-5 text-black shrink-0" />
               )}
-              <BookOpen className="w-5 h-5 text-yellow-600 flex-shrink-0" />
+              <BookOpen className="w-5 h-5 text-yellow-600 shrink-0" />
               <div className="flex-1 min-w-0">
                 <h3 className="font-semibold text-black">Bookmarked</h3>
                 <p className="text-sm text-muted mt-0.5">
@@ -744,9 +720,9 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                   className="flex items-center gap-3 flex-1 text-left"
                 >
                   {isExpanded ? (
-                    <ChevronDown className="w-5 h-5 text-black flex-shrink-0" />
+                    <ChevronDown className="w-5 h-5 text-black shrink-0" />
                   ) : (
-                    <ChevronRight className="w-5 h-5 text-muted flex-shrink-0" />
+                    <ChevronRight className="w-5 h-5 text-muted shrink-0" />
                   )}
                   <div>
                     <h3 className="font-semibold text-lg">{cleanName}</h3>

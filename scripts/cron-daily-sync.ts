@@ -279,26 +279,26 @@ async function main() {
         const { computeAndSaveScoresForItems } = await import('../src/lib/pipeline/compute-scores');
         const { getDbClient } = await import('../src/lib/db/driver');
         const { loadItemsByCategory } = await import('../src/lib/db/items');
-        
+
         const client = await getDbClient();
         const categories: Category[] = ['newsletters', 'podcasts', 'tech_articles', 'ai_news', 'product_news', 'community', 'research'];
         const cutoffTime = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000); // Last 7 days
-        
+
         let totalScored = 0;
         for (const category of categories) {
           const whereClause = category === 'newsletters'
             ? `i.category = ? AND i.id LIKE '%-article-%' AND i.created_at >= ?`
             : `i.category = ? AND i.created_at >= ?`;
-          
+
           const result = await client.query(
-            `SELECT i.* FROM items i 
-             LEFT JOIN item_scores s ON i.id = s.item_id 
+            `SELECT i.* FROM items i
+             LEFT JOIN item_scores s ON i.id = s.item_id
              WHERE ${whereClause}
              AND s.item_id IS NULL
              ORDER BY i.created_at DESC LIMIT 100`,
             [category, cutoffTime]
           );
-          
+
           if (result.rows.length > 0) {
             logger.info(`  Found ${result.rows.length} items without scores in ${category}, scoring...`);
             // Map to FeedItem format and score
@@ -318,13 +318,13 @@ async function main() {
               raw: {},
               fullText: row.full_text || undefined,
             }));
-            
+
             const scoreResult = await computeAndSaveScoresForItems(items);
             totalScored += scoreResult.totalScored;
             logger.info(`  ✅ Scored ${scoreResult.totalScored} items in ${category}`);
           }
         }
-        
+
         if (totalScored > 0) {
           logger.info(`✅ Scored ${totalScored} missing items total`);
         } else {

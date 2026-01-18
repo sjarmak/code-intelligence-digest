@@ -58,7 +58,7 @@ export default function SearchResults({
       try {
         const [favoritesRes, ...libraryRes] = await Promise.all([
           fetch('/api/papers/favorites'),
-          ...results.map((result) => 
+          ...results.map((result) =>
             Promise.all([
               fetch(`/api/items/${encodeURIComponent(result.id)}/libraries`),
               fetch(`/api/items/${encodeURIComponent(result.id)}/fulltext`),
@@ -79,7 +79,7 @@ export default function SearchResults({
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
           const [libraryResItem, fulltextRes] = libraryRes[i];
-          
+
           // Always set library status from database response
           if (libraryResItem?.ok) {
             const libData = await libraryResItem.json();
@@ -154,7 +154,7 @@ export default function SearchResults({
   const handleToggleSavedItems = async (itemId: string) => {
     const status = libraryStatus.get(itemId);
     const inSavedItems = status?.inSavedItems || false;
-    
+
     setLibraryLoading((prev) => new Set(prev).add(itemId));
     try {
       const method = inSavedItems ? 'DELETE' : 'POST';
@@ -203,7 +203,7 @@ export default function SearchResults({
   const handleToggleDigestItems = async (itemId: string) => {
     const status = libraryStatus.get(itemId);
     const inDigestItems = status?.inDigestItems || false;
-    
+
     setLibraryLoading((prev) => new Set(prev).add(itemId));
     try {
       const method = inDigestItems ? 'DELETE' : 'POST';
@@ -310,7 +310,7 @@ export default function SearchResults({
                 {hasFullText.get(result.id) && (
                   <button
                     onClick={() => setShowFullText({ itemId: result.id, title: result.title })}
-                    className="p-2 rounded-lg transition-colors text-gray-400 hover:text-gray-700 hover:bg-gray-50"
+                    className="p-2 rounded-lg transition-colors text-blue-600 hover:text-blue-700 hover:bg-blue-50 border border-blue-200"
                     title="View full text"
                   >
                     <FileText className="w-5 h-5" />

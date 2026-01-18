@@ -112,16 +112,6 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const resultRef = React.useRef<SynthesisResult | null>(null); // Ref to track result in stream handler
-  const isLoadingRef = React.useRef(false); // Ref to track loading state
-
-  // Debug: Log when isLoading changes
-  React.useEffect(() => {
-    isLoadingRef.current = isLoading;
-    console.log('isLoading state changed:', isLoading);
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:122',message:'isLoading state changed in useEffect',data:{isLoading,isLoadingRef:isLoadingRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-  }, [isLoading]);
 
   // Load from localStorage on mount (client-side only)
   // Only load on initial mount, not when type changes (to avoid overwriting new results)
@@ -350,28 +340,12 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   };
 
   const handleGenerate = async (params: SynthesisParams) => {
-    console.log('=== handleGenerate called ===', { type, paramsType: params.type, sourceMode: params.sourceMode });
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:349',message:'handleGenerate entry',data:{type,paramsType:params.type,sourceMode:params.sourceMode,isLoadingBefore:isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    console.log('Setting isLoading to true...');
-    // Use React.startTransition or flushSync to ensure immediate update, but simpler: just set it
     setIsLoading(true);
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:353',message:'setIsLoading(true) called',data:{isLoadingRefBefore:isLoadingRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     setError(null);
     setLoadingProgress(0);
     setProgressMessage('Initializing...');
     setResult(null); // Clear previous result when starting new generation
 
-    // Force a synchronous check after state update
-    setTimeout(() => {
-      console.log('After state update, isLoading should be true. Current state:', isLoading);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:361',message:'setTimeout check',data:{isLoading,isLoadingRef:isLoadingRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-    }, 0);
     // Clear localStorage for this type to avoid showing stale results
     try {
       localStorage.removeItem(`synthesis-result-${type}`);
@@ -450,17 +424,11 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
       // For audio-digest, use SSE streaming for progress updates
       if (effectiveType === "audio-digest" || type === "audio-digest") {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:404',message:'Using streaming for audio-digest',data:{effectiveType,type,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         await handleStreamingGeneration(endpoint, params, effectiveType, progressInterval);
         return; // Exit early after streaming completes
       }
 
       // For other types, use regular fetch
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:408',message:'Using regular fetch (non-streaming)',data:{effectiveType,endpoint,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       setProgressMessage('Sending request...');
       controller = new AbortController();
       const timeoutDuration = 10 * 60 * 1000; // 10 min for non-audio-digest
@@ -469,10 +437,6 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
         console.warn(`Request timeout after ${timeoutDuration / 1000 / 60} minutes`);
       }, timeoutDuration);
 
-      console.log('Starting fetch request to:', endpoint);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:418',message:'Before fetch',data:{endpoint,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       setProgressMessage('Processing request...');
       const response = await fetch(endpoint, {
         method: "POST",
@@ -497,9 +461,6 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       clearInterval(progressInterval);
       setLoadingProgress(95);
       setProgressMessage('Processing response...');
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:461',message:'Response received, setting progress to 95%',data:{isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
 
       if (!response.ok) {
         let errorMessage = `API error: ${response.statusText}`;
@@ -518,9 +479,6 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       setResult(data);
     } catch (err) {
       console.error('=== Generation error caught ===', err);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:456',message:'Error caught',data:{errorName:err instanceof Error?err.name:'unknown',errorMessage:err instanceof Error?err.message:String(err),isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       clearInterval(progressInterval);
       if (timeoutId) clearTimeout(timeoutId);
       let message = "Unknown error occurred";
@@ -549,14 +507,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       setProgressMessage(null);
       console.error("Generation error:", err);
     } finally {
-      console.log('=== finally block: setting isLoading to false ===');
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:470',message:'Finally block: setting isLoading to false',data:{isLoadingBefore:isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       setIsLoading(false);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-page.tsx:473',message:'After setIsLoading(false)',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       setLoadingProgress(0);
     }
   };

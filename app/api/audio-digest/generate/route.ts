@@ -320,16 +320,16 @@ async function streamAudioDigestGeneration(
         if (req.sourceMode === "auto") {
           const { getDigestItems } = await import("@/src/lib/db/digestItems");
           allItems = await getDigestItems();
-          sendSSEEvent(controller, "progress", { 
-            message: `Loaded ${allItems.length} items from digest library`, 
+          sendSSEEvent(controller, "progress", {
+            message: `Loaded ${allItems.length} items from digest library`,
             step: "loading",
-            count: allItems.length 
+            count: allItems.length
           });
 
           const MAX_ITEMS_PER_CATEGORY = 500;
           const preFilteredItems: FeedItem[] = [];
           const categories = [...new Set(allItems.map(item => item.category))];
-          
+
           for (const category of categories) {
             const categoryItems = allItems.filter((item) => item.category === category);
             const sorted = categoryItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
@@ -337,9 +337,9 @@ async function streamAudioDigestGeneration(
             preFilteredItems.push(...limited);
           }
 
-          sendSSEEvent(controller, "progress", { 
-            message: `Ranking items across ${categories.length} categories...`, 
-            step: "ranking" 
+          sendSSEEvent(controller, "progress", {
+            message: `Ranking items across ${categories.length} categories...`,
+            step: "ranking"
           });
 
           const periodDays = 90;
@@ -391,10 +391,10 @@ async function streamAudioDigestGeneration(
             allItems.push(...categoryItems);
           }
 
-          sendSSEEvent(controller, "progress", { 
-            message: `Loaded ${allItems.length} items, ranking...`, 
+          sendSSEEvent(controller, "progress", {
+            message: `Loaded ${allItems.length} items, ranking...`,
             step: "ranking",
-            count: allItems.length 
+            count: allItems.length
           });
 
           const MAX_ITEMS_PER_CATEGORY = 500;
@@ -443,10 +443,10 @@ async function streamAudioDigestGeneration(
           }));
         }
 
-        sendSSEEvent(controller, "progress", { 
-          message: `Retrieved ${mergedItems.length} candidate items`, 
+        sendSSEEvent(controller, "progress", {
+          message: `Retrieved ${mergedItems.length} candidate items`,
           step: "ranking",
-          count: mergedItems.length 
+          count: mergedItems.length
         });
 
         // Step 3: Parse prompt and re-rank if needed
@@ -467,16 +467,16 @@ async function streamAudioDigestGeneration(
         const limit = req.sourceMode === "manual" || req.sourceMode === "auto" ? mergedItems.length : (req.limit || 50);
         const selectedItems = selectItemsForDuration(deduplicatedItems, req.duration || 30, limit);
 
-        sendSSEEvent(controller, "progress", { 
-          message: `Selected ${selectedItems.length} items for ${req.duration || 30} minute digest`, 
+        sendSSEEvent(controller, "progress", {
+          message: `Selected ${selectedItems.length} items for ${req.duration || 30} minute digest`,
           step: "selection",
-          count: selectedItems.length 
+          count: selectedItems.length
         });
 
         // Step 5: Extract highlights
-        sendSSEEvent(controller, "progress", { 
-          message: `Extracting highlights from ${selectedItems.length} items...`, 
-          step: "highlights" 
+        sendSSEEvent(controller, "progress", {
+          message: `Extracting highlights from ${selectedItems.length} items...`,
+          step: "highlights"
         });
         const itemsWithHighlights: ItemWithHighlights[] = [];
         const BATCH_SIZE = 5;
@@ -485,9 +485,9 @@ async function streamAudioDigestGeneration(
         for (let i = 0; i < selectedItems.length; i += BATCH_SIZE) {
           const batch = selectedItems.slice(i, i + BATCH_SIZE);
           const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-          
-          sendSSEEvent(controller, "progress", { 
-            message: `Processing batch ${batchNum}/${totalBatches} (${batch.length} items)`, 
+
+          sendSSEEvent(controller, "progress", {
+            message: `Processing batch ${batchNum}/${totalBatches} (${batch.length} items)`,
             step: "highlights",
             progress: Math.round((batchNum / totalBatches) * 50) // 0-50% for highlights
           });
@@ -497,9 +497,9 @@ async function streamAudioDigestGeneration(
               try {
                 let highlights;
                 if (item.category === "research") {
-                  sendSSEEvent(controller, "progress", { 
-                    message: `Chunking paper full text: ${item.title.substring(0, 60)}...`, 
-                    step: "highlights" 
+                  sendSSEEvent(controller, "progress", {
+                    message: `Chunking paper full text: ${item.title.substring(0, 60)}...`,
+                    step: "highlights"
                   });
                   highlights = await extractPaperHighlights(item, req.prompt || "");
                 } else {
@@ -533,17 +533,17 @@ async function streamAudioDigestGeneration(
           return;
         }
 
-        sendSSEEvent(controller, "progress", { 
-          message: `Extracted highlights from ${itemsWithHighlights.length} items`, 
+        sendSSEEvent(controller, "progress", {
+          message: `Extracted highlights from ${itemsWithHighlights.length} items`,
           step: "highlights",
-          count: itemsWithHighlights.length 
+          count: itemsWithHighlights.length
         });
 
         // Step 6: Generate transcript
-        sendSSEEvent(controller, "progress", { 
-          message: "Generating audio digest transcript...", 
+        sendSSEEvent(controller, "progress", {
+          message: "Generating audio digest transcript...",
           step: "transcript",
-          progress: 75 
+          progress: 75
         });
         const content: AudioDigestContent = await generateAudioDigestTranscript(
           itemsWithHighlights,
@@ -553,10 +553,10 @@ async function streamAudioDigestGeneration(
           req.duration || 30
         );
 
-        sendSSEEvent(controller, "progress", { 
-          message: `Generated transcript with ${content.segments.length} segments`, 
+        sendSSEEvent(controller, "progress", {
+          message: `Generated transcript with ${content.segments.length} segments`,
           step: "transcript",
-          progress: 95 
+          progress: 95
         });
 
         const endTime = Date.now();
@@ -566,7 +566,7 @@ async function streamAudioDigestGeneration(
 
         const response: AudioDigestResponse = {
           id: uuid(),
-          title: req.sourceMode === "manual" 
+          title: req.sourceMode === "manual"
             ? `Audio Digest - Curated Selection`
             : req.sourceMode === "auto"
             ? `Audio Digest - Digest Library`
@@ -602,7 +602,7 @@ async function streamAudioDigestGeneration(
           itemsIncluded: response.itemsIncluded,
           transcriptLength: response.transcript.length
         });
-        
+
         sendSSEEvent(controller, "complete", response);
         controller.close();
       } catch (error) {
@@ -610,8 +610,8 @@ async function streamAudioDigestGeneration(
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
-        sendSSEEvent(controller, "error", { 
-          error: error instanceof Error ? error.message : "Internal server error" 
+        sendSSEEvent(controller, "error", {
+          error: error instanceof Error ? error.message : "Internal server error"
         });
         controller.close();
       }
@@ -629,7 +629,7 @@ async function streamAudioDigestGeneration(
 
 export async function POST(request: NextRequest): Promise<NextResponse<AudioDigestResponse | { error: string }>> {
   const startTime = Date.now();
-  
+
   // Check if client wants streaming (SSE)
   const url = new URL(request.url);
   const useStreaming = url.searchParams.get('stream') === 'true';
@@ -675,7 +675,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AudioDige
       const MAX_ITEMS_PER_CATEGORY = 500;
       const preFilteredItems: FeedItem[] = [];
       const categories = [...new Set(allItems.map(item => item.category))];
-      
+
       for (const category of categories) {
         const categoryItems = allItems.filter((item) => item.category === category);
         const sorted = categoryItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
@@ -909,7 +909,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AudioDige
 
     const response: AudioDigestResponse = {
       id: uuid(),
-      title: req.sourceMode === "manual" 
+      title: req.sourceMode === "manual"
         ? `Audio Digest - Curated Selection`
         : `Audio Digest - ${req.period || "all"}`,
       generatedAt: new Date().toISOString(),

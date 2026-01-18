@@ -1,8 +1,9 @@
 /**
  * Database initialization and client
  *
- * Supports both SQLite (development) and PostgreSQL (production).
- * Driver detection is automatic based on DATABASE_URL env var.
+ * Supports both SQLite (legacy fallback) and PostgreSQL (default).
+ * Driver detection is automatic based on LOCAL_DATABASE_URL or DATABASE_URL env vars.
+ * PostgreSQL is the default for both development and production.
  */
 
 import Database from "better-sqlite3";
@@ -10,7 +11,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { logger } from "../logger";
 import { detectDriver, getDbClient, DatabaseDriver, getDatabaseUrl } from "./driver";
-import { getPostgresSchema } from "./schema-postgres";
+import { getPostgresSchema, TABLES_SQL, INDEXES_SQL } from "./schema-postgres";
 
 let sqlite: Database.Database | null = null;
 let initialized = false;
@@ -82,20 +83,42 @@ export async function initializeDatabase() {
 async function initializePostgresSchema() {
   try {
     const client = await getDbClient();
-    const schema = getPostgresSchema();
 
     // Check if we're on local (no pgvector) by checking if DATABASE_URL is localhost
     const dbUrl = getDatabaseUrl();
     const isLocal = dbUrl?.includes('localhost') || dbUrl?.includes('127.0.0.1');
 
-    // For local development, replace vector types with TEXT
-    let schemaToExecute = schema;
+    // Build schema from parts, excluding extensions (handled separately)
+    let tablesSql = TABLES_SQL;
+    let indexesSql = INDEXES_SQL;
+
+    // For local development, replace vector types with TEXT and skip vector extension
     if (isLocal) {
-      logger.info('Local database detected, replacing vector types with TEXT');
-      schemaToExecute = schema.replace(/vector\(1536\)/gi, 'TEXT');
+      logger.info('Local database detected, replacing vector types with TEXT and skipping pgvector extension');
+      tablesSql = tablesSql.replace(/vector\(1536\)/gi, 'TEXT');
+      // Also remove vector index creation that depends on pgvector (handles multiline)
+      indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw[\s\S]*?;/gi, '-- Vector index idx_embeddings_hnsw skipped for local');
+      indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding[\s\S]*?;/gi, '-- Vector index idx_paper_sections_embedding skipped for local');
+    } else {
+      // For production, try to create extensions but handle errors gracefully
+      try {
+        await client.exec('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
+      } catch (extError) {
+        logger.warn('pg_trgm extension not available, continuing without it', { error: extError });
+      }
+      try {
+        await client.exec('CREATE EXTENSION IF NOT EXISTS vector;');
+      } catch (extError) {
+        logger.warn('pgvector extension not available, continuing without it', { error: extError });
+        // If vector extension fails, replace vector types with TEXT
+        tablesSql = tablesSql.replace(/vector\(1536\)/gi, 'TEXT');
+        indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw[\s\S]*?;/gi, '-- Vector index idx_embeddings_hnsw skipped (pgvector not available)');
+        indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding[\s\S]*?;/gi, '-- Vector index idx_paper_sections_embedding skipped (pgvector not available)');
+      }
     }
 
-    // Execute schema
+    // Execute schema (extensions handled separately above)
+    const schemaToExecute = `${tablesSql}\n${indexesSql}`;
     await client.exec(schemaToExecute);
 
     // Add full_text column if it doesn't exist (for migration)

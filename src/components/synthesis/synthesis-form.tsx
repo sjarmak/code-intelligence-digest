@@ -55,13 +55,6 @@ export function SynthesisForm({
   isLoading = false,
   type,
 }: SynthesisFormProps) {
-  // Debug: Log when isLoading prop changes
-  React.useEffect(() => {
-    console.log('SynthesisForm: isLoading prop changed to:', isLoading);
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:58',message:'isLoading prop changed in form',data:{isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-  }, [isLoading]);
   const [selectedCategories, setSelectedCategories] = useState<Category[]>(
     ALLOWED_CATEGORIES
   );
@@ -109,24 +102,15 @@ export function SynthesisForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:107',message:'handleSubmit called',data:{sourceMode,digestItemsCount,selectedItemIdsSize:selectedItemIds.size,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
 
     if (sourceMode === "auto") {
       if (digestItemsCount === 0) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:112',message:'Early return: no digest items',data:{digestItemsCount},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         alert("No items in digest library. Please add items to your digest library first.");
         return;
       }
     } else {
       // Manual mode
       if (selectedItemIds.size === 0) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:118',message:'Early return: no selected items',data:{selectedItemIdsSize:selectedItemIds.size},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         alert("Please select at least one item from your saved items library");
         return;
       }
@@ -136,9 +120,6 @@ export function SynthesisForm({
     if (sourceMode === "categories") {
       // Categories mode: validate categories, period, limit
       if (selectedCategories.length === 0) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:127',message:'Early return: no categories',data:{selectedCategoriesLength:selectedCategories.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         alert("Please select at least one category");
         return;
       }
@@ -146,25 +127,16 @@ export function SynthesisForm({
       if (period === "custom") {
         // Validate custom date range
         if (!customDateRange.startDate || !customDateRange.endDate) {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:134',message:'Early return: missing dates',data:{hasStartDate:!!customDateRange.startDate,hasEndDate:!!customDateRange.endDate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
           alert("Please select both start and end dates for custom range");
           return;
         }
         const start = new Date(customDateRange.startDate);
         const end = new Date(customDateRange.endDate);
         if (start > end) {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:140',message:'Early return: invalid date range',data:{start:customDateRange.startDate,end:customDateRange.endDate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
           alert("Start date must be before end date");
           return;
         }
         if (end > new Date()) {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:144',message:'Early return: future date',data:{end:customDateRange.endDate},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
           alert("End date cannot be in the future");
           return;
         }
@@ -173,16 +145,6 @@ export function SynthesisForm({
 
     // If podcast mode is "highlights", route to audio-digest
     const effectiveType = (type === "podcast" && podcastMode === "highlights") ? "audio-digest" : type;
-
-    console.log('Form: About to call onGenerate with:', {
-      effectiveType,
-      sourceMode,
-      selectedItemIds: sourceMode === "manual" ? Array.from(selectedItemIds).length : undefined,
-      categories: sourceMode === "categories" ? selectedCategories : undefined,
-    });
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0b6e0246-c239-4b9e-ad1e-e1beaba3a011',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'synthesis-form.tsx:160',message:'Calling onGenerate',data:{effectiveType,sourceMode,isLoading},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
 
     await onGenerate({
       type: effectiveType,
@@ -291,7 +253,7 @@ export function SynthesisForm({
           {/* Manual Mode: Saved Items Selection */}
           {sourceMode === "manual" && (
             <div className="border border-surface-border rounded-lg p-4 max-h-96 overflow-y-auto">
-              <SavedItemsView 
+              <SavedItemsView
                 selectedItemIds={selectedItemIds}
                 onSelectionChange={setSelectedItemIds}
                 showCheckboxes={true}

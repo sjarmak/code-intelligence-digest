@@ -253,8 +253,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     const req = validation.data!;
 
     // Check request size limits
-    const itemCount = req.sourceMode === "auto" 
-      ? (req.categories?.length || 0) * 50 
+    const itemCount = req.sourceMode === "auto"
+      ? (req.categories?.length || 0) * 50
       : (req.selectedItemIds?.length || 0);
     const sizeCheck = checkRequestSize('/api/newsletter/generate', itemCount);
     if (!sizeCheck.allowed) {
@@ -519,7 +519,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
 
     const response: NewsletterResponse = {
       id,
-      title: req.sourceMode === "manual" 
+      title: req.sourceMode === "manual"
         ? `Code Intelligence Digest – Curated Selection`
         : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : "All Time"} of ${new Date().toLocaleDateString()}`,
       generatedAt: new Date().toISOString(),

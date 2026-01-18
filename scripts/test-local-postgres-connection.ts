@@ -1,64 +1,81 @@
 #!/usr/bin/env tsx
 /**
- * Test connection to local PostgreSQL
+ * Test local PostgreSQL connection and driver detection
  */
 
 import * as dotenv from 'dotenv';
 import * as path from 'path';
-import { Pool } from 'pg';
 
+// Load .env.local
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
+import { detectDriver, getDbClient, getDatabaseUrl } from '../src/lib/db/driver';
+import { logger } from '../src/lib/logger';
+
 async function testConnection() {
-  const localUrl = process.env.LOCAL_DATABASE_URL;
-  console.log('Testing connection to:', localUrl?.replace(/:[^:@]+@/, ':****@'));
-  
-  if (!localUrl) {
-    console.error('❌ LOCAL_DATABASE_URL not set');
-    process.exit(1);
-  }
+  console.log('Testing local PostgreSQL connection...\n');
 
-  // Parse connection string manually to ensure correct format
-  const url = new URL(localUrl);
-  const pool = new Pool({
-    host: url.hostname,
-    port: parseInt(url.port || '5432', 10),
-    user: url.username,
-    password: url.password,
-    database: url.pathname.slice(1), // Remove leading /
-    ssl: false,
-  });
+  // Check environment variables
+  console.log('Environment variables:');
+  console.log(`  LOCAL_DATABASE_URL: ${process.env.LOCAL_DATABASE_URL ? '✅ Set' : '❌ Not set'}`);
+  console.log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Not set'}`);
+  console.log(`  USE_LOCAL_DB: ${process.env.USE_LOCAL_DB || 'not set'}`);
+  console.log('');
 
-  try {
-    const result = await pool.query('SELECT current_database(), current_user, version()');
-    console.log('✅ Connection successful!');
-    console.log('Database:', result.rows[0].current_database);
-    console.log('User:', result.rows[0].current_user);
-    console.log('PostgreSQL version:', result.rows[0].version.split(',')[0]);
-    
-    // Test if tables exist
-    const tablesResult = await pool.query(`
-      SELECT table_name 
-      FROM information_schema.tables 
-      WHERE table_schema = 'public' 
-      ORDER BY table_name
-    `);
-    console.log(`\n📊 Found ${tablesResult.rows.length} tables:`);
-    tablesResult.rows.slice(0, 10).forEach(row => {
-      console.log(`  - ${row.table_name}`);
-    });
-    if (tablesResult.rows.length > 10) {
-      console.log(`  ... and ${tablesResult.rows.length - 10} more`);
+  // Check driver detection
+  const driver = detectDriver();
+  const dbUrl = getDatabaseUrl();
+  console.log(`Detected driver: ${driver}`);
+  console.log(`Database URL: ${dbUrl ? dbUrl.replace(/:[^:@]+@/, ':****@') : 'none'}`);
+  console.log('');
+
+  if (driver === 'postgres') {
+    try {
+      const client = await getDbClient();
+      console.log('✅ Successfully connected to PostgreSQL');
+
+      // Test query
+      const result = await client.query('SELECT version()');
+      const version = (result.rows[0] as any)?.version || 'unknown';
+      console.log(`PostgreSQL version: ${version.split(',')[0]}`);
+
+      // Check if schema is initialized
+      const tablesResult = await client.query(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+        ORDER BY table_name
+      `);
+      const tables = tablesResult.rows.map((r: any) => r.table_name);
+      console.log(`\nFound ${tables.length} tables in database:`);
+      tables.slice(0, 10).forEach((table: string) => {
+        console.log(`  - ${table}`);
+      });
+      if (tables.length > 10) {
+        console.log(`  ... and ${tables.length - 10} more`);
+      }
+
+      await client.close();
+      console.log('\n✅ Connection test passed!');
+    } catch (error) {
+      console.error('❌ Connection test failed:', error instanceof Error ? error.message : String(error));
+      if (error instanceof Error && error.stack) {
+        console.error(error.stack);
+      }
+      process.exit(1);
     }
-    
-    await pool.end();
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Connection failed:', error instanceof Error ? error.message : String(error));
-    await pool.end();
-    process.exit(1);
+  } else {
+    console.log('⚠️  Using SQLite instead of PostgreSQL');
+    console.log('To use PostgreSQL, set LOCAL_DATABASE_URL in .env.local');
+    console.log('Example: LOCAL_DATABASE_URL=postgresql://code_intel_user:local_dev_password@localhost:5433/code_intel');
   }
 }
 
-testConnection();
-
+testConnection()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error) => {
+    logger.error('Test failed', { error });
+    process.exit(1);
+  });

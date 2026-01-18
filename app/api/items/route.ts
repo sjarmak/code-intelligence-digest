@@ -4,7 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
+import { loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { getDbClient } from "@/src/lib/db/driver";
 import { rankCategory } from "@/src/lib/pipeline/rank";
@@ -14,6 +14,77 @@ import { logger } from "@/src/lib/logger";
 import { getCategoryConfig } from "@/src/config/categories";
 import { PERIOD_CONFIG } from "@/src/config/periods";
 import { decodeHtmlEntities } from "@/src/lib/utils/html-entities";
+
+// Local auto-catchup sync (dev-only)
+// If the local DB is stale (no items within requested time window),
+// kick off an async catch-up sync so the UI becomes "self-healing".
+let autoCatchupInFlight = false;
+let lastAutoCatchupAttemptAtMs = 0;
+const AUTO_CATCHUP_COOLDOWN_MS = 10 * 60 * 1000;
+const AUTO_CATCHUP_LOOKBACK_DAYS = 30;
+
+async function maybeKickoffLocalCatchupSync(args: {
+  category: Category;
+  period: string;
+  reason: "cutoff_fallback" | "no_items_in_window";
+  maxTimestampISO: string | null;
+}) {
+  const nodeEnv = process.env.NODE_ENV ?? "development";
+  if (nodeEnv === "production") return;
+
+  const localUrl = process.env.LOCAL_DATABASE_URL;
+  if (!localUrl?.startsWith("postgres")) return;
+
+  let host: string | null = null;
+  let port: string | null = null;
+  try {
+    const u = new URL(localUrl);
+    host = u.hostname;
+    port = u.port || null;
+  } catch {
+    // ignore
+  }
+
+  const isLocalHost =
+    host === "localhost" || host === "127.0.0.1" || host?.endsWith(".local") === true;
+  if (!isLocalHost) return;
+
+  const nowMs = Date.now();
+  const cooldownRemainingMs = Math.max(
+    0,
+    AUTO_CATCHUP_COOLDOWN_MS - (nowMs - lastAutoCatchupAttemptAtMs)
+  );
+
+  if (autoCatchupInFlight) return;
+  if (cooldownRemainingMs > 0) return;
+
+  autoCatchupInFlight = true;
+  lastAutoCatchupAttemptAtMs = nowMs;
+
+  logger.info("[AUTO-CATCHUP] starting prod->local sync", {
+    category: args.category,
+    period: args.period,
+    reason: args.reason,
+    maxTimestampISO: args.maxTimestampISO,
+    host,
+    port,
+  });
+
+  // Fire-and-forget; never block /api/items on sync
+  void (async () => {
+    try {
+      const { syncProdToLocalPostgres } = await import("@/src/lib/db/sync-prod-to-local");
+      const result = await syncProdToLocalPostgres(AUTO_CATCHUP_LOOKBACK_DAYS);
+      logger.info("[AUTO-CATCHUP] prod->local sync finished", result);
+    } catch (e) {
+      logger.warn("[AUTO-CATCHUP] prod->local sync failed", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      autoCatchupInFlight = false;
+    }
+  })();
+}
 
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
@@ -141,17 +212,34 @@ export async function GET(request: NextRequest) {
 
     // Force reset SQLite connection to avoid stale data in Next.js
     // Next.js may cache module instances, causing stale database connections
-    const { resetSqliteConnection, getSqlite } = await import("@/src/lib/db/index");
+    const { resetSqliteConnection } = await import("@/src/lib/db/index");
     resetSqliteConnection();
 
     // Load items from database
     // Use direct database query to avoid Next.js module caching issues
     let items: FeedItem[];
+    let usedCutoffFallback = false;
     if (loadOptions?.startDate && loadOptions?.endDate) {
       items = await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate);
     } else {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
+      type ItemRow = {
+        id: string;
+        stream_id: string;
+        source_title: string;
+        title: string;
+        url: string;
+        author: string | null;
+        published_at: number;
+        created_at: number;
+        summary: string | null;
+        content_snippet: string | null;
+        categories: string;
+        category: string;
+        extracted_url?: string | null;
+        full_text?: string | null;
+      } & Record<string, unknown>;
 
       // Calculate cutoff time and date column based on category and period
       let cutoffTime: number;
@@ -159,7 +247,8 @@ export async function GET(request: NextRequest) {
       let dateColumn: string;
 
       // Standard logic for all categories/periods
-      cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+      const nowMs = Date.now();
+      cutoffTime = Math.floor((nowMs - periodDays * 24 * 60 * 60 * 1000) / 1000);
 
       // For research:
       // - Daily/Weekly/Monthly: All show top-ranked results (no date filtering for backfilled papers)
@@ -195,7 +284,7 @@ export async function GET(request: NextRequest) {
       // Single-article newsletters don't get the -article- suffix during decomposition
       // For research day/week/month: no date filtering, just get top items by relevance (via ranking)
       let whereClause: string;
-      let queryParams: any[];
+      let queryParams: unknown[];
 
       if (category === "newsletters") {
         // Include both decomposed articles (with -article- in ID) and single-article newsletters (without -article-)
@@ -217,19 +306,47 @@ export async function GET(request: NextRequest) {
       // Also exclude full_text from initial query to reduce memory usage (load it only if needed)
       const limitClause = category === "research" ? " LIMIT 500" : "";
 
-      // For research, exclude full_text from initial query to reduce memory usage
-      // full_text is only needed for search/ask features, not for displaying items
+      // For research, include full_text in query so we can check if it exists (but don't return it in response)
+      // This allows the frontend to know which items have full_text available
       const selectColumns = category === "research"
-        ? "id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, created_at, updated_at, extracted_url, full_text_fetched_at, full_text_source"
+        ? "id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, created_at, updated_at, extracted_url, full_text, full_text_fetched_at, full_text_source"
         : "*";
 
+      const sqlQuery = `SELECT ${selectColumns} FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`;
+      logger.info(`[API] Executing query: ${sqlQuery} with params: [${queryParams.map(p => typeof p === 'number' ? p : `'${p}'`).join(', ')}]`);
+      const maxTimestampISO: string | null = null;
+      
       const result = await client.query(
-        `SELECT ${selectColumns} FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`,
+        sqlQuery,
         queryParams
       );
-      const rawRows = result.rows as any[];
+      let rawRows = result.rows as ItemRow[];
 
-      logger.info(`[API] Direct query returned ${rawRows.length} rows for category=${category}, periodDays=${periodDays}, dateColumn=${dateColumn}`);
+      // Fallback: if no items match the date cutoff, return the most recent items instead
+      // This ensures the API returns data even when the database hasn't been synced recently
+      if (rawRows.length === 0 && category !== "research" && period !== "all") {
+        // Day should be strict: if nothing in last 24h, return 0 items (no fallback).
+        // Weekly/monthly can still fall back to avoid "nothing ever loads" when local DB is stale.
+        const skipFallback = period === "day";
+        if (!skipFallback) {
+          logger.info(
+            `[API] No items found within cutoff window (${new Date(cutoffTime * 1000).toISOString()}), falling back to most recent items`
+          );
+          const fallbackQuery = `SELECT ${selectColumns} FROM items WHERE category = ? ORDER BY ${dateColumn} DESC${limitClause}`;
+          const fallbackResult = await client.query(fallbackQuery, [category]);
+          rawRows = fallbackResult.rows as ItemRow[];
+          usedCutoffFallback = true;
+
+          await maybeKickoffLocalCatchupSync({
+            category,
+            period,
+            reason: "cutoff_fallback",
+            maxTimestampISO,
+          });
+        }
+      }
+
+      logger.info(`[API] Direct query returned ${rawRows.length} rows for category=${category}, periodDays=${periodDays}, dateColumn=${dateColumn}, cutoffTime=${cutoffTime} (${new Date(cutoffTime * 1000).toISOString()})`);
 
       // Helper function to extract real URL from tracking links
       function extractUrlFromTracking(trackingUrl: string): string | null {
@@ -242,7 +359,7 @@ export async function GET(request: NextRequest) {
             if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
               return decoded;
             }
-          } catch (e) {
+          } catch {
             // URL decode failed
           }
         }
@@ -303,8 +420,56 @@ export async function GET(request: NextRequest) {
 
     logger.info(`[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`);
 
+    // Dev-only safety: Twitter/X feed items shouldn't appear in Newsletters; they're Community.
+    // We filter them out of the newsletters response and (in dev/local only) recategorize them in the DB
+    // so they show up under the Community tab on subsequent loads.
+    if (category === "newsletters") {
+      const isTwitterFeedItem = (it: FeedItem) =>
+        typeof it.sourceTitle === "string" &&
+        it.sourceTitle.toLowerCase().includes("twitter") &&
+        typeof it.url === "string" &&
+        (it.url.includes("twitter.com/") || it.url.includes("x.com/"));
+
+      const twitterFeedItems = items.filter(isTwitterFeedItem);
+      if (twitterFeedItems.length > 0) {
+        items = items.filter((it) => !isTwitterFeedItem(it));
+
+        // Fire-and-forget local recategorization (dev + localhost only)
+        void (async () => {
+          try {
+            const nodeEnv = process.env.NODE_ENV ?? "development";
+            if (nodeEnv === "production") return;
+            const localUrl = process.env.LOCAL_DATABASE_URL;
+            if (!localUrl?.startsWith("postgres")) return;
+            const u = new URL(localUrl);
+            const isLocalHost = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname.endsWith(".local");
+            if (!isLocalHost) return;
+
+            const { getDbClient } = await import("@/src/lib/db/driver");
+            const db = await getDbClient();
+            // Only recategorize clearly-Twitter sources that are currently miscategorized as newsletters
+            await db.run(
+              `
+              UPDATE items
+              SET category = 'community'
+              WHERE category = 'newsletters'
+                AND (url ILIKE '%twitter.com/%' OR url ILIKE '%x.com/%')
+                AND source_title ILIKE '%twitter%'
+            `
+            );
+          } catch (e) {
+            logger.warn("[API] Recategorize twitter feed items failed", {
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        })();
+      }
+    }
+
     // Rank items (no filtering - it's fine for ai_news to show items from newsletters if they're relevant)
-    const rankedItems = await rankCategory(items, category, periodDays, period);
+    // If we had to fall back (no items in-window), skip the internal date filter in rankCategory
+    // so that "week" doesn't become empty after we already chose to display stale data.
+    const rankedItems = await rankCategory(items, category, periodDays, period, { skipDateFilter: usedCutoffFallback });
     logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`);
 
     // Debug: Check if scores are loading
@@ -364,27 +529,27 @@ export async function GET(request: NextRequest) {
       itemsFiltered: rankedItems.length - selectionResult.items.length,
       hasMore, // Indicate if more items are available
       items: selectionResult.items.map((item) => ({
-        id: item.id,
-        title: decodeHtmlEntities(item.title), // Decode HTML entities in title
-        url: item.url,
-        sourceTitle: item.sourceTitle,
-        publishedAt: item.publishedAt.toISOString(),
-        createdAt: item.createdAt?.toISOString() || null,
-        summary: item.summary,
-        author: item.author,
-        categories: item.categories,
-        category: item.category,
-        bm25Score: Number(item.bm25Score.toFixed(3)),
-        llmScore: {
-          relevance: item.llmScore.relevance,
-          usefulness: item.llmScore.usefulness,
-          tags: item.llmScore.tags,
-        },
-        recencyScore: Number(item.recencyScore.toFixed(3)),
-        finalScore: Number(item.finalScore.toFixed(3)),
-        reasoning: item.reasoning,
-        diversityReason: selectionResult.reasons.get(item.id),
-      })),
+          id: item.id,
+          title: decodeHtmlEntities(item.title), // Decode HTML entities in title
+          url: item.url,
+          sourceTitle: item.sourceTitle,
+          publishedAt: item.publishedAt.toISOString(),
+          createdAt: item.createdAt?.toISOString() || null,
+          summary: item.summary,
+          author: item.author,
+          categories: item.categories,
+          category: item.category,
+          bm25Score: Number(item.bm25Score.toFixed(3)),
+          llmScore: {
+            relevance: item.llmScore.relevance,
+            usefulness: item.llmScore.usefulness,
+            tags: item.llmScore.tags,
+          },
+          recencyScore: Number(item.recencyScore.toFixed(3)),
+          finalScore: Number(item.finalScore.toFixed(3)),
+          reasoning: item.reasoning,
+          diversityReason: selectionResult.reasons.get(item.id),
+        })),
     });
 
     // Set cache control headers to prevent Next.js from caching API responses

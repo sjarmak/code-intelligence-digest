@@ -362,7 +362,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       const MAX_ITEMS_PER_CATEGORY = 500;
       const preFilteredItems: FeedItem[] = [];
       const categories = [...new Set(allItems.map(item => item.category))];
-      
+
       for (const category of categories) {
         const categoryItems = allItems.filter((item) => item.category === category);
         const sorted = categoryItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
@@ -576,7 +576,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
 
     const response: PodcastResponse = {
       id,
-      title: rundown.episode_title || (req.sourceMode === "manual" 
+      title: rundown.episode_title || (req.sourceMode === "manual"
         ? `Code Intelligence Digest – Curated Selection`
         : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : req.period === "all" ? "All Time" : "Custom Range"}`),
       generatedAt: new Date().toISOString(),

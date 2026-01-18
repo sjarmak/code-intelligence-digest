@@ -107,8 +107,8 @@ interface Library {
 }
 
 export const PapersQA = forwardRef<
-  { 
-    addPaper: (paper: SelectedPaper) => void; 
+  {
+    addPaper: (paper: SelectedPaper) => void;
     addItem: (item: SelectedItem) => void;
     setSelectedLibrary: (library: Library) => void;
   },
@@ -190,7 +190,7 @@ export const PapersQA = forwardRef<
       if (selectedLibraries.length > 0) {
         const researchLibraryIds: string[] = [];
         const resourceLibraryIds: string[] = [];
-        
+
         selectedLibraries.forEach(lib => {
           if (lib.id === 'saved-items' || lib.id === 'digest-items') {
             resourceLibraryIds.push(lib.id);
@@ -371,7 +371,7 @@ export const PapersQA = forwardRef<
               {renderMarkdown(response.answer)}
             </div>
             <p className="text-xs text-muted mt-2">
-              Based on {response.sourcesUsed || 0} {response.sourcesUsed === 1 ? 'source' : 'sources'} 
+              Based on {response.sourcesUsed || 0} {response.sourcesUsed === 1 ? 'source' : 'sources'}
               {response.papersUsed !== undefined && response.itemsUsed !== undefined && (
                 <> ({response.papersUsed} {response.papersUsed === 1 ? 'paper' : 'papers'}, {response.itemsUsed} {response.itemsUsed === 1 ? 'item' : 'items'})</>
               )}

@@ -13,6 +13,8 @@ import {
   linkPapersToLibraryBatch,
   initializeADSTables,
 } from '@/src/lib/db/ads-papers';
+import type { FeedItem } from '@/src/lib/model';
+import { saveItems } from '@/src/lib/db/items';
 
 export const dynamic = 'force-dynamic';
 
@@ -102,6 +104,63 @@ export async function GET(request: NextRequest) {
       if (papersToStore.length > 0) {
         await storePapersBatch(papersToStore);
         await linkPapersToLibraryBatch(library.id, bibcodes);
+
+        // Also save to items table for consistency
+        // Convert papers to FeedItems and save
+        const itemsToSave: FeedItem[] = papersToStore
+          .filter(p => p.title || p.body) // Only save if we have title or body
+          .map(paper => {
+            // Parse authors
+            let author: string | undefined;
+            if (paper.authors) {
+              try {
+                const authorsArray = JSON.parse(paper.authors);
+                author = Array.isArray(authorsArray) ? authorsArray.join(', ') : authorsArray;
+              } catch {
+                author = paper.authors;
+              }
+            }
+
+            // Parse pubdate
+            let publishedAt: Date;
+            if (paper.pubdate) {
+              publishedAt = new Date(paper.pubdate);
+              if (isNaN(publishedAt.getTime())) {
+                publishedAt = new Date();
+              }
+            } else {
+              publishedAt = new Date();
+            }
+
+            const itemId = `ads:${paper.bibcode}`;
+            const url = paper.arxivUrl || paper.adsUrl || getADSUrl(paper.bibcode);
+
+            return {
+              id: itemId,
+              streamId: `ads:research:${paper.bibcode}`,
+              sourceTitle: 'ADS Research',
+              title: paper.title || 'Untitled',
+              url,
+              author,
+              publishedAt,
+              createdAt: publishedAt,
+              summary: paper.abstract || undefined,
+              contentSnippet: paper.abstract || undefined,
+              fullText: paper.body || undefined,
+              categories: ['research'],
+              category: 'research' as const,
+              raw: {
+                bibcode: paper.bibcode,
+                adsUrl: paper.adsUrl || getADSUrl(paper.bibcode),
+                arxivUrl: paper.arxivUrl || getArxivUrl(paper.bibcode),
+              },
+            };
+          });
+
+        if (itemsToSave.length > 0) {
+          await saveItems(itemsToSave);
+          logger.info(`[LIBRARIES] Saved ${itemsToSave.length} items to items table`);
+        }
       }
 
       items = bibcodes.map((bibcode) => ({

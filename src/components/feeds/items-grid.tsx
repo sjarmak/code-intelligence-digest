@@ -81,6 +81,8 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
         const data = await response.json();
         const fetchedItems = data.items || [];
 
+        console.log(`[ItemsGrid] Fetched ${fetchedItems.length} items for ${category}/${period}`);
+
         // If loading more (loadMoreCount > 0), append new items
         // Otherwise, replace items (initial load or category/period change)
         if (loadMoreCount > 0) {
@@ -145,11 +147,14 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
     );
   }
 
+  console.log(`[ItemsGrid] Rendering ${items.length} items for ${category}/${period}`);
+
   return (
     <div className="space-y-3 w-full">
-      {items.map((item, index) => (
-        <ItemCard key={item.id} item={item} rank={index + 1} period={period} />
-      ))}
+      {items.map((item, index) => {
+        console.log(`[ItemsGrid] Rendering ItemCard ${index + 1}: ${item.id} - ${item.title.substring(0, 40)}...`);
+        return <ItemCard key={item.id} item={item} rank={index + 1} period={period} />;
+      })}
       {hasMore ? (
         <div className="text-center pt-4">
           <button

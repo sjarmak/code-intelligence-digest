@@ -233,9 +233,7 @@ input[type="checkbox"]:checked {
   accent-color: black;
   background-color: black;
   border-color: black;
-}
-
-input[type="radio"]:focus,
+}input[type="radio"]:focus,
 input[type="checkbox"]:focus {
   outline: 2px solid black;
   outline-offset: 2px;
@@ -278,9 +276,7 @@ nav[role="tablist"] {
     padding-left: 1rem;
     padding-right: 1rem;
   }
-}
-
-/* Custom select dropdown arrow - prevents text cutoff */
+}/* Custom select dropdown arrow - prevents text cutoff */
 select.custom-select-arrow {
   appearance: none;
   background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22currentColor%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3E%3Cpolyline points=%226 9 12 15 18 9%22%3E%3C/polyline%3E%3C/svg%3E");

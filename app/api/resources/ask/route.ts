@@ -331,8 +331,8 @@ export async function POST(request: NextRequest) {
         .slice(0, 10) // Limit to top 10 items
         .map((item, idx) => {
           const content = item.fullText || item.summary || item.contentSnippet || 'No content available';
-          const truncatedContent = content.length > 2000 
-            ? content.substring(0, 2000) + '...' 
+          const truncatedContent = content.length > 2000
+            ? content.substring(0, 2000) + '...'
             : content;
 
           return `[Item ${idx + 1}] Title: ${item.title}\nSource: ${item.sourceTitle}\nURL: ${item.url}\nCategory: ${item.category || 'N/A'}\nPublished: ${item.publishedAt.toLocaleDateString()}\n\nContent:\n${truncatedContent}`;
@@ -408,7 +408,7 @@ ${combinedContext}`;
     const citedItemIndices = new Set<number>();
     const paperCitationRegex = /\[Paper\s+(\d+)\]/gi;
     const itemCitationRegex = /\[Item\s+(\d+)\]/gi;
-    
+
     let match;
     while ((match = paperCitationRegex.exec(answer)) !== null) {
       const idx = parseInt(match[1], 10) - 1;
@@ -416,7 +416,7 @@ ${combinedContext}`;
         citedPaperIndices.add(idx);
       }
     }
-    
+
     while ((match = itemCitationRegex.exec(answer)) !== null) {
       const idx = parseInt(match[1], 10) - 1;
       if (idx >= 0 && idx < items.length) {

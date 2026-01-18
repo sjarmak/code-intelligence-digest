@@ -36,7 +36,8 @@ export async function rankCategory(
   items: FeedItem[],
   category: Category,
   periodDays: number,
-  period?: string
+  period?: string,
+  options?: { skipDateFilter?: boolean }
 ): Promise<RankedItem[]> {
   if (items.length === 0) {
     return [];
@@ -61,8 +62,10 @@ export async function rankCategory(
   const useCreatedAt = periodDays <= 3;
   // Skip date filtering when items are already filtered by API route
   // Research: API route filters by created_at (day/week) or published_at (month/all), so skip here
-  const skipDateFilter = (period === "day" && (category === "newsletters" || category === "product_news")) ||
-                         (category === "research"); // All research periods are filtered by API route
+  const skipDateFilterByCategoryPeriod =
+    (period === "day" && (category === "newsletters" || category === "product_news")) ||
+    category === "research"; // All research periods are filtered by API route
+  const skipDateFilter = options?.skipDateFilter === true ? true : skipDateFilterByCategoryPeriod;
 
   // Patterns for low-quality items that should be filtered out
   const BAD_TITLE_PATTERNS = [
