@@ -38,6 +38,52 @@ import type { Category, FeedItem } from '../src/lib/model';
 
 const RECENT_DAYS_FOR_EMBEDDINGS = 7; // Only generate embeddings for items from last 7 days
 
+const ACTIVE_HOURS_START = 7; // 7 AM
+const ACTIVE_HOURS_END = 21; // 9 PM
+
+function getHourInTimeZone(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    hour12: false,
+  }).formatToParts(date);
+  const hourPart = parts.find((p) => p.type === 'hour')?.value;
+  const hour = hourPart ? Number.parseInt(hourPart, 10) : Number.NaN;
+  return Number.isFinite(hour) ? hour : date.getHours();
+}
+
+function isWithinActiveHours(hour: number): boolean {
+  return hour >= ACTIVE_HOURS_START && hour <= ACTIVE_HOURS_END;
+}
+
+/**
+ * Keep hourly cadence when either ET or PT is within 7am–9pm local time.
+ * Otherwise (late night in both), run every 3 hours to reduce Inoreader API calls.
+ */
+function shouldRunCronNow(date: Date): { shouldRun: boolean; reason: string } {
+  const hourET = getHourInTimeZone(date, 'America/New_York');
+  const hourPT = getHourInTimeZone(date, 'America/Los_Angeles');
+
+  const inET = isWithinActiveHours(hourET);
+  const inPT = isWithinActiveHours(hourPT);
+
+  if (inET || inPT) {
+    return {
+      shouldRun: true,
+      reason: `active hours (ET=${hourET}, PT=${hourPT})`,
+    };
+  }
+
+  // Off-hours in both time zones: run every 3 hours (ET-based) to reduce API calls.
+  const shouldRun = hourET % 3 === 1;
+  return {
+    shouldRun,
+    reason: shouldRun
+      ? `off-hours slot (every 3h) (ET=${hourET}, PT=${hourPT})`
+      : `off-hours (skipping) (ET=${hourET}, PT=${hourPT})`,
+  };
+}
+
 interface Stats {
   sync: {
     success: boolean;
@@ -190,6 +236,15 @@ async function main() {
   try {
     logger.info('🔄 Starting hourly sync cron job...');
     logger.info(`Started at: ${new Date().toISOString()}`);
+
+    const now = new Date();
+    const gate = shouldRunCronNow(now);
+    if (!gate.shouldRun) {
+      logger.info(`⏭️  Skipping cron run: ${gate.reason}`);
+      return;
+    }
+
+    logger.info(`⏱️  Running cron: ${gate.reason}`);
 
     // Step 1: Initialize database
     logger.info('\n📦 Initializing database...');

@@ -52,6 +52,8 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const SYNC_ID = 'daily-sync';
+const STREAM_PAGE_SIZE = 250;
+const STALE_BATCHES_TO_STOP = 2;
 
 /**
  * Load existing sync state (if resuming)
@@ -166,6 +168,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
   const existingState = await loadSyncState();
   const resumed = !!existingState && existingState.status === 'paused';
   let continuation = existingState?.continuation_token || undefined;
+  let staleBatchCount = 0;
 
   let researchItemsAdded = 0;
   let researchItemsScored = 0;
@@ -282,7 +285,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       try {
         // Fetch batch
         const response = await client.getStreamContents(allItemsStreamId, {
-          n: 100,
+          n: STREAM_PAGE_SIZE,
           continuation,
           ot: otTimestamp,
         });
@@ -301,6 +304,14 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         items = decomposeFeedItems(items);
         items = categorizeItems(items);
 
+        const createdAtSeconds = items
+          .map((item) =>
+            item.createdAt ? Math.floor(item.createdAt.getTime() / 1000) : null
+          )
+          .filter((t): t is number => t !== null);
+        const newestCreatedAt =
+          createdAtSeconds.length > 0 ? Math.max(...createdAtSeconds) : null;
+
         // Filter by createdAt (when Inoreader received it) for the sync window
         const beforeFilter = items.length;
         items = items.filter(
@@ -312,6 +323,39 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
           logger.debug(
             `[DAILY-SYNC] Filtered ${beforeFilter - afterFilter} items outside window`
           );
+        }
+
+        // If this batch (and subsequent ones) are clearly older than our sync window, stop paging.
+        // This prevents scanning many days worth of items every run (which burns API calls).
+        if (
+          !isCatchup &&
+          afterFilter === 0 &&
+          newestCreatedAt !== null &&
+          newestCreatedAt < syncSinceTimestamp
+        ) {
+          staleBatchCount++;
+
+          if (staleBatchCount >= STALE_BATCHES_TO_STOP) {
+            logger.info(
+              `[DAILY-SYNC] Stopping pagination early: batch ${batchNumber} has no items in window and newest createdAt=${new Date(
+                newestCreatedAt * 1000
+              ).toISOString()} is older than window (${new Date(
+                syncSinceTimestamp * 1000
+              ).toISOString()}).`
+            );
+
+            continuation = undefined;
+            await saveSyncState({
+              continuationToken: null,
+              itemsProcessed: totalItemsAdded,
+              callsUsed,
+              status: 'completed',
+            });
+            hasMoreItems = false;
+            break;
+          }
+        } else {
+          staleBatchCount = 0;
         }
 
         // Save and score by category
