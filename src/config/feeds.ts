@@ -112,6 +112,15 @@ function mapFolderToCategory(folderPath: string): Category | null {
 
 let cachedFeeds: FeedConfig[] | null = null;
 
+/**
+ * Clear the in-memory feeds cache.
+ * Call this before getFeeds() to force a fresh fetch.
+ */
+export function clearFeedsCache(): void {
+  cachedFeeds = null;
+  logger.info("[FEEDS] In-memory cache cleared");
+}
+
 const FEEDS_CACHE_FILE = path.join(process.cwd(), ".cache", "feeds.json");
 
 /**

@@ -1,103 +1,94 @@
 import { NextResponse } from "next/server";
-import { createInoreaderClient } from "@/src/lib/inoreader/client";
+import { getFeeds, clearFeedsCache } from "@/src/config/feeds";
 import { logger } from "@/src/lib/logger";
-import { incrementApiCalls } from "@/src/lib/db/api-budget";
-import * as fs from "fs";
-import * as path from "path";
-import { blockInProduction } from "@/src/lib/auth/guards";
+import { getDbClient, detectDriver } from "@/src/lib/db/driver";
+import { initializeDatabase } from "@/src/lib/db";
 
-// Map folder names to categories
-const FOLDER_TO_CATEGORY: Record<string, string> = {
-  research: "research",
-  "arxiv digest": "research",
-  arxivdigest: "research",
-  "tech articles": "tech_articles",
-  "tech-articles": "tech_articles",
-  "tech company blogs": "tech_articles",
-  "developer communities": "community",
-  "tech podcasts": "podcasts",
-  "coding agent product updates": "product_news",
-  "ai articles": "ai_news",
-};
-
-interface FeedConfig {
-  streamId: string;
-  canonicalName: string;
-  defaultCategory: string;
-  tags?: string[];
-  vendor?: string;
-}
-
-function mapFolderToCategory(folderPath: string): string {
-  const normalized = folderPath.toLowerCase();
-  return FOLDER_TO_CATEGORY[normalized] || "newsletters";
-}
-
+/**
+ * Force refresh feeds from Inoreader, bypassing the database cache.
+ * Works in both development and production.
+ *
+ * Usage: POST /api/admin/refresh-feeds
+ */
 export async function POST() {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
-
   try {
-    logger.info("Starting feed refresh...");
+    logger.info("[refresh-feeds] Starting forced feed refresh...");
 
-    const client = createInoreaderClient();
-    const subscriptionList = await client.getSubscriptions();
-    await incrementApiCalls(1); // Track getSubscriptions call
+    // Initialize database connection
+    await initializeDatabase();
 
-    const feeds: FeedConfig[] = [];
+    // Clear the cache metadata to force a fresh fetch from Inoreader
+    const driver = detectDriver();
+    const client = await getDbClient();
 
-    if (subscriptionList.subscriptions && Array.isArray(subscriptionList.subscriptions)) {
-      for (const sub of subscriptionList.subscriptions) {
-        const folderLabels: string[] = [];
-
-        if (Array.isArray(sub.categories)) {
-          for (const cat of sub.categories) {
-            const labelStr = typeof cat === "string" ? cat : cat?.label;
-            if (labelStr) {
-              folderLabels.push(labelStr);
-            }
-          }
-        }
-
-        let category = "newsletters";
-        for (const folderLabel of folderLabels) {
-          const mapped = mapFolderToCategory(folderLabel);
-          if (mapped) {
-            category = mapped;
-            break;
-          }
-        }
-
-        feeds.push({
-          streamId: sub.id,
-          canonicalName: sub.title,
-          defaultCategory: category,
-          tags: folderLabels,
-          vendor: sub.htmlUrl ? new URL(sub.htmlUrl).hostname : undefined,
-        });
-      }
+    if (driver === "postgres") {
+      await client.run(`DELETE FROM cache_metadata WHERE key = $1`, ["feeds"]);
+    } else {
+      const { getSqlite } = await import("@/src/lib/db/index");
+      const sqlite = getSqlite();
+      sqlite.prepare(`DELETE FROM cache_metadata WHERE key = 'feeds'`).run();
     }
 
-    // Save to cache
-    const cacheDir = path.join(process.cwd(), ".cache");
-    const feedsCacheFile = path.join(cacheDir, "feeds.json");
+    logger.info("[refresh-feeds] DB cache invalidated, clearing in-memory cache...");
 
-    if (!fs.existsSync(cacheDir)) {
-      fs.mkdirSync(cacheDir, { recursive: true });
+    // Clear in-memory cache so getFeeds() fetches fresh from Inoreader
+    clearFeedsCache();
+
+    const feeds = await getFeeds();
+
+    logger.info(`[refresh-feeds] Refreshed ${feeds.length} feeds from Inoreader`);
+
+    // Group by category for summary
+    const byCategory: Record<string, number> = {};
+    for (const feed of feeds) {
+      byCategory[feed.defaultCategory] = (byCategory[feed.defaultCategory] || 0) + 1;
     }
-
-    fs.writeFileSync(feedsCacheFile, JSON.stringify(feeds, null, 2));
-
-    logger.info(`Refreshed and cached ${feeds.length} feeds`);
 
     return NextResponse.json({
       success: true,
       feedCount: feeds.length,
-      message: "Feeds refreshed and cached",
+      byCategory,
+      message: "Feeds refreshed from Inoreader and cached",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.error("Feed refresh failed", error);
+    logger.error("[refresh-feeds] Feed refresh failed", { error });
+
+    return NextResponse.json(
+      {
+        error: message,
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * GET endpoint to check current feed cache status
+ */
+export async function GET() {
+  try {
+    await initializeDatabase();
+
+    const { getFeedsCacheMetadata, getFeedsCount } = await import("@/src/lib/db/feeds");
+
+    const metadata = await getFeedsCacheMetadata();
+    const count = await getFeedsCount();
+
+    const now = Math.floor(Date.now() / 1000);
+    const isExpired = !metadata?.expiresAt || metadata.expiresAt < now;
+    const expiresIn = metadata?.expiresAt ? metadata.expiresAt - now : null;
+
+    return NextResponse.json({
+      feedCount: count,
+      cacheMetadata: metadata,
+      isExpired,
+      expiresInSeconds: expiresIn,
+      expiresInMinutes: expiresIn ? Math.round(expiresIn / 60) : null,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("[refresh-feeds] Failed to get cache status", { error });
 
     return NextResponse.json(
       {

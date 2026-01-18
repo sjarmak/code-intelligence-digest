@@ -201,11 +201,11 @@ export async function updateFeedsCacheMetadata(count: number): Promise<void> {
     if (driver === 'postgres') {
       await client.run(
         `INSERT INTO cache_metadata (key, last_refresh_at, count, expires_at)
-         VALUES ($1, EXTRACT(EPOCH FROM NOW())::INTEGER, $2, EXTRACT(EPOCH FROM NOW())::INTEGER + (6 * 3600))
+         VALUES ($1, EXTRACT(EPOCH FROM NOW())::INTEGER, $2, EXTRACT(EPOCH FROM NOW())::INTEGER + (2 * 3600))
          ON CONFLICT (key) DO UPDATE SET
            last_refresh_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
            count = EXCLUDED.count,
-           expires_at = EXTRACT(EPOCH FROM NOW())::INTEGER + (6 * 3600)`,
+           expires_at = EXTRACT(EPOCH FROM NOW())::INTEGER + (2 * 3600)`,
         ['feeds', count]
       );
     } else {
@@ -217,7 +217,7 @@ export async function updateFeedsCacheMetadata(count: number): Promise<void> {
           'feeds',
           strftime('%s', 'now'),
           ?,
-          strftime('%s', 'now') + (6 * 3600)
+          strftime('%s', 'now') + (2 * 3600)
         )
       `).run(count);
     }
