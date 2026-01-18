@@ -9,6 +9,40 @@ import { getFeedConfig } from "../../config/feeds";
 import { logger } from "../logger";
 import { decodeHtmlEntities } from "../utils/html-entities";
 
+const INOREADER_LABEL_ALIASES: Record<string, string> = {
+  // Inoreader label renamed from "Elevate" -> "Newsletter Misc"
+  elevate: "Newsletter Misc",
+};
+
+export function normalizeInoreaderLabelName(label: string): string {
+  const trimmed = (label ?? "").trim();
+  if (!trimmed) return "";
+
+  // Inoreader can include URL-encoded label names (spaces => %20) or '+'.
+  const plusAsSpace = trimmed.replace(/\+/g, " ");
+  let decoded = plusAsSpace;
+  try {
+    decoded = decodeURIComponent(plusAsSpace);
+  } catch {
+    // If label contains malformed percent-encoding, fall back to raw.
+  }
+
+  const collapsed = decoded.replace(/\s+/g, " ").trim();
+  const alias = INOREADER_LABEL_ALIASES[collapsed.toLowerCase()];
+  return alias ?? collapsed;
+}
+
+export function extractInoreaderCategoryLabel(categoryId: string): string {
+  // Common formats:
+  // - user/1234/label/MyLabel
+  // - user/1234/label/Newsletter%20Misc
+  // - user/1234/state/com.google/starred (not a label, but we still return last segment)
+  const raw = categoryId ?? "";
+  const parts = raw.split("/");
+  const last = parts[parts.length - 1] ?? raw;
+  return normalizeInoreaderLabelName(last);
+}
+
 /**
  * Check if a URL is an Inoreader item URL (should be rejected)
  */
@@ -170,12 +204,39 @@ export async function normalizeItem(raw: InoreaderArticle): Promise<FeedItem> {
   // Determine category: check URL first to catch misconfigured feeds
   let category: Category = feedConfig?.defaultCategory ?? "tech_articles";
 
+  // If this feed isn't in our feeds cache yet, fall back to Inoreader labels when available.
+  // This helps newly-added feeds get categorized correctly before the feeds cache refreshes.
+  if (!feedConfig) {
+    const labelNames = (raw.categories ?? [])
+      .map(extractInoreaderCategoryLabel)
+      .filter(Boolean)
+      .map((c) => c.toLowerCase());
+
+    if (
+      labelNames.some((l) => l === "newsletter misc") ||
+      labelNames.some((l) => l.includes("newsletter"))
+    ) {
+      category = "newsletters";
+    }
+  }
+
   // Override category based on URL patterns (catches misconfigured feeds)
   if (url) {
     // Reddit URLs should always be community, regardless of feed config
     if (/reddit\.com\/(r|u|user)\//i.test(url)) {
       category = "community";
       logger.debug(`Detected Reddit URL, overriding category to community: ${url}`);
+    }
+    // Twitter/X feeds should be community, but avoid reclassifying normal newsletter articles that merely link to Twitter
+    else if (
+      (url.includes("twitter.com/") || url.includes("x.com/")) &&
+      (
+        (feedConfig?.canonicalName ?? "").toLowerCase().includes("twitter") ||
+        (raw.origin?.title ?? "").toLowerCase().includes("twitter")
+      )
+    ) {
+      category = "community";
+      logger.debug(`Detected Twitter/X feed item, overriding category to community: ${url}`);
     }
     // arXiv URLs should always be research
     else if (url.includes("arxiv.org")) {
@@ -198,11 +259,7 @@ export async function normalizeItem(raw: InoreaderArticle): Promise<FeedItem> {
     createdAt, // When Inoreader received/crawled the item
     summary: fullSummary,
     contentSnippet: snippet,
-    categories: (raw.categories ?? []).map((c: string) => {
-      // Extract label from category string like "user/1234/label/MyLabel"
-      const parts = c.split("/");
-      return parts[parts.length - 1] ?? c;
-    }),
+    categories: (raw.categories ?? []).map(extractInoreaderCategoryLabel),
     category,
     raw,
   };

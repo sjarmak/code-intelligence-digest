@@ -73,6 +73,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   "hacker news": "community",
   "news": "community",
   discussion: "community",
+  "tech leaders": "community", // Tech leader social posts and updates
 
   // AI News / Articles
   "ai news": "ai_news",
@@ -87,6 +88,8 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   // Newsletters (fallback)
   newsletter: "newsletters",
   newsletters: "newsletters",
+  "newsletter misc": "newsletters",
+  "newsletter-misc": "newsletters",
   "dev-news": "newsletters",
   "weekly-digest": "newsletters",
 };
