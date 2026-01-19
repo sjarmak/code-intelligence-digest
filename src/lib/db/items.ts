@@ -1265,3 +1265,32 @@ async function createItemFromBibcode(bibcode: string, itemId: string): Promise<v
     // The foreign key constraint will catch it if needed
   }
 }
+
+/**
+ * Get the timestamp of the newest item in the database (based on created_at).
+ * This is used to determine the sync window - we only need to fetch items
+ * newer than this timestamp to avoid gaps when syncs are delayed.
+ *
+ * Returns null if no items exist (first sync).
+ */
+export async function getNewestItemTimestamp(): Promise<number | null> {
+  try {
+    const driver = detectDriver();
+
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        'SELECT MAX(created_at) as newest FROM items'
+      );
+      const row = result.rows[0] as { newest: number | null } | undefined;
+      return row?.newest ?? null;
+    } else {
+      const sqlite = getSqlite();
+      const result = sqlite.prepare('SELECT MAX(created_at) as newest FROM items').get() as { newest: number | null } | undefined;
+      return result?.newest ?? null;
+    }
+  } catch (error) {
+    logger.error('Failed to get newest item timestamp', error);
+    return null;
+  }
+}

@@ -21,7 +21,7 @@ import { createInoreaderClient } from '../inoreader/client';
 import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
 import { decomposeFeedItems } from '../pipeline/decompose';
-import { saveItems } from '../db/items';
+import { saveItems, getNewestItemTimestamp } from '../db/items';
 import { computeAndSaveScoresForItems } from '../pipeline/compute-scores';
 import { logger } from '../logger';
 import { Category, FeedItem } from '../model';
@@ -249,6 +249,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
     // Determine sync time window
     // Using `nt` (newer than) for server-side filtering - Inoreader only returns items newer than this
+    // Key insight: use the newest item timestamp to avoid gaps when syncs are delayed/blocked
     let syncSinceTimestamp: number;
     let reason: string;
 
@@ -257,11 +258,29 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       syncSinceTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
       reason = `last ${lookbackDays} days (catch-up mode, server-side nt filter)`;
     } else {
-      // Normal mode: fetch items that Inoreader received in the last 4 hours
-      // Using server-side `nt` filter to minimize API calls
-      const SYNC_WINDOW_HOURS = 4;
-      syncSinceTimestamp = Math.floor((Date.now() - SYNC_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
-      reason = `last ${SYNC_WINDOW_HOURS} hours (server-side nt filter)`;
+      // Normal mode: fetch items newer than our newest item (with fallback)
+      // This ensures no gaps even if syncs are blocked for hours
+      const DEFAULT_WINDOW_HOURS = 4;
+      const MAX_LOOKBACK_DAYS = 7; // Safety limit to avoid massive catch-ups
+      const defaultTimestamp = Math.floor((Date.now() - DEFAULT_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
+      const maxLookbackTimestamp = Math.floor((Date.now() - MAX_LOOKBACK_DAYS * 24 * 60 * 60 * 1000) / 1000);
+
+      const newestItemTimestamp = await getNewestItemTimestamp();
+
+      if (newestItemTimestamp && newestItemTimestamp > maxLookbackTimestamp) {
+        // Use newest item timestamp (subtract 60s buffer for edge cases)
+        syncSinceTimestamp = newestItemTimestamp - 60;
+        const hoursAgo = ((Date.now() / 1000) - syncSinceTimestamp) / 3600;
+        reason = `since last sync (${hoursAgo.toFixed(1)}h ago, server-side nt filter)`;
+      } else if (newestItemTimestamp) {
+        // Newest item is older than max lookback - use max lookback to avoid huge catch-up
+        syncSinceTimestamp = maxLookbackTimestamp;
+        reason = `last ${MAX_LOOKBACK_DAYS} days (capped, server-side nt filter)`;
+      } else {
+        // No items yet - use default window
+        syncSinceTimestamp = defaultTimestamp;
+        reason = `last ${DEFAULT_WINDOW_HOURS} hours (first sync, server-side nt filter)`;
+      }
     }
 
     const allItemsStreamId = `user/${userId}/state/com.google/all`;
