@@ -52,8 +52,10 @@ const VALID_CATEGORIES: Category[] = [
 ];
 
 const SYNC_ID = 'daily-sync';
-const STREAM_PAGE_SIZE = 250;
-const STALE_BATCHES_TO_STOP = 2;
+// Inoreader supports up to 1000 items per request - use max to minimize API calls
+const STREAM_PAGE_SIZE = 1000;
+// Stop paging after 1 stale batch (all items older than sync window)
+const STALE_BATCHES_TO_STOP = 1;
 
 /**
  * Load existing sync state (if resuming)
@@ -246,22 +248,20 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     }
 
     // Determine sync time window
+    // Using `nt` (newer than) for server-side filtering - Inoreader only returns items newer than this
     let syncSinceTimestamp: number;
-    let otTimestamp: number;
     let reason: string;
 
     if (isCatchup && lookbackDays) {
       // Catch-up mode: fetch from N days ago (for manual catch-up scenarios)
       syncSinceTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
-      otTimestamp = syncSinceTimestamp; // Use same window for ot in catch-up mode
-      reason = `last ${lookbackDays} days (catch-up mode)`;
+      reason = `last ${lookbackDays} days (catch-up mode, server-side nt filter)`;
     } else {
       // Normal mode: fetch items that Inoreader received in the last 4 hours
+      // Using server-side `nt` filter to minimize API calls
       const SYNC_WINDOW_HOURS = 4;
-      const OT_WINDOW_DAYS = 7;
       syncSinceTimestamp = Math.floor((Date.now() - SYNC_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
-      otTimestamp = Math.floor((Date.now() - OT_WINDOW_DAYS * 24 * 60 * 60 * 1000) / 1000);
-      reason = `last ${SYNC_WINDOW_HOURS} hours (createdAt filter), ot=${OT_WINDOW_DAYS}d window`;
+      reason = `last ${SYNC_WINDOW_HOURS} hours (server-side nt filter)`;
     }
 
     const allItemsStreamId = `user/${userId}/state/com.google/all`;
@@ -283,11 +283,11 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       );
 
       try {
-        // Fetch batch
+        // Fetch batch - use `nt` for server-side filtering (only items NEWER than timestamp)
         const response = await client.getStreamContents(allItemsStreamId, {
           n: STREAM_PAGE_SIZE,
           continuation,
-          ot: otTimestamp,
+          nt: syncSinceTimestamp,
         });
 
         callsUsed++;
@@ -304,15 +304,8 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         items = decomposeFeedItems(items);
         items = categorizeItems(items);
 
-        const createdAtSeconds = items
-          .map((item) =>
-            item.createdAt ? Math.floor(item.createdAt.getTime() / 1000) : null
-          )
-          .filter((t): t is number => t !== null);
-        const newestCreatedAt =
-          createdAtSeconds.length > 0 ? Math.max(...createdAtSeconds) : null;
-
-        // Filter by createdAt (when Inoreader received it) for the sync window
+        // With server-side `nt` filter, Inoreader should only return items newer than syncSinceTimestamp.
+        // Keep client-side filter as safety net (in case nt uses published vs crawlTime differently)
         const beforeFilter = items.length;
         items = items.filter(
           (item) => item.createdAt && Math.floor(item.createdAt.getTime() / 1000) >= syncSinceTimestamp
@@ -321,36 +314,18 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
         if (beforeFilter > afterFilter) {
           logger.debug(
-            `[DAILY-SYNC] Filtered ${beforeFilter - afterFilter} items outside window`
+            `[DAILY-SYNC] Client-side filtered ${beforeFilter - afterFilter} items outside window`
           );
         }
 
-        // If this batch (and subsequent ones) are clearly older than our sync window, stop paging.
-        // This prevents scanning many days worth of items every run (which burns API calls).
-        if (
-          !isCatchup &&
-          afterFilter === 0 &&
-          newestCreatedAt !== null &&
-          newestCreatedAt < syncSinceTimestamp
-        ) {
+        // With server-side `nt` filtering, if we get items but they're all filtered out client-side,
+        // it means Inoreader's timestamp differs from our createdAt. Stop to avoid burning API calls.
+        if (!isCatchup && afterFilter === 0 && beforeFilter > 0) {
           staleBatchCount++;
-
           if (staleBatchCount >= STALE_BATCHES_TO_STOP) {
             logger.info(
-              `[DAILY-SYNC] Stopping pagination early: batch ${batchNumber} has no items in window and newest createdAt=${new Date(
-                newestCreatedAt * 1000
-              ).toISOString()} is older than window (${new Date(
-                syncSinceTimestamp * 1000
-              ).toISOString()}).`
+              `[DAILY-SYNC] Stopping: ${STALE_BATCHES_TO_STOP} consecutive batches had all items filtered out client-side`
             );
-
-            continuation = undefined;
-            await saveSyncState({
-              continuationToken: null,
-              itemsProcessed: totalItemsAdded,
-              callsUsed,
-              status: 'completed',
-            });
             hasMoreItems = false;
             break;
           }

@@ -111,6 +111,8 @@ function mapFolderToCategory(folderPath: string): Category | null {
 }
 
 let cachedFeeds: FeedConfig[] | null = null;
+// Singleton promise to prevent race conditions when multiple calls happen simultaneously
+let feedsFetchPromise: Promise<FeedConfig[]> | null = null;
 
 /**
  * Clear the in-memory feeds cache.
@@ -118,6 +120,7 @@ let cachedFeeds: FeedConfig[] | null = null;
  */
 export function clearFeedsCache(): void {
   cachedFeeds = null;
+  feedsFetchPromise = null;
   logger.info("[FEEDS] In-memory cache cleared");
 }
 
@@ -157,16 +160,10 @@ function saveFeedsToCache(feeds: FeedConfig[]): void {
 }
 
 /**
- * Dynamically fetch all feeds from Inoreader
- * Organizes them by folder/label into categories
- * Uses database-backed cache with fallback to Inoreader API
+ * Internal function that actually fetches feeds
+ * Separated to allow singleton promise pattern in getFeeds()
  */
-export async function getFeeds(): Promise<FeedConfig[]> {
-  // Use in-memory cache if available
-  if (cachedFeeds) {
-    return cachedFeeds;
-  }
-
+async function fetchFeedsInternal(): Promise<FeedConfig[]> {
   try {
     // Initialize database on first use
     await initializeDatabase();
@@ -227,7 +224,7 @@ export async function getFeeds(): Promise<FeedConfig[]> {
           vendor: sub.htmlUrl ? new URL(sub.htmlUrl).hostname : undefined,
         });
 
-        logger.info(`Loaded feed: ${sub.title} → ${category}`);
+        logger.debug(`Loaded feed: ${sub.title} → ${category}`);
       }
     }
 
@@ -267,6 +264,36 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     logger.error("No feeds available - API error and no cache");
     return [];
   }
+}
+
+/**
+ * Dynamically fetch all feeds from Inoreader
+ * Organizes them by folder/label into categories
+ * Uses database-backed cache with fallback to Inoreader API
+ *
+ * Uses singleton promise pattern to prevent race conditions when
+ * multiple parallel calls (e.g., from normalizeItems) happen simultaneously.
+ */
+export async function getFeeds(): Promise<FeedConfig[]> {
+  // Use in-memory cache if available (fast path)
+  if (cachedFeeds) {
+    return cachedFeeds;
+  }
+
+  // If a fetch is already in progress, wait for it instead of starting a new one
+  // This prevents the race condition where 250+ parallel normalizeItem calls
+  // all see cachedFeeds=null and all try to fetch/save simultaneously
+  if (feedsFetchPromise) {
+    return feedsFetchPromise;
+  }
+
+  // Start fetch and store the promise so other callers can wait on it
+  feedsFetchPromise = fetchFeedsInternal().finally(() => {
+    // Clear the promise after completion so future calls can refresh if needed
+    feedsFetchPromise = null;
+  });
+
+  return feedsFetchPromise;
 }
 
 /**

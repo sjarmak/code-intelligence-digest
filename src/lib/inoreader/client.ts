@@ -11,7 +11,8 @@ export interface FetchStreamOptions {
   n?: number;
   continuation?: string;
   xt?: string;  // Exclude tag (e.g., read items)
-  ot?: number;  // Oldest timestamp (unix epoch seconds)
+  ot?: number;  // Oldest timestamp - only items OLDER than this (unix epoch seconds)
+  nt?: number;  // Newest timestamp - only items NEWER than this (unix epoch seconds)
 }
 
 export class InoreaderClient {
@@ -80,6 +81,7 @@ export class InoreaderClient {
     if (options.continuation) params.append("c", options.continuation);
     if (options.xt) params.append("xt", options.xt);
     if (options.ot) params.append("ot", options.ot.toString());
+    if (options.nt) params.append("nt", options.nt.toString());
 
     const url = `https://www.inoreader.com/reader/api/0/stream/contents/${encodedStreamId}?${params.toString()}`;
 
