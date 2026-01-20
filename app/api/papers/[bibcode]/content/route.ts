@@ -107,7 +107,7 @@ export async function GET(
           /<img\s+([^>]*?)>/gi,
           (match, attributes) => {
             // Try to find src in various formats
-            let srcMatch = attributes.match(/\ssrc\s*=\s*"([^"]+)"/i) ||
+            const srcMatch = attributes.match(/\ssrc\s*=\s*"([^"]+)"/i) ||
                           attributes.match(/\ssrc\s*=\s*'([^']+)'/i) ||
                           attributes.match(/\ssrc\s*=\s*([^\s>]+)/i) ||
                           attributes.match(/src\s*=\s*"([^"]+)"/i) ||

@@ -139,7 +139,7 @@ function ProcessSectionsButton({ bibcode, onProcessed }: ProcessSectionsButtonPr
   return (
     <div className="mb-8 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
       <p className="text-yellow-800 text-sm mb-2">
-        Section summaries haven't been processed yet. Click the button below to generate them.
+        Section summaries haven&rsquo;t been processed yet. Click the button below to generate them.
       </p>
       <button
         onClick={handleProcess}
@@ -1204,7 +1204,7 @@ export function PaperReaderModal({
                               <div className="flex-1">
                                 {annotation.type === 'highlight' && (
                                   <p className="text-sm text-gray-900 bg-yellow-100 px-1 -mx-1">
-                                    "{annotation.content}"
+                                    &ldquo;{annotation.content}&rdquo;
                                   </p>
                                 )}
                                 {annotation.note && (

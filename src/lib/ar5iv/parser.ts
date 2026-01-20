@@ -248,7 +248,7 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
 
   // Extract sections from headings
   // Try ar5iv.labs format first (with ltx_title class)
-  let sectionRegex = /<(h[1-6])[^>]*(?:id="([^"]*)")?[^>]*class="[^"]*ltx_title[^"]*"[^>]*>([\s\S]*?)<\/\1>/gi;
+  const sectionRegex = /<(h[1-6])[^>]*(?:id="([^"]*)")?[^>]*class="[^"]*ltx_title[^"]*"[^>]*>([\s\S]*?)<\/\1>/gi;
   let sectionMatch;
   let sectionIndex = 0;
   let foundSections = false;
@@ -504,7 +504,7 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
     }
 
     // Clean up table HTML (remove scripts, keep structure)
-    let cleanTableHtml = tableHtml
+    const cleanTableHtml = tableHtml
       .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
       .replace(/on\w+\s*=\s*["'][^"']*["']/gi, '');
 
@@ -613,7 +613,7 @@ export function parseAr5ivHtml(html: string): ParsedPaperContent {
       /<img\s+([^>]*?)>/gi,
       (match, attributes) => {
         // Try to find src in various formats
-        let srcMatch = attributes.match(/\ssrc\s*=\s*"([^"]+)"/i) ||
+        const srcMatch = attributes.match(/\ssrc\s*=\s*"([^"]+)"/i) ||
                       attributes.match(/\ssrc\s*=\s*'([^']+)'/i) ||
                       attributes.match(/\ssrc\s*=\s*([^\s>]+)/i) ||
                       attributes.match(/src\s*=\s*"([^"]+)"/i) ||

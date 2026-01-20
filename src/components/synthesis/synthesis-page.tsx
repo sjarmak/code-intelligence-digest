@@ -5,6 +5,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { SynthesisForm, type SynthesisParams } from "./synthesis-form";
 import { NewsletterViewer } from "./newsletter-viewer";
 import { PodcastViewer } from "./podcast-viewer";
@@ -516,12 +517,12 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
     <div className="space-y-6">
       {/* Back Button */}
       <div className="mb-4">
-        <a
+        <Link
           href="/"
           className="inline-block px-4 py-2 rounded-md text-sm font-medium transition-colors bg-surface border border-surface-border text-muted hover:text-foreground"
         >
           ← Back to Home
-        </a>
+        </Link>
       </div>
 
       {/* Header */}
