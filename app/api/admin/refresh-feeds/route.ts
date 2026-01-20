@@ -17,16 +17,18 @@ export async function POST() {
     // Initialize database connection
     await initializeDatabase();
 
-    // Clear the cache metadata to force a fresh fetch from Inoreader
+    // Clear the cache metadata and feeds table to force a fresh fetch from Inoreader
     const driver = detectDriver();
     const client = await getDbClient();
 
     if (driver === "postgres") {
       await client.run(`DELETE FROM cache_metadata WHERE key = $1`, ["feeds"]);
+      await client.run(`DELETE FROM feeds`);
     } else {
       const { getSqlite } = await import("@/src/lib/db/index");
       const sqlite = getSqlite();
       sqlite.prepare(`DELETE FROM cache_metadata WHERE key = 'feeds'`).run();
+      sqlite.prepare(`DELETE FROM feeds`).run();
     }
 
     logger.info("[refresh-feeds] DB cache invalidated, clearing in-memory cache...");

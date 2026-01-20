@@ -287,3 +287,28 @@ export async function isFeedsCacheValid(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Clear feeds cache from database
+ */
+export async function deleteFeedsCache(): Promise<void> {
+  try {
+    const driver = detectDriver();
+    const client = await getDbClient();
+
+    if (driver === 'postgres') {
+      await client.run(`DELETE FROM cache_metadata WHERE key = $1`, ['feeds']);
+      await client.run(`DELETE FROM feeds`);
+    } else {
+      const { getSqlite } = await import("./index");
+      const sqlite = getSqlite();
+      sqlite.prepare(`DELETE FROM cache_metadata WHERE key = 'feeds'`).run();
+      sqlite.prepare(`DELETE FROM feeds`).run();
+    }
+
+    logger.info("Cleared feeds cache from database");
+  } catch (error) {
+    logger.error("Failed to clear feeds cache", error);
+    throw error;
+  }
+}
