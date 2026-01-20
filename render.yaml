@@ -24,6 +24,8 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: ADS_API_TOKEN
+        sync: false
     healthCheckPath: /api/health
 
   - type: cron

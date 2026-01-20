@@ -8,6 +8,7 @@ import {
   getArxivUrl,
 } from '@/src/lib/ads/client';
 import { logger } from '@/src/lib/logger';
+import { initializeDatabase } from '@/src/lib/db/index';
 import {
   storePapersBatch,
   linkPapersToLibraryBatch,
@@ -27,6 +28,9 @@ export async function GET(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    // Ensure database tables exist before we try to cache anything
+    await initializeDatabase();
 
     const { searchParams } = new URL(request.url);
     const libraryName = searchParams.get('library') || 'Benchmarks';
@@ -102,64 +106,71 @@ export async function GET(request: NextRequest) {
 
       // Store papers in database
       if (papersToStore.length > 0) {
-        await storePapersBatch(papersToStore);
-        await linkPapersToLibraryBatch(library.id, bibcodes);
+        try {
+          await storePapersBatch(papersToStore);
+          await linkPapersToLibraryBatch(library.id, bibcodes);
 
-        // Also save to items table for consistency
-        // Convert papers to FeedItems and save
-        const itemsToSave: FeedItem[] = papersToStore
-          .filter(p => p.title || p.body) // Only save if we have title or body
-          .map(paper => {
-            // Parse authors
-            let author: string | undefined;
-            if (paper.authors) {
-              try {
-                const authorsArray = JSON.parse(paper.authors);
-                author = Array.isArray(authorsArray) ? authorsArray.join(', ') : authorsArray;
-              } catch {
-                author = paper.authors;
+          // Also save to items table for consistency
+          // Convert papers to FeedItems and save
+          const itemsToSave: FeedItem[] = papersToStore
+            .filter(p => p.title || p.body) // Only save if we have title or body
+            .map(paper => {
+              // Parse authors
+              let author: string | undefined;
+              if (paper.authors) {
+                try {
+                  const authorsArray = JSON.parse(paper.authors);
+                  author = Array.isArray(authorsArray) ? authorsArray.join(', ') : authorsArray;
+                } catch {
+                  author = paper.authors;
+                }
               }
-            }
 
-            // Parse pubdate
-            let publishedAt: Date;
-            if (paper.pubdate) {
-              publishedAt = new Date(paper.pubdate);
-              if (isNaN(publishedAt.getTime())) {
+              // Parse pubdate
+              let publishedAt: Date;
+              if (paper.pubdate) {
+                publishedAt = new Date(paper.pubdate);
+                if (isNaN(publishedAt.getTime())) {
+                  publishedAt = new Date();
+                }
+              } else {
                 publishedAt = new Date();
               }
-            } else {
-              publishedAt = new Date();
-            }
 
-            const itemId = `ads:${paper.bibcode}`;
-            const url = paper.arxivUrl || paper.adsUrl || getADSUrl(paper.bibcode);
+              const itemId = `ads:${paper.bibcode}`;
+              const url = paper.arxivUrl || paper.adsUrl || getADSUrl(paper.bibcode);
 
-            return {
-              id: itemId,
-              streamId: `ads:research:${paper.bibcode}`,
-              sourceTitle: 'ADS Research',
-              title: paper.title || 'Untitled',
-              url,
-              author,
-              publishedAt,
-              createdAt: publishedAt,
-              summary: paper.abstract || undefined,
-              contentSnippet: paper.abstract || undefined,
-              fullText: paper.body || undefined,
-              categories: ['research'],
-              category: 'research' as const,
-              raw: {
-                bibcode: paper.bibcode,
-                adsUrl: paper.adsUrl || getADSUrl(paper.bibcode),
-                arxivUrl: paper.arxivUrl || getArxivUrl(paper.bibcode),
-              },
-            };
+              return {
+                id: itemId,
+                streamId: `ads:research:${paper.bibcode}`,
+                sourceTitle: 'ADS Research',
+                title: paper.title || 'Untitled',
+                url,
+                author,
+                publishedAt,
+                createdAt: publishedAt,
+                summary: paper.abstract || undefined,
+                contentSnippet: paper.abstract || undefined,
+                fullText: paper.body || undefined,
+                categories: ['research'],
+                category: 'research' as const,
+                raw: {
+                  bibcode: paper.bibcode,
+                  adsUrl: paper.adsUrl || getADSUrl(paper.bibcode),
+                  arxivUrl: paper.arxivUrl || getArxivUrl(paper.bibcode),
+                },
+              };
+            });
+
+          if (itemsToSave.length > 0) {
+            await saveItems(itemsToSave);
+            logger.info(`[LIBRARIES] Saved ${itemsToSave.length} items to items table`);
+          }
+        } catch (dbError) {
+          logger.error('Failed to cache ADS library items locally', {
+            libraryId: library.id,
+            error: dbError instanceof Error ? dbError.message : String(dbError),
           });
-
-        if (itemsToSave.length > 0) {
-          await saveItems(itemsToSave);
-          logger.info(`[LIBRARIES] Saved ${itemsToSave.length} items to items table`);
         }
       }
 
@@ -196,11 +207,13 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to fetch library items';
     logger.error('Failed to fetch library items', {
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return NextResponse.json(
-      { error: 'Failed to fetch library items' },
+      { error: message },
       { status: 500 },
     );
   }
@@ -219,6 +232,8 @@ export async function POST() {
         { status: 500 },
       );
     }
+
+    await initializeDatabase();
 
     logger.info('Fetching all libraries');
     const libraries = await listLibraries(token);
