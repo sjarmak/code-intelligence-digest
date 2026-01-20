@@ -315,7 +315,7 @@ export async function GET(request: NextRequest) {
       const sqlQuery = `SELECT ${selectColumns} FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`;
       logger.info(`[API] Executing query: ${sqlQuery} with params: [${queryParams.map(p => typeof p === 'number' ? p : `'${p}'`).join(', ')}]`);
       const maxTimestampISO: string | null = null;
-      
+
       const result = await client.query(
         sqlQuery,
         queryParams
@@ -374,7 +374,7 @@ export async function GET(request: NextRequest) {
 
         // Check if URL is a tracking/Inoreader link
         if (row.url && (row.url.includes("inoreader.com") || row.url.includes("google.com/reader") ||
-            row.url.includes("awstrack.me") || row.url.includes("tracking"))) {
+          row.url.includes("awstrack.me") || row.url.includes("tracking"))) {
           // First try extracted_url from database
           if (row.extracted_url && !row.extracted_url.includes("inoreader.com") && !row.extracted_url.includes("google.com/reader")) {
             finalUrl = row.extracted_url;
@@ -424,11 +424,17 @@ export async function GET(request: NextRequest) {
     // We filter them out of the newsletters response and (in dev/local only) recategorize them in the DB
     // so they show up under the Community tab on subsequent loads.
     if (category === "newsletters") {
+      // Detect Twitter feed items by:
+      // 1. URL points to twitter.com or x.com
+      // 2. Source title contains "twitter" OR has @handle pattern (like "/ @username" or "(@username)")
       const isTwitterFeedItem = (it: FeedItem) =>
         typeof it.sourceTitle === "string" &&
-        it.sourceTitle.toLowerCase().includes("twitter") &&
         typeof it.url === "string" &&
-        (it.url.includes("twitter.com/") || it.url.includes("x.com/"));
+        (it.url.includes("twitter.com/") || it.url.includes("x.com/")) &&
+        (
+          it.sourceTitle.toLowerCase().includes("twitter") ||
+          /(\(@|\/\s*@)\w+/.test(it.sourceTitle)
+        );
 
       const twitterFeedItems = items.filter(isTwitterFeedItem);
       if (twitterFeedItems.length > 0) {
@@ -447,14 +453,15 @@ export async function GET(request: NextRequest) {
 
             const { getDbClient } = await import("@/src/lib/db/driver");
             const db = await getDbClient();
-            // Only recategorize clearly-Twitter sources that are currently miscategorized as newsletters
+            // Recategorize Twitter/X items that are miscategorized as newsletters
+            // Matches items with @handle pattern in source title or "twitter" in source title
             await db.run(
               `
               UPDATE items
               SET category = 'community'
               WHERE category = 'newsletters'
                 AND (url ILIKE '%twitter.com/%' OR url ILIKE '%x.com/%')
-                AND source_title ILIKE '%twitter%'
+                AND (source_title ILIKE '%twitter%' OR source_title ~ '(\\(@|/\\s*@)\\w+')
             `
             );
           } catch (e) {
@@ -529,27 +536,27 @@ export async function GET(request: NextRequest) {
       itemsFiltered: rankedItems.length - selectionResult.items.length,
       hasMore, // Indicate if more items are available
       items: selectionResult.items.map((item) => ({
-          id: item.id,
-          title: decodeHtmlEntities(item.title), // Decode HTML entities in title
-          url: item.url,
-          sourceTitle: item.sourceTitle,
-          publishedAt: item.publishedAt.toISOString(),
-          createdAt: item.createdAt?.toISOString() || null,
-          summary: item.summary,
-          author: item.author,
-          categories: item.categories,
-          category: item.category,
-          bm25Score: Number(item.bm25Score.toFixed(3)),
-          llmScore: {
-            relevance: item.llmScore.relevance,
-            usefulness: item.llmScore.usefulness,
-            tags: item.llmScore.tags,
-          },
-          recencyScore: Number(item.recencyScore.toFixed(3)),
-          finalScore: Number(item.finalScore.toFixed(3)),
-          reasoning: item.reasoning,
-          diversityReason: selectionResult.reasons.get(item.id),
-        })),
+        id: item.id,
+        title: decodeHtmlEntities(item.title), // Decode HTML entities in title
+        url: item.url,
+        sourceTitle: item.sourceTitle,
+        publishedAt: item.publishedAt.toISOString(),
+        createdAt: item.createdAt?.toISOString() || null,
+        summary: item.summary,
+        author: item.author,
+        categories: item.categories,
+        category: item.category,
+        bm25Score: Number(item.bm25Score.toFixed(3)),
+        llmScore: {
+          relevance: item.llmScore.relevance,
+          usefulness: item.llmScore.usefulness,
+          tags: item.llmScore.tags,
+        },
+        recencyScore: Number(item.recencyScore.toFixed(3)),
+        finalScore: Number(item.finalScore.toFixed(3)),
+        reasoning: item.reasoning,
+        diversityReason: selectionResult.reasons.get(item.id),
+      })),
     });
 
     // Set cache control headers to prevent Next.js from caching API responses

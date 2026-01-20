@@ -15,26 +15,26 @@ async function listContentSources() {
     let query: string;
     if (driver === 'postgres') {
       query = `
-        SELECT 
+        SELECT
           canonical_name,
           stream_id,
           default_category,
           vendor,
           source_relevance,
           updated_at
-        FROM feeds 
+        FROM feeds
         ORDER BY canonical_name ASC
       `;
     } else {
       query = `
-        SELECT 
+        SELECT
           canonical_name,
           stream_id,
           default_category,
           vendor,
           source_relevance,
           updated_at
-        FROM feeds 
+        FROM feeds
         ORDER BY canonical_name ASC
       `;
     }
@@ -59,11 +59,11 @@ async function listContentSources() {
 
     console.log('\n📰 Full List of Content Sources in Database Cache\n');
     console.log('='.repeat(100));
-    
+
     // Output by category
     for (const [category, categoryFeeds] of Object.entries(byCategory).sort()) {
       console.log(`\n## ${category.toUpperCase()} (${categoryFeeds.length} sources)\n`);
-      
+
       for (const feed of categoryFeeds.sort((a, b) => {
         const nameA = (a.canonical_name as string) || '';
         const nameB = (b.canonical_name as string) || '';
@@ -73,7 +73,7 @@ async function listContentSources() {
         const vendor = (feed.vendor as string) || 'N/A';
         const streamId = (feed.stream_id as string) || '';
         const relevance = feed.source_relevance !== null ? feed.source_relevance : 1;
-        
+
         console.log(`  • ${name}`);
         console.log(`    Vendor: ${vendor}`);
         console.log(`    Stream ID: ${streamId}`);

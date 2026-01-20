@@ -228,11 +228,27 @@ export async function normalizeItem(raw: InoreaderArticle): Promise<FeedItem> {
       logger.debug(`Detected Reddit URL, overriding category to community: ${url}`);
     }
     // Twitter/X feeds should be community, but avoid reclassifying normal newsletter articles that merely link to Twitter
+    // Check if this is a dedicated Twitter feed by:
+    // 1. URL points to twitter.com/x.com AND source title contains "twitter" or "@handle"
+    // 2. OR the feed stream comes from Twitter RSS proxy services (xcancel, xgo.ing, rss.app for Twitter)
     else if (
       (url.includes("twitter.com/") || url.includes("x.com/")) &&
       (
         (feedConfig?.canonicalName ?? "").toLowerCase().includes("twitter") ||
-        (raw.origin?.title ?? "").toLowerCase().includes("twitter")
+        (raw.origin?.title ?? "").toLowerCase().includes("twitter") ||
+        // Check for @handle pattern in source title (indicates dedicated Twitter feed)
+        // Matches both "(@handle)" and "/ @handle" patterns
+        /(\(@|\/\s*@)\w+/.test(feedConfig?.canonicalName ?? "") ||
+        /(\(@|\/\s*@)\w+/.test(raw.origin?.title ?? "") ||
+        // Check if feed stream is from Twitter RSS proxy services
+        (streamId && (
+          streamId.includes("xcancel.com") ||
+          streamId.includes("xgo.ing") ||
+          (streamId.includes("rss.app") && (
+            (feedConfig?.canonicalName ?? "").toLowerCase().includes("twitter") ||
+            (feedConfig?.vendor ?? "").toLowerCase() === "x.com"
+          ))
+        ))
       )
     ) {
       category = "community";
