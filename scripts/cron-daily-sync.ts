@@ -38,8 +38,9 @@ import type { Category, FeedItem } from '../src/lib/model';
 
 const RECENT_DAYS_FOR_EMBEDDINGS = 7; // Only generate embeddings for items from last 7 days
 
-const ACTIVE_HOURS_START = 7; // 7 AM
-const ACTIVE_HOURS_END = 21; // 9 PM
+const ACTIVE_HOURS_START = 7; // 7 AM ET
+const ACTIVE_HOURS_END = 22; // 10 PM ET
+const OFF_HOURS_RUNS = [1, 4]; // 1 AM and 4 AM ET
 
 function getHourInTimeZone(date: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -57,30 +58,26 @@ function isWithinActiveHours(hour: number): boolean {
 }
 
 /**
- * Keep hourly cadence when either ET or PT is within 7am–9pm local time.
- * Otherwise (late night in both), run every 3 hours to reduce Inoreader API calls.
+ * Run hourly during active hours (7 AM - 10 PM ET).
+ * Off-hours: only run at 1 AM and 4 AM ET to minimize Inoreader API calls.
  */
 function shouldRunCronNow(date: Date): { shouldRun: boolean; reason: string } {
   const hourET = getHourInTimeZone(date, 'America/New_York');
-  const hourPT = getHourInTimeZone(date, 'America/Los_Angeles');
 
-  const inET = isWithinActiveHours(hourET);
-  const inPT = isWithinActiveHours(hourPT);
-
-  if (inET || inPT) {
+  if (isWithinActiveHours(hourET)) {
     return {
       shouldRun: true,
-      reason: `active hours (ET=${hourET}, PT=${hourPT})`,
+      reason: `active hours (ET=${hourET})`,
     };
   }
 
-  // Off-hours in both time zones: run every 3 hours (ET-based) to reduce API calls.
-  const shouldRun = hourET % 3 === 1;
+  // Off-hours: only run at specific times (1 AM and 4 AM ET)
+  const shouldRun = OFF_HOURS_RUNS.includes(hourET);
   return {
     shouldRun,
     reason: shouldRun
-      ? `off-hours slot (every 3h) (ET=${hourET}, PT=${hourPT})`
-      : `off-hours (skipping) (ET=${hourET}, PT=${hourPT})`,
+      ? `off-hours scheduled run (ET=${hourET})`
+      : `off-hours (skipping) (ET=${hourET})`,
   };
 }
 
