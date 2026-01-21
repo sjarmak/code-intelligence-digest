@@ -135,12 +135,12 @@ export async function getPodcastAudioByHash(
 
   if (driver === 'postgres') {
     const client = await getDbClient();
-    const result = await client.query<PodcastAudioRow>(`
+    const result = await client.query(`
       SELECT * FROM generated_podcast_audio
       WHERE transcript_hash = $1
       LIMIT 1
     `, [transcriptHash]);
-    row = result.rows[0];
+    row = result.rows[0] as unknown as PodcastAudioRow | undefined;
   } else {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
@@ -179,12 +179,12 @@ export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecor
 
   if (driver === 'postgres') {
     const client = await getDbClient();
-    const result = await client.query<PodcastAudioRow>(`
+    const result = await client.query(`
       SELECT * FROM generated_podcast_audio
       WHERE id = $1
       LIMIT 1
     `, [id]);
-    row = result.rows[0];
+    row = result.rows[0] as unknown as PodcastAudioRow | undefined;
   } else {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
@@ -249,12 +249,12 @@ export async function listRecentPodcastAudio(limit: number = 20): Promise<Podcas
 
   if (driver === 'postgres') {
     const client = await getDbClient();
-    const result = await client.query<PodcastAudioRow>(`
+    const result = await client.query(`
       SELECT * FROM generated_podcast_audio
       ORDER BY created_at DESC
       LIMIT $1
     `, [limit]);
-    rows = result.rows;
+    rows = result.rows as unknown as PodcastAudioRow[];
   } else {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
