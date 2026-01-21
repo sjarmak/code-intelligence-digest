@@ -248,6 +248,17 @@ async function main() {
     await initializeDatabase();
     logger.info('✅ Database initialized');
 
+    // Check if sync is paused and clear it to retry
+    // (Paused syncs don't auto-recover without this - see investigation notes)
+    const { loadSyncState, clearSyncState } = await import('../src/lib/sync/daily-sync');
+    const existingState = await loadSyncState();
+    if (existingState?.status === 'paused') {
+      logger.warn(`⚠️  Previous sync was paused: ${existingState.error}`);
+      logger.info(`🔄 Clearing paused state to allow retry...`);
+      await clearSyncState();
+      logger.info(`✅ Paused state cleared, will retry sync`);
+    }
+
     // Step 2: Run hourly sync (fetches last 4 hours)
     // The sync will automatically detect and resume paused state if it exists
     logger.info('\n🔄 Running hourly sync...');

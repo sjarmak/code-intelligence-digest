@@ -60,8 +60,9 @@ const STALE_BATCHES_TO_STOP = 1;
 
 /**
  * Load existing sync state (if resuming)
+ * Exported for use in cron job to check/manage pause state
  */
-async function loadSyncState(): Promise<SyncStateRow | null> {
+export async function loadSyncState(): Promise<SyncStateRow | null> {
   try {
     const client = await getDbClient();
     // Use SQLite-style ? placeholder - Postgres client will convert it
@@ -133,9 +134,9 @@ async function saveSyncState(data: {
 }
 
 /**
- * Clear sync state when completed
+ * Clear sync state when completed or to recover from pause state
  */
-async function clearSyncState(): Promise<void> {
+export async function clearSyncState(): Promise<void> {
   try {
     const client = await getDbClient();
     const driver = detectDriver();
