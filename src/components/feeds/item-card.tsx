@@ -223,7 +223,7 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
     return () => {
       isMounted = false;
     };
-  }, [item.id, bibcode, config.adminUIEnabled]);
+  }, [item.id, item.title, bibcode, config.adminUIEnabled]);
 
   // Force library status check when component becomes visible again (handles navigation back)
   // This ensures we always check the database state, even if useEffect dependencies haven't changed

@@ -263,7 +263,7 @@ export async function extractItemDigest(
     Title: "${item.title}"
     Source: ${item.sourceTitle}
     Categories: ${item.category}
-    User Focus: ${userPrompt || "Code search, context management for coding agents, information retrieval, developer productivity tools"}
+    User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
 
     Content:
     ${processedText}
@@ -277,7 +277,7 @@ export async function extractItemDigest(
     - namedEntities: [actual names, projects, companies, papers mentioned]
     - whyItMatters: 1-2 sentences explaining concrete relevance. Avoid filler words like "shapes," "fosters," "underscores." Say what problem it solves or approach it takes.
     - sourceCredibility: "high" (peer-reviewed/official), "medium" (established pub), "low" (casual blog)
-    - userRelevanceScore: 0-10 based on direct relevance to code search, context for agents, IR, or productivity (not generic "innovation")
+    - userRelevanceScore: 0-10 based on direct relevance to building benchmarks for coding agents, code search, or codebase understanding (not generic "innovation")
 
     Return ONLY valid JSON, no markdown. Gist and keyBullets must be drawn from actual content, not templates.`,
         },

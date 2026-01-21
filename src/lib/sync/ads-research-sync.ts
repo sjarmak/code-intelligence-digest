@@ -12,7 +12,7 @@
  */
 
 import { logger } from '../logger';
-import { Category, FeedItem } from '../model';
+import { FeedItem } from '../model';
 import { saveItems } from '../db/items';
 import { computeAndSaveScoresForItems } from '../pipeline/compute-scores';
 import { categorizeItems } from '../pipeline/categorize';
@@ -78,22 +78,6 @@ function buildSlidingWindowQuery(year: number, month: number): string {
   const nextYear = month === 12 ? year + 1 : year;
 
   return buildResearchQuery(year, month, nextYear, nextMonth);
-}
-
-/**
- * Build query for last N years (for initial backfill)
- */
-function buildYearsBackQuery(yearsBack: number): string {
-  const now = new Date();
-  const endYear = now.getFullYear();
-  const endMonth = now.getMonth() + 1; // 1-12
-
-  const startDate = new Date(now);
-  startDate.setFullYear(endYear - yearsBack);
-  const startYear = startDate.getFullYear();
-  const startMonth = startDate.getMonth() + 1; // 1-12
-
-  return buildResearchQuery(startYear, startMonth, endYear, endMonth);
 }
 
 /**
@@ -303,7 +287,7 @@ export async function syncResearchFromADS(token: string): Promise<{
   }
 
   const existingIds = new Set(
-    (existingItemsResult.rows as any[]).map(row => row.id)
+    (existingItemsResult.rows as Array<{ id: string }>).map(row => row.id)
   );
 
   // Filter out papers we already have
@@ -495,4 +479,3 @@ export async function syncResearchFromADSInitial(
     totalFound,
   };
 }
-

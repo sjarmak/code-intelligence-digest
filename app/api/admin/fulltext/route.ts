@@ -14,7 +14,7 @@ import { logger } from "@/src/lib/logger";
 import { loadItemsByCategory } from "@/src/lib/db/items";
 import { saveFullText, getFullTextCacheStats } from "@/src/lib/db/items";
 import { fetchFullTextBatch } from "@/src/lib/pipeline/fulltext";
-import { Category } from "@/src/lib/model";
+import { Category, FeedItem } from "@/src/lib/model";
 import { blockInProduction } from "@/src/lib/auth/guards";
 
 const VALID_CATEGORIES: Category[] = [
@@ -31,7 +31,7 @@ const VALID_CATEGORIES: Category[] = [
  * GET /api/admin/fulltext/status
  * Get cache statistics
  */
-export async function GET(request: NextRequest) {
+export async function GET() {
   const blocked = blockInProduction();
   if (blocked) return blocked;
 
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Load items
-    let items = [];
+    let items: FeedItem[] = [];
     if (category) {
       items = await loadItemsByCategory(category, 7); // Last 7 days
     } else {
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     // Filter out items that already have full text if skip_cached is true
     let itemsToFetch = items;
     if (skipCached) {
-      itemsToFetch = items.filter(item => !(item as any).fullText);
+      itemsToFetch = items.filter(item => !item.fullText);
       logger.info(
         `Filtered to ${itemsToFetch.length} items (${items.length - itemsToFetch.length} already cached)`
       );

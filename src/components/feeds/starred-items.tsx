@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import ItemCard from './item-card';
 
 interface StarredItem {
   id: string;

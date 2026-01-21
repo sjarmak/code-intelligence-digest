@@ -21,8 +21,6 @@ const CATEGORY_OVERRIDES: Record<string, Category> = {
 function isPodcastItem(item: FeedItem): boolean {
   const title = item.title.toLowerCase();
   const sourceTitle = item.sourceTitle.toLowerCase();
-  const summary = item.summary?.toLowerCase() || '';
-
   // First, check source title for podcast indicators
   // This catches podcast feeds even when episode titles don't match patterns
   if (sourceTitle.includes('podcast')) {

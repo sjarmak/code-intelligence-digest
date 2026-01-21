@@ -101,6 +101,11 @@ interface AudioDigestResult {
 
 type SynthesisResult = NewsletterResult | PodcastResult | AudioDigestResult;
 
+const isNewsletterResult = (result: SynthesisResult): result is NewsletterResult => 'markdown' in result;
+
+const isPodcastResult = (result: SynthesisResult): result is PodcastResult =>
+  'voiceStyle' in result.generationMetadata;
+
 interface SynthesisPageProps {
   type: "newsletter" | "podcast" | "audio-digest";
 }
@@ -138,7 +143,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       console.warn("Failed to load from localStorage:", e);
     }
     setIsHydrated(true);
-  }, []); // Only run once on mount
+  }, [type]);
 
   // Persist result to localStorage on change (client-side only)
   React.useEffect(() => {
@@ -599,21 +604,21 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
         <div className="lg:col-span-2">
           {result ? (
             <>
-              {result && 'markdown' in result ? (
-                <NewsletterViewer {...(result as NewsletterResult)} />
-              ) : result && 'voiceStyle' in (result as any).generationMetadata ? (
-                <PodcastViewer {...(result as PodcastResult)} />
+              {isNewsletterResult(result) ? (
+                <NewsletterViewer {...result} />
+              ) : isPodcastResult(result) ? (
+                <PodcastViewer {...result} />
               ) : (
                 <>
                   {/* Debug info - remove in production */}
                   {process.env.NODE_ENV === 'development' && (
                     <div className="mb-4 p-2 bg-gray-100 text-xs">
-                      Result ID: {(result as AudioDigestResult).id},
-                      Duration: {(result as AudioDigestResult).duration},
-                      Generated: {(result as AudioDigestResult).generatedAt}
+                      Result ID: {result.id},
+                      Duration: {result.duration},
+                      Generated: {result.generatedAt}
                     </div>
                   )}
-                  <AudioDigestViewer {...(result as AudioDigestResult)} />
+                  <AudioDigestViewer {...result} />
                 </>
               )}
             </>

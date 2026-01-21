@@ -9,6 +9,7 @@ import { loadItemsByCategory } from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { loadScoresForItems } from "@/src/lib/db/items";
 import { logger } from "@/src/lib/logger";
+import type { Category } from "@/src/lib/model";
 
 const PERIOD_DAYS: Record<string, number> = {
   day: 2,
@@ -20,7 +21,8 @@ const PERIOD_DAYS: Record<string, number> = {
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const category = searchParams.get("category") || "newsletters";
+    const categoryParam = searchParams.get("category") || "newsletters";
+    const category = categoryParam as Category;
     const period = searchParams.get("period") || "day";
     const periodDays = PERIOD_DAYS[period] || 2;
 
@@ -50,7 +52,7 @@ export async function GET(request: NextRequest) {
     const itemsWithScores = recentItems.filter(item => scores[item.id]);
 
     // Actually rank
-    const ranked = await rankCategory(items, category as any, periodDays);
+    const ranked = await rankCategory(items, category, periodDays);
 
     // Check problematic item
     const problematicId = 'tag:google.com,2005:reader/item/0000000b19763690-article-12';
@@ -59,7 +61,7 @@ export async function GET(request: NextRequest) {
     // Check database path and connection info
     const { getSqlite } = await import("@/src/lib/db/index");
     const sqlite = getSqlite();
-    const dbInfo = sqlite.prepare("PRAGMA database_list").all() as any[];
+    const dbInfo = sqlite.prepare("PRAGMA database_list").all() as Array<{ seq: number; name: string; file: string }>;
     const dbPath = dbInfo[0]?.file || "unknown";
 
     // Check total items in database
@@ -78,7 +80,9 @@ export async function GET(request: NextRequest) {
     const testQueryResult = freshSqlite.prepare("SELECT COUNT(*) as count FROM items WHERE category = ? AND created_at >= ?").get(category, testCutoffTime) as { count: number };
 
     // Also test the exact query that loadItemsByCategory uses
-    const testRows = freshSqlite.prepare(`SELECT * FROM items WHERE category = ? AND created_at >= ? ORDER BY created_at DESC`).all(category, testCutoffTime) as any[];
+    const testRows = freshSqlite
+      .prepare(`SELECT * FROM items WHERE category = ? AND created_at >= ? ORDER BY created_at DESC`)
+      .all(category, testCutoffTime) as Array<Record<string, unknown>>;
 
     const testItems = await loadItems(category, periodDays);
 
@@ -120,4 +124,3 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
-

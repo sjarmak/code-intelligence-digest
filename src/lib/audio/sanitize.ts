@@ -35,20 +35,6 @@ const CUE_PATTERNS = [
 ];
 
 /**
- * Patterns to strip from transcript before TTS
- */
-const MARKUP_PATTERNS = [
-  /^##\s*.+$/gm, // Markdown headers like "## Segment Name"
-  /^\*\*[A-Z]+:\*\*/gm, // Speaker labels like "**HOST:**"
-  /\*\*([^*]+)\*\*/g, // Bold text - keep content
-  /\[[\d:]+\]\s*/g, // Timestamps like "[00:00]" or "[01:30]"
-  /\(\d+s\)/g, // Duration markers like "(10s)"
-  /\(≈\d+s\)/g, // Approximate duration like "(≈125s)"
-  /^---+$/gm, // Segment separators
-  /\n{3,}/g, // Multiple newlines
-];
-
-/**
  * Sanitize transcript for TTS rendering
  * Removes cues like [INTRO MUSIC], [PAUSE], etc.
  * Optionally normalizes speaker labels

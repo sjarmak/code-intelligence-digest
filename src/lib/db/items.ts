@@ -231,7 +231,6 @@ export async function loadItemsByCategory(
 
     const items: FeedItem[] = [];
     let errorCount = 0;
-    const firstError: { id: string; error: string } | null = null;
 
     logger.info(`[loadItemsByCategory] Starting to map ${rows.length} rows`);
 

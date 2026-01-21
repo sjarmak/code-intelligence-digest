@@ -186,7 +186,7 @@ export async function extractArticleHighlights(
 
 Title: "${item.title}"
 Source: ${item.sourceTitle}
-User Focus: ${userPrompt || "Code search, context management for coding agents, information retrieval, developer productivity tools"}
+User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
 
 Content:
 ${processedText}
@@ -408,7 +408,7 @@ Combine insights from the abstract, key points from the full text, and conclusio
 
 Title: "${item.title}"
 Authors: ${paper.authors ? JSON.parse(paper.authors).join(", ") : "Unknown"}
-User Focus: ${userPrompt || "Code search, context management for coding agents, information retrieval, developer productivity tools"}
+User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
 
 Content:
 ${combinedText}
@@ -633,7 +633,7 @@ If you generate less than ${Math.round(targetWordCount * 0.8)} words, the transc
           role: "user",
           content: `Generate a ${periodLabel} audio digest transcript that reads out highlights from ${itemsWithHighlights.length} items across ${categoryLabels}. This should read like a comprehensive report or documentary, not a conversational podcast.
 
-User Focus: ${userPrompt || "Code search, context management for coding agents, information retrieval, developer productivity tools"}
+User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
 
 Items with highlights (use references like (ref: item-0)):
 ${highlightsContext}

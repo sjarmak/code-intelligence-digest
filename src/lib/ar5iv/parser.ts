@@ -99,6 +99,7 @@ export async function fetchAr5ivHtml(arxivId: string): Promise<string> {
           url,
           status: response.status,
           statusText: response.statusText,
+          errorResponse: errorText?.slice(0, 200),
         });
         lastError = new Error(`HTML fetch failed: ${response.status} ${response.statusText}`);
         continue; // Try next URL

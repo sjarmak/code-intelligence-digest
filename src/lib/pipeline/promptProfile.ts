@@ -3,7 +3,6 @@
  * Parses user prompt into structured intent for re-ranking guidance
  */
 
-import OpenAI from "openai";
 import { logger } from "../logger";
 
 export interface PromptProfile {
@@ -13,17 +12,6 @@ export interface PromptProfile {
   formatHints?: string[];
   voiceStyle?: string;
   excludeTopics?: string[];
-}
-
-/**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
 }
 
 /**
@@ -44,31 +32,6 @@ export async function buildPromptProfile(prompt: string): Promise<PromptProfile 
   const profile = extractProfileDeterministic(prompt);
   logger.info(`Extracted prompt profile: ${JSON.stringify(profile)}`);
   return profile;
-}
-
-/**
- * Sanitize and validate profile
- */
-function sanitizeProfile(profile: unknown): PromptProfile {
-  if (typeof profile !== "object" || profile === null) {
-    return { focusTopics: [] };
-  }
-
-  const p = profile as Record<string, unknown>;
-  return {
-    audience: typeof p.audience === "string" ? p.audience : undefined,
-    intent: typeof p.intent === "string" ? p.intent : undefined,
-    focusTopics: Array.isArray(p.focusTopics) 
-      ? (p.focusTopics as unknown[]).filter(t => typeof t === "string") as string[]
-      : [],
-    formatHints: Array.isArray(p.formatHints)
-      ? (p.formatHints as unknown[]).filter(t => typeof t === "string") as string[]
-      : undefined,
-    voiceStyle: typeof p.voiceStyle === "string" ? p.voiceStyle : undefined,
-    excludeTopics: Array.isArray(p.excludeTopics)
-      ? (p.excludeTopics as unknown[]).filter(t => typeof t === "string") as string[]
-      : undefined,
-  };
 }
 
 /**

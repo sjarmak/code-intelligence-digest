@@ -328,7 +328,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
 
   try {
     // Check rate limits
-    const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
+    const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
     const rateLimitResponse = await enforceRateLimit(request, '/api/podcast/generate');
     if (rateLimitResponse) {
       return rateLimitResponse as NextResponse<PodcastResponse | { error: string }>;

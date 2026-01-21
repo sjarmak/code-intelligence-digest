@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     // Check rate limits (gracefully handle if table doesn't exist)
     let rateLimitResponse = null;
     try {
-      const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
+      const { enforceRateLimit } = await import('@/src/lib/rate-limit');
       rateLimitResponse = await enforceRateLimit(req, '/api/ask');
       if (rateLimitResponse) {
         return rateLimitResponse;

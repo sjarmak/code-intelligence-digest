@@ -236,7 +236,7 @@ export function NewsletterViewer({
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
         {/* Tabs */}
         <div className="border-b border-gray-200 flex overflow-x-auto scrollbar-hide">
-          {(["rendered", "markdown"] as const).map((tab) => (
+          {(["rendered", "markdown", "metadata"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -248,6 +248,7 @@ export function NewsletterViewer({
             >
               {tab === "rendered" && "Newsletter"}
               {tab === "markdown" && "Markdown"}
+              {tab === "metadata" && "Metadata"}
             </button>
           ))}
         </div>
@@ -265,6 +266,31 @@ export function NewsletterViewer({
             <pre className="bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto text-xs sm:text-sm text-gray-700 break-words whitespace-pre-wrap">
               {markdown}
             </pre>
+          )}
+
+          {activeTab === "metadata" && (
+            <div className="space-y-3 text-sm text-gray-700">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Items</p>
+                  <p>{itemsIncluded} selected / {itemsRetrieved} retrieved</p>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Generation</p>
+                  <p>{generationMetadata.modelUsed} · {generationMetadata.duration}</p>
+                </div>
+              </div>
+              {themes.length > 0 && (
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Themes</p>
+                  <ul className="list-disc list-inside text-gray-800 space-y-1">
+                    {themes.map((theme) => (
+                      <li key={theme}>{theme}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

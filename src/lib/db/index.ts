@@ -10,8 +10,8 @@ import Database from "better-sqlite3";
 import * as path from "path";
 import * as fs from "fs";
 import { logger } from "../logger";
-import { detectDriver, getDbClient, DatabaseDriver, getDatabaseUrl } from "./driver";
-import { getPostgresSchema, TABLES_SQL, INDEXES_SQL } from "./schema-postgres";
+import { detectDriver, getDbClient, getDatabaseUrl } from "./driver";
+import { TABLES_SQL, INDEXES_SQL } from "./schema-postgres";
 
 let sqlite: Database.Database | null = null;
 let initialized = false;

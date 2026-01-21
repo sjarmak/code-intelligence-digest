@@ -313,21 +313,24 @@ export function PaperReaderModal({
   };
 
   // Add annotation
-  const addAnnotation = async (type: 'note' | 'highlight', text: string, note?: string) => {
-    try {
-      const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/annotations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, content: text, note }),
-      });
-      if (response.ok) {
-        const annotation = await response.json();
-        setAnnotations((prev) => [annotation, ...prev]);
+  const addAnnotation = useCallback(
+    async (type: 'note' | 'highlight', text: string, note?: string) => {
+      try {
+        const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/annotations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, content: text, note }),
+        });
+        if (response.ok) {
+          const annotation = await response.json();
+          setAnnotations((prev) => [annotation, ...prev]);
+        }
+      } catch (err) {
+        console.error('Failed to add annotation:', err);
       }
-    } catch (err) {
-      console.error('Failed to add annotation:', err);
-    }
-  };
+    },
+    [bibcode]
+  );
 
   // Delete annotation
   const deleteAnnotation = async (id: string) => {
@@ -406,23 +409,6 @@ export function PaperReaderModal({
       setGeneratingSummary(false);
     }
   };
-
-  // Helper to get all text nodes in order
-  const getTextNodes = useCallback((element: Node): Text[] => {
-    const textNodes: Text[] = [];
-    const walker = document.createTreeWalker(
-      element,
-      NodeFilter.SHOW_TEXT,
-      null
-    );
-    let node;
-    while ((node = walker.nextNode())) {
-      if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) {
-        textNodes.push(node as Text);
-      }
-    }
-    return textNodes;
-  }, []);
 
   // Scroll to section
   const scrollToSection = useCallback((sectionId: string) => {
@@ -621,7 +607,7 @@ export function PaperReaderModal({
     }
 
     console.warn('[scrollToSection] Could not find section to scroll to', { sectionId, sectionTitle, sectionSummaryTitle: sectionSummary?.sectionTitle });
-  }, [content, getTextNodes]);
+  }, [content]);
 
   // Handle text selection - show highlight button on selection
   const [selectedText, setSelectedText] = useState<string>('');
@@ -658,19 +644,19 @@ export function PaperReaderModal({
     }
   };
 
-  const handleCreateHighlight = async () => {
-    if (selectedText) {
-      await addAnnotation('highlight', selectedText);
-      setShowHighlightButton(false);
-      setSelectedText('');
-      if (selectionRange) {
-        const selection = window.getSelection();
-        if (selection) {
-          selection.removeAllRanges();
-        }
+  const handleCreateHighlight = useCallback(async () => {
+    if (!selectedText) return;
+
+    await addAnnotation('highlight', selectedText);
+    setShowHighlightButton(false);
+    setSelectedText('');
+    if (selectionRange) {
+      const selection = window.getSelection();
+      if (selection) {
+        selection.removeAllRanges();
       }
     }
-  };
+  }, [addAnnotation, selectedText, selectionRange]);
 
   const handleCancelHighlight = () => {
     setShowHighlightButton(false);
@@ -706,7 +692,7 @@ export function PaperReaderModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onPrevious, onNext, hasPrevious, hasNext, showHighlightButton, selectedText]);
+  }, [onClose, onPrevious, onNext, hasPrevious, hasNext, showHighlightButton, selectedText, handleCreateHighlight]);
 
   // Extract sections from rendered HTML if not provided
   const extractSectionsFromRenderedHtml = useCallback(() => {
@@ -1266,6 +1252,7 @@ export function PaperReaderModal({
                             key={figure.id}
                             className="bg-white rounded-lg border border-gray-200 p-3 hover:border-gray-300 transition-colors"
                           >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={figure.src}
                               alt={figure.alt || figure.caption || `Figure ${figure.id}`}

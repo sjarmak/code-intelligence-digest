@@ -366,16 +366,6 @@ function extractArticlesFromHtml(html: string): Array<{
     { pattern: /miscellaneous/i, name: "Miscellaneous", category: "newsletters" as Category },
   ];
 
-  // Also look for articles near known terms (Delve, Vibium, Package Manager, Groq, Nvidia)
-  // These might not have explicit section headers but are in specific sections
-  const knownArticlePatterns = [
-    { pattern: /delve[^<]*shipmas/i, name: "Delve", section: "Miscellaneous" },
-    { pattern: /vibium[^<]*github/i, name: "Vibium", section: "Programming, Design & Data Science" },
-    { pattern: /package manager[^<]*git[^<]*database/i, name: "Package Manager", section: "Programming, Design & Data Science" },
-    { pattern: /groq[^<]*ai[^<]*technology/i, name: "Groq", section: "Big Tech & Startups" },
-    { pattern: /nvidia[^<]*groq/i, name: "Nvidia/Groq", section: "Big Tech & Startups" },
-  ];
-
   // Find all section headers in the HTML
   for (const { pattern, name, category } of sectionPatterns) {
     const matches = [...cleanHtml.matchAll(new RegExp(pattern.source, 'gi'))];

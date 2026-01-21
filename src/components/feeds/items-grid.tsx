@@ -116,7 +116,6 @@ export default function ItemsGrid({ category, period, customDateRange }: ItemsGr
       itemsRef.current = []; // Reset ref when category/period changes
     }
     fetchItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, period, customDateRange, loadMoreCount]);
 
   const handleLoadMore = () => {

@@ -10,7 +10,6 @@ import {
   generateAndStoreSectionEmbeddings,
   findRelevantSections,
   getSectionSummaries,
-  clearSectionSummaries,
 } from '../db/paper-sections';
 import { logger } from '../logger';
 import OpenAI from 'openai';
@@ -144,15 +143,6 @@ export function extractSectionsFromBody(
     // Look for numbered sections (1. Introduction, 2. Methodology, etc.)
     // Also look for semantic section headers (Introduction, Methodology, Results, etc.)
 
-    const sectionPatterns = [
-      // Numbered sections: "1. Title", "1 Title", "Section 1: Title", etc.
-      /^\s*(\d+)\.?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm,
-      // Section headers: "Section 1: Title", "Section 1 Title"
-      /^\s*[Ss]ection\s+(\d+)[:.]?\s+([A-Z][^\n]{2,80}?)(?:\n|$)/gm,
-      // Common academic section headers (case-insensitive)
-      /^\s*([A-Z][A-Za-z\s]{3,50}?)(?:\n|$)/gm, // Any capitalized line (potential header)
-    ];
-
     // First, try to find numbered sections
     const numberedMatches: Array<{ number: number; title: string; position: number }> = [];
 
@@ -242,7 +232,6 @@ export function extractSectionsFromBody(
         while ((match = semantic.pattern.exec(body)) !== null) {
           // Check if this looks like a section header (not just text in a sentence)
           const before = body.substring(Math.max(0, match.index - 50), match.index);
-          const after = body.substring(match.index + match[0].length, Math.min(body.length, match.index + match[0].length + 50));
 
           // Section headers are usually on their own line, possibly with numbers or formatting
           if (before.match(/\n\s*$/) || before.match(/^\s*$/) || before.match(/\d+\.?\s*$/)) {
@@ -567,4 +556,3 @@ export async function buildSectionContext(
 
   return contextParts.join('\n\n---\n\n');
 }
-

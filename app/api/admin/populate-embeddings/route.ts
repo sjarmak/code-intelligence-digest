@@ -12,7 +12,6 @@ import { getEmbeddingsBatch } from '@/src/lib/db/embeddings';
 import { generateEmbeddingsBatch } from '@/src/lib/embeddings/generate';
 import { saveEmbeddingsBatch } from '@/src/lib/db/embeddings';
 import { logger } from '@/src/lib/logger';
-import { blockInProduction } from '@/src/lib/auth/guards';
 import type { Category, FeedItem } from '@/src/lib/model';
 
 interface PopulateRequest {
@@ -160,4 +159,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

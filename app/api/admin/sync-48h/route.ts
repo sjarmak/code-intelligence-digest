@@ -25,20 +25,9 @@ import { normalizeItems } from '@/src/lib/pipeline/normalize';
 import { categorizeItems } from '@/src/lib/pipeline/categorize';
 import { decomposeFeedItems } from '@/src/lib/pipeline/decompose';
 import { saveItems } from '@/src/lib/db/items';
-import { getSqlite } from '@/src/lib/db/index';
 import { incrementApiCalls } from '@/src/lib/db/api-budget';
 import { Category } from '@/src/lib/model';
 import { blockInProduction } from '@/src/lib/auth/guards';
-
-const VALID_CATEGORIES: Category[] = [
-  'newsletters',
-  'podcasts',
-  'tech_articles',
-  'ai_news',
-  'product_news',
-  'community',
-  'research',
-];
 
 export async function POST() {
   const blocked = blockInProduction();

@@ -129,7 +129,8 @@ export async function generatePodcastRundown(
           content: `You are a podcast producer building a 5–10 minute (300–600 seconds) ${periodLabel} tech podcast rundown.
 
 Categories: ${categoryLabels}
-${profile ? `User focus topics: ${profile.focusTopics.join(", ")}` : ""}
+User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
+${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
 
 Item digests (JSON):
 ${digestContext}
@@ -156,7 +157,7 @@ OUTPUT STRICT JSON (no markdown):
   "cold_open": "string (2–3 sentences, conversational, clear value)",
   "segments": [
     {
-      "name": "string (theme name, e.g., 'Code Search Tooling')",
+      "name": "string (theme name, e.g., 'Benchmarking Agents')",
       "time_seconds": 120,
       "stories_used": ["url1", "url2"],
       "key_points_to_say": ["string", "..."],
@@ -207,7 +208,7 @@ Return ONLY valid JSON.`,
 
     return {
       episode_title: rundown.episode_title || "Code Intelligence Digest",
-      cold_open: rundown.cold_open || "Latest in code search, AI agents, and developer tools.",
+      cold_open: rundown.cold_open || "Latest in benchmarking coding agents and code search.",
       segments,
       lightning_round: rundown.lightning_round || [],
       cut_list: rundown.cut_list || [],
@@ -249,7 +250,7 @@ function generateFallbackRundown(
 
   return {
     episode_title: `Code Intelligence Digest – ${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)}`,
-    cold_open: `Welcome to this week's digest. We're covering ${topDigests.length} stories on code intelligence, agents, and developer tools.`,
+    cold_open: `Welcome to this week's digest. We're covering ${topDigests.length} stories focused on benchmarking coding agents and code search.`,
     segments,
     lightning_round: digests.slice(4, 7).map(d => ({
       headline: d.one_sentence_gist.substring(0, 80),

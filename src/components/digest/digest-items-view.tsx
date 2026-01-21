@@ -4,7 +4,13 @@ import { useEffect, useState, useCallback } from 'react';
 import ItemCard from '@/src/components/feeds/item-card';
 import { FileHeart, RefreshCw, CheckSquare, Square, Trash2, X } from 'lucide-react';
 
-interface DigestItem {
+interface DigestScores {
+  relevance: number;
+  usefulness: number;
+  tags: string[];
+}
+
+interface DigestApiItem {
   id: string;
   title: string;
   url: string;
@@ -15,11 +21,20 @@ interface DigestItem {
   contentSnippet?: string;
   categories?: string[];
   category?: string;
-  llmScore: {
-    relevance: number;
-    usefulness: number;
-    tags: string[];
-  };
+}
+
+interface DigestItem extends DigestApiItem {
+  id: string;
+  title: string;
+  url: string;
+  sourceTitle: string;
+  publishedAt: string;
+  createdAt?: string | null;
+  summary?: string;
+  contentSnippet?: string;
+  categories?: string[];
+  category?: string;
+  llmScore: DigestScores;
   finalScore: number;
   reasoning: string;
   diversityReason?: string;
@@ -49,10 +64,10 @@ export function DigestItemsView() {
       }
 
       const data = await response.json();
-      const fetchedItems = data.items || [];
+      const fetchedItems: DigestApiItem[] = data.items || [];
 
       // Transform items to match ItemCard format
-      const transformedItems: DigestItem[] = fetchedItems.map((item: any) => ({
+      const transformedItems: DigestItem[] = fetchedItems.map((item) => ({
         id: item.id,
         title: item.title,
         url: item.url,

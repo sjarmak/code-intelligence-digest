@@ -8,7 +8,6 @@ import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
-import { shouldFilterNonEnglish } from "../utils/language-detection";
 
 /**
  * Compute recency score with exponential decay

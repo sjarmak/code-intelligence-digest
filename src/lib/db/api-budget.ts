@@ -9,7 +9,6 @@
  */
 
 import { getDbClient, detectDriver } from './driver';
-import { logger } from '../logger';
 
 export interface ApiBudget {
   callsUsed: number;
@@ -129,4 +128,3 @@ export async function getGlobalApiBudget(): Promise<{ callsUsed: number; remaini
     quotaLimit: budget.quotaLimit,
   };
 }
-

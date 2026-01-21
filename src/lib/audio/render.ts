@@ -3,7 +3,7 @@
  * Coordinates provider selection, caching, and storage
  */
 
-import { AudioProvider, RenderAudioRequest, RenderAudioResult, TtsProvider } from "./types";
+import { AudioProvider, RenderAudioResult, TtsProvider } from "./types";
 import { sanitizeTranscriptForTts, computeTranscriptHash, parseTranscriptBySpeaker, hasMultipleSpeakers, SpeakerTurn } from "./sanitize";
 import { createOpenAIProvider } from "./providers/openaiTts";
 import { createElevenLabsProvider } from "./providers/elevenlabsTts";

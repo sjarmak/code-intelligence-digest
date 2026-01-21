@@ -8,7 +8,7 @@
  * This module abstracts the database-specific search implementation.
  */
 
-import { detectDriver, DatabaseDriver, getDbClient } from './driver';
+import { detectDriver, getDbClient } from './driver';
 import { logger } from '../logger';
 
 export interface DbSearchResult {

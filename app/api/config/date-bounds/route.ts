@@ -3,12 +3,12 @@
  * Returns the earliest and latest available dates from the database
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { getEarliestPublishedDate } from "@/src/lib/db/items";
 import { logger } from "@/src/lib/logger";
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     await initializeDatabase();
 
@@ -41,4 +41,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

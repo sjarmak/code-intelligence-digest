@@ -18,6 +18,12 @@ import { logger } from "../logger";
 import { decodeHtmlEntities } from "../utils/html-entities";
 import { extractBibcodeFromUrl } from "../ads/client";
 
+type FeedItemWithFullText = FeedItem & { fullText: string };
+
+function hasFullText(item: FeedItem): item is FeedItemWithFullText {
+  return typeof (item as { fullText?: unknown }).fullText === "string";
+}
+
 export interface SearchResult {
   id: string;
   title: string;
@@ -131,7 +137,7 @@ async function computeSemanticScores(
 
       // Prepare items for batch generation
       const itemsForBatch = itemsToProcess.map((item) => {
-        const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 2000) : "";
+        const fullText = hasFullText(item) ? item.fullText.substring(0, 2000) : "";
         const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
         return {
           id: item.id,
@@ -245,7 +251,7 @@ export async function semanticSearch(
 
       // Prepare items for batch generation
       const itemsForBatch = itemsToProcess.map((item) => {
-        const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 2000) : "";
+        const fullText = hasFullText(item) ? item.fullText.substring(0, 2000) : "";
         const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
         return {
           id: item.id,
@@ -382,7 +388,7 @@ export async function keywordSearch(
     .map((item) => {
       const title = item.title.toLowerCase();
       // Include full text if available (first 5000 chars for better matching)
-      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 5000).toLowerCase() : "";
+      const fullText = hasFullText(item) ? item.fullText.substring(0, 5000).toLowerCase() : "";
       const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
 
       let score = 0;
@@ -464,7 +470,7 @@ function termBasedSearch(
   const scored = items
     .map((item) => {
       // Include full text if available
-      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 5000).toLowerCase() : "";
+      const fullText = hasFullText(item) ? item.fullText.substring(0, 5000).toLowerCase() : "";
       const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
 
       // Count term occurrences

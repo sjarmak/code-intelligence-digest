@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchPapers, getPaper, getLibraryPapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
+import { getPaper, getLibraryPapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
 import { getSavedItems } from '@/src/lib/db/savedItems';
 import { getDigestItems } from '@/src/lib/db/digestItems';
 import { loadItem } from '@/src/lib/db/items';
-import { generateAnswer } from '@/src/lib/pipeline/answer';
-import { retrieveRelevantItems } from '@/src/lib/pipeline/retrieval';
 import { logger } from '@/src/lib/logger';
 import { getADSUrl, getLibraryItems } from '@/src/lib/ads/client';
 import OpenAI from 'openai';

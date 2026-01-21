@@ -78,7 +78,7 @@ export default function SourceRelevanceDropdown({
             ? 'bg-surface-border border-gray-400'
             : 'bg-surface border-surface-border hover:border-surface-focus'
         } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-        title={`Current: ${currentOption?.label || 'Unknown'}`}
+        title={`${sourceName}: ${currentOption?.label || 'Unknown'}`}
       >
         {currentOption?.label || '?'} {currentRelevance !== null && `(${currentRelevance})`}
       </button>

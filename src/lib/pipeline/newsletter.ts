@@ -50,32 +50,6 @@ function isValidUrl(url: string): boolean {
 }
 
 /**
- * Build synthesis context from item digests (Pass 2)
- */
-function buildDigestContext(digests: ItemDigest[]): string {
-  return digests
-    .map((digest, idx) => {
-      return `[${idx + 1}] "${digest.title}"
-Source: ${digest.sourceTitle}
-URL: ${digest.url}
-Credibility: ${digest.sourceCredibility.toUpperCase()}
-User Relevance Score: ${digest.userRelevanceScore}/10
-
-Gist: ${digest.gist}
-
-Key Points:
-${digest.keyBullets.map(b => `- ${b}`).join("\n")}
-
-Why It Matters: ${digest.whyItMatters}
-
-Topics: ${digest.topicTags.join(", ")}
-Named Entities: ${digest.namedEntities.join(", ") || "None"}
----`;
-    })
-    .join("\n\n");
-}
-
-/**
  * Build synthesis context from selected items with full text for top items
  * (Legacy - kept for fallback)
  */
@@ -143,7 +117,8 @@ export async function generateNewsletterContent(
             content: `Generate a ${periodLabel} Code Intelligence Digest newsletter from these curated items.
 
 Categories: ${categoryLabels}
-${profile ? `User focus: ${profile.focusTopics.join(", ")}` : ""}
+User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
+${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
 
 Total Items: ${items.length}
 
@@ -151,7 +126,7 @@ Items (numbered 1-${items.length}):
 ${synthesisContext}
 
 INSTRUCTIONS:
-1. Write for a senior engineering audience focused on code intelligence, agents, and IR
+1. Write for a senior engineering audience focused on building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
 2. Synthesize across sources to find emerging themes and connections
 3. Explain WHY each item matters in relation to the user's focus areas
 4. For research papers, include 1-2 key findings aligned to user interests
@@ -367,27 +342,6 @@ async function generateNewsletterFromDigestData(
      .slice(0, 5)
      .map(([t]) => t);
 
-  // Build categorized digest text for LLM
-  const categorizedContent = Array.from(byCategory.entries())
-    .map(([catName, categoryDigests]) => {
-      const itemsList = categoryDigests
-        .map(d => {
-          // Build attribution line: sourceTitle + author + originalSource
-          const attributions: string[] = [];
-          if (d.sourceTitle) attributions.push(d.sourceTitle);
-          if (d.author) attributions.push(`by ${d.author}`);
-          if (d.originalSource && d.originalSource !== d.sourceTitle?.toLowerCase()) {
-            attributions.push(`on ${d.originalSource}`);
-          }
-          const attribution = attributions.join(" · ");
-
-          return `- **[${d.title}](${d.url})** — *${attribution}*\n  ${d.whyItMatters}`;
-        })
-        .join("\n");
-      return `## ${catName}\n\n${itemsList}`;
-    })
-    .join("\n\n");
-
   if (!apiKey) {
     // Fallback: return basic structure
     logger.warn("No OPENAI_API_KEY for synthesis, using basic template");
@@ -509,8 +463,6 @@ function generateNewsletterFallback(
   markdown += `## ${subtitle}\n`;
   markdown += `**Published:** ${publishDate} | **Items:** ${items.length}\n\n`;
 
-  // Get top items for insightful summary
-  const topItems = Array.from(items).sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 5);
   const topThemes = themes.slice(0, 4).map(t => t.replace(/-/g, " "));
 
   // Build a more substantive executive summary
@@ -540,7 +492,6 @@ function generateNewsletterFallback(
     const topItems = categoryItems.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 7);
 
     for (const item of topItems) {
-      const score = Math.round((item.finalScore || 0) * 100);
       const desc = item.summary || item.contentSnippet || "No description available.";
       const firstLine = desc.split("\n")[0].substring(0, 250);
 
@@ -627,12 +578,12 @@ function generateNewsletterFallback(
              role: "user",
              content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
 
-    **Featured Topics:** ${themes.join(", ") || "code search, context management, agents, information retrieval, developer productivity"}
+    **Featured Topics:** ${themes.join(", ") || "benchmarking coding agents, code search, codebase understanding tools, developer workflows"}
 
     **Key Items Featured:**
     ${itemSummaries}
 
-    **Target Audience:** Sourcegraph engineering and leadership evaluating code search, coding agents, information retrieval, and developer productivity.
+    **Target Audience:** Sourcegraph engineering and leadership evaluating the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases.
 
     **What NOT to do:**
     - Avoid: "highlights," "underscores," "shapes," "fosters," "landscape," "emerging," "approaches," "methodologies"
@@ -823,7 +774,7 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
   /**
    * Convert markdown newsletter to semantic HTML with light theme
    */
-  function buildNewsletterHTML(markdown: string, summary?: string): string {
+  function buildNewsletterHTML(markdown: string): string {
     let html = markdown;
 
     // Convert markdown headers (before links, so we can detect them)

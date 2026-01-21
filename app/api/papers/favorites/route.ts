@@ -3,7 +3,6 @@ import {
   getFavoritePapers,
   markPaperAsFavorite,
   unmarkPaperAsFavorite,
-  isPaperFavorite,
   initializeAnnotationTables,
 } from '@/src/lib/db/paper-annotations';
 import { logger } from '@/src/lib/logger';
@@ -28,7 +27,7 @@ async function ensureTablesInitialized() {
  * GET /api/papers/favorites
  * Get all favorite papers
  */
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     await ensureTablesInitialized();
 
@@ -105,4 +104,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

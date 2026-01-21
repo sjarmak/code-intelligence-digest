@@ -261,21 +261,6 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
     }
 
-    // Calculate period days for auto mode (needed for ranking)
-    let periodDays: number = 7;
-    let startDate: Date | undefined;
-    let endDate: Date | undefined;
-
-    if (req.sourceMode === "auto" && req.period) {
-      if (req.period === "custom" && req.customDateRange) {
-        startDate = new Date(req.customDateRange.startDate);
-        endDate = new Date(req.customDateRange.endDate);
-        periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
-      } else {
-        periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 60;
-      }
-    }
-
     logger.info(`Newsletter request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library` : `selectedItemIds=${req.selectedItemIds?.length} items`}, prompt="${(req.prompt || "").substring(0, 50)}..."`);
 
     // Step 1: Retrieve candidates

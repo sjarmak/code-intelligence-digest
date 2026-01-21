@@ -9,14 +9,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { rankCategoryWithoutRecency } from "@/src/lib/pipeline/rank";
-import { selectWithDiversity } from "@/src/lib/pipeline/select";
 import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
 import { rerankWithPrompt, filterByExclusions } from "@/src/lib/pipeline/promptRerank";
 import {
   extractArticleHighlights,
   extractPaperHighlights,
   generateAudioDigestTranscript,
-  generateShowNotes,
   type ItemWithHighlights,
   type AudioDigestContent,
 } from "@/src/lib/pipeline/audioDigest";
@@ -305,7 +303,6 @@ async function streamAudioDigestGeneration(
   req: AudioDigestRequest,
   startTime: number
 ): Promise<NextResponse<AudioDigestResponse | { error: string }>> {
-  const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       try {
@@ -636,7 +633,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<AudioDige
 
   try {
     // Check rate limits
-    const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
+    const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
     const rateLimitResponse = await enforceRateLimit(request, '/api/audio-digest/generate');
     if (rateLimitResponse) {
       return rateLimitResponse as NextResponse<AudioDigestResponse | { error: string }>;

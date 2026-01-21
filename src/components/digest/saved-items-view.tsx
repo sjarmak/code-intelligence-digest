@@ -10,9 +10,7 @@ interface SavedItemsViewProps {
   showCheckboxes?: boolean;
 }
 
-export function SavedItemsView({ selectedItemIds: externalSelectedIds, onSelectionChange, showCheckboxes = false }: SavedItemsViewProps = {}) {
-
-interface SavedItem {
+interface SavedApiItem {
   id: string;
   title: string;
   url: string;
@@ -23,6 +21,9 @@ interface SavedItem {
   contentSnippet?: string;
   categories?: string[];
   category?: string;
+}
+
+interface SavedItem extends SavedApiItem {
   llmScore: {
     relevance: number;
     usefulness: number;
@@ -32,6 +33,8 @@ interface SavedItem {
   reasoning: string;
   diversityReason?: string;
 }
+
+export function SavedItemsView({ selectedItemIds: externalSelectedIds, onSelectionChange, showCheckboxes = false }: SavedItemsViewProps = {}) {
 
   const [items, setItems] = useState<SavedItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,10 +60,10 @@ interface SavedItem {
       }
 
       const data = await response.json();
-      const fetchedItems = data.items || [];
+      const fetchedItems: SavedApiItem[] = data.items || [];
 
       // Transform items to match ItemCard format
-      const transformedItems: SavedItem[] = fetchedItems.map((item: any) => ({
+      const transformedItems: SavedItem[] = fetchedItems.map((item) => ({
         id: item.id,
         title: item.title,
         url: item.url,

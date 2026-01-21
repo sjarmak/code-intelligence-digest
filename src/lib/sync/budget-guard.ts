@@ -5,7 +5,7 @@
  * No redundant checks during execution - single decision point
  */
 
-import { getApiBudget, hasBudgetFor, ApiBudget } from '../db/api-budget';
+import { getApiBudget, ApiBudget } from '../db/api-budget';
 import { logger } from '../logger';
 
 /**
@@ -64,4 +64,3 @@ export async function checkSyncBudget(
     budget,
   };
 }
-

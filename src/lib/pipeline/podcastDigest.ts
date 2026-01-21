@@ -180,7 +180,7 @@ Return STRICT JSON (no markdown) with:
 - one_line_takeaway: Practical implication or next step (max 80 chars)
 - soundbite_lines: [2-4 short lines that read naturally aloud, max 60 chars each]
 - credibility_notes: "high" (academic/official), "medium" (established), or "low" (casual); plus brief note
-- relevance_to_focus: 0-10 match with user focus (${userPrompt || "general code topics"})
+- relevance_to_focus: 0-10 match with user focus (${userPrompt || "benchmarking coding agents and code search"})
 
 Rules:
 - key_facts MUST be factual, not speculation. Separate claims with "According to [source]" if needed.
@@ -412,7 +412,7 @@ function generateFallbackPodcastDigest(item: RankedItem, userPrompt: string): Po
     what_changed: `New content from ${item.sourceTitle}`,
     who_affected: ["developers", "engineers"],
     uncertainty_or_conflicts: [],
-    one_line_takeaway: `Relevant to ${userPrompt || "code intelligence"}`,
+    one_line_takeaway: `Relevant to ${userPrompt || "benchmarking coding agents and code search"}`,
     soundbite_lines: [item.title.substring(0, 60)],
     credibility_notes: `${item.sourceTitle} (medium credibility)`,
     relevance_to_focus: Math.round(item.finalScore * 10),

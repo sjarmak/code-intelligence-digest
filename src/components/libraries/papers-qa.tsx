@@ -114,7 +114,7 @@ export const PapersQA = forwardRef<
   },
   PapersQAProps
 >(
-  function PapersQA({ onPaperSelect: _onPaperSelect, onLibrarySelect: _onLibrarySelect }, ref) {
+  function PapersQA(_props: PapersQAProps, ref) {
     const [question, setQuestion] = useState('');
     const [loading, setLoading] = useState(false);
     const [response, setResponse] = useState<AskResponse | null>(null);

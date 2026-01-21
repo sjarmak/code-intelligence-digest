@@ -33,7 +33,7 @@ export class LocalStorageAdapter implements StorageAdapter {
   async putObject(
     key: string,
     bytes: Buffer,
-    contentType: string = "audio/mpeg"
+    _contentType: string = "audio/mpeg"
   ): Promise<{ url: string; bytes: number }> {
     try {
       const filePath = path.join(AUDIO_DIR, key);

@@ -26,6 +26,14 @@ const eslintConfig = defineConfig([
       // legitimate state sync effects and date initialization logic.
       "react-hooks/set-state-in-effect": "off",
       "react-hooks/purity": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrors: "none",
+        },
+      ],
       // These rules are overly noisy in our mixed client/server code. Track
       // remaining usages via warnings while we gradually type things.
       "@typescript-eslint/no-explicit-any": "warn",

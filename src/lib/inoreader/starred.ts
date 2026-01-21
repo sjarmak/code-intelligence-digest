@@ -18,6 +18,19 @@ export interface StarredItemMetadata {
   categories?: string[];
 }
 
+interface InoreaderStreamItem {
+  id: string;
+  title?: string;
+  origin?: { title?: string };
+  alternate?: Array<{ href: string }>;
+  canonical?: Array<{ href: string }>;
+  published?: number;
+  updated?: number;
+  summary?: { content?: string };
+  content?: { content?: string };
+  categories?: string[];
+}
+
 /**
  * Fetch starred items from Inoreader
  * Uses special streamId "user/-/state/com.google/starred"
@@ -44,7 +57,7 @@ export async function fetchStarredItems(
     const response = await client.getStreamContents(streamId, {
       n: limit,
       continuation,
-    });
+    }) as { items?: InoreaderStreamItem[]; continuation?: string };
 
     // Track API call in budget
     await incrementApiCalls(1);
@@ -54,7 +67,7 @@ export async function fetchStarredItems(
       return { items: [], count: 0 };
     }
 
-    const items: StarredItemMetadata[] = response.items.map((article: any) => ({
+    const items: StarredItemMetadata[] = response.items.map((article) => ({
       id: article.id,
       title: article.title || "(Untitled)",
       sourceTitle: article.origin?.title || "Unknown Source",

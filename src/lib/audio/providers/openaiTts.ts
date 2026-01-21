@@ -30,7 +30,7 @@ export class OpenAITtsProvider implements TtsProvider {
     }
 
     // OpenAI TTS supports: alloy, echo, fable, onyx, nova, shimmer
-    const voice = (req.voice as any) || "alloy";
+    const voice = req.voice ?? "alloy";
 
     try {
       logger.info("Rendering audio with OpenAI TTS", {

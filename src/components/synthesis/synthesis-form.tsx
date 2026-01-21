@@ -65,7 +65,7 @@ export function SynthesisForm({
   });
   const [limit, setLimit] = useState(50);
   const [prompt, setPrompt] = useState(
-    "Focus on code search, coding agents, context management for agents, information retrieval for code, and developer productivity with AI tools. Prioritize research papers, technical articles, and product announcements that demonstrate actual progress in these areas. Filter out benchmarking studies that don't address practical developer needs."
+    "Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows."
   );
   const [voiceStyle, setVoiceStyle] = useState<"conversational" | "technical" | "executive">(
     "conversational"
@@ -483,10 +483,10 @@ export function SynthesisForm({
               id="prompt"
               placeholder={
                 type === "newsletter"
-                  ? "e.g., Focus on code search and developer productivity. Emphasize actionable takeaways."
+                  ? "e.g., Focus on content relevant to building benchmarks for coding agents and code search."
                   : type === "podcast"
-                  ? "e.g., Create an engaging episode about AI agents for code review. Target tech leads."
-                  : "e.g., Focus on code search, context management for agents, and information retrieval. Prioritize research papers and technical articles."
+                  ? "e.g., Create an engaging episode about benchmarking coding agents with codebase understanding tools."
+                  : "e.g., Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search."
               }
               value={prompt}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrompt(e.target.value)}

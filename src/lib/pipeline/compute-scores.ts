@@ -20,7 +20,6 @@ function computeRecencyScore(
 ): number {
   const now = Date.now();
   const ageMs = now - publishedAt.getTime();
-  const ageDays = ageMs / (24 * 60 * 60 * 1000);
   const halfLifeMs = halfLifeDays * 24 * 60 * 60 * 1000;
 
   // Exponential decay: score = 0.2 + 0.8 * e^(-ln(2) * age / halfLife)
@@ -269,4 +268,3 @@ export async function computeAndSaveScoresForItems(
 
   return { totalScored, categoriesScored };
 }
-

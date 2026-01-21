@@ -281,7 +281,7 @@ export function getArxivUrl(bibcode: string): string | null {
   if (!match) {
     return null;
   }
-  const [, year, part1, part2, part3] = match;
+  const [, , part1, part2, part3] = match;
   const arxivId = `${part1}${part2}.${part3}`;
   return `https://arxiv.org/abs/${arxivId}`;
 }

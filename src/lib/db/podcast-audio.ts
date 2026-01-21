@@ -21,6 +21,21 @@ export interface PodcastAudioRecord {
   createdAt?: number;
 }
 
+interface PodcastAudioRow {
+  id: string;
+  podcast_id: string | null;
+  transcript_hash: string;
+  provider: string;
+  voice: string | null;
+  format: string;
+  duration: string | null;
+  duration_seconds: number | null;
+  audio_url: string;
+  segment_audio: string | null;
+  bytes: number;
+  created_at?: number;
+}
+
 /**
  * Save generated audio metadata to database
  * Uses ON CONFLICT to handle race conditions gracefully
@@ -116,7 +131,7 @@ export async function getPodcastAudioByHash(
 ): Promise<PodcastAudioRecord | null> {
   const driver = detectDriver();
 
-  let row: any;
+  let row: PodcastAudioRow | undefined;
 
   if (driver === 'postgres') {
     const client = await getDbClient();
@@ -125,7 +140,7 @@ export async function getPodcastAudioByHash(
       WHERE transcript_hash = $1
       LIMIT 1
     `, [transcriptHash]);
-    row = result.rows[0];
+    row = result.rows[0] as PodcastAudioRow | undefined;
   } else {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
@@ -133,7 +148,7 @@ export async function getPodcastAudioByHash(
       WHERE transcript_hash = ?
       LIMIT 1
     `);
-    row = stmt.get(transcriptHash) as any;
+    row = stmt.get(transcriptHash) as PodcastAudioRow | undefined;
   }
 
   if (!row) return null;
@@ -148,7 +163,7 @@ export async function getPodcastAudioByHash(
     duration: row.duration || undefined,
     durationSeconds: row.duration_seconds || undefined,
     audioUrl: row.audio_url,
-    segmentAudio: row.segment_audio ? JSON.parse(row.segment_audio) : undefined,
+    segmentAudio: row.segment_audio ? (JSON.parse(row.segment_audio) as SegmentAudioMetadata[]) : undefined,
     bytes: row.bytes,
     createdAt: row.created_at,
   };
@@ -160,7 +175,7 @@ export async function getPodcastAudioByHash(
 export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecord | null> {
   const driver = detectDriver();
 
-  let row: any;
+  let row: PodcastAudioRow | undefined;
 
   if (driver === 'postgres') {
     const client = await getDbClient();
@@ -169,7 +184,7 @@ export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecor
       WHERE id = $1
       LIMIT 1
     `, [id]);
-    row = result.rows[0];
+    row = result.rows[0] as PodcastAudioRow | undefined;
   } else {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
@@ -177,7 +192,7 @@ export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecor
       WHERE id = ?
       LIMIT 1
     `);
-    row = stmt.get(id) as any;
+    row = stmt.get(id) as PodcastAudioRow | undefined;
   }
 
   if (!row) return null;
@@ -192,7 +207,7 @@ export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecor
     duration: row.duration || undefined,
     durationSeconds: row.duration_seconds || undefined,
     audioUrl: row.audio_url,
-    segmentAudio: row.segment_audio ? JSON.parse(row.segment_audio) : undefined,
+    segmentAudio: row.segment_audio ? (JSON.parse(row.segment_audio) as SegmentAudioMetadata[]) : undefined,
     bytes: row.bytes,
     createdAt: row.created_at,
   };
@@ -230,7 +245,7 @@ export async function podcastAudioExists(transcriptHash: string): Promise<boolea
 export async function listRecentPodcastAudio(limit: number = 20): Promise<PodcastAudioRecord[]> {
   const driver = detectDriver();
 
-  let rows: any[];
+  let rows: PodcastAudioRow[];
 
   if (driver === 'postgres') {
     const client = await getDbClient();
@@ -239,7 +254,7 @@ export async function listRecentPodcastAudio(limit: number = 20): Promise<Podcas
       ORDER BY created_at DESC
       LIMIT $1
     `, [limit]);
-    rows = result.rows;
+    rows = result.rows as PodcastAudioRow[];
   } else {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
@@ -247,7 +262,7 @@ export async function listRecentPodcastAudio(limit: number = 20): Promise<Podcas
       ORDER BY created_at DESC
       LIMIT ?
     `);
-    rows = stmt.all(limit) as any[];
+    rows = stmt.all(limit) as PodcastAudioRow[];
   }
 
   return rows.map((record) => ({
@@ -260,7 +275,7 @@ export async function listRecentPodcastAudio(limit: number = 20): Promise<Podcas
     duration: record.duration || undefined,
     durationSeconds: record.duration_seconds || undefined,
     audioUrl: record.audio_url,
-    segmentAudio: record.segment_audio ? JSON.parse(record.segment_audio) : undefined,
+    segmentAudio: record.segment_audio ? (JSON.parse(record.segment_audio) as SegmentAudioMetadata[]) : undefined,
     bytes: record.bytes,
     createdAt: record.created_at,
   }));
