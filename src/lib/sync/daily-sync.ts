@@ -218,22 +218,37 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         callsUsed++;
         await incrementApiCalls(1);
       } catch (error) {
-        // If getUserInfo fails (e.g., 429 error), pause and resume later
+        // If getUserInfo fails (e.g., 429 error), handle based on error type
         const errorMsg = error instanceof Error ? error.message : String(error);
         logger.error(`[DAILY-SYNC] Failed to fetch user info: ${errorMsg}`);
 
         // Check if it's a 429 (rate limit) or other error
         const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
-        const pauseError = isRateLimit
-          ? `Rate limit reached. Will resume automatically.`
-          : `Failed to fetch user info: ${errorMsg}`;
 
+        if (isRateLimit) {
+          // For rate limits: Don't pause (which requires manual recovery)
+          // Instead, exit cleanly and let hourly cron retry automatically
+          // This is better because rate limits are transient
+          logger.warn(`[DAILY-SYNC] Rate limit hit (429). Exiting cleanly for hourly retry. Attempt ${totalItemsAdded > 0 ? 'had some progress' : 'was fresh'}.`);
+          return {
+            success: false,
+            itemsAdded: totalItemsAdded,
+            apiCallsUsed: callsUsed,
+            categoriesProcessed,
+            resumed,
+            paused: false, // Don't pause - let hourly cron retry
+            error: `Rate limit (429). Will retry in next hourly cycle (~1 hour).`,
+          };
+        }
+
+        // For permanent errors (auth, config, etc), pause to prevent retry loop
+        logger.error(`[DAILY-SYNC] Permanent error, pausing sync: ${errorMsg}`);
         await saveSyncState({
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
           callsUsed,
           status: 'paused',
-          error: pauseError,
+          error: `Failed to fetch user info: ${errorMsg}. Requires manual investigation.`,
         });
         return {
           success: false,
@@ -242,7 +257,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
           categoriesProcessed,
           resumed,
           paused: true,
-          error: pauseError,
+          error: `Failed to fetch user info: ${errorMsg}`,
         };
       }
     } else {
@@ -424,26 +439,35 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
 
         if (isRateLimit) {
-          logger.warn(`[DAILY-SYNC] Rate limit reached (429). Pausing sync. Will resume automatically.`);
-          await saveSyncState({
-            continuationToken: continuation,
-            itemsProcessed: totalItemsAdded,
-            callsUsed,
-            status: 'paused',
-            error: 'Rate limit reached (429). Will resume automatically.',
-          });
+          // For rate limits: Don't pause (which requires manual recovery)
+          // Instead, exit cleanly and let hourly cron retry automatically
+          logger.warn(`[DAILY-SYNC] Rate limit reached (429). Exiting cleanly. Will retry in next hourly cycle.`);
+          logger.info(`[DAILY-SYNC] Made progress: ${totalItemsAdded} items added, ${callsUsed} API calls used`);
+          
+          // Save progress so far (don't pause, just mark as exit)
+          if (continuation) {
+            // If we have a continuation token, save it for later retry
+            await saveSyncState({
+              continuationToken: continuation,
+              itemsProcessed: totalItemsAdded,
+              callsUsed,
+              status: 'in_progress', // Mark as paused progress, not as failed
+              error: 'Rate limited - will resume from continuation token',
+            });
+          }
+          
           return {
             success: false,
             itemsAdded: totalItemsAdded,
             apiCallsUsed: callsUsed,
             categoriesProcessed,
             resumed,
-            paused: true,
-            error: 'Rate limit reached (429). Will resume automatically.',
+            paused: false, // Don't pause - let hourly cron retry
+            error: `Rate limit (429) after ${totalItemsAdded} items. Will retry in next hourly cycle.`,
           };
         }
 
-        // For other errors, re-throw
+        // For other errors, re-throw to be handled by caller
         throw error;
       }
     }
