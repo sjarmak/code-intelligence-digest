@@ -397,7 +397,7 @@ async function generateNewsletterFromDigestData(
   const markdown = buildNewsletterMarkdown(byCategory2, periodLabel, summaryText);
 
   // Build HTML from markdown
-  const html = buildNewsletterHTML(markdown, summaryText);
+  const html = buildNewsletterHTML(markdown);
 
   logger.info("Newsletter passed quality filters", {
     totalDigests: digests.length,
