@@ -305,6 +305,64 @@ export async function getFeedConfig(streamId: string): Promise<FeedConfig | unde
 }
 
 /**
+ * Check if a stream ID is known (exists in the feeds cache)
+ */
+export async function isKnownFeed(streamId: string): Promise<boolean> {
+  const config = await getFeedConfig(streamId);
+  return config !== undefined;
+}
+
+/**
+ * Find unknown stream IDs from a list (feeds not in cache)
+ * Used to detect newly-added subscriptions that need cache refresh
+ */
+export async function findUnknownFeeds(streamIds: string[]): Promise<string[]> {
+  const feeds = await getFeeds();
+  const knownStreamIds = new Set(feeds.map((f) => f.streamId));
+  return streamIds.filter((id) => !knownStreamIds.has(id));
+}
+
+/**
+ * Force refresh the feeds cache from Inoreader API
+ * Call this when unknown feeds are detected to pick up new subscriptions
+ * Returns the number of new feeds discovered
+ */
+export async function forceRefreshFeedsCache(): Promise<{ total: number; newFeeds: string[] }> {
+  const oldFeeds = cachedFeeds ? [...cachedFeeds] : [];
+  const oldStreamIds = new Set(oldFeeds.map((f) => f.streamId));
+  
+  // Clear caches to force a fresh fetch
+  clearFeedsCache();
+  
+  // Also invalidate the database cache
+  try {
+    const { deleteFeedsCache } = await import('../lib/db/feeds');
+    await deleteFeedsCache();
+  } catch (error) {
+    logger.warn('[FEEDS] Could not clear database feeds cache', { error });
+  }
+  
+  // Fetch fresh from Inoreader
+  const newFeeds = await getFeeds();
+  
+  // Find newly discovered feeds
+  const newStreamIds = newFeeds
+    .filter((f) => !oldStreamIds.has(f.streamId))
+    .map((f) => f.streamId);
+  
+  if (newStreamIds.length > 0) {
+    logger.info(`[FEEDS] Discovered ${newStreamIds.length} new feeds after cache refresh`, {
+      newFeeds: newStreamIds.map((id) => {
+        const feed = newFeeds.find((f) => f.streamId === id);
+        return feed?.canonicalName || id;
+      }),
+    });
+  }
+  
+  return { total: newFeeds.length, newFeeds: newStreamIds };
+}
+
+/**
  * Get all streams for a given category
  */
 export async function getStreamsByCategory(category: Category): Promise<string[]> {

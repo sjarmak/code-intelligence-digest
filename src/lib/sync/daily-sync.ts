@@ -29,6 +29,7 @@ import { getDbClient, detectDriver, nowTimestamp } from '../db/driver';
 import { getCachedUserId, setCachedUserId } from '../db/index';
 import { incrementApiCalls } from '../db/api-budget';
 import { syncResearchFromADS } from './ads-research-sync';
+import { findUnknownFeeds, forceRefreshFeedsCache } from '../../config/feeds';
 
 interface SyncStateRow {
   id: string;
@@ -316,6 +317,33 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
           logger.info('[DAILY-SYNC] No more items to fetch (empty response)');
           hasMoreItems = false;
           break;
+        }
+
+        // Check for unknown feeds on first batch - auto-refresh cache if new subscriptions detected
+        if (batchNumber === 1) {
+          const streamIds = response.items
+            .map((item) => item.origin?.streamId)
+            .filter((id): id is string => !!id);
+          const uniqueStreamIds = [...new Set(streamIds)];
+          const unknownFeeds = await findUnknownFeeds(uniqueStreamIds);
+          
+          if (unknownFeeds.length > 0) {
+            logger.info(`[DAILY-SYNC] Detected ${unknownFeeds.length} unknown feeds - refreshing feeds cache`, {
+              unknownFeeds: unknownFeeds.slice(0, 5), // Log first 5
+            });
+            
+            try {
+              const refreshResult = await forceRefreshFeedsCache();
+              callsUsed++; // forceRefreshFeedsCache makes 1 API call
+              await incrementApiCalls(1);
+              
+              logger.info(`[DAILY-SYNC] Feeds cache refreshed: ${refreshResult.total} total, ${refreshResult.newFeeds.length} new`);
+            } catch (refreshError) {
+              logger.warn('[DAILY-SYNC] Failed to refresh feeds cache, continuing with existing cache', {
+                error: refreshError,
+              });
+            }
+          }
         }
 
         // Normalize, decompose newsletters, and categorize

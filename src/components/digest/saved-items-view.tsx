@@ -344,6 +344,17 @@ export function SavedItemsView({ selectedItemIds: externalSelectedIds, onSelecti
                 )}
               </button>
             )}
+            {!showCheckboxes && !deleteMode && items.length > 0 && (
+              <button
+                onClick={handleRemoveAll}
+                disabled={deleting}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors bg-red-50 border border-red-300 text-red-700 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                title="Clear all items from saved library"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear All
+              </button>
+            )}
             <button
               onClick={handleRefresh}
               disabled={refreshing || loading || deleting}

@@ -937,6 +937,43 @@ export async function getCachedHtmlContent(
 }
 
 /**
+ * Check if HTML content is likely a CAPTCHA or error page
+ */
+function isInvalidHtmlContent(htmlContent: string): { invalid: boolean; reason?: string } {
+  const htmlLower = htmlContent.toLowerCase();
+  
+  // Check for CAPTCHA indicators
+  if (
+    htmlLower.includes('recaptcha') ||
+    htmlLower.includes('captcha') ||
+    htmlLower.includes('challenge-platform')
+  ) {
+    return { invalid: true, reason: 'CAPTCHA page detected' };
+  }
+  
+  // Check for rate limiting
+  if (
+    htmlLower.includes('rate limit') ||
+    htmlLower.includes('too many requests') ||
+    htmlLower.includes('access denied')
+  ) {
+    return { invalid: true, reason: 'Rate limit or access denied page' };
+  }
+  
+  // Check for Cloudflare protection
+  if (htmlLower.includes('cloudflare') && htmlLower.includes('checking your browser')) {
+    return { invalid: true, reason: 'Cloudflare protection page' };
+  }
+  
+  // Check for very short content that's likely an error
+  if (htmlContent.length < 200) {
+    return { invalid: true, reason: 'Content too short' };
+  }
+  
+  return { invalid: false };
+}
+
+/**
  * Cache HTML content for a paper, along with parsed sections and figures
  */
 export async function cacheHtmlContent(
@@ -945,6 +982,17 @@ export async function cacheHtmlContent(
   sections?: Array<{ id: string; title: string; level: number }>,
   figures?: Array<{ id: string; src: string; caption: string }>
 ): Promise<boolean> {
+  // Validate content before caching
+  const validation = isInvalidHtmlContent(htmlContent);
+  if (validation.invalid) {
+    logger.warn('Refusing to cache invalid HTML content', {
+      bibcode,
+      reason: validation.reason,
+      contentLength: htmlContent.length,
+    });
+    return false;
+  }
+
   const { detectDriver, getDbClient } = await import('./driver');
   const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);

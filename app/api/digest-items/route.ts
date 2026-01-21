@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getDigestItems, addToDigestItems, removeFromDigestItems, removeMultipleFromDigestItems, removeAllFromDigestItems } from "@/src/lib/db/digestItems";
+import { getDigestItems, addToDigestItems, addMultipleToDigestItems, removeFromDigestItems, removeMultipleFromDigestItems, removeAllFromDigestItems } from "@/src/lib/db/digestItems";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { logger } from "@/src/lib/logger";
 
@@ -36,6 +36,19 @@ export async function POST(request: NextRequest) {
   try {
     await initializeDatabase();
     const body = await request.json();
+    
+    // Handle bulk add
+    if (Array.isArray(body.itemIds) && body.itemIds.length > 0) {
+      const result = await addMultipleToDigestItems(body.itemIds);
+      return NextResponse.json({ 
+        success: true, 
+        message: `${result.success} items added${result.failed > 0 ? `, ${result.failed} failed` : ''}`,
+        added: result.success,
+        failed: result.failed
+      });
+    }
+
+    // Handle single item add
     const { itemId } = body;
 
     if (!itemId || typeof itemId !== "string") {

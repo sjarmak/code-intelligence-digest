@@ -130,6 +130,26 @@ export async function fetchAr5ivHtml(arxivId: string): Promise<string> {
         continue; // Try next URL
       }
 
+      // Check for CAPTCHA or rate limiting pages
+      if (
+        htmlLower.includes('recaptcha') ||
+        htmlLower.includes('captcha') ||
+        htmlLower.includes('rate limit') ||
+        htmlLower.includes('too many requests') ||
+        htmlLower.includes('access denied') ||
+        htmlLower.includes('please verify') ||
+        htmlLower.includes('cloudflare') ||
+        htmlLower.includes('challenge-platform')
+      ) {
+        logger.warn('HTML returned CAPTCHA/rate limit page, trying next source', {
+          arxivId,
+          url,
+          htmlLength: html.length,
+        });
+        lastError = new Error('HTML returned CAPTCHA or rate limit page - please try again later');
+        continue; // Try next URL
+      }
+
       // Check if we got redirected to abstract page (for ar5iv URLs)
       if (url.includes('ar5iv') && (htmlLower.includes('arxiv.org/abs/') || html.includes('submission history'))) {
         logger.warn('ar5iv redirected to abstract page, trying next source', {

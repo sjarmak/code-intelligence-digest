@@ -48,6 +48,27 @@ export async function addToDigestItems(itemId: string): Promise<void> {
 }
 
 /**
+ * Add multiple items to digest items library
+ */
+export async function addMultipleToDigestItems(itemIds: string[]): Promise<{ success: number; failed: number }> {
+  let success = 0;
+  let failed = 0;
+
+  for (const itemId of itemIds) {
+    try {
+      await addToDigestItems(itemId);
+      success++;
+    } catch (error) {
+      logger.error(`Failed to add item ${itemId} to digest items library`, error);
+      failed++;
+    }
+  }
+
+  logger.debug(`Added ${success} items to digest items library (${failed} failed)`);
+  return { success, failed };
+}
+
+/**
  * Remove item from digest items library
  */
 export async function removeFromDigestItems(itemId: string): Promise<void> {

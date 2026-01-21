@@ -48,6 +48,27 @@ export async function addToSavedItems(itemId: string): Promise<void> {
 }
 
 /**
+ * Add multiple items to saved items library
+ */
+export async function addMultipleToSavedItems(itemIds: string[]): Promise<{ success: number; failed: number }> {
+  let success = 0;
+  let failed = 0;
+
+  for (const itemId of itemIds) {
+    try {
+      await addToSavedItems(itemId);
+      success++;
+    } catch (error) {
+      logger.error(`Failed to add item ${itemId} to saved items library`, error);
+      failed++;
+    }
+  }
+
+  logger.debug(`Added ${success} items to saved items library (${failed} failed)`);
+  return { success, failed };
+}
+
+/**
  * Remove item from saved items library
  */
 export async function removeFromSavedItems(itemId: string): Promise<void> {

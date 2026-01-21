@@ -21,6 +21,7 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
   const [savedItems, setSavedItems] = useState<FeedItem[]>([]);
   const [digestItems, setDigestItems] = useState<FeedItem[]>([]);
   const [expandedLibrary, setExpandedLibrary] = useState<'saved-items' | 'digest-items' | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   // Fetch saved items
   const fetchSavedItems = useCallback(async () => {
@@ -126,6 +127,46 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
     }
   };
 
+  const handleClearAllSavedItems = async () => {
+    if (!confirm(`Are you sure you want to remove ALL ${savedItems.length} items from the Saved Items library? This cannot be undone.`)) {
+      return;
+    }
+    setClearing(true);
+    try {
+      const response = await fetch('/api/saved-items?all=true', {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        window.dispatchEvent(new CustomEvent('saved-items-changed'));
+        await fetchSavedItems();
+      }
+    } catch (err) {
+      console.error('Failed to clear saved items:', err);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const handleClearAllDigestItems = async () => {
+    if (!confirm(`Are you sure you want to remove ALL ${digestItems.length} items from the Digest Items library? This cannot be undone.`)) {
+      return;
+    }
+    setClearing(true);
+    try {
+      const response = await fetch('/api/digest-items?all=true', {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        window.dispatchEvent(new CustomEvent('digest-items-changed'));
+        await fetchDigestItems();
+      }
+    } catch (err) {
+      console.error('Failed to clear digest items:', err);
+    } finally {
+      setClearing(false);
+    }
+  };
+
   const formatDate = (dateString: string | Date): string => {
     const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
     return date.toLocaleDateString();
@@ -169,6 +210,20 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
               </p>
             </div>
           </button>
+          {savedItems.length > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClearAllSavedItems();
+              }}
+              disabled={clearing}
+              title="Clear all items from saved library"
+              className="text-xs px-2 py-1 rounded bg-red-50 text-red-700 border border-red-300 hover:bg-red-100 transition-colors whitespace-nowrap flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Trash2 className="w-3 h-3" />
+              Clear All
+            </button>
+          )}
           {onSelectLibraryForQA && savedItems.length > 0 && (
             <button
               onClick={(e) => {
@@ -274,6 +329,20 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
               </p>
             </div>
           </button>
+          {digestItems.length > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClearAllDigestItems();
+              }}
+              disabled={clearing}
+              title="Clear all items from digest library"
+              className="text-xs px-2 py-1 rounded bg-red-50 text-red-700 border border-red-300 hover:bg-red-100 transition-colors whitespace-nowrap flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Trash2 className="w-3 h-3" />
+              Clear All
+            </button>
+          )}
           {onSelectLibraryForQA && digestItems.length > 0 && (
             <button
               onClick={(e) => {

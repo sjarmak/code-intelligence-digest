@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Plus, BookOpen, FileText, Bookmark, FolderHeart, FileHeart } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, BookOpen, FileText, Bookmark, FolderHeart, FileHeart, Trash2, RefreshCw, AlertCircle, CheckSquare, Square, X } from 'lucide-react';
 import { PaperReaderModal } from './paper-reader-modal';
 
 interface LibraryItemMetadata {
@@ -55,6 +55,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(new Set());
   const [processingBibcode, setProcessingBibcode] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
+  const [refreshingBibcode, setRefreshingBibcode] = useState<string | null>(null);
+  const [removingBibcode, setRemovingBibcode] = useState<string | null>(null);
 
   // Library status for saved/digest items
   const [itemIdMap, setItemIdMap] = useState<Map<string, string>>(new Map()); // bibcode -> itemId
@@ -65,6 +67,11 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const [readerOpen, setReaderOpen] = useState(false);
   const [readerBibcode, setReaderBibcode] = useState<string | null>(null);
   const [readerTitle, setReaderTitle] = useState<string | undefined>();
+
+  // Selection mode state for bulk add
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedBibcodes, setSelectedBibcodes] = useState<Set<string>>(new Set());
+  const [bulkAdding, setBulkAdding] = useState(false);
 
   // Get all papers in current library for navigation
   const getCurrentLibraryPapers = useCallback(() => {
@@ -294,6 +301,151 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       return next;
     });
   }, [findItemIdForPaper]);
+
+  // Get all visible papers in the currently expanded library
+  const getVisiblePapers = useCallback(() => {
+    if (!expandedLibrary || !libraryData[expandedLibrary]) return [];
+    return libraryData[expandedLibrary].items;
+  }, [expandedLibrary, libraryData]);
+
+  // Toggle selection for a paper
+  const handleToggleSelection = (bibcode: string) => {
+    setSelectedBibcodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(bibcode)) {
+        next.delete(bibcode);
+      } else {
+        next.add(bibcode);
+      }
+      return next;
+    });
+  };
+
+  // Select all papers in current library
+  const handleSelectAll = () => {
+    const papers = getVisiblePapers();
+    setSelectedBibcodes(new Set(papers.map(p => p.bibcode)));
+  };
+
+  // Deselect all papers
+  const handleDeselectAll = () => {
+    setSelectedBibcodes(new Set());
+  };
+
+  // Toggle select mode
+  const handleToggleSelectMode = () => {
+    setSelectMode(!selectMode);
+    if (selectMode) {
+      setSelectedBibcodes(new Set());
+    }
+  };
+
+  // Bulk add to digest items
+  const handleBulkAddToDigest = async (bibcodes?: string[]) => {
+    const targetBibcodes = bibcodes || Array.from(selectedBibcodes);
+    if (targetBibcodes.length === 0) return;
+
+    setBulkAdding(true);
+    try {
+      // Convert bibcodes to itemIds
+      const itemIds = targetBibcodes.map(bibcode => itemIdMap.get(bibcode) || `ads:${bibcode}`);
+      
+      const response = await fetch('/api/digest-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemIds }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to add items to digest');
+      }
+
+      const result = await response.json();
+      
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('digest-items-changed'));
+      
+      // Reload library status for added papers
+      const papers = getVisiblePapers().filter(p => targetBibcodes.includes(p.bibcode));
+      await loadLibraryStatusForPapers(papers);
+      
+      // Clear selection after successful add
+      if (!bibcodes) {
+        setSelectedBibcodes(new Set());
+        setSelectMode(false);
+      }
+      
+      alert(`Added ${result.added || targetBibcodes.length} items to digest library`);
+    } catch (error) {
+      console.error('Failed to bulk add to digest:', error);
+      alert('Failed to add items to digest library');
+    } finally {
+      setBulkAdding(false);
+    }
+  };
+
+  // Bulk add to saved items
+  const handleBulkAddToSaved = async (bibcodes?: string[]) => {
+    const targetBibcodes = bibcodes || Array.from(selectedBibcodes);
+    if (targetBibcodes.length === 0) return;
+
+    setBulkAdding(true);
+    try {
+      // Convert bibcodes to itemIds
+      const itemIds = targetBibcodes.map(bibcode => itemIdMap.get(bibcode) || `ads:${bibcode}`);
+      
+      const response = await fetch('/api/saved-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemIds }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to add items to saved');
+      }
+
+      const result = await response.json();
+      
+      // Dispatch event to notify other components
+      window.dispatchEvent(new CustomEvent('saved-items-changed'));
+      
+      // Reload library status for added papers
+      const papers = getVisiblePapers().filter(p => targetBibcodes.includes(p.bibcode));
+      await loadLibraryStatusForPapers(papers);
+      
+      // Clear selection after successful add
+      if (!bibcodes) {
+        setSelectedBibcodes(new Set());
+        setSelectMode(false);
+      }
+      
+      alert(`Added ${result.added || targetBibcodes.length} items to saved library`);
+    } catch (error) {
+      console.error('Failed to bulk add to saved:', error);
+      alert('Failed to add items to saved library');
+    } finally {
+      setBulkAdding(false);
+    }
+  };
+
+  // Add all papers from current library
+  const handleAddAllToDigest = () => {
+    const papers = getVisiblePapers();
+    if (papers.length === 0) return;
+    
+    if (!confirm(`Add all ${papers.length} papers from this library to Digest Items?`)) return;
+    
+    handleBulkAddToDigest(papers.map(p => p.bibcode));
+  };
+
+  const handleAddAllToSaved = () => {
+    const papers = getVisiblePapers();
+    if (papers.length === 0) return;
+    
+    if (!confirm(`Add all ${papers.length} papers from this library to Saved Items?`)) return;
+    
+    handleBulkAddToSaved(papers.map(p => p.bibcode));
+  };
 
   // Toggle saved items
   const handleToggleSavedItems = async (bibcode: string) => {
@@ -597,17 +749,120 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
 
           {expandedLibrary === 'Bookmarked' && (
             <div className="border-t border-yellow-300 p-4 bg-white">
+              {/* Bulk action toolbar */}
+              <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleToggleSelectMode}
+                    disabled={bulkAdding}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-md ${
+                      selectMode
+                        ? 'bg-blue-100 border border-blue-300 text-blue-700'
+                        : 'bg-white border border-gray-300 text-black hover:bg-gray-50'
+                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                    title={selectMode ? 'Exit select mode' : 'Enter select mode'}
+                  >
+                    {selectMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5" />}
+                    {selectMode ? 'Cancel' : 'Select'}
+                  </button>
+                  {selectMode && (
+                    <>
+                      <button
+                        onClick={selectedBibcodes.size === bookmarkedLibrary.items.length ? handleDeselectAll : handleSelectAll}
+                        disabled={bulkAdding}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-white border border-gray-300 text-black hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                      >
+                        {selectedBibcodes.size === bookmarkedLibrary.items.length ? (
+                          <><CheckSquare className="w-3.5 h-3.5" /> Deselect All</>
+                        ) : (
+                          <><Square className="w-3.5 h-3.5" /> Select All</>
+                        )}
+                      </button>
+                      {selectedBibcodes.size > 0 && (
+                        <>
+                          <button
+                            onClick={() => handleBulkAddToDigest()}
+                            disabled={bulkAdding}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-purple-50 border border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                            title="Add selected to digest items"
+                          >
+                            <FileHeart className="w-3.5 h-3.5" />
+                            Add {selectedBibcodes.size} to Digest
+                          </button>
+                          <button
+                            onClick={() => handleBulkAddToSaved()}
+                            disabled={bulkAdding}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-yellow-50 border border-yellow-300 text-yellow-700 hover:bg-yellow-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                            title="Add selected to saved items"
+                          >
+                            <FolderHeart className="w-3.5 h-3.5" />
+                            Add {selectedBibcodes.size} to Saved
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+                {!selectMode && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleAddAllToDigest}
+                      disabled={bulkAdding || bookmarkedLibrary.items.length === 0}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-purple-50 border border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                      title="Add all papers to digest items"
+                    >
+                      <FileHeart className="w-3.5 h-3.5" />
+                      Add All to Digest
+                    </button>
+                    <button
+                      onClick={handleAddAllToSaved}
+                      disabled={bulkAdding || bookmarkedLibrary.items.length === 0}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-yellow-50 border border-yellow-300 text-yellow-700 hover:bg-yellow-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                      title="Add all papers to saved items"
+                    >
+                      <FolderHeart className="w-3.5 h-3.5" />
+                      Add All to Saved
+                    </button>
+                  </div>
+                )}
+              </div>
               <div className="space-y-2">
-                {bookmarkedLibrary.items.map((item) => (
+                {bookmarkedLibrary.items.map((item) => {
+                  const hasNoTitle = !item.title || item.title === item.bibcode;
+                  const isRefreshing = refreshingBibcode === item.bibcode;
+                  const isRemoving = removingBibcode === item.bibcode;
+                  const isSelected = selectedBibcodes.has(item.bibcode);
+                  
+                  return (
                   <div
                     key={item.bibcode}
-                    className="flex items-start justify-between p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-colors group"
+                    className={`flex items-start justify-between p-3 border rounded-lg hover:bg-gray-50 transition-colors group ${
+                      hasNoTitle ? 'border-amber-300 bg-amber-50/50' : isSelected ? 'border-blue-400 bg-blue-50/50' : 'border-gray-200 hover:border-gray-300'
+                    }`}
                   >
+                    {selectMode && (
+                      <button
+                        onClick={() => handleToggleSelection(item.bibcode)}
+                        className="mr-3 mt-1 flex-shrink-0"
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="w-5 h-5 text-blue-600" />
+                        ) : (
+                          <Square className="w-5 h-5 text-gray-400" />
+                        )}
+                      </button>
+                    )}
                     <div className="flex-1 min-w-0">
                       <button
-                        onClick={() => openReader(item.bibcode, item.title)}
+                        onClick={() => selectMode ? handleToggleSelection(item.bibcode) : openReader(item.bibcode, item.title)}
                         className="text-left w-full"
                       >
+                        {hasNoTitle && (
+                          <div className="flex items-center gap-1.5 mb-1 text-amber-600">
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            <span className="text-xs">Metadata may be incomplete - try refreshing</span>
+                          </div>
+                        )}
                         <h4 className="font-medium text-black hover:text-gray-700 transition-colors line-clamp-2">
                           {item.title || item.bibcode}
                         </h4>
@@ -619,8 +874,44 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                         )}
                       </button>
                     </div>
-                    <div className="flex items-center gap-2 ml-4">
-                      {/* Saved items library button - always show for research papers */}
+                    <div className="flex items-center gap-1.5 ml-4">
+                      {/* Refresh metadata button */}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          setRefreshingBibcode(item.bibcode);
+                          try {
+                            // Clear cache and refetch
+                            await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/clear-cache`, {
+                              method: 'POST',
+                            });
+                            // Trigger a refetch of metadata
+                            await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}`);
+                            // Refresh the bookmarked list
+                            const updated = await fetchBookmarkedPapers();
+                            if (updated) {
+                              setLibraryData(prev => ({
+                                ...prev,
+                                'Bookmarked': updated,
+                              }));
+                            }
+                          } catch (err) {
+                            console.error('Failed to refresh paper:', err);
+                          } finally {
+                            setRefreshingBibcode(null);
+                          }
+                        }}
+                        disabled={isRefreshing}
+                        className={`p-1.5 rounded transition-colors ${
+                          isRefreshing
+                            ? 'text-blue-400 animate-spin'
+                            : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                        }`}
+                        title="Refresh paper metadata"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                      {/* Saved items library button */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -636,7 +927,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                       >
                         <FolderHeart className="w-4 h-4" />
                       </button>
-                      {/* Digest items library button - always show for research papers */}
+                      {/* Digest items library button */}
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -652,37 +943,44 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                       >
                         <FileHeart className="w-4 h-4" />
                       </button>
+                      {/* Remove from bookmarks button - more prominent */}
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
-                          try {
-                            const response = await fetch('/api/papers/favorites', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ bibcode: item.bibcode, favorite: false }),
-                            });
-                            if (response.ok) {
-                              // Refresh bookmarked papers
-                              const updated = await fetchBookmarkedPapers();
-                              if (updated) {
-                                setLibraryData(prev => ({
-                                  ...prev,
-                                  'Bookmarked': updated,
-                                }));
-                                if (expandedLibrary === 'Bookmarked') {
-                                  setExpandedLibrary(null);
-                                  setTimeout(() => setExpandedLibrary('Bookmarked'), 100);
+                          if (window.confirm(`Remove "${item.title || item.bibcode}" from bookmarks?`)) {
+                            setRemovingBibcode(item.bibcode);
+                            try {
+                              const response = await fetch('/api/papers/favorites', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ bibcode: item.bibcode, favorite: false }),
+                              });
+                              if (response.ok) {
+                                // Refresh bookmarked papers
+                                const updated = await fetchBookmarkedPapers();
+                                if (updated) {
+                                  setLibraryData(prev => ({
+                                    ...prev,
+                                    'Bookmarked': updated,
+                                  }));
                                 }
                               }
+                            } catch (err) {
+                              console.error('Failed to remove bookmark:', err);
+                            } finally {
+                              setRemovingBibcode(null);
                             }
-                          } catch (err) {
-                            console.error('Failed to remove bookmark:', err);
                           }
                         }}
-                        className="p-1.5 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-100 rounded transition-colors"
-                        title="Remove bookmark"
+                        disabled={isRemoving}
+                        className={`p-1.5 rounded transition-colors ${
+                          isRemoving
+                            ? 'text-red-400 opacity-50'
+                            : 'text-red-500 hover:text-red-600 hover:bg-red-50'
+                        }`}
+                        title="Remove from bookmarks"
                       >
-                        <Bookmark className="w-4 h-4 fill-current" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                       {onAddPaperToQA && (
                         <button
@@ -695,7 +993,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -756,14 +1055,107 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                     </div>
                   ) : data ? (
                     <>
+                      {/* Bulk action toolbar */}
+                      <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleToggleSelectMode}
+                            disabled={bulkAdding}
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-md ${
+                              selectMode
+                                ? 'bg-blue-100 border border-blue-300 text-blue-700'
+                                : 'bg-white border border-gray-300 text-black hover:bg-gray-50'
+                            } disabled:opacity-50 disabled:cursor-not-allowed`}
+                            title={selectMode ? 'Exit select mode' : 'Enter select mode'}
+                          >
+                            {selectMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5" />}
+                            {selectMode ? 'Cancel' : 'Select'}
+                          </button>
+                          {selectMode && (
+                            <>
+                              <button
+                                onClick={selectedBibcodes.size === items.length ? handleDeselectAll : handleSelectAll}
+                                disabled={bulkAdding}
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-white border border-gray-300 text-black hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                              >
+                                {selectedBibcodes.size === items.length ? (
+                                  <><CheckSquare className="w-3.5 h-3.5" /> Deselect All</>
+                                ) : (
+                                  <><Square className="w-3.5 h-3.5" /> Select All</>
+                                )}
+                              </button>
+                              {selectedBibcodes.size > 0 && (
+                                <>
+                                  <button
+                                    onClick={() => handleBulkAddToDigest()}
+                                    disabled={bulkAdding}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-purple-50 border border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                                    title="Add selected to digest items"
+                                  >
+                                    <FileHeart className="w-3.5 h-3.5" />
+                                    Add {selectedBibcodes.size} to Digest
+                                  </button>
+                                  <button
+                                    onClick={() => handleBulkAddToSaved()}
+                                    disabled={bulkAdding}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-yellow-50 border border-yellow-300 text-yellow-700 hover:bg-yellow-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                                    title="Add selected to saved items"
+                                  >
+                                    <FolderHeart className="w-3.5 h-3.5" />
+                                    Add {selectedBibcodes.size} to Saved
+                                  </button>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        {!selectMode && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={handleAddAllToDigest}
+                              disabled={bulkAdding || items.length === 0}
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-purple-50 border border-purple-300 text-purple-700 hover:bg-purple-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                              title="Add all papers to digest items"
+                            >
+                              <FileHeart className="w-3.5 h-3.5" />
+                              Add All to Digest
+                            </button>
+                            <button
+                              onClick={handleAddAllToSaved}
+                              disabled={bulkAdding || items.length === 0}
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors bg-yellow-50 border border-yellow-300 text-yellow-700 hover:bg-yellow-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                              title="Add all papers to saved items"
+                            >
+                              <FolderHeart className="w-3.5 h-3.5" />
+                              Add All to Saved
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       {items.length > 0 ? (
-                        items.map((item) => (
+                        items.map((item) => {
+                          const isSelected = selectedBibcodes.has(item.bibcode);
+                          return (
                           <div
                             key={item.bibcode}
-                            className="border border-surface-border rounded-lg overflow-hidden bg-surface hover:border-gray-400/50 transition-colors"
+                            className={`border rounded-lg overflow-hidden bg-surface transition-colors ${
+                              isSelected ? 'border-blue-400 bg-blue-50/30' : 'border-surface-border hover:border-gray-400/50'
+                            }`}
                           >
                             <div className="p-4 pb-3">
                               <div className="flex items-start justify-between gap-4">
+                                {selectMode && (
+                                  <button
+                                    onClick={() => handleToggleSelection(item.bibcode)}
+                                    className="mt-1 flex-shrink-0"
+                                  >
+                                    {isSelected ? (
+                                      <CheckSquare className="w-5 h-5 text-blue-600" />
+                                    ) : (
+                                      <Square className="w-5 h-5 text-gray-400" />
+                                    )}
+                                  </button>
+                                )}
                                 <div className="flex-1 min-w-0">
                                   {item.title ? (
                                     <a
@@ -948,7 +1340,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                               </div>
                             )}
                           </div>
-                        ))
+                        );
+                        })
                       ) : (
                         <div className="text-center text-muted py-4">No papers in this library</div>
                       )}
