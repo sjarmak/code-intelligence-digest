@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getPaper, getLibraryPapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
+import { getPaper, getLibraryPapers, getFavoritePapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
 import { getSavedItems } from '@/src/lib/db/savedItems';
 import { getDigestItems } from '@/src/lib/db/digestItems';
@@ -152,6 +152,14 @@ export async function POST(request: NextRequest) {
         const token = process.env.ADS_API_TOKEN;
 
         for (const libId of effectiveLibraryIds) {
+          // Handle 'bookmarked' library specially - uses is_favorite flag, not junction table
+          if (libId === 'bookmarked') {
+            const favoritePapers = await getFavoritePapers(limit);
+            logger.info('Fetched bookmarked papers', { count: favoritePapers.length });
+            allPapers.push(...favoritePapers);
+            continue;
+          }
+
           // First try to get papers from database
           let libPapers = await getLibraryPapers(libId, limit);
 
