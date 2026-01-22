@@ -21,11 +21,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runDailySync } from '@/src/lib/sync/daily-sync';
 import { logger } from '@/src/lib/logger';
-import { blockInProduction } from '@/src/lib/auth/guards';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
+  // Note: This endpoint requires authentication via middleware (cookie-based auth)
+  // No blockInProduction since authenticated users should be able to catch up
 
   try {
     const searchParams = request.nextUrl.searchParams;
