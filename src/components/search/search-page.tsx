@@ -28,7 +28,7 @@ export default function SearchPage() {
       const params = new URLSearchParams({
         q: query,
         period: period,
-        limit: '20',
+        limit: '100', // Increased from 20 to show more results
       });
 
       if (category) {
