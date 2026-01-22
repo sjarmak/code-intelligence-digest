@@ -135,10 +135,10 @@ async function computeSemanticScores(
         );
       }
 
-      // Prepare items for batch generation
+      // Prepare items for batch generation - include sourceTitle for source context
       const itemsForBatch = itemsToProcess.map((item) => {
         const fullText = hasFullText(item) ? item.fullText.substring(0, 2000) : "";
-        const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
+        const text = `${item.title} ${item.sourceTitle || ""} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
         return {
           id: item.id,
           text: text || item.title,
@@ -249,10 +249,10 @@ export async function semanticSearch(
         );
       }
 
-      // Prepare items for batch generation
+      // Prepare items for batch generation - include sourceTitle for source context
       const itemsForBatch = itemsToProcess.map((item) => {
         const fullText = hasFullText(item) ? item.fullText.substring(0, 2000) : "";
-        const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
+        const text = `${item.title} ${item.sourceTitle || ""} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
         return {
           id: item.id,
           text: text || item.title,
@@ -389,7 +389,8 @@ export async function keywordSearch(
       const title = item.title.toLowerCase();
       // Include full text if available (first 5000 chars for better matching)
       const fullText = hasFullText(item) ? item.fullText.substring(0, 5000).toLowerCase() : "";
-      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
+      // Include sourceTitle to match source/feed names (e.g., "Sourcegraph" Twitter feed)
+      const text = `${item.title} ${item.sourceTitle || ""} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
 
       let score = 0;
 
