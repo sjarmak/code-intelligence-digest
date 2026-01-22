@@ -211,29 +211,51 @@ export async function initializeAnnotationTables() {
 /**
  * Create a new annotation
  */
-export function createAnnotation(input: CreateAnnotationInput): PaperAnnotation {
-  const db = getSqlite();
+export async function createAnnotation(input: CreateAnnotationInput): Promise<PaperAnnotation> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
   const id = randomUUID();
   const now = Math.floor(Date.now() / 1000);
 
-  const stmt = db.prepare(`
-    INSERT INTO paper_annotations (
-      id, bibcode, type, content, note, start_offset, end_offset, section_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    await client.run(`
+      INSERT INTO paper_annotations (
+        id, bibcode, type, content, note, start_offset, end_offset, section_id, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `, [
+      id,
+      input.bibcode,
+      input.type,
+      input.content,
+      input.note ?? null,
+      input.startOffset ?? null,
+      input.endOffset ?? null,
+      input.sectionId ?? null,
+      now,
+      now
+    ]);
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      INSERT INTO paper_annotations (
+        id, bibcode, type, content, note, start_offset, end_offset, section_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
 
-  stmt.run(
-    id,
-    input.bibcode,
-    input.type,
-    input.content,
-    input.note ?? null,
-    input.startOffset ?? null,
-    input.endOffset ?? null,
-    input.sectionId ?? null,
-    now,
-    now
-  );
+    stmt.run(
+      id,
+      input.bibcode,
+      input.type,
+      input.content,
+      input.note ?? null,
+      input.startOffset ?? null,
+      input.endOffset ?? null,
+      input.sectionId ?? null,
+      now,
+      now
+    );
+  }
 
   logger.info('Annotation created', { id, bibcode: input.bibcode, type: input.type });
 
@@ -254,108 +276,196 @@ export function createAnnotation(input: CreateAnnotationInput): PaperAnnotation 
 /**
  * Get all annotations for a paper
  */
-export function getAnnotations(bibcode: string): PaperAnnotation[] {
-  const db = getSqlite();
+export async function getAnnotations(bibcode: string): Promise<PaperAnnotation[]> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT
-      id, bibcode, type, content, note,
-      start_offset as startOffset, end_offset as endOffset,
-      section_id as sectionId, created_at as createdAt, updated_at as updatedAt
-    FROM paper_annotations
-    WHERE bibcode = ?
-    ORDER BY created_at DESC
-  `);
-
-  return stmt.all(bibcode) as PaperAnnotation[];
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT
+        id, bibcode, type, content, note,
+        start_offset as "startOffset", end_offset as "endOffset",
+        section_id as "sectionId", created_at as "createdAt", updated_at as "updatedAt"
+      FROM paper_annotations
+      WHERE bibcode = $1
+      ORDER BY created_at DESC
+    `, [bibcode]);
+    return result.rows as unknown as PaperAnnotation[];
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT
+        id, bibcode, type, content, note,
+        start_offset as startOffset, end_offset as endOffset,
+        section_id as sectionId, created_at as createdAt, updated_at as updatedAt
+      FROM paper_annotations
+      WHERE bibcode = ?
+      ORDER BY created_at DESC
+    `);
+    return stmt.all(bibcode) as PaperAnnotation[];
+  }
 }
 
 /**
  * Get a single annotation by ID
  */
-export function getAnnotation(id: string): PaperAnnotation | null {
-  const db = getSqlite();
+export async function getAnnotation(id: string): Promise<PaperAnnotation | null> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT
-      id, bibcode, type, content, note,
-      start_offset as startOffset, end_offset as endOffset,
-      section_id as sectionId, created_at as createdAt, updated_at as updatedAt
-    FROM paper_annotations
-    WHERE id = ?
-  `);
-
-  return (stmt.get(id) as PaperAnnotation) ?? null;
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT
+        id, bibcode, type, content, note,
+        start_offset as "startOffset", end_offset as "endOffset",
+        section_id as "sectionId", created_at as "createdAt", updated_at as "updatedAt"
+      FROM paper_annotations
+      WHERE id = $1
+    `, [id]);
+    return (result.rows[0] as unknown as PaperAnnotation) ?? null;
+  } else {
+    const db = getSqlite();
+    const stmt = db.prepare(`
+      SELECT
+        id, bibcode, type, content, note,
+        start_offset as startOffset, end_offset as endOffset,
+        section_id as sectionId, created_at as createdAt, updated_at as updatedAt
+      FROM paper_annotations
+      WHERE id = ?
+    `);
+    return (stmt.get(id) as PaperAnnotation) ?? null;
+  }
 }
 
 /**
  * Update an annotation
  */
-export function updateAnnotation(
+export async function updateAnnotation(
   id: string,
   updates: Partial<Pick<PaperAnnotation, 'content' | 'note'>>
-): PaperAnnotation | null {
-  const db = getSqlite();
+): Promise<PaperAnnotation | null> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
 
-  const setClauses: string[] = ['updated_at = ?'];
-  const values: (string | number | null)[] = [now];
+  if (driver === 'postgres') {
+    const setClauses: string[] = ['updated_at = $1'];
+    const values: (string | number | null)[] = [now];
+    let paramIndex = 2;
 
-  if (updates.content !== undefined) {
-    setClauses.push('content = ?');
-    values.push(updates.content);
+    if (updates.content !== undefined) {
+      setClauses.push(`content = $${paramIndex++}`);
+      values.push(updates.content);
+    }
+    if (updates.note !== undefined) {
+      setClauses.push(`note = $${paramIndex++}`);
+      values.push(updates.note);
+    }
+
+    values.push(id);
+
+    const client = await getDbClient();
+    const result = await client.run(`
+      UPDATE paper_annotations
+      SET ${setClauses.join(', ')}
+      WHERE id = $${paramIndex}
+    `, values);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    logger.info('Annotation updated', { id });
+    return getAnnotation(id);
+  } else {
+    const db = getSqlite();
+
+    const setClauses: string[] = ['updated_at = ?'];
+    const values: (string | number | null)[] = [now];
+
+    if (updates.content !== undefined) {
+      setClauses.push('content = ?');
+      values.push(updates.content);
+    }
+    if (updates.note !== undefined) {
+      setClauses.push('note = ?');
+      values.push(updates.note);
+    }
+
+    values.push(id);
+
+    const stmt = db.prepare(`
+      UPDATE paper_annotations
+      SET ${setClauses.join(', ')}
+      WHERE id = ?
+    `);
+
+    const result = stmt.run(...values);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    logger.info('Annotation updated', { id });
+    return getAnnotation(id);
   }
-  if (updates.note !== undefined) {
-    setClauses.push('note = ?');
-    values.push(updates.note);
-  }
-
-  values.push(id);
-
-  const stmt = db.prepare(`
-    UPDATE paper_annotations
-    SET ${setClauses.join(', ')}
-    WHERE id = ?
-  `);
-
-  const result = stmt.run(...values);
-
-  if (result.changes === 0) {
-    return null;
-  }
-
-  logger.info('Annotation updated', { id });
-  return getAnnotation(id);
 }
 
 /**
  * Delete an annotation
  */
-export function deleteAnnotation(id: string): boolean {
-  const db = getSqlite();
+export async function deleteAnnotation(id: string): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`DELETE FROM paper_annotations WHERE id = ?`);
-  const result = stmt.run(id);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.run(`DELETE FROM paper_annotations WHERE id = $1`, [id]);
 
-  if (result.changes > 0) {
-    logger.info('Annotation deleted', { id });
-    return true;
+    if (result.changes > 0) {
+      logger.info('Annotation deleted', { id });
+      return true;
+    }
+    return false;
+  } else {
+    const db = getSqlite();
+
+    const stmt = db.prepare(`DELETE FROM paper_annotations WHERE id = ?`);
+    const result = stmt.run(id);
+
+    if (result.changes > 0) {
+      logger.info('Annotation deleted', { id });
+      return true;
+    }
+    return false;
   }
-  return false;
 }
 
 /**
  * Get annotation count for a paper
  */
-export function getAnnotationCount(bibcode: string): number {
-  const db = getSqlite();
+export async function getAnnotationCount(bibcode: string): Promise<number> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT COUNT(*) as count FROM paper_annotations WHERE bibcode = ?
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT COUNT(*) as count FROM paper_annotations WHERE bibcode = $1
+    `, [bibcode]);
+    return parseInt(String(result.rows[0]?.count ?? '0'), 10);
+  } else {
+    const db = getSqlite();
 
-  const result = stmt.get(bibcode) as { count: number };
-  return result.count;
+    const stmt = db.prepare(`
+      SELECT COUNT(*) as count FROM paper_annotations WHERE bibcode = ?
+    `);
+
+    const result = stmt.get(bibcode) as { count: number };
+    return result.count;
+  }
 }
 
 // ========== Tag Operations ==========
@@ -812,36 +922,65 @@ export async function getFavoritePapers(): Promise<string[]> {
 /**
  * Get paper-level notes
  */
-export function getPaperNotes(bibcode: string): string | null {
-  const db = getSqlite();
+export async function getPaperNotes(bibcode: string): Promise<string | null> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    SELECT paper_notes FROM ads_papers WHERE bibcode = ?
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.query(`
+      SELECT paper_notes FROM ads_papers WHERE bibcode = $1
+    `, [bibcode]);
+    return (result.rows[0] as { paper_notes: string | null } | undefined)?.paper_notes ?? null;
+  } else {
+    const db = getSqlite();
 
-  const result = stmt.get(bibcode) as { paper_notes: string | null } | undefined;
-  return result?.paper_notes ?? null;
+    const stmt = db.prepare(`
+      SELECT paper_notes FROM ads_papers WHERE bibcode = ?
+    `);
+
+    const result = stmt.get(bibcode) as { paper_notes: string | null } | undefined;
+    return result?.paper_notes ?? null;
+  }
 }
 
 /**
  * Update paper-level notes
  */
-export function updatePaperNotes(bibcode: string, notes: string | null): boolean {
-  const db = getSqlite();
+export async function updatePaperNotes(bibcode: string, notes: string | null): Promise<boolean> {
+  const { detectDriver, getDbClient } = await import('./driver');
+  const driver = detectDriver();
 
-  const stmt = db.prepare(`
-    UPDATE ads_papers
-    SET paper_notes = ?, updated_at = strftime('%s', 'now')
-    WHERE bibcode = ?
-  `);
+  if (driver === 'postgres') {
+    const client = await getDbClient();
+    const result = await client.run(`
+      UPDATE ads_papers
+      SET paper_notes = $1, updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
+      WHERE bibcode = $2
+    `, [notes, bibcode]);
 
-  const result = stmt.run(notes, bibcode);
+    if (result.changes > 0) {
+      logger.info('Paper notes updated', { bibcode });
+      return true;
+    }
+    return false;
+  } else {
+    const db = getSqlite();
 
-  if (result.changes > 0) {
-    logger.info('Paper notes updated', { bibcode });
-    return true;
+    const stmt = db.prepare(`
+      UPDATE ads_papers
+      SET paper_notes = ?, updated_at = strftime('%s', 'now')
+      WHERE bibcode = ?
+    `);
+
+    const result = stmt.run(notes, bibcode);
+
+    if (result.changes > 0) {
+      logger.info('Paper notes updated', { bibcode });
+      return true;
+    }
+    return false;
   }
-  return false;
 }
 
 // ========== HTML Content Cache Operations ==========

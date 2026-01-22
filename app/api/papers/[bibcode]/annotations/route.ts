@@ -48,8 +48,8 @@ export async function GET(
 
     logger.info('Fetching annotations', { bibcode });
 
-    const annotations = getAnnotations(bibcode);
-    const paperNotes = getPaperNotes(bibcode);
+    const annotations = await getAnnotations(bibcode);
+    const paperNotes = await getPaperNotes(bibcode);
 
     return NextResponse.json({
       bibcode,
@@ -91,7 +91,7 @@ export async function POST(
     // Handle paper-level notes update
     if (body.action === 'updatePaperNotes') {
       const { notes } = body;
-      const success = updatePaperNotes(bibcode, notes);
+      const success = await updatePaperNotes(bibcode, notes);
 
       if (!success) {
         return NextResponse.json(
@@ -121,7 +121,7 @@ export async function POST(
       );
     }
 
-    const annotation = createAnnotation({
+    const annotation = await createAnnotation({
       bibcode,
       type,
       content,
@@ -175,7 +175,7 @@ export async function PATCH(
       );
     }
 
-    const updated = updateAnnotation(id, { content, note });
+    const updated = await updateAnnotation(id, { content, note });
 
     if (!updated) {
       return NextResponse.json(
@@ -228,7 +228,7 @@ export async function DELETE(
       );
     }
 
-    const deleted = deleteAnnotation(id);
+    const deleted = await deleteAnnotation(id);
 
     if (!deleted) {
       return NextResponse.json(
