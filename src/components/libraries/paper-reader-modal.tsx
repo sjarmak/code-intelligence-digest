@@ -316,17 +316,23 @@ export function PaperReaderModal({
   const addAnnotation = useCallback(
     async (type: 'note' | 'highlight', text: string, note?: string) => {
       try {
+        console.log('[addAnnotation] Creating annotation:', { type, text: text.substring(0, 50), bibcode });
         const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/annotations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ type, content: text, note }),
         });
+        console.log('[addAnnotation] Response status:', response.status);
         if (response.ok) {
           const annotation = await response.json();
+          console.log('[addAnnotation] Created annotation:', annotation);
           setAnnotations((prev) => [annotation, ...prev]);
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('[addAnnotation] Failed with status:', response.status, errorData);
         }
       } catch (err) {
-        console.error('Failed to add annotation:', err);
+        console.error('[addAnnotation] Failed to add annotation:', err);
       }
     },
     [bibcode]
@@ -615,7 +621,12 @@ export function PaperReaderModal({
   const [showHighlightButton, setShowHighlightButton] = useState(false);
   const [highlightButtonPosition, setHighlightButtonPosition] = useState({ x: 0, y: 0 });
 
-  const handleTextSelection = () => {
+  const handleTextSelection = (e: React.MouseEvent) => {
+    // Don't process selection if clicking on the highlight button container
+    if ((e.target as HTMLElement).closest('.highlight-button-container')) {
+      return;
+    }
+    
     const selection = window.getSelection();
     if (selection && selection.toString().trim().length > 0) {
       const text = selection.toString().trim();
@@ -645,7 +656,11 @@ export function PaperReaderModal({
   };
 
   const handleCreateHighlight = useCallback(async () => {
-    if (!selectedText) return;
+    console.log('[handleCreateHighlight] Called with selectedText:', selectedText?.substring(0, 50));
+    if (!selectedText) {
+      console.log('[handleCreateHighlight] No selected text, returning');
+      return;
+    }
 
     await addAnnotation('highlight', selectedText);
     setShowHighlightButton(false);
@@ -959,9 +974,15 @@ export function PaperReaderModal({
                 top: `${highlightButtonPosition.y}px`,
                 transform: 'translateX(-50%) translateY(-100%)',
               }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onMouseUp={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
             >
               <button
-                onClick={handleCreateHighlight}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCreateHighlight();
+                }}
                 className="px-3 py-1.5 bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 transition-colors text-sm font-medium flex items-center gap-1"
                 title="Create highlight (or press H)"
               >
@@ -969,7 +990,10 @@ export function PaperReaderModal({
                 Highlight
               </button>
               <button
-                onClick={handleCancelHighlight}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCancelHighlight();
+                }}
                 className="px-2 py-1.5 text-gray-600 hover:text-gray-800 transition-colors"
                 title="Cancel (Esc)"
               >
