@@ -425,6 +425,23 @@ export async function keywordSearch(
     .slice(0, limit);
 
   logger.info(`Keyword search returned ${scored.length} results with query: "${query}" from ${items.length} items`);
+  
+  // Debug: log sample of items that matched vs didn't match for "sourcegraph" queries
+  if (query.toLowerCase().includes('sourcegraph') && scored.length < 50) {
+    const matchedIds = new Set(scored.map(s => s.item.id));
+    const unmatchedSamples = items
+      .filter(item => !matchedIds.has(item.id))
+      .filter(item => item.sourceTitle?.toLowerCase().includes('sourcegraph') || 
+                      item.title?.toLowerCase().includes('sourcegraph'))
+      .slice(0, 3);
+    
+    if (unmatchedSamples.length > 0) {
+      logger.warn(`[DEBUG] ${unmatchedSamples.length} items with "sourcegraph" in sourceTitle/title NOT matched by search`);
+      for (const item of unmatchedSamples) {
+        logger.warn(`[DEBUG] Unmatched: "${item.title?.substring(0, 50)}" sourceTitle="${item.sourceTitle}"`);
+      }
+    }
+  }
 
   return scored.map((x) => {
     // Extract bibcode from URL if this is a research paper
