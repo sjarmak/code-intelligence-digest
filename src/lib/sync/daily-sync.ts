@@ -150,7 +150,7 @@ export async function clearSyncState(): Promise<void> {
   }
 }
 
-export async function runDailySync(options?: { lookbackDays?: number }): Promise<{
+export async function runDailySync(options?: { lookbackDays?: number; forceLookback?: boolean }): Promise<{
   success: boolean;
   itemsAdded: number;
   apiCallsUsed: number;
@@ -167,6 +167,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
   const categoriesProcessed: Category[] = [];
   const isCatchup = !!options?.lookbackDays;
   const lookbackDays = options?.lookbackDays;
+  const forceLookback = options?.forceLookback ?? false;
 
   // Load existing state (if resuming)
   const existingState = await loadSyncState();
@@ -270,19 +271,39 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     let syncSinceTimestamp: number;
     let reason: string;
 
+    // Get newest item timestamp first - used in both modes
+    const newestItemTimestamp = await getNewestItemTimestamp();
+    const DEFAULT_WINDOW_HOURS = 4;
+    const defaultTimestamp = Math.floor((Date.now() - DEFAULT_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
+
     if (isCatchup && lookbackDays) {
-      // Catch-up mode: fetch from N days ago (for manual catch-up scenarios)
-      syncSinceTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
-      reason = `last ${lookbackDays} days (catch-up mode, server-side nt filter)`;
+      // Catch-up mode: SMART catch-up that avoids re-fetching existing items
+      // Only go back further than newestItemTimestamp if there's actually a gap
+      // Unless forceLookback=true, which bypasses the optimization (for re-categorizing)
+      const lookbackTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
+      
+      if (forceLookback) {
+        // Force mode: re-fetch all items from lookback period (expensive, for re-categorizing)
+        syncSinceTimestamp = lookbackTimestamp;
+        reason = `last ${lookbackDays} days (FORCE mode - re-fetching all items)`;
+        logger.warn(`[DAILY-SYNC] Force catch-up: will re-fetch ALL items from last ${lookbackDays} days (expensive!)`);
+      } else if (newestItemTimestamp && newestItemTimestamp > lookbackTimestamp) {
+        // We have items newer than the lookback - use newest item timestamp instead
+        // This prevents re-fetching thousands of existing items
+        syncSinceTimestamp = newestItemTimestamp - 60; // 60s buffer
+        const hoursAgo = ((Date.now() / 1000) - syncSinceTimestamp) / 3600;
+        reason = `since newest item (${hoursAgo.toFixed(1)}h ago) - catch-up mode but DB has recent items`;
+        logger.info(`[DAILY-SYNC] Catch-up requested ${lookbackDays}d but DB has items from ${hoursAgo.toFixed(1)}h ago - using smart sync`);
+      } else {
+        // No items in lookback period - do full catch-up
+        syncSinceTimestamp = lookbackTimestamp;
+        reason = `last ${lookbackDays} days (catch-up mode, no recent items in DB)`;
+      }
     } else {
       // Normal mode: fetch items newer than our newest item (with fallback)
       // This ensures no gaps even if syncs are blocked for hours
-      const DEFAULT_WINDOW_HOURS = 4;
       const MAX_LOOKBACK_DAYS = 7; // Safety limit to avoid massive catch-ups
-      const defaultTimestamp = Math.floor((Date.now() - DEFAULT_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
       const maxLookbackTimestamp = Math.floor((Date.now() - MAX_LOOKBACK_DAYS * 24 * 60 * 60 * 1000) / 1000);
-
-      const newestItemTimestamp = await getNewestItemTimestamp();
 
       if (newestItemTimestamp && newestItemTimestamp > maxLookbackTimestamp) {
         // Use newest item timestamp (subtract 60s buffer for edge cases)
