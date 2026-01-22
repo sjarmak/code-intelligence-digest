@@ -7,6 +7,65 @@
 import { InoreaderStreamResponse, InoreaderTokenResponse } from "./types.js";
 import { logger } from "../logger";
 
+/**
+ * Rate limit info from Inoreader API response headers
+ */
+export interface RateLimitInfo {
+  zone1Limit: number;
+  zone1Usage: number;
+  zone2Limit: number;
+  zone2Usage: number;
+  resetAfterSeconds: number;
+}
+
+/**
+ * Extract rate limit info from Inoreader API response headers
+ */
+function extractRateLimitInfo(response: Response): RateLimitInfo | null {
+  const zone1Limit = response.headers.get('X-Reader-Zone1-Limit');
+  const zone1Usage = response.headers.get('X-Reader-Zone1-Usage');
+  const zone2Limit = response.headers.get('X-Reader-Zone2-Limit');
+  const zone2Usage = response.headers.get('X-Reader-Zone2-Usage');
+  const resetAfter = response.headers.get('X-Reader-Limits-Reset-After');
+
+  if (!zone1Limit || !zone1Usage) {
+    return null;
+  }
+
+  return {
+    zone1Limit: parseInt(zone1Limit, 10),
+    zone1Usage: parseInt(zone1Usage, 10),
+    zone2Limit: parseInt(zone2Limit || '0', 10),
+    zone2Usage: parseInt(zone2Usage || '0', 10),
+    resetAfterSeconds: parseInt(resetAfter || '0', 10),
+  };
+}
+
+/**
+ * Log rate limit info with warning if approaching limits
+ */
+function logRateLimitInfo(rateLimits: RateLimitInfo | null, context: string): void {
+  if (!rateLimits) return;
+
+  const zone1Percent = (rateLimits.zone1Usage / rateLimits.zone1Limit) * 100;
+  const resetMinutes = Math.round(rateLimits.resetAfterSeconds / 60);
+  const resetHours = (rateLimits.resetAfterSeconds / 3600).toFixed(1);
+
+  const logData = {
+    zone1: `${rateLimits.zone1Usage}/${rateLimits.zone1Limit}`,
+    zone2: `${rateLimits.zone2Usage}/${rateLimits.zone2Limit}`,
+    resetIn: resetMinutes > 60 ? `${resetHours}h` : `${resetMinutes}m`,
+  };
+
+  if (zone1Percent >= 90) {
+    logger.warn(`[INOREADER-RATE] ⚠️ ${context}: CRITICAL - ${zone1Percent.toFixed(0)}% of Zone1 quota used`, logData);
+  } else if (zone1Percent >= 75) {
+    logger.warn(`[INOREADER-RATE] ${context}: HIGH - ${zone1Percent.toFixed(0)}% of Zone1 quota used`, logData);
+  } else {
+    logger.info(`[INOREADER-RATE] ${context}: ${zone1Percent.toFixed(0)}% of Zone1 quota used`, logData);
+  }
+}
+
 export interface FetchStreamOptions {
   n?: number;
   continuation?: string;
@@ -105,6 +164,10 @@ export class InoreaderClient {
         );
       }
 
+      // Log rate limit info
+      const rateLimits = extractRateLimitInfo(response);
+      logRateLimitInfo(rateLimits, 'getStreamContents');
+
       const data = (await response.json()) as InoreaderStreamResponse;
       logger.info(`[INOREADER-API] getStreamContents SUCCESS: ${data.items?.length || 0} items`, {
         streamId: streamId.substring(0, 50),
@@ -142,6 +205,10 @@ export class InoreaderClient {
         );
       }
 
+      // Log rate limit info
+      const rateLimits = extractRateLimitInfo(response);
+      logRateLimitInfo(rateLimits, 'getUserInfo');
+
       const data = await response.json();
       logger.info(`[INOREADER-API] getUserInfo SUCCESS`);
       return data;
@@ -174,6 +241,10 @@ export class InoreaderClient {
           `Failed to fetch subscriptions: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
+
+      // Log rate limit info
+      const rateLimits = extractRateLimitInfo(response);
+      logRateLimitInfo(rateLimits, 'getSubscriptions');
 
       const data = await response.json();
       logger.info(`[INOREADER-API] getSubscriptions SUCCESS`, {
