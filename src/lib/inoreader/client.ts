@@ -85,7 +85,10 @@ export class InoreaderClient {
 
     const url = `https://www.inoreader.com/reader/api/0/stream/contents/${encodedStreamId}?${params.toString()}`;
 
-    logger.debug(`Fetching Inoreader stream: ${url}`);
+    logger.info(`[INOREADER-API] getStreamContents called`, {
+      streamId: streamId.substring(0, 50),
+      options: { n: options.n, hasContinuation: !!options.continuation, hasNt: !!options.nt },
+    });
 
     try {
       const response = await fetch(url, {
@@ -96,12 +99,19 @@ export class InoreaderClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        logger.error(`[INOREADER-API] getStreamContents FAILED: ${response.status}`, { streamId, errorText });
         throw new Error(
           `Failed to fetch stream contents: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
 
-      return (await response.json()) as InoreaderStreamResponse;
+      const data = (await response.json()) as InoreaderStreamResponse;
+      logger.info(`[INOREADER-API] getStreamContents SUCCESS: ${data.items?.length || 0} items`, {
+        streamId: streamId.substring(0, 50),
+        itemCount: data.items?.length || 0,
+        hasContinuation: !!data.continuation,
+      });
+      return data;
     } catch (error) {
       logger.error(`Error fetching stream contents for ${streamId}`, error);
       throw error;
@@ -115,6 +125,8 @@ export class InoreaderClient {
     const token = await this.getAccessToken();
     const url = "https://www.inoreader.com/reader/api/0/user-info";
 
+    logger.info(`[INOREADER-API] getUserInfo called`);
+
     try {
       const response = await fetch(url, {
         headers: {
@@ -124,12 +136,15 @@ export class InoreaderClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        logger.error(`[INOREADER-API] getUserInfo FAILED: ${response.status}`, { errorText });
         throw new Error(
           `Failed to fetch user info: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
 
-      return await response.json();
+      const data = await response.json();
+      logger.info(`[INOREADER-API] getUserInfo SUCCESS`);
+      return data;
     } catch (error) {
       logger.error("Error fetching user info", error);
       throw error;
@@ -143,7 +158,7 @@ export class InoreaderClient {
     const token = await this.getAccessToken();
     const url = "https://www.inoreader.com/reader/api/0/subscription/list";
 
-    logger.debug("Fetching Inoreader subscriptions...");
+    logger.info(`[INOREADER-API] getSubscriptions called`);
 
     try {
       const response = await fetch(url, {
@@ -154,12 +169,17 @@ export class InoreaderClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        logger.error(`[INOREADER-API] getSubscriptions FAILED: ${response.status}`, { errorText });
         throw new Error(
           `Failed to fetch subscriptions: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
 
-      return await response.json();
+      const data = await response.json();
+      logger.info(`[INOREADER-API] getSubscriptions SUCCESS`, {
+        subscriptionCount: Array.isArray((data as {subscriptions?: unknown[]}).subscriptions) ? (data as {subscriptions: unknown[]}).subscriptions.length : 0,
+      });
+      return data;
     } catch (error) {
       logger.error("Error fetching subscriptions", error);
       throw error;

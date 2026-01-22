@@ -1,10 +1,11 @@
 /**
  * API route: POST /api/admin/sync
- * Trigger manual sync from Inoreader to database
  * 
- * Endpoints:
- * - POST /api/admin/sync/all - Sync all categories
- * - POST /api/admin/sync/category?category=newsletters - Sync one category
+ * @deprecated This endpoint is DEPRECATED and BLOCKED.
+ * Use /api/admin/sync-daily instead - it's much more efficient.
+ * 
+ * This old endpoint makes 1 API call per stream (~100+ calls for a full sync)
+ * vs sync-daily which uses 1-2 calls total with server-side filtering.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -29,8 +30,22 @@ const VALID_CATEGORIES: Category[] = [
  * Sync all categories from Inoreader
  */
 export async function POST(req: NextRequest) {
+  // Block in production - this endpoint is deprecated and too expensive
   const blocked = blockInProduction();
-  if (blocked) return blocked;
+  if (blocked) {
+    logger.warn('[DEPRECATED] /api/admin/sync endpoint called but blocked in production');
+    return NextResponse.json(
+      { 
+        error: 'This endpoint is deprecated and blocked. Use /api/admin/sync-daily instead.',
+        reason: 'This endpoint makes 100+ API calls. sync-daily uses only 1-2 calls.',
+        alternative: 'POST /api/admin/sync-daily',
+      },
+      { status: 410 } // 410 Gone - indicates deprecated/removed
+    );
+  }
+
+  // Even in dev, warn about the inefficiency
+  logger.warn('[DEPRECATED] /api/admin/sync called - this uses 100+ API calls. Use /api/admin/sync-daily instead.');
 
   try {
     const { pathname } = new URL(req.url);
