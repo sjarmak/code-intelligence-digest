@@ -1,17 +1,16 @@
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState } from 'react';
 import ItemsGrid from '@/src/components/feeds/items-grid';
 import SearchPage from '@/src/components/search/search-page';
 import QAPage from '@/src/components/qa/qa-page';
 import StarredItems from '@/src/components/feeds/starred-items';
 import { useAppConfig } from '@/src/hooks/useAppConfig';
-import { DateRangePicker, DateRange } from '@/src/components/common/date-range-picker';
 
 export const dynamic = 'force-dynamic';
 
-type Period = 'day' | 'week' | 'month' | 'all' | 'custom';
-type TabType = 'resources' | 'search' | 'ask' | 'digest' | 'libraries' | 'starred';
+type Period = 'day' | 'week' | 'month' | 'all';
+type TabType = 'resources' | 'search' | 'ask' | 'starred';
 
 function Loading() {
   return <div className="text-center py-12 text-muted">Loading...</div>;
@@ -20,23 +19,8 @@ function Loading() {
 export default function Home() {
   const { config } = useAppConfig();
   const [period, setPeriod] = useState<Period>('week');
-  const [customDateRange, setCustomDateRange] = useState<DateRange | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('newsletters');
   const [activeTab, setActiveTab] = useState<TabType>('resources');
-
-  // Ensure page scrolls to top on mount (fixes mobile scroll issue)
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, []);
-
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      window.location.href = '/login';
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  };
 
   const categories = [
     { id: 'newsletters', label: 'Newsletters' },
@@ -49,68 +33,47 @@ export default function Home() {
   ];
 
   return (
-    <div className="min-h-screen bg-white text-black flex flex-col">
+    <div className="min-h-screen bg-white text-black">
       {/* Header */}
-      <header className="border-b border-surface-border fixed top-0 left-0 right-0 z-20 bg-surface">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4">
+      <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex justify-between items-start">
             {/* Title */}
-            <div className="flex-1 min-w-0">
-              <h1 className="text-2xl sm:text-3xl font-bold">Code Intelligence Digest</h1>
-              <p className="text-muted mt-2 text-sm sm:text-base">
+            <div>
+              <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
+              <p className="text-muted mt-2">
                 Daily, weekly, and monthly digests of code intelligence, tools, and AI agents
               </p>
             </div>
 
-            {/* Action buttons - upper right */}
-            <div className="flex shrink-0 items-center gap-2">
-              {/* Starred button - only in dev */}
-              {config.features.starred && (
-                <button
-                  onClick={() => setActiveTab('starred')}
-                  className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
-                    activeTab === 'starred'
-                      ? 'bg-black text-white border border-black'
-                      : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                  }`}
-                  title="View starred items"
-                >
-                  Starred
-                </button>
-              )}
-              {/* Settings icon - only in dev */}
-              {config.adminUIEnabled && (
-                <a
-                  href="/admin"
-                  className="p-1 rounded-md transition-colors hover:bg-gray-100"
-                  title="Manage relevance tuning and content sync"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </a>
-              )}
-            </div>
+            {/* Settings icon - only in dev */}
+            {config.adminUIEnabled && (
+              <a
+                href="/admin"
+                className="p-1 rounded-md transition-colors hover:bg-gray-100"
+                title="Manage relevance tuning and content sync"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </a>
+            )}
           </div>
         </div>
       </header>
 
-      {/* Spacer for fixed header - increased height to account for header with buttons */}
-      <div className="h-[140px] sm:h-28" aria-hidden="true"></div>
-
       {/* Main Tabs */}
-      <div className="border-b border-surface-border bg-surface sticky top-[140px] sm:top-28 z-30">
-        <div className="w-full px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-3 py-2 sm:py-0">
-            {/* Navigation tabs row */}
-            <nav className="flex overflow-x-auto gap-4 sm:gap-6 -mx-4 sm:mx-0 px-4 sm:px-0 scrollbar-hide" role="tablist" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+      <div className="border-b border-surface-border bg-surface sticky top-20 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center">
+            <nav className="flex overflow-x-auto gap-6" role="tablist">
               <button
                   onClick={() => setActiveTab('resources')}
-                  className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                  className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                     activeTab === 'resources'
                       ? 'border-black text-black'
-                      : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
+                      : 'border-transparent text-muted hover:text-black'
                   }`}
                   role="tab"
                   aria-selected={activeTab === 'resources'}
@@ -119,10 +82,10 @@ export default function Home() {
                 </button>
                <button
                  onClick={() => setActiveTab('search')}
-                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                    activeTab === 'search'
                      ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
+                     : 'border-transparent text-muted hover:text-black'
                  }`}
                  role="tab"
                  aria-selected={activeTab === 'search'}
@@ -131,66 +94,74 @@ export default function Home() {
                </button>
                <button
                  onClick={() => setActiveTab('ask')}
-                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                    activeTab === 'ask'
                      ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
+                     : 'border-transparent text-muted hover:text-black'
                  }`}
                  role="tab"
                  aria-selected={activeTab === 'ask'}
                >
                  Ask
                </button>
-               <button
-                 onClick={() => {
-                   setActiveTab('digest');
-                   window.location.href = '/digest';
-                 }}
-                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                   activeTab === 'digest'
-                     ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
-                 }`}
-                 role="tab"
-                 aria-selected={activeTab === 'digest'}
-               >
-                 Generate Digest
-               </button>
-               <button
-                 onClick={() => {
-                   setActiveTab('libraries');
-                   window.location.href = '/libraries';
-                 }}
-                 className={`px-1 py-3 sm:py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                   activeTab === 'libraries'
-                     ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
-                 }`}
-                 role="tab"
-                 aria-selected={activeTab === 'libraries'}
+             </nav>
+
+             {/* Right-aligned buttons */}
+             <div className="flex gap-2 ml-auto">
+               {/* Starred button - only in dev */}
+               {config.features.starred && (
+                 <button
+                   onClick={() => setActiveTab('starred')}
+                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                     activeTab === 'starred'
+                       ? 'bg-black text-white border border-black'
+                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
+                   }`}
+                   title="View starred items"
+                 >
+                   Starred
+                 </button>
+               )}
+               <a
+                 href="/libraries"
+                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                 title="View ADS research libraries"
                >
                  Libraries
-               </button>
-             </nav>
-          </div>
+               </a>
+               <a
+                 href="/synthesis/newsletter"
+                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                 title="Generate newsletters"
+               >
+                 Newsletter Generator
+               </a>
+               <a
+                 href="/synthesis/podcast"
+                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
+                 title="Generate podcast episodes"
+               >
+                 Podcast Generator
+               </a>
+             </div>
+           </div>
         </div>
       </div>
 
       {/* Category Tabs (only show for resources tab) */}
       {activeTab === 'resources' && (
-        <div className="border-b border-surface-border bg-surface sticky top-[196px] sm:top-[168px] z-10">
-          <div className="w-full px-4 sm:px-6 lg:px-8">
-            <div className="flex flex-col gap-3 py-2 sm:py-0">
-              {/* Category tabs row */}
-              <nav className="flex overflow-x-auto gap-2 -mx-4 sm:mx-0 px-4 sm:px-0 scrollbar-hide" role="tablist" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+        <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center">
+              <nav className="flex overflow-x-auto gap-2" role="tablist">
                 {categories.map((cat) => (
                    <button
                       key={cat.id}
                       onClick={() => setActiveCategory(cat.id)}
-                      className={`px-3 sm:px-4 py-3 sm:py-4 text-xs sm:text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                      className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                         activeCategory === cat.id
                           ? 'border-black text-black'
-                          : 'border-transparent text-muted hover:text-black hover:border-gray-300 cursor-pointer'
+                          : 'border-transparent text-muted hover:text-black'
                       }`}
                       role="tab"
                       aria-selected={activeCategory === cat.id}
@@ -200,11 +171,11 @@ export default function Home() {
                   ))}
                </nav>
 
-              {/* Period buttons row - separate row to prevent overlap */}
-              <div className="flex flex-wrap items-center gap-2">
+              {/* Period buttons on the right */}
+              <div className="flex gap-2 ml-auto">
                 <button
                    onClick={() => setPeriod('day')}
-                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                      period === 'day'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -214,7 +185,7 @@ export default function Home() {
                 </button>
                 <button
                    onClick={() => setPeriod('week')}
-                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                      period === 'week'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -224,7 +195,7 @@ export default function Home() {
                 </button>
                 <button
                    onClick={() => setPeriod('month')}
-                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                      period === 'month'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -234,7 +205,7 @@ export default function Home() {
                 </button>
                 <button
                    onClick={() => setPeriod('all')}
-                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
+                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                      period === 'all'
                        ? 'bg-black text-white'
                        : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
@@ -242,43 +213,17 @@ export default function Home() {
                 >
                    All-time
                 </button>
-                <button
-                   onClick={() => setPeriod('custom')}
-                   className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
-                     period === 'custom'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
-                >
-                   Custom Range
-                </button>
               </div>
-              {/* Custom date range picker - shown when custom is selected */}
-              {period === 'custom' && (
-                <div className="mt-3 pb-2">
-                  <DateRangePicker
-                    value={customDateRange}
-                    onChange={(range) => {
-                      setCustomDateRange(range);
-                    }}
-                    className="max-w-md"
-                  />
-                </div>
-              )}
             </div>
-          </div>
+           </div>
          </div>
        )}
 
       {/* Content */}
-      <main className={`px-4 sm:px-6 lg:px-8 py-8 w-full max-w-7xl mx-auto overflow-x-hidden`}>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'resources' && (
           <Suspense fallback={<Loading />}>
-            <ItemsGrid
-              category={activeCategory}
-              period={period}
-              customDateRange={period === 'custom' ? customDateRange : null}
-            />
+            <ItemsGrid category={activeCategory} period={period} />
           </Suspense>
         )}
         {activeTab === 'search' && <SearchPage />}
@@ -289,20 +234,6 @@ export default function Home() {
           </Suspense>
         )}
       </main>
-
-      {/* Footer with logout */}
-      <footer className="border-t border-surface-border mt-auto py-4">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-end">
-            <button
-              onClick={handleLogout}
-              className="text-sm text-muted hover:text-black transition-colors"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

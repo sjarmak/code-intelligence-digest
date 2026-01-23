@@ -24,35 +24,7 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: ADS_API_TOKEN
-        sync: false
     healthCheckPath: /api/health
-
-  - type: cron
-    name: hourly-sync
-    runtime: node
-    region: ohio
-    schedule: "0 * * * *"  # Run every hour at minute 0
-    # Updated: Dec 28, 2025 - Includes item scoring in hourly sync
-    buildCommand: npm install
-    startCommand: npx tsx scripts/cron-daily-sync.ts
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: code-intel-digest-db
-          property: connectionString
-      - key: INOREADER_CLIENT_ID
-        sync: false
-      - key: INOREADER_CLIENT_SECRET
-        sync: false
-      - key: INOREADER_REFRESH_TOKEN
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: ADS_API_TOKEN
-        sync: false
 
 databases:
   - name: code-intel-digest-db

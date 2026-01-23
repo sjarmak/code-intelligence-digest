@@ -4,7 +4,7 @@
  * Can be integrated into daily sync or called manually for tuning
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { fetchAllStarredItems } from "../../../../src/lib/inoreader/starred";
 import { saveItems } from "../../../../src/lib/db/items";
 import { saveStarredItems } from "../../../../src/lib/db/starredItems";
@@ -102,7 +102,7 @@ export async function POST() {
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const blocked = blockInProduction();
   if (blocked) return blocked;
 

@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/src/lib/logger';
 import { loadItemsByCategory, saveFullText, getFullTextCacheStats } from '@/src/lib/db/items';
-import { fetchFullTextBatch } from '@/src/lib/pipeline/fulltext';
+import { fetchFullText, fetchFullTextBatch } from '@/src/lib/pipeline/fulltext';
 import { getBibcodeMetadata } from '@/src/lib/ads/client';
 import type { Category } from '@/src/lib/model';
 import { blockInProduction } from '@/src/lib/auth/guards';
@@ -71,6 +71,8 @@ async function populateResearchViaADS(
       if (arxivIds.length === 0) continue;
 
       try {
+        // Build ADS query: arxiv:ID1 OR arxiv:ID2 OR ...
+        const query = arxivIds.map((id) => `arxiv:${id}`).join(' OR ');
         const metadata = await getBibcodeMetadata(arxivIds, adsToken);
 
         // Save results

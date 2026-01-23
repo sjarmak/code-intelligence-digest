@@ -1,26 +1,36 @@
 /**
  * Database initialization and client
- *
- * Supports both SQLite (legacy fallback) and PostgreSQL (default).
- * Driver detection is automatic based on LOCAL_DATABASE_URL or DATABASE_URL env vars.
- * PostgreSQL is the default for both development and production.
+ * 
+ * Supports both SQLite (development) and PostgreSQL (production).
+ * Driver detection is automatic based on DATABASE_URL env var.
  */
 
 import Database from "better-sqlite3";
 import * as path from "path";
 import * as fs from "fs";
 import { logger } from "../logger";
-import { detectDriver, getDbClient, getDatabaseUrl } from "./driver";
-import { TABLES_SQL, INDEXES_SQL } from "./schema-postgres";
+import { detectDriver, getDbClient, DatabaseDriver } from "./driver";
+import { getPostgresSchema } from "./schema-postgres";
 
 let sqlite: Database.Database | null = null;
 let initialized = false;
 
 /**
+ * Reset SQLite connection to avoid stale data in Next.js dev server
+ * This is a no-op in production or when using PostgreSQL
+ */
+export function resetSqliteConnection(): void {
+  const driver = detectDriver();
+  if (driver === 'sqlite' && sqlite) {
+    // Close existing connection
+    sqlite.close();
+    sqlite = null;
+    logger.debug('SQLite connection reset');
+  }
+}
+
+/**
  * Get or create SQLite database connection (development only)
- *
- * NOTE: SQLite connections are cached. If you're seeing stale data,
- * you may need to close and reopen the connection.
  */
 export function getSqlite() {
   if (!sqlite) {
@@ -36,24 +46,10 @@ export function getSqlite() {
     // Enable foreign keys
     sqlite.pragma("foreign_keys = ON");
 
-    // Enable WAL mode for better concurrency and to avoid stale reads
-    sqlite.pragma("journal_mode = WAL");
-
     logger.info(`Database initialized at ${dbPath}`);
   }
 
   return sqlite;
-}
-
-/**
- * Close and reset the SQLite connection (useful for testing or fixing stale data)
- */
-export function resetSqliteConnection() {
-  if (sqlite) {
-    sqlite.close();
-    sqlite = null;
-    logger.info("SQLite connection closed and reset");
-  }
 }
 
 /**
@@ -83,44 +79,11 @@ export async function initializeDatabase() {
 async function initializePostgresSchema() {
   try {
     const client = await getDbClient();
-
-    // Check if we're on local (no pgvector) by checking if DATABASE_URL is localhost
-    const dbUrl = getDatabaseUrl();
-    const isLocal = dbUrl?.includes('localhost') || dbUrl?.includes('127.0.0.1');
-
-    // Build schema from parts, excluding extensions (handled separately)
-    let tablesSql = TABLES_SQL;
-    let indexesSql = INDEXES_SQL;
-
-    // For local development, replace vector types with TEXT and skip vector extension
-    if (isLocal) {
-      logger.info('Local database detected, replacing vector types with TEXT and skipping pgvector extension');
-      tablesSql = tablesSql.replace(/vector\(1536\)/gi, 'TEXT');
-      // Also remove vector index creation that depends on pgvector (handles multiline)
-      indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw[\s\S]*?;/gi, '-- Vector index idx_embeddings_hnsw skipped for local');
-      indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding[\s\S]*?;/gi, '-- Vector index idx_paper_sections_embedding skipped for local');
-    } else {
-      // For production, try to create extensions but handle errors gracefully
-      try {
-        await client.exec('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
-      } catch (extError) {
-        logger.warn('pg_trgm extension not available, continuing without it', { error: extError });
-      }
-      try {
-        await client.exec('CREATE EXTENSION IF NOT EXISTS vector;');
-      } catch (extError) {
-        logger.warn('pgvector extension not available, continuing without it', { error: extError });
-        // If vector extension fails, replace vector types with TEXT
-        tablesSql = tablesSql.replace(/vector\(1536\)/gi, 'TEXT');
-        indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw[\s\S]*?;/gi, '-- Vector index idx_embeddings_hnsw skipped (pgvector not available)');
-        indexesSql = indexesSql.replace(/CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding[\s\S]*?;/gi, '-- Vector index idx_paper_sections_embedding skipped (pgvector not available)');
-      }
-    }
-
-    // Execute schema (extensions handled separately above)
-    const schemaToExecute = `${tablesSql}\n${indexesSql}`;
-    await client.exec(schemaToExecute);
-
+    const schema = getPostgresSchema();
+    
+    // Execute schema in segments (extensions, tables, indexes)
+    await client.exec(schema);
+    
     // Add full_text column if it doesn't exist (for migration)
     try {
       await client.run(`
@@ -129,25 +92,7 @@ async function initializePostgresSchema() {
     } catch {
       // Column may already exist
     }
-
-    // Add missing columns to ads_papers if they don't exist (for migration)
-    try {
-      await client.exec(`
-        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_content TEXT;
-        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_fetched_at INTEGER;
-        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_sections TEXT;
-        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS html_figures TEXT;
-        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS paper_notes TEXT;
-        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS is_favorite INTEGER DEFAULT 0;
-        ALTER TABLE ads_papers ADD COLUMN IF NOT EXISTS favorited_at INTEGER;
-      `);
-    } catch {
-      // Columns may already exist
-    }
-
-    // Tables are created via schema SQL, but ensure they exist for migrations
-    // The schema SQL already includes saved_items and digest_items tables
-
+    
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
     logger.error("Failed to initialize PostgreSQL schema", error);
@@ -249,7 +194,7 @@ async function initializeSqliteSchema() {
 
     // Create index for efficient lookups
     sqlite.exec(`
-      CREATE INDEX IF NOT EXISTS idx_embeddings_generated_at
+      CREATE INDEX IF NOT EXISTS idx_embeddings_generated_at 
       ON item_embeddings(generated_at);
     `);
 
@@ -273,7 +218,7 @@ async function initializeSqliteSchema() {
         date TEXT PRIMARY KEY,
         calls_used INTEGER DEFAULT 0,
         last_updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        quota_limit INTEGER DEFAULT 1000
+        quota_limit INTEGER DEFAULT 100
       );
     `);
 
@@ -310,30 +255,6 @@ async function initializeSqliteSchema() {
         relevance_rating INTEGER,
         notes TEXT,
         rated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-      );
-    `);
-
-    // Create saved_items table: general bookmark/save library for any item type
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS saved_items (
-        id TEXT PRIMARY KEY,
-        item_id TEXT NOT NULL UNIQUE,
-        saved_at INTEGER NOT NULL,
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-      );
-    `);
-
-    // Create digest_items table: items specifically marked for digest generation
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS digest_items (
-        id TEXT PRIMARY KEY,
-        item_id TEXT NOT NULL UNIQUE,
-        added_at INTEGER NOT NULL,
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
         updated_at INTEGER DEFAULT (strftime('%s', 'now')),
         FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
       );
@@ -385,20 +306,6 @@ async function initializeSqliteSchema() {
       );
     `);
 
-    // Create usage_quota table for rate limiting
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS usage_quota (
-        key TEXT PRIMARY KEY,
-        endpoint TEXT NOT NULL,
-        client_ip TEXT NOT NULL,
-        window_type TEXT NOT NULL,
-        used INTEGER DEFAULT 0,
-        reset_at INTEGER NOT NULL,
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-      );
-    `);
-
     // Create indexes for common queries
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);
@@ -415,8 +322,6 @@ async function initializeSqliteSchema() {
       CREATE INDEX IF NOT EXISTS idx_item_relevance_rating ON item_relevance(relevance_rating);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_hash ON generated_podcast_audio(transcript_hash);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
-      CREATE INDEX IF NOT EXISTS idx_usage_quota_endpoint ON usage_quota(endpoint, client_ip);
-      CREATE INDEX IF NOT EXISTS idx_usage_quota_reset ON usage_quota(reset_at);
     `);
 
     logger.info("SQLite schema initialized successfully");
@@ -429,26 +334,46 @@ async function initializeSqliteSchema() {
 /**
  * Global API budget tracking (cross-endpoint)
  * Tracks all Inoreader API calls made in a single day
- *
- * @deprecated Use getApiBudget() and incrementApiCalls() from './api-budget' instead
- * Keeping for backward compatibility during migration
  */
 
-export async function getGlobalApiBudget(): Promise<{ callsUsed: number; remaining: number; quotaLimit: number }> {
-  // Re-export from new module for backward compatibility
-  const { getApiBudget } = await import('./api-budget');
-  const budget = await getApiBudget();
+export function getGlobalApiBudget(): { callsUsed: number; remaining: number; quotaLimit: number } {
+  const sqlite = getSqlite();
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  
+  const row = sqlite
+    .prepare('SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?')
+    .get(today) as { calls_used: number; quota_limit: number } | undefined;
+  
+  if (!row) {
+    // Initialize for today
+    sqlite
+      .prepare('INSERT OR IGNORE INTO global_api_budget (date, calls_used) VALUES (?, 0)')
+      .run(today);
+    return { callsUsed: 0, remaining: 100, quotaLimit: 100 };
+  }
+  
   return {
-    callsUsed: budget.callsUsed,
-    remaining: budget.remaining,
-    quotaLimit: budget.quotaLimit,
+    callsUsed: row.calls_used,
+    remaining: row.quota_limit - row.calls_used,
+    quotaLimit: row.quota_limit,
   };
 }
 
-export async function incrementGlobalApiCalls(count: number): Promise<{ callsUsed: number; remaining: number }> {
-  // Re-export from new module for backward compatibility
-  const { incrementApiCalls } = await import('./api-budget');
-  const budget = await incrementApiCalls(count);
+export function incrementGlobalApiCalls(count: number): { callsUsed: number; remaining: number } {
+  const sqlite = getSqlite();
+  const today = new Date().toISOString().split('T')[0];
+  
+  sqlite
+    .prepare(`
+      INSERT INTO global_api_budget (date, calls_used) 
+      VALUES (?, ?)
+      ON CONFLICT(date) DO UPDATE SET 
+        calls_used = calls_used + ?,
+        last_updated_at = strftime('%s', 'now')
+    `)
+    .run(today, count, count);
+  
+  const budget = getGlobalApiBudget();
   return {
     callsUsed: budget.callsUsed,
     remaining: budget.remaining,
@@ -460,21 +385,20 @@ export async function incrementGlobalApiCalls(count: number): Promise<{ callsUse
  * First run: fetch from API (1 call)
  * Subsequent runs: retrieve from cache (0 calls)
  */
-export async function getCachedUserId(): Promise<string | null> {
-  const client = await getDbClient();
-  const result = await client.query(
-    'SELECT user_id FROM user_cache WHERE key = ?',
-    ['inoreader_user_id']
-  );
-  const row = result.rows[0] as { user_id: string } | undefined;
+export function getCachedUserId(): string | null {
+  const sqlite = getSqlite();
+  const row = sqlite
+    .prepare('SELECT user_id FROM user_cache WHERE key = ?')
+    .get('inoreader_user_id') as { user_id: string } | undefined;
   return row?.user_id || null;
 }
 
-export async function setCachedUserId(userId: string): Promise<void> {
-  const client = await getDbClient();
-  const driver = detectDriver();
-  const insertSql = driver === 'postgres'
-    ? 'INSERT INTO user_cache (key, user_id, cached_at) VALUES ($1, $2, EXTRACT(EPOCH FROM NOW())::INTEGER) ON CONFLICT (key) DO UPDATE SET user_id = $2, cached_at = EXTRACT(EPOCH FROM NOW())::INTEGER'
-    : 'INSERT OR REPLACE INTO user_cache (key, user_id) VALUES (?, ?)';
-  await client.run(insertSql, ['inoreader_user_id', userId]);
+export function setCachedUserId(userId: string): void {
+  const sqlite = getSqlite();
+  sqlite
+    .prepare(`
+      INSERT OR REPLACE INTO user_cache (key, user_id) 
+      VALUES (?, ?)
+    `)
+    .run('inoreader_user_id', userId);
 }

@@ -194,12 +194,13 @@ export async function GET(request: NextRequest) {
     } else {
       periodDays = PERIOD_DAYS[period];
 
-      // For research and product_news, use created_at for day period to show recently received items
-      // This ensures items show up even if they were published earlier but received recently
-      if ((category === "research" || category === "product_news") && period === "day") {
+      // For research, product_news, and newsletters: use created_at for day period to show recently synced items
+      // This ensures items show up based on when they were added to the database, not when they were published
+      // "Daily" means "what's new today" = items synced in the last 24 hours
+      if ((category === "research" || category === "product_news" || category === "newsletters") && period === "day") {
         // Use 1 day for day period (today only)
         periodDays = 1;
-        logger.info(`[API] Using 1 day window for ${category} day period to show recently received items`);
+        logger.info(`[API] Using 1 day window with created_at for ${category} day period to show recently synced items`);
       }
     }
 
@@ -271,12 +272,18 @@ export async function GET(request: NextRequest) {
           logger.info(`[API] Research ${period} period: no date filtering, showing top ranked results`);
         }
       } else {
-        // For newsletters and other categories: use created_at for day period, published_at for others
-        // This ensures items show up based on when they were received (created_at) for daily view
-        useCreatedAt = period === 'day';
-        dateColumn = useCreatedAt ? 'created_at' : 'published_at';
+        // For most categories: use published_at for date filtering
+        // This ensures items show up based on when they were published, not when they were synced
+        useCreatedAt = false;
+        dateColumn = 'published_at';
+        
+        // Exception: For newsletters with day period, use created_at to show recently synced items
+        // "Daily" means items synced in the last 24 hours, regardless of when they were published
+        // This ensures users see fresh content even if newsletter published_at is delayed
         if (category === "newsletters" && period === "day") {
-          logger.info(`[API] Newsletters day period: using ${periodDays} day window (${new Date(cutoffTime * 1000).toISOString()}), dateColumn=${dateColumn}`);
+          useCreatedAt = true;
+          dateColumn = 'created_at';
+          logger.info(`[API] Newsletters day period: using created_at with ${periodDays} day window (${new Date(cutoffTime * 1000).toISOString()})`);
         }
       }
 

@@ -1,6 +1,6 @@
 /**
  * PostgreSQL Schema Definitions
- *
+ * 
  * PostgreSQL-compatible schema with:
  * - pgvector for embeddings
  * - tsvector for full-text search
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS global_api_budget (
   date TEXT PRIMARY KEY,
   calls_used INTEGER DEFAULT 0,
   last_updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  quota_limit INTEGER DEFAULT 1000
+  quota_limit INTEGER DEFAULT 100
 );
 
 -- User cache table
@@ -179,99 +179,6 @@ CREATE TABLE IF NOT EXISTS generated_podcast_audio (
   generated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
-
--- Usage quota table for rate limiting
-CREATE TABLE IF NOT EXISTS usage_quota (
-  key TEXT PRIMARY KEY,
-  endpoint TEXT NOT NULL,
-  client_ip TEXT NOT NULL,
-  window_type TEXT NOT NULL,
-  used INTEGER DEFAULT 0,
-  reset_at INTEGER NOT NULL,
-  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
-);
-
--- ADS papers table
-CREATE TABLE IF NOT EXISTS ads_papers (
-  bibcode TEXT PRIMARY KEY,
-  title TEXT,
-  authors TEXT,
-  pubdate TEXT,
-  abstract TEXT,
-  body TEXT,
-  year INTEGER,
-  journal TEXT,
-  ads_url TEXT,
-  arxiv_url TEXT,
-  fulltext_source TEXT,
-  html_content TEXT,
-  html_fetched_at INTEGER,
-  html_sections TEXT,
-  html_figures TEXT,
-  paper_notes TEXT,
-  is_favorite INTEGER DEFAULT 0,
-  favorited_at INTEGER,
-  fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
-);
-
--- ADS library papers junction table: links papers to libraries
-CREATE TABLE IF NOT EXISTS ads_library_papers (
-  library_id TEXT NOT NULL,
-  bibcode TEXT NOT NULL,
-  added_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  PRIMARY KEY (library_id, bibcode),
-  FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
-);
-
--- ADS libraries cache table
-CREATE TABLE IF NOT EXISTS ads_libraries (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT,
-  num_documents INTEGER NOT NULL DEFAULT 0,
-  is_public INTEGER NOT NULL DEFAULT 0,
-  fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
-);
-
--- Paper sections table for section-based retrieval
-CREATE TABLE IF NOT EXISTS paper_sections (
-  id TEXT PRIMARY KEY,
-  bibcode TEXT NOT NULL REFERENCES ads_papers(bibcode) ON DELETE CASCADE,
-  section_id TEXT NOT NULL,
-  section_title TEXT NOT NULL,
-  level INTEGER NOT NULL,
-  summary TEXT NOT NULL,
-  full_text TEXT NOT NULL,
-  char_start INTEGER NOT NULL,
-  char_end INTEGER NOT NULL,
-  embedding vector(1536), -- pgvector for semantic search
-  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  UNIQUE(bibcode, section_id)
-);
-
--- Saved items table: general bookmark/save library for any item type
-CREATE TABLE IF NOT EXISTS saved_items (
-  id TEXT PRIMARY KEY,
-  item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
-  saved_at INTEGER NOT NULL,
-  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
-);
-
--- Digest items table: items specifically marked for digest generation
-CREATE TABLE IF NOT EXISTS digest_items (
-  id TEXT PRIMARY KEY,
-  item_id TEXT NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
-  added_at INTEGER NOT NULL,
-  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
-);
 `;
 
 /**
@@ -312,38 +219,12 @@ CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_aud
 
 -- Embeddings index for vector similarity search (IVFFlat for speed)
 -- Note: Run this after populating embeddings for better index quality
--- CREATE INDEX IF NOT EXISTS idx_embeddings_vector ON item_embeddings
+-- CREATE INDEX IF NOT EXISTS idx_embeddings_vector ON item_embeddings 
 --   USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- HNSW index alternative (faster queries, slower builds)
-CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings
+CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings 
   USING hnsw (embedding vector_cosine_ops);
-
--- Usage quota indexes
-CREATE INDEX IF NOT EXISTS idx_usage_quota_endpoint ON usage_quota(endpoint, client_ip);
-CREATE INDEX IF NOT EXISTS idx_usage_quota_reset ON usage_quota(reset_at);
-
--- ADS papers indexes
-CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
-CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
-
--- ADS library papers indexes
-CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
-CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
-
--- Paper sections indexes
-CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode ON paper_sections(bibcode);
--- Vector similarity index for section embeddings
-CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding ON paper_sections
-  USING hnsw (embedding vector_cosine_ops);
-
--- Saved items indexes
-CREATE INDEX IF NOT EXISTS idx_saved_items_item_id ON saved_items(item_id);
-CREATE INDEX IF NOT EXISTS idx_saved_items_saved_at ON saved_items(saved_at);
-
--- Digest items indexes
-CREATE INDEX IF NOT EXISTS idx_digest_items_item_id ON digest_items(item_id);
-CREATE INDEX IF NOT EXISTS idx_digest_items_added_at ON digest_items(added_at);
 `;
 
 /**

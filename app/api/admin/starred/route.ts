@@ -16,21 +16,6 @@ import { initializeDatabase } from "../../../../src/lib/db/index";
 import { z } from "zod";
 import { blockInProduction } from "../../../../src/lib/auth/guards";
 
-interface StarredItemRecord {
-  id: string;
-  itemId: string;
-  inoreaderItemId: string;
-  title: string;
-  url: string;
-  sourceTitle: string;
-  publishedAt: number;
-  summary?: string | null;
-  relevanceRating: RelevanceRating;
-  notes?: string | null;
-  starredAt: number;
-  ratedAt?: number | null;
-}
-
 const RateStarredSchema = z.object({
   rating: z.union([
     z.literal(0),
@@ -54,11 +39,11 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(url.searchParams.get("limit") || "50");
     const offset = parseInt(url.searchParams.get("offset") || "0");
 
-    const items = (await getStarredItems({
+    const items = await getStarredItems({
       onlyUnrated,
       limit,
       offset,
-    })) as StarredItemRecord[];
+    });
 
     const total = await countStarredItems();
     const unrated = await countUnratedStarredItems();
@@ -69,7 +54,7 @@ export async function GET(request: NextRequest) {
         count: items.length,
         total,
         unrated,
-        items: items.map((item) => ({
+        items: items.map((item: any) => ({
           id: item.id,
           itemId: item.itemId,
           inoreaderItemId: item.inoreaderItemId,

@@ -21,7 +21,7 @@ const SetRelevanceSchema = z.object({
   relevance: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]),
 });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const blocked = blockInProduction();
   if (blocked) return blocked;
 
