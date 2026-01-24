@@ -252,8 +252,8 @@
         "Tests pass"
       ],
       "priority": 17,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added 24 new tests for computeBoostMultiplier covering: 5x sourcegraph, 3.5x product names, 3.0x for 3+ terms, 2.5x agent+context, 2.0x for 2 terms, 1.5x for 1 term, 1.0x baseline, boost priority, category parameter, and constants exports"
     },
     {
       "id": "US-018",
