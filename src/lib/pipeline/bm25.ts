@@ -4,133 +4,13 @@
  */
 
 import { Category } from "../model";
+import { getTermsByCategory } from "../../config/domain-terms";
 
 /**
  * Domain term categories with weights
- * Weights are multipliers applied during scoring
+ * Uses shared domain terms configuration from domain-terms.ts
  */
-const DOMAIN_TERMS = {
-  code_search: {
-    weight: 1.6,
-    terms: [
-      "code search",
-      "symbol search",
-      "codebase search",
-      "code navigation",
-      "cross-reference",
-      "symbol indexing",
-      "code indexing",
-      "function lookup",
-      "variable tracking",
-      "semantic code",
-    ],
-  },
-  ir: {
-    weight: 1.5,
-    terms: [
-      "semantic search",
-      "rag",
-      "retrieval augmented",
-      "vector database",
-      "embeddings",
-      "similarity search",
-      "dense retrieval",
-      "information retrieval",
-      "relevance ranking",
-      "corpus",
-    ],
-  },
-  context: {
-    weight: 1.5,
-    terms: [
-      "context window",
-      "token budget",
-      "context length",
-      "compression",
-      "summarization",
-      "chunking",
-      "prompt optimization",
-      "context management",
-      "long context",
-      "token limit",
-    ],
-  },
-  agentic: {
-    weight: 1.4,
-    terms: [
-      "agent",
-      "agentic",
-      "tool use",
-      "planning",
-      "orchestration",
-      "workflow",
-      "multi-step",
-      "reasoning loop",
-      "agent framework",
-      "tool calling",
-    ],
-  },
-  enterprise: {
-    weight: 1.3,
-    terms: [
-      "monorepo",
-      "monolithic",
-      "dependency management",
-      "modularization",
-      "enterprise scale",
-      "large codebase",
-      "legacy system",
-      "refactoring",
-      "migration",
-      "scalability",
-    ],
-  },
-  devtools: {
-    weight: 1.2,
-    terms: [
-      "ide",
-      "debugging",
-      "profiling",
-      "linter",
-      "formatter",
-      "test framework",
-      "ci/cd",
-      "devops",
-      "automation",
-      "developer experience",
-    ],
-  },
-  llm_code: {
-    weight: 1.2,
-    terms: [
-      "llm",
-      "transformer",
-      "fine-tuning",
-      "function calling",
-      "code generation",
-      "code completion",
-      "neural",
-      "reasoning pattern",
-      "training data",
-      "model architecture",
-    ],
-  },
-  sdlc: {
-    weight: 1.0,
-    terms: [
-      "code review",
-      "testing",
-      "test suite",
-      "unit test",
-      "integration test",
-      "deployment",
-      "release",
-      "version control",
-      "git",
-      "pull request",
-    ],
-  },
-};
+const DOMAIN_TERMS = getTermsByCategory();
 
 /**
  * Category-specific BM25 queries built from domain terms
