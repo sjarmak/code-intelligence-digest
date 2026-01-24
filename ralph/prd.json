@@ -428,8 +428,8 @@
         "Typecheck passes"
       ],
       "priority": 29,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "File is used by /api/admin/sync route. Added @deprecated JSDoc tags to module and all exported functions, plus detailed TODO deprecation plan recommending migration to daily-sync.ts."
     },
     {
       "id": "US-030",

@@ -13,6 +13,19 @@
 
 ---
 
+## 2026-01-24 - US-029
+- What was implemented: Added deprecation notices to `src/lib/sync/inoreader-sync.ts` since the file is actively used by `/api/admin/sync` route
+- Files changed:
+  - `src/lib/sync/inoreader-sync.ts` (modified - added @deprecated JSDoc tags and TODO deprecation plan)
+- **Learnings for future iterations:**
+  - The `inoreader-sync.ts` file is imported by `/api/admin/sync/route.ts` (syncAllCategories, syncCategory functions)
+  - Cannot delete it because it's actively used - added deprecation notice instead
+  - The module-level @deprecated tag explains why to use `daily-sync.ts` instead (state management, resume capability, better error handling)
+  - Each exported function has individual @deprecated tags pointing to the daily-sync.ts alternatives
+  - TODO deprecation plan includes: 1) Update API route, 2) Migrate functions, 3) Delete file after migration
+  - When evaluating deprecated code, always check for imports first with grep before deciding to delete
+---
+
 ## 2026-01-24 - US-026
 - What was implemented: N/A - `rankCategoryWithoutRecency` function does not exist in this branch, so there's nothing to delete
 - Files changed: None
