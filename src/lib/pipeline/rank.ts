@@ -9,6 +9,7 @@ import { BM25Index } from "./bm25";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
 import { computeRecencyScore } from "./scoring-utils";
+import { filterLowQualityItem } from "../../config/filter-patterns";
 
 /**
  * Rank items for a given category
@@ -40,9 +41,25 @@ export async function rankCategory(
     return [];
   }
 
+  // Filter out low-quality items (bad titles, bad URLs, etc.)
+  const qualityItems = recentItems.filter((item) => {
+    const filterResult = filterLowQualityItem(item);
+    if (filterResult.filtered) {
+      logger.debug(`Filtering low-quality item: ${item.title} (${filterResult.reason})`);
+      return false;
+    }
+    return true;
+  });
+
+  logger.info(`${qualityItems.length} items after quality filter (removed ${recentItems.length - qualityItems.length})`);
+
+  if (qualityItems.length === 0) {
+    return [];
+  }
+
   // Build BM25 index
   const bm25 = new BM25Index();
-  bm25.addDocuments(recentItems);
+  bm25.addDocuments(qualityItems);
   // Parse query string into terms
   const queryTerms = config.query
     .toLowerCase()
@@ -52,7 +69,7 @@ export async function rankCategory(
   const bm25Normalized = bm25.normalizeScores(bm25Scores);
 
   // Load pre-computed LLM scores from database (only during daily sync should new scores be calculated)
-  const itemIds = recentItems.map((item) => item.id);
+  const itemIds = qualityItems.map((item) => item.id);
   const preComputedScores = await loadScoresForItems(itemIds);
   
   // Convert to LLMScoreResult format expected by the ranking logic
@@ -69,7 +86,7 @@ export async function rankCategory(
   }
 
   // Compute all scores and combine
-  const rankedItems: RankedItem[] = recentItems.map((item) => {
+  const rankedItems: RankedItem[] = qualityItems.map((item) => {
     const bm25Score = bm25Normalized.get(item.id) ?? 0;
     const llmResult = llmScores[item.id];
     // Compute LLM score from pre-computed relevance and usefulness (0.7 * relevance + 0.3 * usefulness)
