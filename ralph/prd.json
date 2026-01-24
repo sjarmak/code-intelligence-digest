@@ -341,8 +341,8 @@
         "Typecheck passes"
       ],
       "priority": 23,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced 55 lines of inline DOMAIN_TERM_WEIGHTS with import from buildTermWeightMap() in domain-terms.ts"
     },
     {
       "id": "US-024",
