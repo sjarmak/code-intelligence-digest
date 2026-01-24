@@ -13,6 +13,18 @@
 
 ---
 
+## 2026-01-24 - US-010
+- What was implemented: Added `filterLowQualityItem` function to `src/config/filter-patterns.ts`
+- Files changed:
+  - `src/config/filter-patterns.ts` (modified - added FilterResult interface and filterLowQualityItem function)
+- **Learnings for future iterations:**
+  - The filterLowQualityItem function checks in order: title length, title patterns, URL patterns, URL domains
+  - Returns early with a reason string for the first match, avoiding unnecessary checks
+  - MIN_TITLE_LENGTH constant (10 chars) is defined locally in the module since it's filter-specific
+  - The function handles null/undefined titles gracefully with optional chaining
+  - FeedItem type is imported from model.ts via the `@/src/lib/model` path alias
+---
+
 ## 2026-01-24 - US-009
 - What was implemented: Created `src/config/filter-patterns.ts` with consolidated bad URL and title patterns
 - Files changed:
