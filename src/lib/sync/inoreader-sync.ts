@@ -1,9 +1,23 @@
 /**
  * Periodic sync from Inoreader API to database
  * Decouples data retrieval from request path
- * 
+ *
  * This runs periodically (scheduled job) and pulls fresh data from Inoreader,
  * saving it to the database. Read requests always hit the database cache.
+ *
+ * @deprecated This module is deprecated. Use `daily-sync.ts` instead, which provides:
+ * - State management with resume capability
+ * - Better error handling and rate limiting
+ * - Database driver abstraction for PostgreSQL/SQLite compatibility
+ * - Incremental sync with continuation tokens
+ *
+ * TODO: Deprecation Plan
+ * 1. Update /api/admin/sync route to use daily-sync.ts functions
+ * 2. Migrate syncAllCategories -> use daily-sync with appropriate options
+ * 3. Migrate syncCategory -> use daily-sync for single category
+ * 4. Remove this file after route migration is complete
+ *
+ * Currently used by: /api/admin/sync/route.ts
  */
 
 import { createInoreaderClient } from '../inoreader/client';
@@ -27,6 +41,7 @@ const VALID_CATEGORIES: Category[] = [
 /**
  * Sync all items from Inoreader for all categories
  * Call this periodically from a cron job or scheduled task
+ * @deprecated Use daily-sync.ts runDailySync() instead
  */
 export async function syncAllCategories(): Promise<{
   success: boolean;
@@ -69,6 +84,7 @@ export async function syncAllCategories(): Promise<{
 
 /**
  * Sync a single category from Inoreader
+ * @deprecated Use daily-sync.ts runDailySync() with category filter instead
  */
 export async function syncCategory(category: Category): Promise<{
   itemsAdded: number;
@@ -153,6 +169,7 @@ export async function syncCategory(category: Category): Promise<{
 /**
  * Sync a single stream from Inoreader
  * Useful for incremental updates or manual triggering
+ * @deprecated Use daily-sync.ts runDailySync() with stream filter instead
  */
 export async function syncStream(
   streamId: string
