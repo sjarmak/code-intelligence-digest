@@ -382,8 +382,8 @@
         "Typecheck passes"
       ],
       "priority": 26,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "N/A - rankCategoryWithoutRecency function does not exist in this branch (per US-012). The function existed only in the production branch, not main. No code changes needed - typecheck passes."
     },
     {
       "id": "US-027",

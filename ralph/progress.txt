@@ -13,6 +13,16 @@
 
 ---
 
+## 2026-01-24 - US-026
+- What was implemented: N/A - `rankCategoryWithoutRecency` function does not exist in this branch, so there's nothing to delete
+- Files changed: None
+- **Learnings for future iterations:**
+  - Confirmed via `grep` that `rankCategoryWithoutRecency` doesn't exist anywhere in the codebase (only in PRD/documentation)
+  - This is consistent with US-012 and US-025 findings: the function exists only in `production` branch, not `main`
+  - The unified `rankCategory` function with `includeRecency` option (added in US-024) replaces the need for a separate function
+  - When PRD asks to delete a function that doesn't exist, verify with grep/search, mark as N/A, and document
+---
+
 ## 2026-01-24 - US-025
 - What was implemented: N/A - `rankCategoryWithoutRecency` function does not exist in this branch, so there are no callers to update
 - Files changed: None
