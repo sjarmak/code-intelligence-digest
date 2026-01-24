@@ -10,6 +10,11 @@
  * - Generic promotional content
  */
 
+import type { FeedItem } from "@/src/lib/model";
+
+/** Minimum title length required for content to pass filtering */
+const MIN_TITLE_LENGTH = 10;
+
 /**
  * Bad URL patterns - URLs matching these should be excluded
  *
@@ -137,3 +142,75 @@ export const BAD_URL_DOMAINS: readonly string[] = [
   "newsletter-digest",
   "bonobopress.com",
 ] as const;
+
+/**
+ * Filter result returned by filterLowQualityItem
+ */
+export interface FilterResult {
+  /** Whether the item was filtered (true = should be excluded) */
+  filtered: boolean;
+  /** Reason for filtering, if filtered is true */
+  reason?: string;
+}
+
+/**
+ * Check if a feed item should be filtered due to low quality indicators.
+ *
+ * Checks:
+ * 1. Title length (must be at least MIN_TITLE_LENGTH characters)
+ * 2. Title against BAD_TITLE_PATTERNS
+ * 3. URL against BAD_URL_PATTERNS
+ * 4. URL against BAD_URL_DOMAINS
+ *
+ * @param item - The feed item to check
+ * @returns FilterResult with filtered=true and reason if item should be excluded
+ *
+ * @example
+ * const result = filterLowQualityItem(item);
+ * if (result.filtered) {
+ *   console.log(`Filtered: ${result.reason}`);
+ * }
+ */
+export function filterLowQualityItem(item: FeedItem): FilterResult {
+  // Check minimum title length
+  if (!item.title || item.title.trim().length < MIN_TITLE_LENGTH) {
+    return {
+      filtered: true,
+      reason: `Title too short (${item.title?.trim().length ?? 0} < ${MIN_TITLE_LENGTH} chars)`,
+    };
+  }
+
+  // Check title against bad patterns
+  for (const pattern of BAD_TITLE_PATTERNS) {
+    if (pattern.test(item.title)) {
+      return {
+        filtered: true,
+        reason: `Title matches bad pattern: ${pattern.source}`,
+      };
+    }
+  }
+
+  // Check URL against bad patterns
+  if (item.url) {
+    for (const pattern of BAD_URL_PATTERNS) {
+      if (pattern.test(item.url)) {
+        return {
+          filtered: true,
+          reason: `URL matches bad pattern: ${pattern.source}`,
+        };
+      }
+    }
+
+    // Check URL against bad domains
+    for (const domain of BAD_URL_DOMAINS) {
+      if (item.url.toLowerCase().includes(domain.toLowerCase())) {
+        return {
+          filtered: true,
+          reason: `URL contains bad domain: ${domain}`,
+        };
+      }
+    }
+  }
+
+  return { filtered: false };
+}
