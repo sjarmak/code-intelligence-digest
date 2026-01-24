@@ -13,6 +13,16 @@
 
 ---
 
+## 2026-01-24 - US-012
+- What was implemented: N/A - `rankCategoryWithoutRecency` function does not exist in this branch
+- Files changed: None
+- **Learnings for future iterations:**
+  - The function `rankCategoryWithoutRecency` exists in the `production` branch but not in `main` branch
+  - This refactoring branch (`ralph/codebase-refactoring`) was created from `main`, so the function is not present
+  - When PRD references a function that doesn't exist, mark as N/A and document the branch divergence
+  - Check git history with `git show <branch>:path/to/file.ts | grep functionName` to verify function existence across branches
+---
+
 ## 2026-01-24 - US-011
 - What was implemented: Updated `src/lib/pipeline/rank.ts` to use the shared `filterLowQualityItem` function from filter-patterns.ts
 - Files changed:
