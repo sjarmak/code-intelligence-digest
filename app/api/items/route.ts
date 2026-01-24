@@ -8,19 +8,9 @@ import { loadItemsByCategory } from "@/src/lib/db/items";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
-import { Category } from "@/src/lib/model";
+import { Category, VALID_CATEGORIES } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { getCategoryConfig } from "@/src/config/categories";
-
-const VALID_CATEGORIES: Category[] = [
-  "newsletters",
-  "podcasts",
-  "tech_articles",
-  "ai_news",
-  "product_news",
-  "community",
-  "research",
-];
 
 const PERIOD_DAYS: Record<string, number> = {
   day: 1,
