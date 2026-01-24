@@ -102,8 +102,8 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced local VALID_CATEGORIES in both daily-sync.ts and weekly-sync.ts with import from model.ts"
     },
     {
       "id": "US-008",
@@ -115,8 +115,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced local VALID_CATEGORIES array with import from @/src/lib/model"
     },
     {
       "id": "US-009",
@@ -130,8 +130,8 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Created src/config/filter-patterns.ts with BAD_URL_PATTERNS (21 patterns), BAD_TITLE_PATTERNS (11 patterns), and BAD_URL_DOMAINS (6 domains) consolidated from decompose.ts and reviewNewsletter.ts"
     },
     {
       "id": "US-010",
