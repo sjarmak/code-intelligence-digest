@@ -1,16 +1,33 @@
 /**
  * Optimized Inoreader sync using minimal API calls
- * 
+ *
  * Instead of calling each stream individually (30+ calls),
  * fetch from category tags in bulk (2-3 calls total)
- * 
+ *
  * Inoreader special stream IDs:
  * - user/{userId}/state/com.google/all        = All items
  * - user/{userId}/label/{label}                = Label/folder items
  * - user/{userId}/state/com.google/starred     = Starred items
- * 
+ *
  * This approach uses only 1-3 API calls per month sync,
  * leaving 97-99 calls available for other uses.
+ *
+ * @deprecated This module is deprecated. Use `daily-sync.ts` instead, which provides:
+ * - State management with resume capability (survives restarts)
+ * - Better error handling and rate limiting
+ * - Database driver abstraction for PostgreSQL/SQLite compatibility
+ * - Incremental sync with continuation tokens
+ * - Shared state management via sync-state.ts
+ *
+ * TODO: Migration Plan
+ * 1. Update /api/admin/sync-optimized route to use daily-sync.ts
+ * 2. The bulk fetching approach here could be integrated into daily-sync.ts
+ *    as an "optimized mode" option if needed
+ * 3. Migrate syncCategoryOptimized -> runDailySync with category filter
+ * 4. Migrate syncAllCategoriesOptimized -> runDailySync with all categories
+ * 5. Remove this file after route migration is complete
+ *
+ * Currently used by: /api/admin/sync-optimized/[...slug]/route.ts
  */
 
 import { createInoreaderClient } from '../inoreader/client';
@@ -24,6 +41,7 @@ import { getStreamsByCategory } from '@/src/config/feeds';
 /**
  * Fetch all items from a specific category/label in one call
  * Uses Inoreader's label/tag feature for bulk fetching
+ * @deprecated Use daily-sync.ts runDailySync() with category filter instead
  */
 export async function syncCategoryOptimized(
   category: Category
@@ -113,13 +131,14 @@ export async function syncCategoryOptimized(
 
 /**
  * Sync ALL categories in bulk with minimal API calls
- * 
+ *
  * Strategy:
  * 1. Fetch all items from user's "All Items" stream (1 call)
  * 2. Normalize and categorize
  * 3. Save to database
- * 
+ *
  * This uses only 1 API call to populate entire database!
+ * @deprecated Use daily-sync.ts runDailySync() instead
  */
 export async function syncAllCategoriesOptimized(): Promise<{
   success: boolean;
@@ -282,9 +301,10 @@ export async function syncAllCategoriesOptimized(): Promise<{
 /**
  * Alternative: Fetch from multiple category labels/tags
  * Useful if you have organized your subscriptions in Inoreader
- * 
+ *
  * Example: If you have "Code_Intelligence" folder with all relevant feeds,
  * this would fetch only from that label in 1 call.
+ * @deprecated Use daily-sync.ts runDailySync() with label stream ID instead
  */
 export async function syncByLabel(labelId: string): Promise<{
   itemsAdded: number;
