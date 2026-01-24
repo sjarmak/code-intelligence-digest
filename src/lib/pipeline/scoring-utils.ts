@@ -90,3 +90,118 @@ export function computeRecencyScore(
   // At age=0, score=1.0; at age=halfLife, score≈0.6; approaches 0.2 as age→∞
   return 0.2 + 0.8 * Math.pow(2, -ageDays / halfLifeDays);
 }
+
+/**
+ * Result of boost multiplier calculation
+ */
+export interface BoostResult {
+  /** The boost multiplier to apply to the final score */
+  multiplier: number;
+  /** Terms that matched and contributed to the boost */
+  matchedTerms: string[];
+}
+
+/**
+ * Compute boost multiplier based on content relevance to core domain terms.
+ *
+ * Boost tiers:
+ * - 5.0x: Content contains "sourcegraph" (highest priority)
+ * - 3.0-4.0x: Content matches a product name OR has 3+ core terms
+ * - 2.0-2.5x: Content has 2 core terms OR agent + code context compound
+ * - 1.5x: Content has 1 core term
+ * - 1.0x: No relevant matches (baseline)
+ *
+ * @param content - The text content to search (title + summary + snippet)
+ * @param category - The category being ranked (unused for now, but allows category-specific boosts in the future)
+ * @returns BoostResult with multiplier and matched terms
+ *
+ * @example
+ * // Sourcegraph content gets maximum boost
+ * computeBoostMultiplier("Sourcegraph announces new code search", "tech_articles")
+ * // => { multiplier: 5.0, matchedTerms: ["sourcegraph"] }
+ *
+ * @example
+ * // Product name match
+ * computeBoostMultiplier("How to use Cursor for coding", "tech_articles")
+ * // => { multiplier: 3.5, matchedTerms: ["cursor"] }
+ */
+export function computeBoostMultiplier(
+  content: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  category: string
+): BoostResult {
+  const contentLower = content.toLowerCase();
+  const matchedTerms: string[] = [];
+
+  // SOURCEGRAPH: Highest priority (5.0x)
+  if (contentLower.includes('sourcegraph')) {
+    return {
+      multiplier: 5.0,
+      matchedTerms: ['sourcegraph'],
+    };
+  }
+
+  // Check for product name matches (3.5x)
+  const matchedProducts = PRODUCT_NAMES.filter((product) =>
+    contentLower.includes(product)
+  );
+  if (matchedProducts.length > 0) {
+    return {
+      multiplier: 3.5,
+      matchedTerms: [...matchedProducts],
+    };
+  }
+
+  // Count matching core terms
+  const matchedCoreTerms = CORE_TERMS.filter((term) =>
+    contentLower.includes(term)
+  );
+  const coreTermCount = matchedCoreTerms.length;
+  matchedTerms.push(...matchedCoreTerms);
+
+  // Check for compound terms (agent + code search/intelligence/context)
+  const hasAgent =
+    contentLower.includes('agent') ||
+    contentLower.includes('agentic') ||
+    contentLower.includes('coding agent');
+  // Code context terms: code search, code intelligence, context management, context window
+  const codeContextTerms = CORE_TERMS.slice(1, 8); // code search through context window
+  const hasCodeContext = codeContextTerms.some((term) =>
+    contentLower.includes(term)
+  );
+
+  if (coreTermCount >= 3) {
+    // Multiple domain terms = strong signal (3.0x)
+    return {
+      multiplier: 3.0,
+      matchedTerms,
+    };
+  } else if (coreTermCount === 2) {
+    // Two core terms (2.0x)
+    return {
+      multiplier: 2.0,
+      matchedTerms,
+    };
+  } else if (hasAgent && hasCodeContext) {
+    // Agent + code context = sweet spot (2.5x)
+    if (!matchedTerms.includes('agent')) {
+      matchedTerms.push('agent');
+    }
+    return {
+      multiplier: 2.5,
+      matchedTerms,
+    };
+  } else if (coreTermCount === 1) {
+    // Single core term (1.5x)
+    return {
+      multiplier: 1.5,
+      matchedTerms,
+    };
+  }
+
+  // No matches - baseline (1.0x)
+  return {
+    multiplier: 1.0,
+    matchedTerms: [],
+  };
+}
