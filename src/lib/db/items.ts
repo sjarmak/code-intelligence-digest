@@ -416,7 +416,7 @@ export async function saveExtractedUrls(urlMap: Record<string, string>): Promise
   try {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
-      UPDATE items 
+      UPDATE items
       SET extracted_url = ?,
           updated_at = strftime('%s', 'now')
       WHERE id = ?
@@ -432,6 +432,57 @@ export async function saveExtractedUrls(urlMap: Record<string, string>): Promise
     logger.info(`Saved extracted URLs for ${Object.keys(urlMap).length} items`);
   } catch (error) {
     logger.error("Failed to save extracted URLs", error);
+    throw error;
+  }
+}
+
+/**
+ * Load cached BM25 scores for items from the item_scores table.
+ * Returns the most recent BM25 score for each item that has one.
+ * Used for optimization: skip BM25 calculation for items with cached scores.
+ */
+export async function loadBM25ScoresForItems(
+  itemIds: string[],
+  category: string
+): Promise<Record<string, number>> {
+  try {
+    if (itemIds.length === 0) {
+      return {};
+    }
+
+    const sqlite = getSqlite();
+
+    // Get the most recent BM25 scores for each item in the given category
+    const placeholders = itemIds.map(() => "?").join(",");
+    const rows = sqlite
+      .prepare(
+        `
+      SELECT item_id, bm25_score, scored_at
+      FROM item_scores
+      WHERE item_id IN (${placeholders}) AND category = ?
+      ORDER BY scored_at DESC
+    `
+      )
+      .all(...itemIds, category) as Array<{
+      item_id: string;
+      bm25_score: number;
+      scored_at: number;
+    }>;
+
+    const scores: Record<string, number> = {};
+    const seen = new Set<string>();
+
+    for (const row of rows) {
+      // Only include the first (most recent) score for each item
+      if (!seen.has(row.item_id)) {
+        seen.add(row.item_id);
+        scores[row.item_id] = row.bm25_score;
+      }
+    }
+
+    return scores;
+  } catch (error) {
+    logger.error("Failed to load BM25 scores for items", error);
     throw error;
   }
 }

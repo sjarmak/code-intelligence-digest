@@ -6,7 +6,7 @@
 import { FeedItem, RankedItem, Category } from "../model";
 import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
-import { loadScoresForItems } from "../db/items";
+import { loadScoresForItems, loadBM25ScoresForItems } from "../db/items";
 import { logger } from "../logger";
 import { computeRecencyScore, computeBoostMultiplier } from "./scoring-utils";
 import { filterLowQualityItem } from "../../config/filter-patterns";
@@ -79,19 +79,35 @@ export async function rankCategory(
     return [];
   }
 
-  // Build BM25 index
-  const bm25 = new BM25Index();
-  bm25.addDocuments(qualityItems);
-  // Parse query string into terms
-  const queryTerms = config.query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length > 0);
-  const bm25Scores = bm25.score(queryTerms);
-  const bm25Normalized = bm25.normalizeScores(bm25Scores);
+  // Load cached BM25 scores to skip re-computation for items that have them
+  const itemIds = qualityItems.map((item) => item.id);
+  const cachedBM25Scores = await loadBM25ScoresForItems(itemIds, category);
+  const itemsWithCachedBM25 = qualityItems.filter((item) => cachedBM25Scores[item.id] !== undefined);
+  const itemsNeedingBM25 = qualityItems.filter((item) => cachedBM25Scores[item.id] === undefined);
+
+  // Build BM25 index only for items without cached scores
+  let bm25Normalized: Map<string, number>;
+  if (itemsNeedingBM25.length === 0) {
+    // All items have cached scores, skip BM25 index building entirely
+    logger.info(`Skipped BM25 for ${itemsWithCachedBM25.length} items with cached scores`);
+    bm25Normalized = new Map();
+  } else {
+    const bm25 = new BM25Index();
+    bm25.addDocuments(itemsNeedingBM25);
+    // Parse query string into terms
+    const queryTerms = config.query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((t) => t.length > 0);
+    const bm25Scores = bm25.score(queryTerms);
+    bm25Normalized = bm25.normalizeScores(bm25Scores);
+
+    if (itemsWithCachedBM25.length > 0) {
+      logger.info(`Skipped BM25 for ${itemsWithCachedBM25.length} items with cached scores`);
+    }
+  }
 
   // Load pre-computed LLM scores from database (only during daily sync should new scores be calculated)
-  const itemIds = qualityItems.map((item) => item.id);
   const preComputedScores = await loadScoresForItems(itemIds);
   
   // Convert to LLMScoreResult format expected by the ranking logic
@@ -109,7 +125,8 @@ export async function rankCategory(
 
   // Compute all scores and combine
   const rankedItems: RankedItem[] = qualityItems.map((item) => {
-    const bm25Score = bm25Normalized.get(item.id) ?? 0;
+    // Use cached BM25 score if available, otherwise use freshly computed score
+    const bm25Score = cachedBM25Scores[item.id] ?? bm25Normalized.get(item.id) ?? 0;
     const llmResult = llmScores[item.id];
     // Compute LLM score from pre-computed relevance and usefulness (0.7 * relevance + 0.3 * usefulness)
     // No score = use BM25 as proxy (better than hardcoded 5/10)
