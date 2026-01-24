@@ -19,81 +19,10 @@ import { categorizeItems } from '../pipeline/categorize';
 import { saveItems, getLastPublishedTimestamp } from '../db/items';
 import { logger } from '../logger';
 import { Category, VALID_CATEGORIES } from '../model';
-import { getSqlite } from '../db/index';
-
-interface SyncStateRow {
-  id: string;
-  continuation_token: string | null;
-  items_processed: number;
-  calls_used: number;
-  started_at: number;
-  last_updated_at: number;
-  status: string;
-  error: string | null;
-}
+import { loadSyncState, saveSyncState, clearSyncState } from './sync-state';
 
 const SYNC_ID = 'daily-sync';
 const FALLBACK_HOURS_IF_EMPTY = 24; // Fallback window if database has no items
-
-/**
- * Get current sync state from database
- */
-function getSyncState(): SyncStateRow | null {
-  try {
-    const sqlite = getSqlite();
-    const row = sqlite
-      .prepare('SELECT * FROM sync_state WHERE id = ?')
-      .get(SYNC_ID) as SyncStateRow | undefined;
-    return row ?? null;
-  } catch (error) {
-    logger.warn('[DAILY-SYNC] Could not load sync state, starting fresh', error as Record<string, unknown>);
-    return null;
-  }
-}
-
-/**
- * Save sync state to resume later if interrupted
- */
-function saveSyncState(data: {
-  continuationToken?: string | null;
-  itemsProcessed: number;
-  callsUsed: number;
-  status: 'in_progress' | 'completed' | 'paused';
-  error?: string;
-}): void {
-  try {
-    const sqlite = getSqlite();
-    sqlite.prepare(`
-      INSERT OR REPLACE INTO sync_state 
-      (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
-      VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), ?, ?)
-    `).run(
-      SYNC_ID,
-      data.continuationToken || null,
-      data.itemsProcessed,
-      data.callsUsed,
-      Math.floor(Date.now() / 1000),
-      data.status,
-      data.error || null
-    );
-    logger.debug('[DAILY-SYNC] Saved sync state', data);
-  } catch (error) {
-    logger.error('[DAILY-SYNC] Failed to save sync state', error);
-  }
-}
-
-/**
- * Clear sync state when completed
- */
-function clearSyncState(): void {
-  try {
-    const sqlite = getSqlite();
-    sqlite.prepare('DELETE FROM sync_state WHERE id = ?').run(SYNC_ID);
-    logger.info('[DAILY-SYNC] Cleared sync state (sync complete)');
-  } catch (error) {
-    logger.warn('[DAILY-SYNC] Could not clear sync state', error as Record<string, unknown>);
-  }
-}
 
 /**
  * Run daily sync: fetch items newer than the last one in our database
@@ -121,18 +50,18 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     logger.info('[DAILY-SYNC] Starting daily sync (fetch newer items)');
   }
 
-  const existingState = getSyncState();
+  const existingState = await loadSyncState(SYNC_ID);
   const resumed = existingState ? existingState.status === 'paused' : false;
 
   if (resumed) {
-    logger.info(`[DAILY-SYNC] Resuming from previous sync (${existingState!.items_processed} items processed)`);
+    logger.info(`[DAILY-SYNC] Resuming from previous sync (${existingState!.itemsProcessed} items processed)`);
   }
 
   const client = createInoreaderClient();
   const categoriesProcessed: Category[] = [];
   let totalItemsAdded = 0;
-  let callsUsed = existingState?.calls_used ?? 0;
-  let continuation = existingState?.continuation_token || undefined;
+  let callsUsed = existingState?.callsUsed ?? 0;
+  let continuation = existingState?.continuationToken || undefined;
 
   try {
     // Get user ID
@@ -247,7 +176,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
       // Update sync state (resume point)
       continuation = response.continuation || undefined;
-      saveSyncState({
+      await saveSyncState(SYNC_ID, {
         continuationToken: continuation,
         itemsProcessed: totalItemsAdded,
         callsUsed,
@@ -257,7 +186,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       // Safety check: if we've used 95+ calls, pause and resume tomorrow
       if (callsUsed >= 95) {
         logger.warn(`[DAILY-SYNC] Approaching rate limit (${callsUsed} calls used). Pausing. Will resume tomorrow.`);
-        saveSyncState({
+        await saveSyncState(SYNC_ID, {
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
           callsUsed,
@@ -280,7 +209,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     }
 
     // Sync complete
-    clearSyncState();
+    await clearSyncState(SYNC_ID);
 
     logger.info(
       `[DAILY-SYNC] Complete: ${totalItemsAdded} items, ${categoriesProcessed.length} categories, ${callsUsed} API calls`
@@ -298,7 +227,7 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     // Save error state for resumption
-    saveSyncState({
+    await saveSyncState(SYNC_ID, {
       continuationToken: continuation,
       itemsProcessed: totalItemsAdded,
       callsUsed,
