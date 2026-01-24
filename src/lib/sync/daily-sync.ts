@@ -340,11 +340,15 @@ export async function runDailySync(options?: { lookbackDays?: number; forceLookb
       );
 
       try {
-        // Fetch batch - use `nt` for server-side filtering (only items NEWER than timestamp)
+        // Fetch batch - use `ot` for server-side filtering (only items NEWER than timestamp)
+        // Note: Inoreader's naming is counterintuitive:
+        //   - `ot` = "older than" = exclude items older than this = return items PUBLISHED AFTER this time
+        //   - `nt` = "newer than" = exclude items newer than this = return items PUBLISHED BEFORE this time
+        // We want items NEWER than syncSinceTimestamp, so we use `ot`
         const response = await client.getStreamContents(allItemsStreamId, {
           n: STREAM_PAGE_SIZE,
           continuation,
-          nt: syncSinceTimestamp,
+          ot: syncSinceTimestamp,
         });
 
         callsUsed++;

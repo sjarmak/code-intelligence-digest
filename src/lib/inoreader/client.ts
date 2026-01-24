@@ -70,8 +70,9 @@ export interface FetchStreamOptions {
   n?: number;
   continuation?: string;
   xt?: string;  // Exclude tag (e.g., read items)
-  ot?: number;  // Oldest timestamp - only items OLDER than this (unix epoch seconds)
-  nt?: number;  // Newest timestamp - only items NEWER than this (unix epoch seconds)
+  // Inoreader's timestamp parameters have counterintuitive naming:
+  ot?: number;  // "older than" = EXCLUDE items older than this = return items PUBLISHED AFTER this time (unix epoch seconds)
+  nt?: number;  // "newer than" = EXCLUDE items newer than this = return items PUBLISHED BEFORE this time (unix epoch seconds)
 }
 
 export class InoreaderClient {
