@@ -13,6 +13,18 @@
 
 ---
 
+## 2026-01-24 - US-022
+- What was implemented: Updated `src/lib/pipeline/bm25.ts` to import domain terms from the shared `domain-terms.ts` module
+- Files changed:
+  - `src/lib/pipeline/bm25.ts` (modified - removed 123 lines, added 3 lines)
+- **Learnings for future iterations:**
+  - The `getTermsByCategory()` function from `domain-terms.ts` returns exactly the same structure as the original local `DOMAIN_TERMS` object
+  - Structure: `Record<DomainCategory, { weight: number; terms: string[] }>`
+  - This enables direct replacement without modifying any of the downstream code that uses `DOMAIN_TERMS`
+  - The `CATEGORY_QUERIES` object that references `DOMAIN_TERMS.category.terms` continues to work unchanged
+  - Removed 120+ lines of duplicate term definitions, leaving only 3 lines: import + function call
+---
+
 ## 2026-01-24 - US-021
 - What was implemented: Created `src/config/domain-terms.ts` consolidating term configurations from `bm25.ts` and `categories.ts`
 - Files changed:

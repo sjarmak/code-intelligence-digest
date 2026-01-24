@@ -327,8 +327,8 @@
         "Typecheck passes"
       ],
       "priority": 22,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced local DOMAIN_TERMS object (123 lines) with import of getTermsByCategory() from domain-terms.ts. The shared function returns the same structure as the original object."
     },
     {
       "id": "US-023",
