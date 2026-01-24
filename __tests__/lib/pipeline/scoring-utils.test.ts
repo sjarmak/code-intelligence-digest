@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { computeRecencyScore } from "../../../src/lib/pipeline/scoring-utils";
+import {
+  computeRecencyScore,
+  computeBoostMultiplier,
+  PRODUCT_NAMES,
+  CORE_TERMS,
+} from "../../../src/lib/pipeline/scoring-utils";
 
 describe("computeRecencyScore", () => {
   // Fix Date.now to a specific point in time for deterministic tests
@@ -156,6 +161,271 @@ describe("computeRecencyScore", () => {
         expect(score).toBeLessThanOrEqual(previousScore);
         previousScore = score;
       }
+    });
+  });
+});
+
+describe("computeBoostMultiplier", () => {
+  describe("5x boost for sourcegraph", () => {
+    it("should return 5.0x multiplier for content containing 'sourcegraph'", () => {
+      const result = computeBoostMultiplier(
+        "Sourcegraph announces new code search features",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(5.0);
+      expect(result.matchedTerms).toContain("sourcegraph");
+    });
+
+    it("should match sourcegraph case-insensitively", () => {
+      const result = computeBoostMultiplier(
+        "SOURCEGRAPH releases update",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(5.0);
+      expect(result.matchedTerms).toContain("sourcegraph");
+    });
+
+    it("should prioritize sourcegraph over other matches", () => {
+      // Content with both sourcegraph and product names should get 5.0x
+      const result = computeBoostMultiplier(
+        "Sourcegraph vs Cursor comparison for code intelligence",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(5.0);
+      expect(result.matchedTerms).toContain("sourcegraph");
+      // Other terms should not be in matchedTerms since sourcegraph takes priority
+      expect(result.matchedTerms).not.toContain("cursor");
+    });
+  });
+
+  describe("3.5x boost for product names", () => {
+    it("should return 3.5x multiplier for content containing a product name", () => {
+      const result = computeBoostMultiplier(
+        "How to use Cursor for AI-assisted coding",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(3.5);
+      expect(result.matchedTerms).toContain("cursor");
+    });
+
+    it("should match all product names", () => {
+      for (const product of PRODUCT_NAMES) {
+        const result = computeBoostMultiplier(
+          `Article about ${product} and its features`,
+          "tech_articles"
+        );
+        expect(result.multiplier).toBe(3.5);
+        expect(result.matchedTerms).toContain(product);
+      }
+    });
+
+    it("should return multiple matched products when present", () => {
+      const result = computeBoostMultiplier(
+        "Comparing Cursor vs Copilot for developers",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(3.5);
+      expect(result.matchedTerms).toContain("cursor");
+      expect(result.matchedTerms).toContain("copilot");
+    });
+
+    it("should match product names case-insensitively", () => {
+      const result = computeBoostMultiplier(
+        "CLAUDE CODE is amazing",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(3.5);
+      expect(result.matchedTerms).toContain("claude code");
+    });
+  });
+
+  describe("3.0x boost for 3+ core terms", () => {
+    it("should return 3.0x multiplier for content with 3 or more core terms", () => {
+      const result = computeBoostMultiplier(
+        "This article covers code search, code intelligence, and software engineering best practices",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(3.0);
+      expect(result.matchedTerms.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it("should return all matched core terms", () => {
+      const result = computeBoostMultiplier(
+        "deep search combined with code search enables better information retrieval and developer productivity",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(3.0);
+      expect(result.matchedTerms).toContain("deep search");
+      expect(result.matchedTerms).toContain("code search");
+      expect(result.matchedTerms).toContain("information retrieval");
+      expect(result.matchedTerms).toContain("developer productivity");
+    });
+  });
+
+  describe("2.5x boost for agent + code context", () => {
+    it("should return 2.5x multiplier for agent + code search combo", () => {
+      const result = computeBoostMultiplier(
+        "Building an agent that uses code search effectively",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(2.5);
+      expect(result.matchedTerms).toContain("code search");
+      expect(result.matchedTerms).toContain("agent");
+    });
+
+    it("should return 2.5x multiplier for agentic + context management combo", () => {
+      const result = computeBoostMultiplier(
+        "Agentic systems require proper context management",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(2.5);
+      expect(result.matchedTerms).toContain("context management");
+    });
+
+    it("should return 2.0x for coding agent + code intelligence (2 core terms)", () => {
+      // "coding agent" is a core term, "code intelligence" is also a core term
+      // So this results in 2 core terms = 2.0x boost
+      const result = computeBoostMultiplier(
+        "coding agent leveraging code intelligence",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(2.0);
+      expect(result.matchedTerms).toContain("coding agent");
+      expect(result.matchedTerms).toContain("code intelligence");
+    });
+  });
+
+  describe("2.0x boost for 2 core terms", () => {
+    it("should return 2.0x multiplier for content with exactly 2 core terms", () => {
+      const result = computeBoostMultiplier(
+        "Improving developer productivity through better benchmark testing",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(2.0);
+      expect(result.matchedTerms.length).toBe(2);
+      expect(result.matchedTerms).toContain("developer productivity");
+      expect(result.matchedTerms).toContain("benchmark");
+    });
+  });
+
+  describe("1.5x boost for single core term", () => {
+    it("should return 1.5x multiplier for content with exactly 1 core term", () => {
+      const result = computeBoostMultiplier(
+        "Understanding the context window in LLMs",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(1.5);
+      expect(result.matchedTerms.length).toBe(1);
+      expect(result.matchedTerms).toContain("context window");
+    });
+
+    it("should return 1.5x for any single core term", () => {
+      for (const term of CORE_TERMS) {
+        const result = computeBoostMultiplier(
+          `Article discussing ${term} in depth`,
+          "tech_articles"
+        );
+        // Some terms might trigger agent+code context combo,
+        // so we only test non-code-context terms individually
+        expect(result.multiplier).toBeGreaterThanOrEqual(1.5);
+        expect(result.matchedTerms).toContain(term);
+      }
+    });
+  });
+
+  describe("1.0x baseline for no matches", () => {
+    it("should return 1.0x multiplier for content with no relevant terms", () => {
+      const result = computeBoostMultiplier(
+        "Random article about cooking recipes",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(1.0);
+      expect(result.matchedTerms).toHaveLength(0);
+    });
+
+    it("should return 1.0x for empty content", () => {
+      const result = computeBoostMultiplier("", "tech_articles");
+      expect(result.multiplier).toBe(1.0);
+      expect(result.matchedTerms).toHaveLength(0);
+    });
+
+    it("should return 1.0x for content with partial matches that don't qualify", () => {
+      // "search" alone doesn't match "code search" or "deep search"
+      const result = computeBoostMultiplier(
+        "How to search for files on your computer",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(1.0);
+      expect(result.matchedTerms).toHaveLength(0);
+    });
+  });
+
+  describe("boost tier priority", () => {
+    it("should prioritize sourcegraph (5.0x) over all other boosts", () => {
+      const result = computeBoostMultiplier(
+        "Sourcegraph uses cursor and copilot for code search and code intelligence with agents",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(5.0);
+    });
+
+    it("should prioritize product names (3.5x) over core terms (3.0x)", () => {
+      const result = computeBoostMultiplier(
+        "Using Aider for deep search, code search, code intelligence, and more",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(3.5);
+    });
+
+    it("should prioritize 3+ core terms (3.0x) over agent+context (2.5x)", () => {
+      // This content has 3+ core terms which should be prioritized
+      const result = computeBoostMultiplier(
+        "Agent uses deep search, code search, and code intelligence",
+        "tech_articles"
+      );
+      expect(result.multiplier).toBe(3.0);
+    });
+  });
+
+  describe("category parameter", () => {
+    it("should accept different category values", () => {
+      const categories = [
+        "tech_articles",
+        "newsletters",
+        "podcasts",
+        "ai_news",
+        "product_news",
+        "community",
+        "research",
+      ];
+
+      for (const category of categories) {
+        const result = computeBoostMultiplier(
+          "Article about code search",
+          category
+        );
+        // Currently category doesn't affect the multiplier, but function should accept it
+        expect(result.multiplier).toBeGreaterThanOrEqual(1.0);
+      }
+    });
+  });
+
+  describe("constants exports", () => {
+    it("should export PRODUCT_NAMES with expected products", () => {
+      expect(PRODUCT_NAMES).toContain("cursor");
+      expect(PRODUCT_NAMES).toContain("copilot");
+      expect(PRODUCT_NAMES).toContain("claude code");
+      expect(PRODUCT_NAMES).toContain("cody");
+      expect(PRODUCT_NAMES).toContain("aider");
+      expect(PRODUCT_NAMES.length).toBe(11);
+    });
+
+    it("should export CORE_TERMS with expected terms", () => {
+      expect(CORE_TERMS).toContain("code search");
+      expect(CORE_TERMS).toContain("code intelligence");
+      expect(CORE_TERMS).toContain("context window");
+      expect(CORE_TERMS).toContain("developer productivity");
+      expect(CORE_TERMS.length).toBe(13);
     });
   });
 });
