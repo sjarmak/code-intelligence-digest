@@ -11,6 +11,20 @@ export type Category =
   | "community"
   | "research";
 
+/**
+ * All valid category values as a readonly array.
+ * Use this for validation and iteration over categories.
+ */
+export const VALID_CATEGORIES: readonly Category[] = [
+  "newsletters",
+  "podcasts",
+  "tech_articles",
+  "ai_news",
+  "product_news",
+  "community",
+  "research",
+] as const;
+
 export interface FeedItem {
   id: string;
   streamId: string;
