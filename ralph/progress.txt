@@ -13,6 +13,18 @@
 
 ---
 
+## 2026-01-24 - US-011
+- What was implemented: Updated `src/lib/pipeline/rank.ts` to use the shared `filterLowQualityItem` function from filter-patterns.ts
+- Files changed:
+  - `src/lib/pipeline/rank.ts` (modified - added import and quality filtering step)
+- **Learnings for future iterations:**
+  - The rankCategory function did not have BAD_TITLE_PATTERNS or BAD_URL_PATTERNS defined locally - these patterns existed in decompose.ts and reviewNewsletter.ts
+  - Added quality filtering step after time window filter, before BM25 indexing to avoid wasting computation
+  - Filter uses `qualityItems` variable to distinguish from `recentItems` (time-filtered) items
+  - Logs filtered items at debug level with reason, and summary count at info level
+  - The import path from pipeline to config is `../../config/filter-patterns`
+---
+
 ## 2026-01-24 - US-010
 - What was implemented: Added `filterLowQualityItem` function to `src/config/filter-patterns.ts`
 - Files changed:
