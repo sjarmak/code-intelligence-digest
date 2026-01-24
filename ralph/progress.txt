@@ -13,6 +13,26 @@
 
 ---
 
+## 2026-01-24 - US-016
+- What was implemented: Updated `src/lib/pipeline/rank.ts` to use the shared `computeBoostMultiplier` function from `scoring-utils.ts`
+- Files changed:
+  - `src/lib/pipeline/rank.ts` (modified - replaced inline boost logic with import)
+- **Learnings for future iterations:**
+  - Replaced ~50 lines of inline boost logic with 8 lines using shared function
+  - Removed local `coreTerms` array that duplicated CORE_TERMS constant
+  - The `computeBoostMultiplier` function already lowercases content internally, so we don't need `.toLowerCase()` on contentToSearch
+  - Simplified boost logging: one unified debug log instead of tier-specific messages
+  - The boostResult.matchedTerms array provides which terms triggered the boost for transparency
+---
+
+## 2026-01-24 - US-015
+- What was implemented: N/A - `compute-scores.ts` does not exist in codebase
+- Files changed: None
+- **Learnings for future iterations:**
+  - Same situation as US-002: PRD references `compute-scores.ts` but this file doesn't exist
+  - The boost logic is only in `rank.ts` (covered by US-016)
+---
+
 ## 2026-01-24 - US-014
 - What was implemented: Added `computeBoostMultiplier` function to `src/lib/pipeline/scoring-utils.ts`
 - Files changed:

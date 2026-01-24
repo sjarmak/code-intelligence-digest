@@ -221,8 +221,8 @@
         "Typecheck passes"
       ],
       "priority": 15,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "N/A - compute-scores.ts does not exist in codebase. The boost logic is in rank.ts (covered by US-016)."
     },
     {
       "id": "US-016",
@@ -235,8 +235,8 @@
         "Typecheck passes"
       ],
       "priority": 16,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced 50+ lines of inline boost logic with computeBoostMultiplier import. Removed local coreTerms array. Simplified boost logging."
     },
     {
       "id": "US-017",
