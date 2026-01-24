@@ -369,8 +369,8 @@
         "Typecheck passes"
       ],
       "priority": 25,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "N/A - rankCategoryWithoutRecency function does not exist in this branch (per US-012), so there are no callers to update. The RankOptions interface with includeRecency option was added in US-024 and is ready for use."
     },
     {
       "id": "US-026",

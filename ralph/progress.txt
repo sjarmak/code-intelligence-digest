@@ -13,6 +13,16 @@
 
 ---
 
+## 2026-01-24 - US-025
+- What was implemented: N/A - `rankCategoryWithoutRecency` function does not exist in this branch, so there are no callers to update
+- Files changed: None
+- **Learnings for future iterations:**
+  - The `rankCategoryWithoutRecency` function was identified in US-012 as existing only in the `production` branch, not `main`
+  - Since this refactoring branch was created from `main`, the function doesn't exist
+  - The `RankOptions` interface with `includeRecency` option was added in US-024 and is ready for any future callers
+  - When PRD references callers that don't exist, mark as N/A and document the reasoning
+---
+
 ## 2026-01-24 - US-023
 - What was implemented: Updated `src/config/categories.ts` to import and use the shared domain terms from `domain-terms.ts`
 - Files changed:
