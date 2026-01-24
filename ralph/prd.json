@@ -313,8 +313,8 @@
         "Typecheck passes"
       ],
       "priority": 21,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Created src/config/domain-terms.ts with 97 domain terms, DomainTerm interface, helper functions (getTermsForCategory, getTermWeight, buildTermWeightMap, getTermsByCategory), and DOMAIN_CATEGORIES metadata."
     },
     {
       "id": "US-022",

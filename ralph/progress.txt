@@ -13,6 +13,20 @@
 
 ---
 
+## 2026-01-24 - US-021
+- What was implemented: Created `src/config/domain-terms.ts` consolidating term configurations from `bm25.ts` and `categories.ts`
+- Files changed:
+  - `src/config/domain-terms.ts` (created - 279 lines)
+- **Learnings for future iterations:**
+  - Consolidated 97 domain terms from two sources: `bm25.ts` DOMAIN_TERMS (categorized object) and `categories.ts` DOMAIN_TERM_WEIGHTS (flat term→weight map)
+  - Structure uses `{ term: string, weight: number, category: DomainCategory }[]` as specified in PRD
+  - Added helper functions: `getTermsForCategory()`, `getTermWeight()`, `buildTermWeightMap()`, `getTermsByCategory()`
+  - `getTermsByCategory()` returns the same structure as original DOMAIN_TERMS in bm25.ts for backwards compatibility
+  - Handled plural forms (e.g., "agent"/"agents", "vector database"/"vector databases") by including both but deduplicating in `getTermsByCategory()`
+  - Weight tiers: code_search (1.6), ir/context (1.5), agentic (1.4), enterprise (1.3), devtools/llm_code (1.2), sdlc (1.0)
+  - Used `as const` on arrays for readonly type safety
+---
+
 ## 2026-01-24 - US-020
 - What was implemented: Updated `src/lib/sync/weekly-sync.ts` to use the shared sync state module from `sync-state.ts`
 - Files changed:
