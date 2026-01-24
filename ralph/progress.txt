@@ -13,6 +13,18 @@
 
 ---
 
+## 2026-01-24 - US-013
+- What was implemented: Added `PRODUCT_NAMES` and `CORE_TERMS` constants to `src/lib/pipeline/scoring-utils.ts`
+- Files changed:
+  - `src/lib/pipeline/scoring-utils.ts` (modified - added boost constants)
+- **Learnings for future iterations:**
+  - PRODUCT_NAMES contains 11 AI coding tools: augment code, claude code, cursor, copilot, cody, aider, codegen, windsurf, void, trae, roo
+  - CORE_TERMS contains 13 domain-specific terms from the existing `coreTerms` array in rank.ts
+  - Both arrays use `as const` for readonly type safety and better TypeScript inference
+  - JSDoc with category groupings makes constants self-documenting
+  - These constants will be used by computeBoostMultiplier function (US-014) and to replace inline arrays in rank.ts (US-016)
+---
+
 ## 2026-01-24 - US-012
 - What was implemented: N/A - `rankCategoryWithoutRecency` function does not exist in this branch
 - Files changed: None
