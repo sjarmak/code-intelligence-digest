@@ -34,6 +34,7 @@ import { createInoreaderClient } from '../inoreader/client';
 import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
 import { saveItems } from '../db/items';
+import { incrementApiCalls } from '../db/api-budget';
 import { logger } from '../logger';
 import { Category } from '../model';
 import { getStreamsByCategory } from '@/src/config/feeds';
@@ -79,6 +80,9 @@ export async function syncCategoryOptimized(
     const response = await client.getStreamContents(allItemsStreamId, {
       n: 500, // Fetch up to 500 items per stream
     });
+
+    // Track API call in budget
+    await incrementApiCalls(1);
 
     if (!response.items || response.items.length === 0) {
       logger.warn(
@@ -176,6 +180,10 @@ export async function syncAllCategoriesOptimized(): Promise<{
       throw new Error('Could not determine user ID from Inoreader');
     }
 
+    // Track getUserInfo API call
+    await incrementApiCalls(1);
+    apiCallsUsed++;
+
     logger.info(`[SYNC-OPTIMIZED] User ID: ${userId}`);
 
     // Use the "all items" special stream ID
@@ -201,6 +209,10 @@ export async function syncAllCategoriesOptimized(): Promise<{
         n: 1000, // Get up to 1000 items per call
         continuation,
       });
+
+      // Track API call in budget
+      await incrementApiCalls(1);
+      apiCallsUsed++;
 
       if (!response.items || response.items.length === 0) {
         break;
@@ -254,7 +266,7 @@ export async function syncAllCategoriesOptimized(): Promise<{
       );
     } while (continuation);
 
-    apiCallsUsed = callCount;
+    // apiCallsUsed is already tracked above
 
     if (totalItemsAdded === 0) {
       logger.warn('[SYNC-OPTIMIZED] No items found or saved');
@@ -314,15 +326,18 @@ export async function syncByLabel(labelId: string): Promise<{
 
   const client = createInoreaderClient();
 
-  try {
-    const response = await client.getStreamContents(labelId, {
-      n: 500,
-    });
+    try {
+      const response = await client.getStreamContents(labelId, {
+        n: 500,
+      });
 
-    if (!response.items || response.items.length === 0) {
-      logger.warn(`[SYNC-OPTIMIZED] No items found in label: ${labelId}`);
-      return { itemsAdded: 0, apiCallsUsed: 1 };
-    }
+      // Track API call in budget
+      await incrementApiCalls(1);
+
+      if (!response.items || response.items.length === 0) {
+        logger.warn(`[SYNC-OPTIMIZED] No items found in label: ${labelId}`);
+        return { itemsAdded: 0, apiCallsUsed: 1 };
+      }
 
     // Normalize and save
     let items = await normalizeItems(response.items);

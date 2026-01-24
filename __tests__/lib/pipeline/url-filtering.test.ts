@@ -48,7 +48,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     // Should only have the good article, not the collection pages
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/article");
@@ -69,7 +69,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/good-article");
   });
@@ -90,7 +90,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/article");
   });
@@ -109,7 +109,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/article");
   });
@@ -128,7 +128,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/real-article");
   });
@@ -146,7 +146,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     // Should have 2 articles (the two good ones, not the newsletter index)
     expect(decomposed).toHaveLength(2);
     const urls = decomposed.map(d => d.url).sort();
@@ -169,7 +169,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     // Should have 3 articles, filtering out advertise and unsubscribe
     expect(decomposed).toHaveLength(3);
     const urls = decomposed.map(d => d.url).sort();
@@ -191,7 +191,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     // Should only have the good article
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/good-article");
@@ -212,7 +212,7 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     // Should only have the good article, all digest domain pages should be filtered
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/real-article");
@@ -231,8 +231,127 @@ describe("URL filtering in newsletter decomposition", () => {
     );
 
     const decomposed = decomposeNewsletterItem(item);
-    
+
     expect(decomposed).toHaveLength(1);
     expect(decomposed[0].url).toBe("https://example.com/good-article");
+  });
+
+  it("should exclude homepage URLs (domain root)", () => {
+    const item = createMockNewsletterItem(
+      "Weekly Digest",
+      `
+        <html>
+          <a href="https://example.com/">Homepage</a>
+          <a href="https://example.com">Homepage No Slash</a>
+          <a href="https://example.com/?utm_source=newsletter">Homepage With Params</a>
+          <a href="https://example.com/article">Good Article</a>
+        </html>
+      `
+    );
+
+    const decomposed = decomposeNewsletterItem(item);
+
+    // Should only have the good article, not the homepages
+    expect(decomposed).toHaveLength(1);
+    expect(decomposed[0].url).toBe("https://example.com/article");
+  });
+
+  it("should exclude TLDR domain homepages", () => {
+    const item = createMockNewsletterItem(
+      "TLDR Newsletter",
+      `
+        <html>
+          <a href="https://tldr.tech/">TLDR Home</a>
+          <a href="https://tldr.tech">TLDR Home No Slash</a>
+          <a href="https://tldrnewsletter.com/">TLDR Newsletter Home</a>
+          <a href="https://tldr.tech/article-slug">Good Article</a>
+        </html>
+      `
+    );
+
+    const decomposed = decomposeNewsletterItem(item);
+
+    // Should only have the good article, not the homepages
+    expect(decomposed).toHaveLength(1);
+    expect(decomposed[0].url).toBe("https://tldr.tech/article-slug");
+  });
+
+  it("should exclude decoded TLDR tracking URLs that point to homepages", () => {
+    const item = createMockNewsletterItem(
+      "TLDR Newsletter",
+      `
+        <html>
+          <a href="https://tracking.tldrnewsletter.com/CL0/https:%2F%2Ftldr.tech%2F/1/">Year with ChatGPT</a>
+          <a href="https://tracking.tldrnewsletter.com/CL0/https:%2F%2Fexample.com%2Farticle/1/">Good Article</a>
+        </html>
+      `
+    );
+
+    const decomposed = decomposeNewsletterItem(item);
+
+    // Should only have the good article, not the homepage URL
+    expect(decomposed).toHaveLength(1);
+    expect(decomposed[0].url).toBe("https://example.com/article");
+  });
+
+  it("should exclude Pointer and ByteByteGo homepages", () => {
+    const item = createMockNewsletterItem(
+      "Newsletter",
+      `
+        <html>
+          <a href="https://pointer.io/">Pointer Home</a>
+          <a href="https://bytebytego.com/">ByteByteGo Home</a>
+          <a href="https://pointer.io/article">Good Pointer Article</a>
+          <a href="https://bytebytego.com/post">Good ByteByteGo Article</a>
+        </html>
+      `
+    );
+
+    const decomposed = decomposeNewsletterItem(item);
+
+    // Should have 2 articles, not the homepages
+    expect(decomposed).toHaveLength(2);
+    const urls = decomposed.map(d => d.url).sort();
+    expect(urls).toContain("https://pointer.io/article");
+    expect(urls).toContain("https://bytebytego.com/post");
+  });
+
+  it("should exclude localhost URLs", () => {
+    const item = createMockNewsletterItem(
+      "Newsletter",
+      `
+        <html>
+          <a href="http://localhost:3002/article">Localhost Article</a>
+          <a href="https://127.0.0.1:3002/article">127.0.0.1 Article</a>
+          <a href="https://tracking.tldrnewsletter.com/CL0/http:%2F%2Flocalhost:3002%2Farticle/1/">TLDR with localhost</a>
+          <a href="https://example.com/article">Good Article</a>
+        </html>
+      `
+    );
+
+    const decomposed = decomposeNewsletterItem(item);
+
+    // Should only have the good article, not localhost URLs
+    expect(decomposed).toHaveLength(1);
+    expect(decomposed[0].url).toBe("https://example.com/article");
+  });
+
+  it("should exclude 'your favorite substacker' promotional titles", () => {
+    const item = createMockNewsletterItem(
+      "Byte Byte Go",
+      `
+        <html>
+          <a href="https://bytebytego.substack.com/subscribe">Your Favorite Substacker</a>
+          <a href="https://bytebytego.substack.com/p/article">Good Article</a>
+        </html>
+      `
+    );
+
+    const decomposed = decomposeNewsletterItem(item);
+
+    // Should only have the good article, not the promotional subscription link
+    expect(decomposed).toHaveLength(1);
+    expect(decomposed[0].url).toBe("https://bytebytego.substack.com/p/article");
+    expect(decomposed[0].title).toBe("Good Article");
   });
 });

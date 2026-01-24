@@ -79,30 +79,45 @@ code-intel-digest/
 npm install
 ```
 
-### 2. Configure Environment
+### 2. Start Local PostgreSQL Database
 
-Copy `.env.local.example` to `.env.local` and fill in your Inoreader OAuth2 credentials:
+PostgreSQL is the default database for local development (mirrors production):
 
 ```bash
-cp .env.local.example .env.local
+npm run db:start
 ```
 
-Edit `.env.local`:
+This starts a PostgreSQL container on port 5433. Initialize the schema:
 
-```env
+```bash
+npx tsx scripts/init-local-postgres.ts
+```
+
+### 3. Configure Environment
+
+Create `.env.local` with your configuration:
+
+```bash
+# Inoreader API Credentials
 INOREADER_CLIENT_ID=your_client_id
 INOREADER_CLIENT_SECRET=your_client_secret
 INOREADER_REFRESH_TOKEN=your_refresh_token
+
+# Local PostgreSQL Database (default for development)
+LOCAL_DATABASE_URL=postgresql://code_intel_user:local_dev_password@localhost:5433/code_intel
+
+# Optional: OpenAI API Key for LLM scoring
+# OPENAI_API_KEY=sk-...
 ```
 
-**How to get these credentials:**
+**How to get Inoreader credentials:**
 
 1. Register your app: https://www.inoreader.com/oauth/accounts/login?redirect_url=/oauth/register
 2. You'll receive Client ID and Client Secret
 3. Use the OAuth2 flow to obtain a Refresh Token
 4. (Alternative) Copy from research-agent if you have existing credentials
 
-### 3. Configure Feeds
+### 4. Configure Feeds
 
 Edit `src/config/feeds.ts` with your Inoreader stream IDs. Stream IDs can be:
 
@@ -129,7 +144,7 @@ export const FEEDS: FeedConfig[] = [
 ];
 ```
 
-### 4. Run Development Server
+### 5. Run Development Server
 
 ```bash
 npm run dev
@@ -172,8 +187,57 @@ This project includes a `render.yaml` Blueprint for one-click deployment to [Ren
    - `ADMIN_API_TOKEN` (required in production)
    - `OPENAI_API_KEY` (optional, for LLM scoring)
 
-**Local Development:** Uses SQLite (`.data/digest.db`)
+**Local Development:** Uses PostgreSQL (via Docker Compose) - **Default**
 **Production:** Uses PostgreSQL (auto-configured by Render)
+
+### Local PostgreSQL Setup
+
+PostgreSQL is the default database for local development to mirror production architecture.
+
+1. **Start local PostgreSQL with Docker:**
+   ```bash
+   npm run db:start
+   ```
+
+2. **Configure `.env.local`:**
+   ```bash
+   # Local development database (used by default for app and scripts)
+   LOCAL_DATABASE_URL=postgresql://code_intel_user:local_dev_password@localhost:5433/code_intel
+
+   # Production database (only needed if you want to sync from production)
+   DATABASE_URL=postgresql://user:pass@production-host/code_intel
+
+   # Production URL for syncing (optional, can use DATABASE_URL)
+   PRODUCTION_DATABASE_URL=postgresql://user:pass@production-host/code_intel
+   ```
+
+   **Note:** The connection string uses port `5433` (not 5432) to avoid conflicts with system PostgreSQL.
+
+3. **Initialize the local database schema:**
+   ```bash
+   npx tsx scripts/init-local-postgres.ts
+   ```
+
+4. **Workflow:**
+   ```bash
+   # Sync from production to local (get latest data)
+   npm run db:sync:from-prod
+
+   # Run batch operations (they'll use LOCAL_DATABASE_URL automatically)
+   npx tsx scripts/backfill-paper-sections.ts
+   npx tsx scripts/score-production-items.ts
+
+   # Sync back to production (push your changes)
+   npm run db:sync:to-prod
+   ```
+
+**Database Selection Priority:**
+- PostgreSQL is required for both development and production
+- If `LOCAL_DATABASE_URL` is set, it's used for local development (required)
+- If only `DATABASE_URL` is set, it's used (production)
+- If neither is set, falls back to SQLite (legacy, not recommended - PostgreSQL must be configured)
+
+This ensures your local development environment mirrors production architecture. PostgreSQL is the primary database for all environments.
 
 See [history/docs/RENDER_DEPLOYMENT.md](history/docs/RENDER_DEPLOYMENT.md) for full deployment guide.
 

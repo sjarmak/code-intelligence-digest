@@ -30,7 +30,7 @@ export class OpenAITtsProvider implements TtsProvider {
     }
 
     // OpenAI TTS supports: alloy, echo, fable, onyx, nova, shimmer
-    const voice = (req.voice as any) || "alloy";
+    const voice = req.voice ?? "alloy";
 
     try {
       logger.info("Rendering audio with OpenAI TTS", {
@@ -39,22 +39,32 @@ export class OpenAITtsProvider implements TtsProvider {
         textLength: req.transcript.length,
       });
 
+      // OpenAI TTS supports: mp3, opus, aac, flac
+      // Map our format to OpenAI's response_format
+      const responseFormat = req.format === "wav" ? "wav" : "mp3";
+
       // Call OpenAI TTS API
       const response = await this.client.audio.speech.create({
         model: this.model,
         voice,
         input: req.transcript,
-        response_format: "mp3",
+        response_format: responseFormat as "mp3" | "opus" | "aac" | "flac" | "wav",
       });
 
       // Convert response to buffer
       const arrayBuffer = await response.arrayBuffer();
       const bytes = Buffer.from(arrayBuffer);
 
+      // Validate buffer has content
+      if (!bytes || bytes.length === 0) {
+        throw new Error("OpenAI TTS returned empty audio buffer");
+      }
+
       logger.info("Audio rendered successfully", {
         provider: "openai",
         bytes: bytes.length,
         voice,
+        format: responseFormat,
       });
 
       return {

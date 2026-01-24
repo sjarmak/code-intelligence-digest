@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import ItemRelevanceBadge, { ItemRelevanceRating } from './item-relevance-badge';
 
 interface StarredItem {
@@ -11,6 +11,7 @@ interface StarredItem {
   url: string;
   sourceTitle: string;
   publishedAt: string;
+  createdAt?: string | null;
   summary?: string;
   relevanceRating: number | null;
   notes: string | null;
@@ -26,7 +27,7 @@ export default function StarredItemsPanel() {
   const [stats, setStats] = useState({ total: 0, unrated: 0 });
   const [syncing, setSyncing] = useState(false);
 
-  const loadStarredItems = async () => {
+  const loadStarredItems = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -52,11 +53,11 @@ export default function StarredItemsPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterUnrated]);
 
   useEffect(() => {
     loadStarredItems();
-  }, [filterUnrated]);
+  }, [loadStarredItems]);
 
   const handleSyncStarred = async () => {
     setSyncing(true);
@@ -71,7 +72,7 @@ export default function StarredItemsPanel() {
         throw new Error('Failed to sync starred items');
       }
 
-      const data = await response.json();
+      await response.json();
       // Reload items after sync
       await loadStarredItems();
     } catch (err) {
@@ -197,7 +198,7 @@ export default function StarredItemsPanel() {
               <div className="flex items-center gap-2 text-xs text-muted mb-1">
                 <span className="font-medium">{item.sourceTitle}</span>
                 <span>•</span>
-                <span>{new Date(item.publishedAt).toLocaleDateString()}</span>
+                <span>{new Date(item.createdAt || item.publishedAt).toLocaleDateString()}</span>
               </div>
 
               {item.summary && (

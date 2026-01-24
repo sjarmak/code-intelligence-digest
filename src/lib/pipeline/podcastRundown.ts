@@ -1,6 +1,6 @@
 /**
  * Stage B: Podcast rundown generation (editorial clustering)
- * Uses gpt-5.2-thinking to select stories, cluster by theme, decide order
+ * Uses gpt-4o-mini to select stories, cluster by theme, decide order
  * Produces segments with time budgets, transitions, and attribution plan
  */
 
@@ -87,7 +87,7 @@ function formatDigestsForRundown(digests: PodcastItemDigest[]): string {
  */
 export async function generatePodcastRundown(
   digests: PodcastItemDigest[],
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   _categories: Category[],
   profile: PromptProfile | null
 ): Promise<PodcastRundown> {
@@ -109,7 +109,7 @@ export async function generatePodcastRundown(
   );
 
   const digestContext = formatDigestsForRundown(qualityDigests);
-  const periodLabel = period === "week" ? "weekly" : "monthly";
+  const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
   const categoryLabels = _categories.join(", ");
 
   const client = getClient();
@@ -120,7 +120,7 @@ export async function generatePodcastRundown(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 8000,
       response_format: { type: "json_object" },
       messages: [
@@ -129,7 +129,8 @@ export async function generatePodcastRundown(
           content: `You are a podcast producer building a 5–10 minute (300–600 seconds) ${periodLabel} tech podcast rundown.
 
 Categories: ${categoryLabels}
-${profile ? `User focus topics: ${profile.focusTopics.join(", ")}` : ""}
+User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
+${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
 
 Item digests (JSON):
 ${digestContext}
@@ -156,7 +157,7 @@ OUTPUT STRICT JSON (no markdown):
   "cold_open": "string (2–3 sentences, conversational, clear value)",
   "segments": [
     {
-      "name": "string (theme name, e.g., 'Code Search Tooling')",
+      "name": "string (theme name, e.g., 'Benchmarking Agents')",
       "time_seconds": 120,
       "stories_used": ["url1", "url2"],
       "key_points_to_say": ["string", "..."],
@@ -199,15 +200,15 @@ Return ONLY valid JSON.`,
     }
 
     const rundown = JSON.parse(content) as PodcastRundown;
-    
+
     // Validate and normalize
     const segments = (rundown.segments || []).slice(0, 4);
-    const totalTime = segments.reduce((sum, s) => sum + (s.time_seconds || 0), 0) + 
+    const totalTime = segments.reduce((sum, s) => sum + (s.time_seconds || 0), 0) +
                       ((rundown.lightning_round?.length || 0) > 0 ? 60 : 0) + 60; // Add lightning + intro/outro
 
     return {
       episode_title: rundown.episode_title || "Code Intelligence Digest",
-      cold_open: rundown.cold_open || "Latest in code search, AI agents, and developer tools.",
+      cold_open: rundown.cold_open || "Latest in benchmarking coding agents and code search.",
       segments,
       lightning_round: rundown.lightning_round || [],
       cut_list: rundown.cut_list || [],
@@ -225,11 +226,11 @@ Return ONLY valid JSON.`,
  */
 function generateFallbackRundown(
   digests: PodcastItemDigest[],
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   _categories: Category[]
 ): PodcastRundown {
-  const periodLabel = period === "week" ? "weekly" : "monthly";
-  
+  const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
+
   // Take top 4 digests
   const topDigests = digests.slice(0, 4);
 
@@ -249,7 +250,7 @@ function generateFallbackRundown(
 
   return {
     episode_title: `Code Intelligence Digest – ${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)}`,
-    cold_open: `Welcome to this week's digest. We're covering ${topDigests.length} stories on code intelligence, agents, and developer tools.`,
+    cold_open: `Welcome to this week's digest. We're covering ${topDigests.length} stories focused on benchmarking coding agents and code search.`,
     segments,
     lightning_round: digests.slice(4, 7).map(d => ({
       headline: d.one_sentence_gist.substring(0, 80),

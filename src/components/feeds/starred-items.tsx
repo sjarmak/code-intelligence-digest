@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import ItemCard from './item-card';
 
 interface StarredItem {
   id: string;
@@ -11,6 +10,7 @@ interface StarredItem {
   url: string;
   sourceTitle: string;
   publishedAt: string;
+  createdAt?: string | null;
   summary?: string;
   relevanceRating?: number | null;
   notes?: string | null;
@@ -90,7 +90,7 @@ export default function StarredItems() {
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted mb-2">
                   <span className="font-medium text-gray-700">{item.sourceTitle}</span>
                   <span>•</span>
-                  <span>{new Date(item.publishedAt).toLocaleDateString()}</span>
+                  <span>{new Date(item.createdAt || item.publishedAt).toLocaleDateString()}</span>
                 </div>
                 {item.summary && (
                   <p className="text-sm text-gray-600 line-clamp-2">{item.summary}</p>

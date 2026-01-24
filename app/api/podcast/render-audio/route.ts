@@ -22,6 +22,7 @@ import {
 } from "@/src/lib/audio/sanitize";
 import { renderAudio, renderMultiVoiceAudio, DEFAULT_VOICE_PAIRS, MultiVoiceConfig } from "@/src/lib/audio/render";
 import { getPodcastAudioByHash, savePodcastAudio } from "@/src/lib/db/podcast-audio";
+import { initializeDatabase } from "@/src/lib/db/index";
 import { getLocalStorage } from "@/src/lib/storage/local";
 import { logger } from "@/src/lib/logger";
 
@@ -29,7 +30,25 @@ const ALLOWED_PROVIDERS: AudioProvider[] = ["openai", "elevenlabs", "nemo"];
 const ALLOWED_FORMATS: AudioFormat[] = ["mp3", "wav"];
 const DEFAULT_VOICE = "alloy";
 const DEFAULT_FORMAT: AudioFormat = "mp3";
-const TIMEOUT_MS = 120_000; // 2 minutes for full render
+const BASE_TIMEOUT_MS = 120_000; // 2 minutes base timeout
+const TIMEOUT_PER_MINUTE_MS = 60_000; // 60 seconds per minute of estimated audio (was 30, increased for longer transcripts)
+
+/**
+ * Calculate dynamic timeout based on transcript length
+ * Estimates ~150 words per minute, adds buffer for processing
+ */
+function calculateTimeout(transcript: string): number {
+  // Estimate words (rough approximation)
+  const wordCount = transcript.split(/\s+/).length;
+  // Estimate duration in minutes (150 wpm)
+  const estimatedMinutes = Math.ceil(wordCount / 150);
+  // Calculate timeout: base + (estimated minutes * per-minute buffer)
+  // Add extra buffer for long transcripts (chunking overhead)
+  const timeout = BASE_TIMEOUT_MS + (estimatedMinutes * TIMEOUT_PER_MINUTE_MS);
+  // Cap at 60 minutes to allow for very long transcripts with chunking overhead
+  const maxTimeout = 60 * 60 * 1000; // 60 minutes (was 30, increased for longer content)
+  return Math.min(timeout, maxTimeout);
+}
 
 interface ValidatedRequest {
   transcript: string;
@@ -126,6 +145,16 @@ export async function POST(
   const startTime = Date.now();
 
   try {
+    // Initialize database to ensure tables exist
+    await initializeDatabase();
+
+    // Check rate limits
+    const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await enforceRateLimit(request, '/api/podcast/render-audio');
+    if (rateLimitResponse) {
+      return rateLimitResponse as NextResponse<RenderAudioEndpointResponse | { error: string }>;
+    }
+
     const body = await request.json();
     const validation = validateRequest(body);
 
@@ -134,6 +163,12 @@ export async function POST(
     }
 
     const req = validation.data!;
+
+    // Check request size limits (transcript length)
+    const sizeCheck = checkRequestSize('/api/podcast/render-audio', req.transcript.length);
+    if (!sizeCheck.allowed) {
+      return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
+    }
 
     // Check if transcript has multiple speakers for multi-voice
     const hasMultiple = hasMultipleSpeakers(req.transcript);
@@ -213,14 +248,23 @@ export async function POST(
       return NextResponse.json(response);
     }
 
-    // Step 4: Render audio (with timeout)
+    // Step 4: Render audio (with dynamic timeout based on transcript length)
     let audioBuffer: Buffer;
     let durationSeconds: number;
     const renderStartTime = Date.now();
 
+    // Calculate dynamic timeout based on transcript length
+    const dynamicTimeout = calculateTimeout(req.transcript);
+    logger.info("Audio render timeout calculated", {
+      transcriptLength: req.transcript.length,
+      estimatedMinutes: Math.ceil(req.transcript.split(/\s+/).length / 150),
+      timeoutMs: dynamicTimeout,
+      timeoutMinutes: Math.round(dynamicTimeout / 60000),
+    });
+
     try {
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Audio render timeout")), TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Audio render timeout after ${Math.round(dynamicTimeout / 60000)} minutes`)), dynamicTimeout)
       );
 
       const renderPromise = (async () => {
@@ -248,12 +292,51 @@ export async function POST(
       const result = await Promise.race([renderPromise, timeoutPromise]);
       audioBuffer = result.bytes;
       durationSeconds = result.durationSeconds || estimateDurationFromTranscript(sanitized);
+
+      // Validate audio buffer has content
+      if (!audioBuffer || audioBuffer.length === 0) {
+        logger.error("Audio render produced empty buffer", {
+          provider: req.provider,
+          transcriptLength: sanitized.length,
+        });
+        return NextResponse.json(
+          { error: "Audio render produced empty buffer. Please check provider configuration and try again." },
+          { status: 500 }
+        );
+      }
+
+      // Validate minimum size (MP3 files should have headers, minimum ~1KB for valid audio)
+      const MIN_AUDIO_SIZE = 1024;
+      if (audioBuffer.length < MIN_AUDIO_SIZE) {
+        logger.warn("Audio buffer suspiciously small", {
+          provider: req.provider,
+          bytes: audioBuffer.length,
+          transcriptLength: sanitized.length,
+        });
+        // Continue anyway, might be valid for very short transcripts
+      }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isTimeout = errorMessage.includes("timeout") || errorMessage.includes("terminated") || errorMessage.includes("abort");
+
       logger.error("Audio render failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
+        transcriptLength: req.transcript.length,
+        estimatedMinutes: Math.ceil(req.transcript.split(/\s+/).length / 150),
+        timeoutMs: dynamicTimeout,
+        provider: req.provider,
       });
+
+      // Provide more helpful error message for timeouts
+      let userMessage = `Failed to render audio: ${errorMessage}`;
+      if (isTimeout) {
+        const estimatedMinutes = Math.ceil(req.transcript.split(/\s+/).length / 150);
+        userMessage = `Audio rendering timed out. The transcript is very long (estimated ${estimatedMinutes} minutes of audio). This may be due to a long transcript with many items. Consider using a smaller selection or splitting the content into multiple parts.`;
+      }
+
       return NextResponse.json(
-        { error: `Failed to render audio: ${error instanceof Error ? error.message : "Unknown error"}` },
+        { error: userMessage },
         { status: 500 }
       );
     }
@@ -263,27 +346,107 @@ export async function POST(
     // Step 5: Store audio
     const storage = getLocalStorage();
     const audioKey = `podcasts/${uuid()}.${req.format}`;
-    const { url: audioUrl, bytes: fileBytes } = await storage.putObject(
-      audioKey,
-      audioBuffer,
-      `audio/${req.format}`
-    );
+
+    logger.info("Storing audio file", {
+      key: audioKey,
+      bufferSize: audioBuffer.length,
+      format: req.format,
+    });
+
+    let audioUrl: string;
+    let fileBytes: number;
+
+    try {
+      const storageResult = await storage.putObject(
+        audioKey,
+        audioBuffer,
+        `audio/${req.format}`
+      );
+      audioUrl = storageResult.url;
+      fileBytes = storageResult.bytes;
+
+      if (!audioUrl) {
+        throw new Error("Storage returned empty URL");
+      }
+
+      logger.info("Audio stored successfully", {
+        url: audioUrl,
+        bytes: fileBytes,
+      });
+    } catch (error) {
+      logger.error("Failed to store audio", {
+        error: error instanceof Error ? error.message : String(error),
+        key: audioKey,
+      });
+      return NextResponse.json(
+        { error: `Failed to store audio: ${error instanceof Error ? error.message : "Unknown error"}` },
+        { status: 500 }
+      );
+    }
 
     // Step 6: Save to database
     const audioId = `aud-${uuid()}`;
     const duration = formatDuration(durationSeconds);
 
-    await savePodcastAudio({
-      id: audioId,
-      transcriptHash,
-      provider: req.provider,
-      voice: voiceKey,
-      format: req.format,
-      duration,
-      durationSeconds,
-      audioUrl,
-      bytes: fileBytes,
-    });
+    try {
+      await savePodcastAudio({
+        id: audioId,
+        transcriptHash,
+        provider: req.provider,
+        voice: voiceKey,
+        format: req.format,
+        duration,
+        durationSeconds,
+        audioUrl,
+        bytes: fileBytes,
+      });
+    } catch (error) {
+      // Handle duplicate key error (race condition - another request already saved this)
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes("duplicate key") || errorMessage.includes("UNIQUE constraint")) {
+        logger.info("Duplicate transcript hash detected (race condition), fetching existing record", {
+          transcriptHash,
+        });
+
+        // Fetch the existing record
+        const existing = await getPodcastAudioByHash(transcriptHash);
+        if (existing) {
+          logger.info("Using existing audio record", {
+            id: existing.id,
+            audioUrl: existing.audioUrl,
+          });
+
+          // Return the existing record instead
+          const response: RenderAudioEndpointResponse = {
+            id: existing.id,
+            generatedAt: new Date((existing.createdAt || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+            provider: existing.provider as AudioProvider,
+            format: existing.format as AudioFormat,
+            voice: existing.voice || voiceKey,
+            duration: existing.duration || duration,
+            audioUrl: existing.audioUrl,
+            segmentAudio: existing.segmentAudio,
+            generationMetadata: {
+              providerLatency: `${providerLatency}s`,
+              bytes: existing.bytes,
+              transcriptHash,
+              cached: true, // Mark as cached since we used existing record
+              multiVoice: useMultiVoice,
+            },
+          };
+
+          await recordUsage(request, '/api/podcast/render-audio');
+          return NextResponse.json(response);
+        }
+      }
+
+      // If it's not a duplicate key error, or we couldn't fetch existing, re-throw
+      logger.error("Failed to save audio to database", {
+        error: errorMessage,
+        transcriptHash,
+      });
+      throw error;
+    }
 
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
 
@@ -312,6 +475,15 @@ export async function POST(
         multiVoice: useMultiVoice,
       },
     };
+
+    logger.info("Sending audio render response", {
+      id: audioId,
+      audioUrl,
+      bytes: fileBytes,
+    });
+
+    // Record successful usage
+    await recordUsage(request, '/api/podcast/render-audio');
 
     return NextResponse.json(response);
   } catch (error) {

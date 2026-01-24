@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { loadItemsByCategory } from "@/src/lib/db/items";
+import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
 import { hybridSearch, semanticSearch, keywordSearch } from "@/src/lib/pipeline/search";
 
 const VALID_CATEGORIES: Category[] = [
@@ -22,7 +22,7 @@ const VALID_CATEGORIES: Category[] = [
 
 /**
  * GET /api/search?q=code+intelligence&category=research&period=week&limit=10&type=hybrid
- * 
+ *
  * Query parameters:
  * - q (required): Search query string
  * - category (optional): Restrict to specific category
@@ -35,6 +35,13 @@ const VALID_CATEGORIES: Category[] = [
  */
 export async function GET(req: NextRequest) {
   try {
+    // Check rate limits
+    const rateLimitModule = await import('@/src/lib/rate-limit');
+    const rateLimitResponse = await rateLimitModule.enforceRateLimit(req, '/api/search');
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const { searchParams } = new URL(req.url);
 
     const query = searchParams.get("q");
@@ -42,6 +49,8 @@ export async function GET(req: NextRequest) {
     const period = searchParams.get("period") || "week";
     const limit = Math.min(parseInt(searchParams.get("limit") || "10"), 100);
     const searchType = (searchParams.get("type") || "hybrid") as "hybrid" | "semantic" | "keyword";
+    const startDateParam = searchParams.get("startDate");
+    const endDateParam = searchParams.get("endDate");
 
     // Validate required parameters
     if (!query || query.trim().length === 0) {
@@ -61,14 +70,45 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Map period to days
+    // Map period to days or handle custom range
     const periodDaysMap: Record<string, number> = {
-      day: 1,
+      day: 2, // Last 48 hours
       week: 7,
       month: 30,
       all: 90,
     };
-    const periodDays = periodDaysMap[period] || 7;
+
+    let periodDays: number;
+    let loadOptions: { startDate?: Date; endDate?: Date } | undefined;
+
+    if (period === "custom") {
+      if (!startDateParam || !endDateParam) {
+        return NextResponse.json(
+          { error: "Custom period requires startDate and endDate parameters" },
+          { status: 400 }
+        );
+      }
+      const startDate = new Date(startDateParam);
+      const endDate = new Date(endDateParam);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        return NextResponse.json(
+          { error: "Invalid date format. Use YYYY-MM-DD" },
+          { status: 400 }
+        );
+      }
+      if (startDate > endDate) {
+        return NextResponse.json(
+          { error: "Start date must be before end date" },
+          { status: 400 }
+        );
+      }
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      loadOptions = { startDate, endDate };
+      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+    } else {
+      periodDays = periodDaysMap[period] || 7;
+    }
 
     logger.info(
       `[SEARCH] Query: "${query}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}, type: ${searchType}`
@@ -82,13 +122,17 @@ export async function GET(req: NextRequest) {
 
     if (category) {
       // Search in specific category
-      const categoryItems = await loadItemsByCategory(category, periodDays);
+      const categoryItems = loadOptions?.startDate && loadOptions?.endDate
+        ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
+        : await loadItemsByCategory(category, periodDays);
       searchItems = categoryItems || [];
     } else {
       // Search across all categories
       const allCategories = VALID_CATEGORIES;
       for (const cat of allCategories) {
-        const items = await loadItemsByCategory(cat, periodDays);
+        const items = loadOptions?.startDate && loadOptions?.endDate
+          ? await loadItemsByCategoryWithDateRange(cat, loadOptions.startDate, loadOptions.endDate)
+          : await loadItemsByCategory(cat, periodDays);
         if (items && items.length > 0) {
           searchItems.push(...items);
         }
@@ -101,7 +145,7 @@ export async function GET(req: NextRequest) {
       );
       // Map periodDays back to period name
       const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
-      
+
       return NextResponse.json({
         query,
         category: category || "all",
@@ -137,7 +181,10 @@ export async function GET(req: NextRequest) {
 
     // Map periodDays back to period name for response
     const periodName = Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
-    
+
+    // Record successful usage
+    await rateLimitModule.recordUsage(req, '/api/search');
+
     return NextResponse.json({
       query,
       category: category || "all",

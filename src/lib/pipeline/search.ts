@@ -1,20 +1,28 @@
 /**
  * Hybrid search pipeline
  * Combines BM25 keyword matching + semantic search (embeddings)
- * 
+ *
  * Hybrid approach:
  * 1. BM25: Fast, keyword-based, good for exact term matches
  * 2. Semantic: Slow (embeddings), good for conceptual matches
  * 3. Combined: Weighted average of both scores
- * 
- * Embeddings are 768-dimensional pseudo-embeddings (deterministic hash-based)
+ *
+ * Embeddings are 1536-dimensional (OpenAI text-embedding-3-small) with fallback to pseudo-embeddings
  * In production, replace with OpenAI/Anthropic embeddings
  */
 
 import { FeedItem, RankedItem } from "../model";
-import { generateEmbedding, topKSimilar, cosineSimilarity } from "../embeddings";
+import { generateEmbedding, generateEmbeddingsBatch, topKSimilar, cosineSimilarity } from "../embeddings";
 import { getEmbeddingsBatch, saveEmbeddingsBatch } from "../db/embeddings";
 import { logger } from "../logger";
+import { decodeHtmlEntities } from "../utils/html-entities";
+import { extractBibcodeFromUrl } from "../ads/client";
+
+type FeedItemWithFullText = FeedItem & { fullText: string };
+
+function hasFullText(item: FeedItem): item is FeedItemWithFullText {
+  return typeof (item as { fullText?: unknown }).fullText === "string";
+}
 
 export interface SearchResult {
   id: string;
@@ -22,12 +30,14 @@ export interface SearchResult {
   url: string;
   sourceTitle: string;
   publishedAt: string;
+  createdAt?: string | null;
   summary?: string;
   contentSnippet?: string;
   category: string;
   similarity: number; // 0-1 final score (hybrid)
   bm25Score?: number; // Raw BM25 score
   semanticScore?: number; // Raw semantic similarity
+  bibcode?: string; // For research papers (extracted from URL)
 }
 
 /**
@@ -109,22 +119,71 @@ async function computeSemanticScores(
     const itemIds = items.map((item) => item.id);
     const cachedEmbeddings = await getEmbeddingsBatch(itemIds);
 
-    // Generate missing embeddings
+    // Generate missing embeddings using batch API
     const itemsNeedingEmbeddings = items.filter((item) => !cachedEmbeddings.has(item.id));
-    const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
 
-    for (const item of itemsNeedingEmbeddings) {
-      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 2000) : "";
-      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`;
-      const embedding = await generateEmbedding(text);
-      newEmbeddings.push({ itemId: item.id, embedding });
-      cachedEmbeddings.set(item.id, embedding);
-    }
+    if (itemsNeedingEmbeddings.length > 0) {
+      // Limit to prevent memory issues
+      const MAX_EMBEDDINGS_PER_REQUEST = 500;
+      const itemsToProcess = itemsNeedingEmbeddings.slice(0, MAX_EMBEDDINGS_PER_REQUEST);
 
-    // Save newly generated embeddings
-    if (newEmbeddings.length > 0) {
-      await saveEmbeddingsBatch(newEmbeddings);
-      logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
+      if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
+        logger.warn(
+          `Too many missing embeddings (${itemsNeedingEmbeddings.length}). ` +
+          `Processing first ${MAX_EMBEDDINGS_PER_REQUEST}. ` +
+          `Consider running populate-embeddings script to pre-generate all embeddings.`
+        );
+      }
+
+      // Prepare items for batch generation - include sourceTitle for source context
+      const itemsForBatch = itemsToProcess.map((item) => {
+        const fullText = hasFullText(item) ? item.fullText.substring(0, 2000) : "";
+        const text = `${item.title} ${item.sourceTitle || ""} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
+        return {
+          id: item.id,
+          text: text || item.title,
+        };
+      });
+
+      // Generate embeddings in batch
+      const newEmbeddingsMap = await generateEmbeddingsBatch(itemsForBatch);
+
+      // Convert to array format and validate dimensions
+      const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
+      for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
+        // Ensure embedding is 1536 dimensions (pad if needed)
+        if (embedding.length === 1536) {
+          newEmbeddings.push({ itemId, embedding });
+          cachedEmbeddings.set(itemId, embedding);
+        } else if (embedding.length === 768) {
+          // Pad 768-dim embeddings to 1536
+          logger.warn(`Padding 768-dim embedding to 1536 for item ${itemId}`);
+          const padded = new Array(1536);
+          for (let i = 0; i < 1536; i++) {
+            padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
+          }
+          newEmbeddings.push({ itemId, embedding: padded });
+          cachedEmbeddings.set(itemId, padded);
+        } else {
+          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, using zero vector`);
+          const zeroVector = Array(1536).fill(0);
+          cachedEmbeddings.set(itemId, zeroVector);
+        }
+      }
+
+      // Save newly generated embeddings
+      if (newEmbeddings.length > 0) {
+        await saveEmbeddingsBatch(newEmbeddings);
+        logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
+      }
+
+      // For remaining items (if we hit the limit), use zero vectors
+      if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
+        const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);
+        for (const item of remaining) {
+          cachedEmbeddings.set(item.id, Array(1536).fill(0));
+        }
+      }
     }
 
     // Compute cosine similarity for all items
@@ -176,21 +235,69 @@ export async function semanticSearch(
     // Determine which items need new embeddings
     const itemsNeedingEmbeddings = items.filter((item) => !cachedEmbeddings.has(item.id));
 
-    // Generate missing embeddings
-    const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
-    for (const item of itemsNeedingEmbeddings) {
-      // Include full text if available (first 2000 chars to avoid excessive token usage)
-      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 2000) : "";
-      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`;
-      const embedding = await generateEmbedding(text);
-      newEmbeddings.push({ itemId: item.id, embedding });
-      cachedEmbeddings.set(item.id, embedding);
-    }
+    // Generate missing embeddings using batch API
+    if (itemsNeedingEmbeddings.length > 0) {
+      // Limit to prevent memory issues
+      const MAX_EMBEDDINGS_PER_REQUEST = 500;
+      const itemsToProcess = itemsNeedingEmbeddings.slice(0, MAX_EMBEDDINGS_PER_REQUEST);
 
-    // Save newly generated embeddings
-    if (newEmbeddings.length > 0) {
-      await saveEmbeddingsBatch(newEmbeddings);
-      logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
+      if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
+        logger.warn(
+          `Too many missing embeddings (${itemsNeedingEmbeddings.length}). ` +
+          `Processing first ${MAX_EMBEDDINGS_PER_REQUEST}. ` +
+          `Consider running populate-embeddings script to pre-generate all embeddings.`
+        );
+      }
+
+      // Prepare items for batch generation - include sourceTitle for source context
+      const itemsForBatch = itemsToProcess.map((item) => {
+        const fullText = hasFullText(item) ? item.fullText.substring(0, 2000) : "";
+        const text = `${item.title} ${item.sourceTitle || ""} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim();
+        return {
+          id: item.id,
+          text: text || item.title,
+        };
+      });
+
+      // Generate embeddings in batch
+      const newEmbeddingsMap = await generateEmbeddingsBatch(itemsForBatch);
+
+      // Convert to array format and validate dimensions
+      const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
+      for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
+        // Ensure embedding is 1536 dimensions (pad if needed)
+        if (embedding.length === 1536) {
+          newEmbeddings.push({ itemId, embedding });
+          cachedEmbeddings.set(itemId, embedding);
+        } else if (embedding.length === 768) {
+          // Pad 768-dim embeddings to 1536
+          logger.warn(`Padding 768-dim embedding to 1536 for item ${itemId}`);
+          const padded = new Array(1536);
+          for (let i = 0; i < 1536; i++) {
+            padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
+          }
+          newEmbeddings.push({ itemId, embedding: padded });
+          cachedEmbeddings.set(itemId, padded);
+        } else {
+          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, using zero vector`);
+          const zeroVector = Array(1536).fill(0);
+          cachedEmbeddings.set(itemId, zeroVector);
+        }
+      }
+
+      // Save newly generated embeddings
+      if (newEmbeddings.length > 0) {
+        await saveEmbeddingsBatch(newEmbeddings);
+        logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
+      }
+
+      // For remaining items (if we hit the limit), use zero vectors
+      if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
+        const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);
+        for (const item of remaining) {
+          cachedEmbeddings.set(item.id, Array(1536).fill(0));
+        }
+      }
     }
 
     // Compute similarity scores
@@ -229,16 +336,21 @@ export async function semanticSearch(
         throw new Error(`Item ${match.id} not found`);
       }
 
+      // Extract bibcode from URL if this is a research paper
+      const bibcode = extractBibcodeFromUrl(item.url);
+
       return {
         id: item.id,
-        title: item.title,
+        title: decodeHtmlEntities(item.title), // Decode HTML entities in title
         url: item.url,
         sourceTitle: item.sourceTitle,
         publishedAt: item.publishedAt.toISOString(),
+        createdAt: item.createdAt?.toISOString() || null,
         summary: item.summary,
         contentSnippet: item.contentSnippet,
         category: item.category,
         similarity: Math.round(match.score * 1000) / 1000, // Round to 3 decimals
+        bibcode: bibcode || undefined,
       };
     });
 
@@ -276,8 +388,9 @@ export async function keywordSearch(
     .map((item) => {
       const title = item.title.toLowerCase();
       // Include full text if available (first 5000 chars for better matching)
-      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 5000).toLowerCase() : "";
-      const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
+      const fullText = hasFullText(item) ? item.fullText.substring(0, 5000).toLowerCase() : "";
+      // Include sourceTitle to match source/feed names (e.g., "Sourcegraph" Twitter feed)
+      const text = `${item.title} ${item.sourceTitle || ""} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
 
       let score = 0;
 
@@ -312,18 +425,42 @@ export async function keywordSearch(
     .slice(0, limit);
 
   logger.info(`Keyword search returned ${scored.length} results with query: "${query}" from ${items.length} items`);
+  
+  // Debug: log sample of items that matched vs didn't match for "sourcegraph" queries
+  if (query.toLowerCase().includes('sourcegraph') && scored.length < 50) {
+    const matchedIds = new Set(scored.map(s => s.item.id));
+    const unmatchedSamples = items
+      .filter(item => !matchedIds.has(item.id))
+      .filter(item => item.sourceTitle?.toLowerCase().includes('sourcegraph') || 
+                      item.title?.toLowerCase().includes('sourcegraph'))
+      .slice(0, 3);
+    
+    if (unmatchedSamples.length > 0) {
+      logger.warn(`[DEBUG] ${unmatchedSamples.length} items with "sourcegraph" in sourceTitle/title NOT matched by search`);
+      for (const item of unmatchedSamples) {
+        logger.warn(`[DEBUG] Unmatched: "${item.title?.substring(0, 50)}" sourceTitle="${item.sourceTitle}"`);
+      }
+    }
+  }
 
-  return scored.map((x) => ({
-    id: x.item.id,
-    title: x.item.title,
-    url: x.item.url,
-    sourceTitle: x.item.sourceTitle,
-    publishedAt: x.item.publishedAt.toISOString(),
-    summary: x.item.summary,
-    contentSnippet: x.item.contentSnippet,
-    category: x.item.category,
-    similarity: Math.min(1.0, Math.round((x.score / 100) * 1000) / 1000), // Normalize to [0, 1]
-  }));
+  return scored.map((x) => {
+    // Extract bibcode from URL if this is a research paper
+    const bibcode = extractBibcodeFromUrl(x.item.url);
+
+    return {
+      id: x.item.id,
+      title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
+      url: x.item.url,
+      sourceTitle: x.item.sourceTitle,
+      publishedAt: x.item.publishedAt.toISOString(),
+      createdAt: x.item.createdAt?.toISOString() || null,
+      summary: x.item.summary,
+      contentSnippet: x.item.contentSnippet,
+      category: x.item.category,
+      similarity: Math.min(1.0, Math.round((x.score / 100) * 1000) / 1000), // Normalize to [0, 1]
+      bibcode: bibcode || undefined,
+    };
+  });
 }
 
 /**
@@ -351,7 +488,7 @@ function termBasedSearch(
   const scored = items
     .map((item) => {
       // Include full text if available
-      const fullText = (item as any).fullText ? (item as any).fullText.substring(0, 5000).toLowerCase() : "";
+      const fullText = hasFullText(item) ? item.fullText.substring(0, 5000).toLowerCase() : "";
       const text = `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.toLowerCase();
 
       // Count term occurrences
@@ -374,23 +511,30 @@ function termBasedSearch(
 
   logger.info(`Term-based search returned ${scored.length} results with query: "${query}" from ${items.length} items`);
 
-  return scored.map((x) => ({
-    id: x.item.id,
-    title: x.item.title,
-    url: x.item.url,
-    sourceTitle: x.item.sourceTitle,
-    publishedAt: x.item.publishedAt.toISOString(),
-    summary: x.item.summary,
-    contentSnippet: x.item.contentSnippet,
-    category: x.item.category,
-    similarity: Math.round((x.score / 100) * 1000) / 1000, // Normalize score
-  }));
+  return scored.map((x) => {
+    // Extract bibcode from URL if this is a research paper
+    const bibcode = extractBibcodeFromUrl(x.item.url);
+
+    return {
+      id: x.item.id,
+      title: decodeHtmlEntities(x.item.title), // Decode HTML entities in title
+      url: x.item.url,
+      sourceTitle: x.item.sourceTitle,
+      publishedAt: x.item.publishedAt.toISOString(),
+      createdAt: x.item.createdAt?.toISOString() || null,
+      summary: x.item.summary,
+      contentSnippet: x.item.contentSnippet,
+      category: x.item.category,
+      similarity: Math.round((x.score / 100) * 1000) / 1000, // Normalize score
+      bibcode: bibcode || undefined,
+    };
+  });
 }
 
 /**
  * Rerank items using hybrid approach: semantic + LLM scores
  * For items that already have scores (RankedItem), boost by semantic relevance
- * 
+ *
  * In search mode (high boostWeight), semantic similarity dominates.
  * In digest mode (low boostWeight), LLM+BM25 scores have more influence.
  */
@@ -401,12 +545,12 @@ export function rerankWithSemanticScore(
 ): RankedItem[] {
   const reranked = rankedItems.map((item) => {
     const semanticScore = semanticScores.get(item.id) ?? 0;
-    
+
     // Blend semantic score into final score
     // With weight=0.5: equal balance between semantic and existing scores
     // Higher weight means semantic match becomes more important (better for user queries)
-    const blendedScore = 
-      item.finalScore * (1 - boostWeight) + 
+    const blendedScore =
+      item.finalScore * (1 - boostWeight) +
       semanticScore * boostWeight;
 
     return {
@@ -418,6 +562,6 @@ export function rerankWithSemanticScore(
 
   // Re-sort by blended score
   reranked.sort((a, b) => b.finalScore - a.finalScore);
-  
+
   return reranked;
 }

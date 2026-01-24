@@ -5,6 +5,7 @@
 
 import { createInoreaderClient } from "./client";
 import { logger } from "../logger";
+import { incrementApiCalls } from "../db/api-budget";
 
 export interface StarredItemMetadata {
   id: string; // Inoreader item ID
@@ -14,6 +15,19 @@ export interface StarredItemMetadata {
   publishedAt: Date;
   summary?: string;
   contentSnippet?: string;
+  categories?: string[];
+}
+
+interface InoreaderStreamItem {
+  id: string;
+  title?: string;
+  origin?: { title?: string };
+  alternate?: Array<{ href: string }>;
+  canonical?: Array<{ href: string }>;
+  published?: number;
+  updated?: number;
+  summary?: { content?: string };
+  content?: { content?: string };
   categories?: string[];
 }
 
@@ -31,9 +45,9 @@ export async function fetchStarredItems(
 }> {
   try {
     const client = createInoreaderClient();
-    
+
     const streamId = "user/-/state/com.google/starred";
-    
+
     logger.info("Fetching starred items from Inoreader", {
       streamId,
       limit,
@@ -43,14 +57,17 @@ export async function fetchStarredItems(
     const response = await client.getStreamContents(streamId, {
       n: limit,
       continuation,
-    });
+    }) as { items?: InoreaderStreamItem[]; continuation?: string };
+
+    // Track API call in budget
+    await incrementApiCalls(1);
 
     if (!response.items) {
       logger.warn("No items in starred response");
       return { items: [], count: 0 };
     }
 
-    const items: StarredItemMetadata[] = response.items.map((article: any) => ({
+    const items: StarredItemMetadata[] = response.items.map((article) => ({
       id: article.id,
       title: article.title || "(Untitled)",
       sourceTitle: article.origin?.title || "Unknown Source",

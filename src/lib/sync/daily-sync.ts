@@ -1,38 +1,156 @@
 /**
- * Daily sync strategy: fetch only items newer than what we already have
- * 
+ * Hourly sync strategy: fetch last 4 hours of items (fixed window)
+ *
  * Features:
- * - Tracks last synced item timestamp in database
- * - Fetches only items published after that timestamp
- * - Falls back to 24-hour window if database is empty
- * - Resumable if interrupted by rate limits
+ * - Always fetches last 4 hours regardless of database state (reliable)
+ * - Server-side filtering via `ot` parameter minimizes API calls
+ * - Database handles deduplication (INSERT OR REPLACE / ON CONFLICT)
+ * - Post-processing handles decomposition, categorization, etc.
+ * - Resumable if interrupted by rate limits (429 errors from Inoreader)
  * - Tracks progress and continuation tokens
- * - Designed to fit within 100-call daily limit
- * 
- * Expected cost: 1-3 API calls per sync
- * Remaining budget: 97+ calls for other uses
+ * - Relies on Inoreader's 429 errors for rate limiting (no internal counting)
+ *
+ * Why 4 hours?
+ * - Since we sync hourly, 4 hours provides overlap to catch items even if one sync fails
+ * - Overlap prevents gaps while still being efficient
+ * - Server-side filtering means we only get items from that window
+ * - Smaller window = fewer items per sync = faster processing
  */
 
 import { createInoreaderClient } from '../inoreader/client';
 import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
-import { saveItems, getLastPublishedTimestamp } from '../db/items';
+import { decomposeFeedItems } from '../pipeline/decompose';
+import { saveItems, getNewestItemTimestamp } from '../db/items';
+import { computeAndSaveScoresForItems } from '../pipeline/compute-scores';
 import { logger } from '../logger';
-import { Category, VALID_CATEGORIES } from '../model';
-import { loadSyncState, saveSyncState, clearSyncState } from './sync-state';
+import { Category, FeedItem } from '../model';
+import { getDbClient, detectDriver, nowTimestamp } from '../db/driver';
+import { getCachedUserId, setCachedUserId } from '../db/index';
+import { incrementApiCalls } from '../db/api-budget';
+import { syncResearchFromADS } from './ads-research-sync';
+import { findUnknownFeeds, forceRefreshFeedsCache } from '../../config/feeds';
+
+interface SyncStateRow {
+  id: string;
+  continuation_token: string | null;
+  items_processed: number;
+  calls_used: number;
+  started_at: number;
+  last_updated_at: number;
+  status: string;
+  error: string | null;
+}
+
+const VALID_CATEGORIES: Category[] = [
+  'newsletters',
+  'podcasts',
+  'tech_articles',
+  'ai_news',
+  'product_news',
+  'community',
+  'research',
+];
 
 const SYNC_ID = 'daily-sync';
-const FALLBACK_HOURS_IF_EMPTY = 24; // Fallback window if database has no items
+// Inoreader supports up to 1000 items per request - use max to minimize API calls
+const STREAM_PAGE_SIZE = 1000;
+// Stop paging after 1 stale batch (all items older than sync window)
+const STALE_BATCHES_TO_STOP = 1;
 
 /**
- * Run daily sync: fetch items newer than the last one in our database
- * This ensures we never miss items and uses minimal API calls
- * 
- * @param lookbackDays Optional: override default sync window. Use for bootstrap or catch-up.
- *                     If provided, fetches items from the last N days instead of since last sync.
- *                     Example: runDailySync({ lookbackDays: 7 }) fetches last 7 days.
+ * Load existing sync state (if resuming)
+ * Exported for use in cron job to check/manage pause state
  */
-export async function runDailySync(options?: { lookbackDays?: number }): Promise<{
+export async function loadSyncState(): Promise<SyncStateRow | null> {
+  try {
+    const client = await getDbClient();
+    // Use SQLite-style ? placeholder - Postgres client will convert it
+    const result = await client.query(
+      'SELECT * FROM sync_state WHERE id = ?',
+      [SYNC_ID]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0] as unknown as SyncStateRow;
+    return row;
+  } catch (error) {
+    logger.error('[DAILY-SYNC] Failed to load sync state', error);
+    return null;
+  }
+}
+
+/**
+ * Save sync state (for resumability)
+ */
+async function saveSyncState(data: {
+  continuationToken?: string | null;
+  itemsProcessed: number;
+  callsUsed: number;
+  status: 'in_progress' | 'completed' | 'paused';
+  error?: string;
+}): Promise<void> {
+  try {
+    const client = await getDbClient();
+    const driver = detectDriver();
+    const now = Math.floor(Date.now() / 1000);
+
+    // Build SQL with driver-specific timestamp expression
+    const timestampExpr = nowTimestamp(driver);
+
+    // Use ON CONFLICT syntax that works for both SQLite and Postgres
+    // Use SQLite-style ? placeholders - the Postgres client will convert them to $1, $2, etc.
+    // Note: last_updated_at uses driver-specific SQL expression (not a parameter)
+    const sql = `
+      INSERT INTO sync_state
+      (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
+      VALUES (?, ?, ?, ?, ?, ${timestampExpr}, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET
+        continuation_token = excluded.continuation_token,
+        items_processed = excluded.items_processed,
+        calls_used = excluded.calls_used,
+        last_updated_at = ${timestampExpr},
+        status = excluded.status,
+        error = excluded.error
+    `;
+
+    await client.run(sql, [
+      SYNC_ID,
+      data.continuationToken || null,
+      data.itemsProcessed,
+      data.callsUsed,
+      now,
+      data.status,
+      data.error || null,
+    ]);
+
+    logger.debug('[DAILY-SYNC] Saved sync state', data);
+  } catch (error) {
+    logger.error('[DAILY-SYNC] Failed to save sync state', error);
+  }
+}
+
+/**
+ * Clear sync state when completed or to recover from pause state
+ */
+export async function clearSyncState(): Promise<void> {
+  try {
+    const client = await getDbClient();
+    const driver = detectDriver();
+    const sql = driver === 'postgres'
+      ? 'DELETE FROM sync_state WHERE id = $1'
+      : 'DELETE FROM sync_state WHERE id = ?';
+    await client.run(sql, [SYNC_ID]);
+    logger.info('[DAILY-SYNC] Cleared sync state (sync complete)');
+  } catch (error) {
+    logger.warn('[DAILY-SYNC] Could not clear sync state', error as Record<string, unknown>);
+  }
+}
+
+export async function runDailySync(options?: { lookbackDays?: number; forceLookback?: boolean }): Promise<{
   success: boolean;
   itemsAdded: number;
   apiCallsUsed: number;
@@ -41,59 +159,165 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
   paused: boolean;
   error?: string;
 }> {
-  const lookbackDays = options?.lookbackDays;
-  const isCatchup = lookbackDays !== undefined;
-  
-  if (isCatchup) {
-    logger.info(`[DAILY-SYNC] Starting catch-up sync (fetch last ${lookbackDays} days)`);
-  } else {
-    logger.info('[DAILY-SYNC] Starting daily sync (fetch newer items)');
-  }
-
-  const existingState = await loadSyncState(SYNC_ID);
-  const resumed = existingState ? existingState.status === 'paused' : false;
-
-  if (resumed) {
-    logger.info(`[DAILY-SYNC] Resuming from previous sync (${existingState!.itemsProcessed} items processed)`);
-  }
+  logger.info('[DAILY-SYNC] Starting daily sync (fetch newer items)');
 
   const client = createInoreaderClient();
-  const categoriesProcessed: Category[] = [];
   let totalItemsAdded = 0;
-  let callsUsed = existingState?.callsUsed ?? 0;
-  let continuation = existingState?.continuationToken || undefined;
+  let callsUsed = 0; // Tracked locally and in database budget
+  const categoriesProcessed: Category[] = [];
+  const isCatchup = !!options?.lookbackDays;
+  const lookbackDays = options?.lookbackDays;
+  const forceLookback = options?.forceLookback ?? false;
+
+  // Load existing state (if resuming)
+  const existingState = await loadSyncState();
+  const resumed = !!existingState && existingState.status === 'paused';
+  let continuation = existingState?.continuation_token || undefined;
+  let staleBatchCount = 0;
+
+  let researchItemsAdded = 0;
+  let researchItemsScored = 0;
 
   try {
-    // Get user ID
-    logger.debug('[DAILY-SYNC] Fetching user ID...');
-    const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
-    const userId = (userInfo?.userId || userInfo?.id) as string | undefined;
+    // Sync research from ADS instead of Inoreader
+    const adsToken = process.env.ADS_API_TOKEN;
 
-    if (!userId) {
-      throw new Error('Could not determine user ID from Inoreader');
+    if (adsToken) {
+      try {
+        logger.info('[DAILY-SYNC] Syncing research papers from ADS...');
+        const researchResult = await syncResearchFromADS(adsToken);
+        researchItemsAdded = researchResult.itemsAdded;
+        researchItemsScored = researchResult.itemsScored;
+        logger.info(`[DAILY-SYNC] ADS research sync: ${researchItemsAdded} items added, ${researchItemsScored} scored`);
+
+        // Add research to categories processed
+        if (researchItemsAdded > 0 && !categoriesProcessed.includes('research')) {
+          categoriesProcessed.push('research');
+        }
+      } catch (error) {
+        logger.error('[DAILY-SYNC] ADS research sync failed (continuing with Inoreader sync)', error);
+      }
     }
 
-    callsUsed++;
+    // Get user ID (cached, no API call if available)
+    let userId: string | null = await getCachedUserId();
+
+    if (!userId) {
+      logger.debug('[DAILY-SYNC] User ID not cached. Fetching from API...');
+      try {
+        const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
+        userId = (userInfo?.userId || userInfo?.id) as string | null;
+
+        if (!userId) {
+          throw new Error('Could not determine user ID from Inoreader');
+        }
+
+        // Cache it for future syncs
+        await setCachedUserId(userId);
+        logger.info('[DAILY-SYNC] Cached user ID for future syncs');
+
+        callsUsed++;
+        await incrementApiCalls(1);
+      } catch (error) {
+        // If getUserInfo fails (e.g., 429 error), handle based on error type
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.error(`[DAILY-SYNC] Failed to fetch user info: ${errorMsg}`);
+
+        // Check if it's a 429 (rate limit) or other error
+        const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
+
+        if (isRateLimit) {
+          // For rate limits: Don't pause (which requires manual recovery)
+          // Instead, exit cleanly and let hourly cron retry automatically
+          // This is better because rate limits are transient
+          logger.warn(`[DAILY-SYNC] Rate limit hit (429). Exiting cleanly for hourly retry. Attempt ${totalItemsAdded > 0 ? 'had some progress' : 'was fresh'}.`);
+          return {
+            success: false,
+            itemsAdded: totalItemsAdded,
+            apiCallsUsed: callsUsed,
+            categoriesProcessed,
+            resumed,
+            paused: false, // Don't pause - let hourly cron retry
+            error: `Rate limit (429). Will retry in next hourly cycle (~1 hour).`,
+          };
+        }
+
+        // For permanent errors (auth, config, etc), pause to prevent retry loop
+        logger.error(`[DAILY-SYNC] Permanent error, pausing sync: ${errorMsg}`);
+        await saveSyncState({
+          continuationToken: continuation,
+          itemsProcessed: totalItemsAdded,
+          callsUsed,
+          status: 'paused',
+          error: `Failed to fetch user info: ${errorMsg}. Requires manual investigation.`,
+        });
+        return {
+          success: false,
+          itemsAdded: totalItemsAdded,
+          apiCallsUsed: callsUsed,
+          categoriesProcessed,
+          resumed,
+          paused: true,
+          error: `Failed to fetch user info: ${errorMsg}`,
+        };
+      }
+    } else {
+      logger.debug('[DAILY-SYNC] Using cached user ID');
+    }
 
     // Determine sync time window
+    // Using `nt` (newer than) for server-side filtering - Inoreader only returns items newer than this
+    // Key insight: use the newest item timestamp to avoid gaps when syncs are delayed/blocked
     let syncSinceTimestamp: number;
     let reason: string;
 
+    // Get newest item timestamp first - used in both modes
+    const newestItemTimestamp = await getNewestItemTimestamp();
+    const DEFAULT_WINDOW_HOURS = 4;
+    const defaultTimestamp = Math.floor((Date.now() - DEFAULT_WINDOW_HOURS * 60 * 60 * 1000) / 1000);
+
     if (isCatchup && lookbackDays) {
-      // Catch-up mode: fetch from N days ago regardless of database state
-      syncSinceTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
-      reason = `last ${lookbackDays} days (catch-up mode)`;
-    } else {
-      // Normal mode: fetch items newer than what we already have
-      const lastPublished = await getLastPublishedTimestamp();
-      if (lastPublished) {
-        // Fetch items newer than the most recent one we have
-        syncSinceTimestamp = lastPublished;
-        reason = `since last item (${new Date(lastPublished * 1000).toISOString()})`;
+      // Catch-up mode: SMART catch-up that avoids re-fetching existing items
+      // Only go back further than newestItemTimestamp if there's actually a gap
+      // Unless forceLookback=true, which bypasses the optimization (for re-categorizing)
+      const lookbackTimestamp = Math.floor((Date.now() - lookbackDays * 24 * 60 * 60 * 1000) / 1000);
+      
+      if (forceLookback) {
+        // Force mode: re-fetch all items from lookback period (expensive, for re-categorizing)
+        syncSinceTimestamp = lookbackTimestamp;
+        reason = `last ${lookbackDays} days (FORCE mode - re-fetching all items)`;
+        logger.warn(`[DAILY-SYNC] Force catch-up: will re-fetch ALL items from last ${lookbackDays} days (expensive!)`);
+      } else if (newestItemTimestamp && newestItemTimestamp > lookbackTimestamp) {
+        // We have items newer than the lookback - use newest item timestamp instead
+        // This prevents re-fetching thousands of existing items
+        syncSinceTimestamp = newestItemTimestamp - 60; // 60s buffer
+        const hoursAgo = ((Date.now() / 1000) - syncSinceTimestamp) / 3600;
+        reason = `since newest item (${hoursAgo.toFixed(1)}h ago) - catch-up mode but DB has recent items`;
+        logger.info(`[DAILY-SYNC] Catch-up requested ${lookbackDays}d but DB has items from ${hoursAgo.toFixed(1)}h ago - using smart sync`);
       } else {
-        // Database is empty: fallback to last 24 hours
-        syncSinceTimestamp = Math.floor((Date.now() - FALLBACK_HOURS_IF_EMPTY * 60 * 60 * 1000) / 1000);
-        reason = `last ${FALLBACK_HOURS_IF_EMPTY} hours (database empty)`;
+        // No items in lookback period - do full catch-up
+        syncSinceTimestamp = lookbackTimestamp;
+        reason = `last ${lookbackDays} days (catch-up mode, no recent items in DB)`;
+      }
+    } else {
+      // Normal mode: fetch items newer than our newest item (with fallback)
+      // This ensures no gaps even if syncs are blocked for hours
+      const MAX_LOOKBACK_DAYS = 7; // Safety limit to avoid massive catch-ups
+      const maxLookbackTimestamp = Math.floor((Date.now() - MAX_LOOKBACK_DAYS * 24 * 60 * 60 * 1000) / 1000);
+
+      if (newestItemTimestamp && newestItemTimestamp > maxLookbackTimestamp) {
+        // Use newest item timestamp (subtract 60s buffer for edge cases)
+        syncSinceTimestamp = newestItemTimestamp - 60;
+        const hoursAgo = ((Date.now() / 1000) - syncSinceTimestamp) / 3600;
+        reason = `since last sync (${hoursAgo.toFixed(1)}h ago, server-side nt filter)`;
+      } else if (newestItemTimestamp) {
+        // Newest item is older than max lookback - use max lookback to avoid huge catch-up
+        syncSinceTimestamp = maxLookbackTimestamp;
+        reason = `last ${MAX_LOOKBACK_DAYS} days (capped, server-side nt filter)`;
+      } else {
+        // No items yet - use default window
+        syncSinceTimestamp = defaultTimestamp;
+        reason = `last ${DEFAULT_WINDOW_HOURS} hours (first sync, server-side nt filter)`;
       }
     }
 
@@ -105,6 +329,8 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
 
     let batchNumber = 0;
     let hasMoreItems = true;
+    const allItemsToScore: FeedItem[] = [];
+    let totalScoresComputed = 0;
 
     while (hasMoreItems) {
       batchNumber++;
@@ -113,111 +339,192 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
         `[DAILY-SYNC] Fetching batch ${batchNumber}${continuation ? ' (continuation)' : ''} (${callsUsed} calls used so far)`
       );
 
-      // Fetch batch (items newer than last sync)
-      // Uses `ot` parameter (older than) to only return items newer than syncSinceTimestamp
-      // This significantly reduces API calls by filtering on server-side
-      const response = await client.getStreamContents(allItemsStreamId, {
-        n: 1000,
-        continuation,
-        ot: syncSinceTimestamp, // Only fetch items newer than this timestamp
-      });
+      try {
+        // Fetch batch - use `ot` for server-side filtering (only items NEWER than timestamp)
+        // Note: Inoreader's naming is counterintuitive:
+        //   - `ot` = "older than" = exclude items older than this = return items PUBLISHED AFTER this time
+        //   - `nt` = "newer than" = exclude items newer than this = return items PUBLISHED BEFORE this time
+        // We want items NEWER than syncSinceTimestamp, so we use `ot`
+        const response = await client.getStreamContents(allItemsStreamId, {
+          n: STREAM_PAGE_SIZE,
+          continuation,
+          ot: syncSinceTimestamp,
+        });
 
-      callsUsed++;
+        callsUsed++;
+        await incrementApiCalls(1);
 
-      if (!response.items || response.items.length === 0) {
-        logger.info('[DAILY-SYNC] No more items to fetch (empty response)');
-        hasMoreItems = false;
-        break;
-      }
-
-      // Note: We cannot do early termination based on the oldest item in batch
-      // because Inoreader doesn't guarantee items are sorted chronologically.
-      // Items from Dec 2 can be mixed with items from Dec 23 in the same batch.
-      // Instead, we rely on the continuation token to determine if there are more items.
-
-      logger.info(
-        `[DAILY-SYNC] Batch ${batchNumber}: fetched ${response.items.length} items (${callsUsed} calls used)`
-      );
-
-      // Normalize and categorize
-      let items = await normalizeItems(response.items);
-      items = categorizeItems(items);
-
-      // Filter to only items newer than sync threshold (client-side enforcement)
-      const syncThresholdDate = new Date(syncSinceTimestamp * 1000);
-      const beforeFilter = items.length;
-      items = items.filter((item) => item.publishedAt.getTime() > syncThresholdDate.getTime());
-      const afterFilter = items.length;
-
-      if (beforeFilter !== afterFilter) {
-        logger.debug(
-          `[DAILY-SYNC] Batch ${batchNumber}: filtered ${beforeFilter - afterFilter} items at/before sync threshold`
-        );
-      }
-
-      // Save by category
-      for (const category of VALID_CATEGORIES) {
-        const categoryItems = items.filter((i) => i.category === category);
-        if (categoryItems.length === 0) continue;
-
-        try {
-          await saveItems(categoryItems);
-          totalItemsAdded += categoryItems.length;
-
-          if (!categoriesProcessed.includes(category)) {
-            categoriesProcessed.push(category);
-          }
-
-          logger.debug(`[DAILY-SYNC] Batch ${batchNumber}: saved ${categoryItems.length} to ${category}`);
-        } catch (error) {
-          logger.error(`[DAILY-SYNC] Failed to save ${category}`, error);
+        if (!response.items || response.items.length === 0) {
+          logger.info('[DAILY-SYNC] No more items to fetch (empty response)');
+          hasMoreItems = false;
+          break;
         }
-      }
 
-      // Update sync state (resume point)
-      continuation = response.continuation || undefined;
-      await saveSyncState(SYNC_ID, {
-        continuationToken: continuation,
-        itemsProcessed: totalItemsAdded,
-        callsUsed,
-        status: continuation ? 'in_progress' : 'completed',
-      });
+        // Check for unknown feeds on first batch - auto-refresh cache if new subscriptions detected
+        if (batchNumber === 1) {
+          const streamIds = response.items
+            .map((item) => item.origin?.streamId)
+            .filter((id): id is string => !!id);
+          const uniqueStreamIds = [...new Set(streamIds)];
+          const unknownFeeds = await findUnknownFeeds(uniqueStreamIds);
+          
+          if (unknownFeeds.length > 0) {
+            logger.info(`[DAILY-SYNC] Detected ${unknownFeeds.length} unknown feeds - refreshing feeds cache`, {
+              unknownFeeds: unknownFeeds.slice(0, 5), // Log first 5
+            });
+            
+            try {
+              const refreshResult = await forceRefreshFeedsCache();
+              callsUsed++; // forceRefreshFeedsCache makes 1 API call
+              await incrementApiCalls(1);
+              
+              logger.info(`[DAILY-SYNC] Feeds cache refreshed: ${refreshResult.total} total, ${refreshResult.newFeeds.length} new`);
+            } catch (refreshError) {
+              logger.warn('[DAILY-SYNC] Failed to refresh feeds cache, continuing with existing cache', {
+                error: refreshError,
+              });
+            }
+          }
+        }
 
-      // Safety check: if we've used 95+ calls, pause and resume tomorrow
-      if (callsUsed >= 95) {
-        logger.warn(`[DAILY-SYNC] Approaching rate limit (${callsUsed} calls used). Pausing. Will resume tomorrow.`);
-        await saveSyncState(SYNC_ID, {
+        // Normalize, decompose newsletters, and categorize
+        let items = await normalizeItems(response.items);
+        items = decomposeFeedItems(items);
+        items = categorizeItems(items);
+
+        // With server-side `nt` filter, Inoreader should only return items newer than syncSinceTimestamp.
+        // Keep client-side filter as safety net (in case nt uses published vs crawlTime differently)
+        const beforeFilter = items.length;
+        items = items.filter(
+          (item) => item.createdAt && Math.floor(item.createdAt.getTime() / 1000) >= syncSinceTimestamp
+        );
+        const afterFilter = items.length;
+
+        if (beforeFilter > afterFilter) {
+          logger.debug(
+            `[DAILY-SYNC] Client-side filtered ${beforeFilter - afterFilter} items outside window`
+          );
+        }
+
+        // With server-side `nt` filtering, if we get items but they're all filtered out client-side,
+        // it means Inoreader's timestamp differs from our createdAt. Stop to avoid burning API calls.
+        if (!isCatchup && afterFilter === 0 && beforeFilter > 0) {
+          staleBatchCount++;
+          if (staleBatchCount >= STALE_BATCHES_TO_STOP) {
+            logger.info(
+              `[DAILY-SYNC] Stopping: ${STALE_BATCHES_TO_STOP} consecutive batches had all items filtered out client-side`
+            );
+            hasMoreItems = false;
+            break;
+          }
+        } else {
+          staleBatchCount = 0;
+        }
+
+        // Save and score by category
+        for (const category of VALID_CATEGORIES) {
+          const categoryItems = items.filter((i) => i.category === category);
+          if (categoryItems.length === 0) continue;
+
+          try {
+            await saveItems(categoryItems);
+            totalItemsAdded += categoryItems.length;
+
+            if (!categoriesProcessed.includes(category)) {
+              categoriesProcessed.push(category);
+            }
+
+            // Score items immediately after saving
+            try {
+              logger.debug(`[DAILY-SYNC] Batch ${batchNumber}: scoring ${categoryItems.length} items immediately after save...`);
+              const batchScoreResult = await computeAndSaveScoresForItems(categoryItems);
+              totalScoresComputed += batchScoreResult.totalScored;
+            } catch (scoreError) {
+              logger.error(`[DAILY-SYNC] Batch ${batchNumber}: Failed to score items (will retry at end)`, scoreError);
+              allItemsToScore.push(...categoryItems);
+            }
+          } catch (error) {
+            logger.error(`[DAILY-SYNC] Failed to save ${category}`, error);
+          }
+        }
+
+        // Save progress
+        continuation = response.continuation || undefined;
+        await saveSyncState({
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
           callsUsed,
-          status: 'paused',
-          error: 'Rate limit approaching. Will resume tomorrow.',
+          status: continuation ? 'in_progress' : 'completed',
         });
 
-        return {
-          success: false,
-          itemsAdded: totalItemsAdded,
-          apiCallsUsed: callsUsed,
-          categoriesProcessed,
-          resumed,
-          paused: true,
-          error: 'Paused at 95 calls to stay within daily limit. Will resume tomorrow.',
-        };
-      }
+        hasMoreItems = !!continuation && continuation.length > 0;
+      } catch (error) {
+        // Check if it's a 429 (rate limit) error
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
 
-      hasMoreItems = !!continuation && continuation.length > 0;
+        if (isRateLimit) {
+          // For rate limits: Don't pause (which requires manual recovery)
+          // Instead, exit cleanly and let hourly cron retry automatically
+          logger.warn(`[DAILY-SYNC] Rate limit reached (429). Exiting cleanly. Will retry in next hourly cycle.`);
+          logger.info(`[DAILY-SYNC] Made progress: ${totalItemsAdded} items added, ${callsUsed} API calls used`);
+          
+          // Save progress so far (don't pause, just mark as exit)
+          if (continuation) {
+            // If we have a continuation token, save it for later retry
+            await saveSyncState({
+              continuationToken: continuation,
+              itemsProcessed: totalItemsAdded,
+              callsUsed,
+              status: 'in_progress', // Mark as paused progress, not as failed
+              error: 'Rate limited - will resume from continuation token',
+            });
+          }
+          
+          return {
+            success: false,
+            itemsAdded: totalItemsAdded,
+            apiCallsUsed: callsUsed,
+            categoriesProcessed,
+            resumed,
+            paused: false, // Don't pause - let hourly cron retry
+            error: `Rate limit (429) after ${totalItemsAdded} items. Will retry in next hourly cycle.`,
+          };
+        }
+
+        // For other errors, re-throw to be handled by caller
+        throw error;
+      }
     }
 
-    // Sync complete
-    await clearSyncState(SYNC_ID);
+    // Score any remaining items that weren't scored during batch processing
+    let scoresComputed = totalScoresComputed;
+    if (allItemsToScore.length > 0) {
+      logger.info(`[DAILY-SYNC] Computing relevance scores for ${allItemsToScore.length} remaining items...`);
+      try {
+        const scoreResult = await computeAndSaveScoresForItems(allItemsToScore);
+        scoresComputed += scoreResult.totalScored;
+        logger.info(`[DAILY-SYNC] Computed and saved scores for ${scoreResult.totalScored} remaining items across ${scoreResult.categoriesScored.length} categories`);
+      } catch (error) {
+        logger.error(`[DAILY-SYNC] Failed to compute scores for remaining items (items still saved)`, error);
+      }
+    } else {
+      logger.info(`[DAILY-SYNC] All items were scored during batch processing - no remaining items to score`);
+    }
+
+    await clearSyncState();
+
+    const avgItemsPerCall = totalItemsAdded > 0 ? (totalItemsAdded / callsUsed).toFixed(1) : '0';
+    const totalItemsIncludingResearch = totalItemsAdded + researchItemsAdded;
+    const totalScoresIncludingResearch = scoresComputed + researchItemsScored;
 
     logger.info(
-      `[DAILY-SYNC] Complete: ${totalItemsAdded} items, ${categoriesProcessed.length} categories, ${callsUsed} API calls`
+      `[DAILY-SYNC] Complete: ${totalItemsIncludingResearch} items (${totalItemsAdded} from Inoreader, ${researchItemsAdded} from ADS), ${totalScoresIncludingResearch} scored, ${categoriesProcessed.length} categories, ${callsUsed} API calls (${avgItemsPerCall} items/call)`
     );
 
     return {
       success: true,
-      itemsAdded: totalItemsAdded,
+      itemsAdded: totalItemsAdded + researchItemsAdded,
       apiCallsUsed: callsUsed,
       categoriesProcessed,
       resumed,
@@ -226,13 +533,18 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
 
-    // Save error state for resumption
-    await saveSyncState(SYNC_ID, {
+    // Check if it's a rate limit error
+    const isRateLimit = errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('Too Many Requests');
+    const pauseError = isRateLimit
+      ? 'Rate limit reached (429). Will resume automatically.'
+      : errorMsg;
+
+    await saveSyncState({
       continuationToken: continuation,
       itemsProcessed: totalItemsAdded,
       callsUsed,
       status: 'paused',
-      error: errorMsg,
+      error: pauseError,
     });
 
     logger.error('[DAILY-SYNC] Sync failed', error);
@@ -243,8 +555,8 @@ export async function runDailySync(options?: { lookbackDays?: number }): Promise
       apiCallsUsed: callsUsed,
       categoriesProcessed,
       resumed,
-      paused: true,
-      error: errorMsg,
+      paused: isRateLimit,
+      error: pauseError,
     };
   }
 }

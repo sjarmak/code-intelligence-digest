@@ -5,6 +5,7 @@ import { Category } from '@/src/lib/model';
 import SearchBox from './search-box';
 import SearchResults from './search-results';
 import { SearchResult } from '@/src/lib/pipeline/search';
+import { DateRange } from '@/src/components/common/date-range-picker';
 
 export default function SearchPage() {
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -13,7 +14,12 @@ export default function SearchPage() {
   const [hasSearched, setHasSearched] = useState(false);
   const [itemsSearched, setItemsSearched] = useState(0);
 
-  const handleSearch = async (query: string, category: Category | null, period: 'week' | 'month') => {
+  const handleSearch = async (
+    query: string,
+    category: Category | null,
+    period: 'week' | 'month' | 'custom',
+    customDateRange?: DateRange | null
+  ) => {
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
@@ -22,11 +28,16 @@ export default function SearchPage() {
       const params = new URLSearchParams({
         q: query,
         period: period,
-        limit: '20',
+        limit: '100', // Increased from 20 to show more results
       });
 
       if (category) {
         params.append('category', category);
+      }
+
+      if (period === 'custom' && customDateRange) {
+        params.append('startDate', customDateRange.startDate);
+        params.append('endDate', customDateRange.endDate);
       }
 
       const response = await fetch(`/api/search?${params.toString()}`);

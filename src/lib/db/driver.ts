@@ -1,13 +1,15 @@
 /**
- * Database driver abstraction for SQLite (dev) and PostgreSQL (prod)
+ * Database driver abstraction for PostgreSQL (required)
  *
- * This module provides a unified interface that:
- * - Uses better-sqlite3 in development (no DATABASE_URL)
- * - Uses pg in production (DATABASE_URL set)
+ * This module provides a unified interface for PostgreSQL in both development and production:
+ * - PostgreSQL is required for both development and production
+ * - Local development uses LOCAL_DATABASE_URL (typically via Docker Compose)
+ * - Production uses DATABASE_URL (from environment)
+ * - Falls back to SQLite only if no PostgreSQL connection string is provided (legacy, not recommended)
  *
- * MIGRATION STATUS: This is a transitional file.
- * Once PostgreSQL support is fully implemented, the SQLite code path
- * can be removed for production builds.
+ * To use PostgreSQL locally:
+ * 1. Start PostgreSQL: npm run db:start
+ * 2. Set LOCAL_DATABASE_URL in .env.local (see docker-compose.yml for connection details)
  */
 
 import { logger } from '../logger';
@@ -28,16 +30,51 @@ export interface DatabaseClient {
 }
 
 let clientInstance: DatabaseClient | null = null;
+let postgresPool: import('pg').Pool | null = null;
 
 /**
  * Detect which database driver to use based on environment
+ *
+ * Priority:
+ * 1. If USE_LOCAL_DB=true, use LOCAL_DATABASE_URL (for batch scripts)
+ * 2. Otherwise, check LOCAL_DATABASE_URL first (for local development)
+ * 3. Then check DATABASE_URL (for production)
+ * 4. Fall back to SQLite only if no PostgreSQL connection string is found
  */
 export function detectDriver(): DatabaseDriver {
+  // Check if we should use local database (for batch operations)
+  const useLocal = process.env.USE_LOCAL_DB === 'true';
+
+  // Priority: USE_LOCAL_DB flag > LOCAL_DATABASE_URL > DATABASE_URL
+  let dbUrl: string | undefined;
+  if (useLocal) {
+    dbUrl = process.env.LOCAL_DATABASE_URL;
+  } else {
+    // For normal app usage, prefer LOCAL_DATABASE_URL for local dev, then DATABASE_URL for production
+    dbUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+  }
+
   // PostgreSQL connection string takes precedence
-  if (process.env.DATABASE_URL?.startsWith('postgres')) {
+  if (dbUrl?.startsWith('postgres')) {
     return 'postgres';
   }
+
+  // Fall back to SQLite only if no PostgreSQL URL is configured (legacy, not recommended)
+  // PostgreSQL is required for both development and production
   return 'sqlite';
+}
+
+/**
+ * Get the database connection string to use
+ * Priority: USE_LOCAL_DB flag > LOCAL_DATABASE_URL > DATABASE_URL
+ */
+export function getDatabaseUrl(): string | undefined {
+  const useLocal = process.env.USE_LOCAL_DB === 'true';
+  if (useLocal) {
+    return process.env.LOCAL_DATABASE_URL;
+  }
+  // For normal app usage, prefer LOCAL_DATABASE_URL for local dev, then DATABASE_URL for production
+  return process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
 }
 
 /**
@@ -114,17 +151,41 @@ async function createPostgresClient(): Promise<DatabaseClient> {
   // Dynamic import pg
   const { Pool } = await import('pg');
 
-  // Render databases always require SSL, regardless of NODE_ENV
-  const connectionString = process.env.DATABASE_URL || '';
-  const isRenderDb = connectionString.includes('render.com');
-  const requireSsl = process.env.NODE_ENV === 'production' || isRenderDb;
+  const databaseUrl = getDatabaseUrl() || '';
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL or LOCAL_DATABASE_URL is required for PostgreSQL');
+  }
+  // Enable SSL for Render databases (required) and production environments
+  const needsSSL = process.env.NODE_ENV === 'production' || databaseUrl.includes('render.com');
 
   const pool = new Pool({
-    connectionString,
-    ssl: requireSsl
-      ? { rejectUnauthorized: false }
-      : undefined,
+    connectionString: databaseUrl,
+    ssl: needsSSL ? { rejectUnauthorized: false } : undefined,
     max: 10, // Connection pool size
+    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+    connectionTimeoutMillis: 20000, // Return error after 20 seconds if connection cannot be established
+    // Note: statement_timeout is a PostgreSQL server setting, not a pool setting
+    // It should be set via SET statement_timeout = '60s' per connection if needed
+  });
+
+  // Store pool reference for direct access
+  postgresPool = pool;
+
+  // Set statement timeout per connection
+  pool.on('connect', async (client) => {
+    try {
+      await client.query("SET statement_timeout = '120s'");
+    } catch (err) {
+      logger.warn('Failed to set statement_timeout', { error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Handle connection errors
+  pool.on('error', (err) => {
+    logger.error('PostgreSQL pool error', { error: err.message });
+    // Reset the pool reference so we can recreate it
+    postgresPool = null;
+    clientInstance = null;
   });
 
   // Test connection
@@ -161,9 +222,27 @@ async function createPostgresClient(): Promise<DatabaseClient> {
 
     async close(): Promise<void> {
       await pool.end();
+      postgresPool = null;
       clientInstance = null;
     },
   };
+}
+
+/**
+ * Get a fresh connection from the PostgreSQL pool
+ * Use this for operations that need a guaranteed fresh connection
+ */
+export async function getFreshPostgresConnection(): Promise<import('pg').PoolClient> {
+  if (!postgresPool) {
+    // Ensure pool exists
+    await getDbClient();
+  }
+
+  if (!postgresPool) {
+    throw new Error('PostgreSQL pool not initialized');
+  }
+
+  return await postgresPool.connect();
 }
 
 /**

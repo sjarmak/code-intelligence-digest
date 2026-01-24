@@ -1,7 +1,7 @@
 /**
  * Item extraction and digest generation (Pass 1)
  * Converts raw items with full text into structured digests
- * Uses gpt-5.2-chat-latest with strict JSON schema
+ * Uses gpt-4o-mini with strict JSON schema
  */
 
 import OpenAI from "openai";
@@ -24,7 +24,7 @@ export interface ItemDigest {
   whyItMatters: string; // Relevance to coding/agents/IR
   sourceCredibility: "high" | "medium" | "low";
   userRelevanceScore: number; // 0-10 based on user prompt match
-  
+
   // Enriched metadata (extracted from actual article page)
   author?: string; // Article author (Substack, Medium, dev.to, etc.)
   publishDate?: string; // Article publication date (ISO 8601)
@@ -55,7 +55,7 @@ function extractMetadataSync(url: string): PageMetadata {
     // Extract domain for originalSource
     const urlObj = new URL(url);
     const domain = urlObj.hostname.replace("www.", "");
-    
+
     // For Substack, extract author from URL pattern (e.g., "alice.substack.com")
     if (domain.includes("substack.com")) {
       const match = url.match(/https:\/\/([^.]+)\.substack\.com/);
@@ -66,7 +66,7 @@ function extractMetadataSync(url: string): PageMetadata {
         };
       }
     }
-    
+
     // For Medium, try to extract author from URL pattern (e.g., "@authorname")
     if (domain.includes("medium.com")) {
       const match = url.match(/medium\.com\/@([^/]+)/);
@@ -80,7 +80,7 @@ function extractMetadataSync(url: string): PageMetadata {
         originalSource: "medium.com",
       };
     }
-    
+
     // For dev.to
     if (domain.includes("dev.to")) {
       return {
@@ -147,7 +147,7 @@ async function summarizeChunk(
   total: number
 ): Promise<string> {
   const response = await client.chat.completions.create({
-    model: "gpt-5.2-chat-latest",
+    model: "gpt-4o-mini",
     max_completion_tokens: 300,
     messages: [
       {
@@ -209,7 +209,7 @@ export async function extractItemDigest(
   try {
     // For email newsletters/Inoreader URLs, use summary directly (it's the actual content)
     let fullText = item.fullText || item.summary || item.contentSnippet || "";
-    
+
     if (isEmailNewsletterSource(item.sourceTitle) && item.summary) {
       logger.info(`Using embedded content for email newsletter: "${item.title}"`);
       fullText = stripHtml(item.summary);
@@ -226,10 +226,24 @@ export async function extractItemDigest(
       } else {
         logger.info(`Chunking long article: "${item.title}" (${chunks.length} chunks)`);
 
-        // Summarize each chunk
-        const chunkSummaries = await Promise.all(
-          chunks.map((chunk, idx) => summarizeChunk(client, chunk, idx + 1, chunks.length))
-        );
+        // Summarize chunks in batches to control memory usage
+        const chunkSummaries: string[] = [];
+        const CHUNK_BATCH_SIZE = 5; // Process 5 chunks at a time
+
+        for (let i = 0; i < chunks.length; i += CHUNK_BATCH_SIZE) {
+          const chunkBatch = chunks.slice(i, i + CHUNK_BATCH_SIZE);
+          const summaries = await Promise.all(
+            chunkBatch.map((chunk, idx) =>
+              summarizeChunk(client, chunk, i + idx + 1, chunks.length)
+            )
+          );
+          chunkSummaries.push(...summaries);
+
+          // Brief pause for GC on large articles
+          if (i + CHUNK_BATCH_SIZE < chunks.length) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        }
 
         // Merge summaries
         processedText = chunkSummaries.join("\n\n");
@@ -238,7 +252,7 @@ export async function extractItemDigest(
 
     // Extract digest from processed text
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 800,
       response_format: { type: "json_object" },
       messages: [
@@ -249,13 +263,13 @@ export async function extractItemDigest(
     Title: "${item.title}"
     Source: ${item.sourceTitle}
     Categories: ${item.category}
-    User Focus: ${userPrompt || "Code search, context management for coding agents, information retrieval, developer productivity tools"}
-    
+    User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
+
     Content:
     ${processedText}
-    
+
     ${processedText.length < 300 ? "Note: Content is sparse. Infer insights from the title and available text." : ""}
-    
+
     Return JSON with:
     - topicTags: [3-5 specific tags, avoid generic terms like "emerging" or "landscape". Use concrete terms like "caching", "indexing", "ranking", "agents"]
     - gist: 1-2 sentence summary of WHAT is described (max 120 chars). Use active voice. Not "this highlights" but "the paper shows" or "the tool does X".
@@ -263,8 +277,8 @@ export async function extractItemDigest(
     - namedEntities: [actual names, projects, companies, papers mentioned]
     - whyItMatters: 1-2 sentences explaining concrete relevance. Avoid filler words like "shapes," "fosters," "underscores." Say what problem it solves or approach it takes.
     - sourceCredibility: "high" (peer-reviewed/official), "medium" (established pub), "low" (casual blog)
-    - userRelevanceScore: 0-10 based on direct relevance to code search, context for agents, IR, or productivity (not generic "innovation")
-    
+    - userRelevanceScore: 0-10 based on direct relevance to building benchmarks for coding agents, code search, or codebase understanding (not generic "innovation")
+
     Return ONLY valid JSON, no markdown. Gist and keyBullets must be drawn from actual content, not templates.`,
         },
       ],
@@ -280,7 +294,7 @@ export async function extractItemDigest(
     // All newsletter articles are published elsewhere
     // If URL is missing or invalid, try to find it via web search
     let digestUrl = item.url;
-    
+
     if (!digestUrl || digestUrl.includes("inoreader.com")) {
       logger.debug(`Attempting to find URL for article: "${item.title}"`);
       const foundUrl = await findArticleUrl(item.title, item.sourceTitle, item.summary || item.fullText);
@@ -289,7 +303,7 @@ export async function extractItemDigest(
         logger.info(`Found article URL via search: "${item.title}" -> ${foundUrl}`);
       }
     }
-    
+
 
 
     // Fetch enriched metadata from the article URL (author, original source, etc.)
@@ -315,7 +329,7 @@ export async function extractItemDigest(
       whyItMatters: extracted.whyItMatters || "",
       sourceCredibility: extracted.sourceCredibility || "medium",
       userRelevanceScore: Math.min(10, Math.max(0, extracted.userRelevanceScore || 5)),
-      
+
       // Enriched metadata from article page
       author: metadata.author,
       publishDate: metadata.publishDate,
@@ -380,7 +394,7 @@ export async function extractBatchDigests(
     `After decomposition: ${decomposedItems.length} items ` +
     `(${decomposedItems.length - items.length > 0 ? "+" : ""}${decomposedItems.length - items.length} from newsletters)`
   );
-  
+
   // Log decomposition results in detail
   if (decomposedItems.length > items.length) {
     logger.info(`Decomposition produced extra items. Sample URLs: ${decomposedItems.slice(0, 3).map(i => i.url).join(", ")}`);
@@ -403,16 +417,34 @@ export async function extractBatchDigests(
   const decomposedItemUrls = decomposedItems.slice(0, 5).map(i => ({ id: i.id.substring(0, 40), title: i.title.substring(0, 40), url: i.url }));
   logger.info(`[BEFORE_EXTRACT] Decomposed item URLs: ${JSON.stringify(decomposedItemUrls)}`);
 
-  const digests = await Promise.all(
-    decomposedItems.map((item) => extractItemDigest(item, userPrompt))
-  );
+  // Extract digests in batches to control memory usage
+  const digests: ItemDigest[] = [];
+  const BATCH_SIZE = 10; // Process 10 items at a time
+
+  for (let i = 0; i < decomposedItems.length; i += BATCH_SIZE) {
+    const batch = decomposedItems.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(decomposedItems.length / BATCH_SIZE);
+    logger.info(`Extracting digests batch ${batchNum}/${totalBatches} (${batch.length} items)`);
+
+    const batchDigests = await Promise.all(
+      batch.map((item) => extractItemDigest(item, userPrompt))
+    );
+
+    digests.push(...batchDigests);
+
+    // Small delay between batches to allow GC
+    if (i + BATCH_SIZE < decomposedItems.length) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
 
   logger.info(`Extracted ${digests.length} digests`);
-  
+
   // Log sample digest URLs AFTER extraction
   const digestUrls = digests.slice(0, 5).map(d => ({ id: d.id.substring(0, 40), title: d.title.substring(0, 40), url: d.url }));
   logger.info(`[AFTER_EXTRACT] Sample digest URLs: ${JSON.stringify(digestUrls)}`);
-  
+
   return digests;
 }
 
@@ -422,10 +454,10 @@ export async function extractBatchDigests(
 async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Promise<ItemDigest> {
   const tags = item.llmScore.tags.slice(0, 5);
   const rawContent = item.summary || item.contentSnippet || "No summary available";
-  
+
   // Strip HTML if needed
   const cleanContent = rawContent.includes("<") ? stripHtml(rawContent) : rawContent;
-  
+
   // Generate more informative whyItMatters from actual content
   let whyItMatters = cleanContent.substring(0, 150).trim();
   if (whyItMatters.length < 50) {
@@ -472,14 +504,14 @@ async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Pr
     category: item.category,
     topicTags: tags,
     gist: cleanContent.substring(0, 100).trim(),
-    keyBullets: cleanContent.length > 150 
-      ? [cleanContent.substring(0, 150).trim() + "..."] 
+    keyBullets: cleanContent.length > 150
+      ? [cleanContent.substring(0, 150).trim() + "..."]
       : [cleanContent.trim()],
     namedEntities: [],
     whyItMatters,
     sourceCredibility: "medium",
     userRelevanceScore: Math.round(item.finalScore * 10),
-    
+
     // Enriched metadata (sync version for fallback)
     author: metadataSync.author,
     publishDate: metadataSync.publishDate,

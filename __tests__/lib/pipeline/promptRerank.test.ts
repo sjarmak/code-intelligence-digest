@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { rerankWithPrompt, filterByExclusions } from "@/src/lib/pipeline/promptRerank";
-import { RankedItem } from "@/src/lib/model";
-import { PromptProfile } from "@/src/lib/pipeline/promptProfile";
+import { rerankWithPrompt, filterByExclusions } from "../../../src/lib/pipeline/promptRerank";
+import { RankedItem } from "../../../src/lib/model";
+import { PromptProfile } from "../../../src/lib/pipeline/promptProfile";
 
 describe("promptRerank", () => {
   const createMockItem = (id: string, title: string, tags: string[]): RankedItem => ({

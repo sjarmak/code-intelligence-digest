@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: code-intel-digest-postgres
+    environment:
+      POSTGRES_USER: code_intel_user
+      POSTGRES_PASSWORD: local_dev_password
+      POSTGRES_DB: code_intel
+    command: postgres -c log_statement=all -c log_destination=stderr
+    ports:
+      - "5433:5432"  # Use 5433 to avoid conflict with system PostgreSQL
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U code_intel_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+

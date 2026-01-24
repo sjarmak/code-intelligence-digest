@@ -1,6 +1,6 @@
 /**
  * Newsletter generation (Pass 2 - Synthesis)
- * Converts item digests into a polished newsletter using gpt-5.2-pro
+ * Converts item digests into a polished newsletter using gpt-4o-mini
  */
 
 import OpenAI from "openai";
@@ -47,32 +47,6 @@ function isValidUrl(url: string): boolean {
   if (!url || typeof url !== "string") return false;
   if (url.includes("inoreader.com") || url.includes("google.com/reader")) return false;
   return url.startsWith("http://") || url.startsWith("https://");
-}
-
-/**
- * Build synthesis context from item digests (Pass 2)
- */
-function buildDigestContext(digests: ItemDigest[]): string {
-  return digests
-    .map((digest, idx) => {
-      return `[${idx + 1}] "${digest.title}"
-Source: ${digest.sourceTitle}
-URL: ${digest.url}
-Credibility: ${digest.sourceCredibility.toUpperCase()}
-User Relevance Score: ${digest.userRelevanceScore}/10
-
-Gist: ${digest.gist}
-
-Key Points:
-${digest.keyBullets.map(b => `- ${b}`).join("\n")}
-
-Why It Matters: ${digest.whyItMatters}
-
-Topics: ${digest.topicTags.join(", ")}
-Named Entities: ${digest.namedEntities.join(", ") || "None"}
----`;
-    })
-    .join("\n\n");
 }
 
 /**
@@ -133,7 +107,7 @@ export async function generateNewsletterContent(
   if (client) {
     try {
       const response = await client.chat.completions.create({
-        model: "gpt-5.2-chat-latest",
+        model: "gpt-4o-mini",
         max_completion_tokens: 4000,
         reasoning_effort: "high",
         response_format: { type: "json_object" },
@@ -143,7 +117,8 @@ export async function generateNewsletterContent(
             content: `Generate a ${periodLabel} Code Intelligence Digest newsletter from these curated items.
 
 Categories: ${categoryLabels}
-${profile ? `User focus: ${profile.focusTopics.join(", ")}` : ""}
+User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
+${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
 
 Total Items: ${items.length}
 
@@ -151,7 +126,7 @@ Items (numbered 1-${items.length}):
 ${synthesisContext}
 
 INSTRUCTIONS:
-1. Write for a senior engineering audience focused on code intelligence, agents, and IR
+1. Write for a senior engineering audience focused on building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
 2. Synthesize across sources to find emerging themes and connections
 3. Explain WHY each item matters in relation to the user's focus areas
 4. For research papers, include 1-2 key findings aligned to user interests
@@ -181,14 +156,14 @@ Return only valid JSON.`,
       if (!content) {
         throw new Error("No content returned from LLM");
       }
-      
+
       try {
         const parsed = JSON.parse(content);
         summary = parsed.summary || "No summary generated.";
         themes = Array.isArray(parsed.themes) ? parsed.themes : [];
         markdown = parsed.markdown || "# Code Intelligence Digest\n\nNo content generated.";
         html = parsed.html || "<article><h1>Code Intelligence Digest</h1><p>No content generated.</p></article>";
-        
+
         if (!markdown || markdown === "# Code Intelligence Digest\n\nNo content generated.") {
           throw new Error("LLM returned empty markdown");
         }
@@ -228,12 +203,12 @@ Return only valid JSON.`,
  */
 export async function generateNewsletterFromDigests(
   digests: ItemDigest[],
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   categories: Category[],
   profile: PromptProfile | null,
   userPrompt?: string
 ): Promise<NewsletterContent> {
-  const periodLabel = period === "week" ? "weekly" : "monthly";
+  const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
   return await generateNewsletterFromDigestData(digests, periodLabel, userPrompt || "");
 }
 
@@ -243,7 +218,7 @@ export async function generateNewsletterFromDigests(
   */
 function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[]> {
     const byCategory = new Map<string, ItemDigest[]>();
-    
+
     // Category label mapping for display
     const categoryLabels: Record<string, string> = {
       newsletters: "Newsletters",
@@ -254,7 +229,7 @@ function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[
       community: "Community",
       research: "Research",
     };
-    
+
     // Define priority order (lower number = higher priority)
     const categoryPriority: Record<string, number> = {
       research: 1,
@@ -265,18 +240,18 @@ function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[
       newsletters: 6,
       podcasts: 7,
     };
-    
+
     // Group by category first
     const tempMap = new Map<string, ItemDigest[]>();
     for (const digest of digests) {
       const displayLabel = categoryLabels[digest.category] || digest.category;
-      
+
       if (!tempMap.has(displayLabel)) {
         tempMap.set(displayLabel, []);
       }
       tempMap.get(displayLabel)!.push(digest);
     }
-    
+
     // Sort entries by category priority and add to result map (which preserves insertion order)
     const sortedEntries = Array.from(tempMap.entries()).sort((a, b) => {
       const catKeyA = Object.entries(categoryLabels).find(([, v]) => v === a[0])?.[0] || a[0];
@@ -285,11 +260,11 @@ function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[
       const priorB = categoryPriority[catKeyB] ?? 99;
       return priorA - priorB;
     });
-    
+
     for (const [label, items] of sortedEntries) {
       byCategory.set(label, items);
     }
-    
+
     return byCategory;
   }
 
@@ -328,7 +303,7 @@ async function generateNewsletterFromDigestData(
        themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
      }
    }
-   
+
    // Parse user prompt to extract focus topics for theme boosting
    let userPromptTopics: string[] = [];
    if (userPrompt) {
@@ -348,7 +323,7 @@ async function generateNewsletterFromDigestData(
      const lowerPrompt = userPrompt.toLowerCase();
      userPromptTopics = domainTerms.filter(term => lowerPrompt.includes(term));
    }
-   
+
    // Boost themes that match user prompt topics
    if (userPromptTopics.length > 0) {
      for (const [theme, score] of themeFreq.entries()) {
@@ -361,32 +336,11 @@ async function generateNewsletterFromDigestData(
        }
      }
    }
-   
+
    const themes = Array.from(themeFreq.entries())
      .sort((a, b) => b[1] - a[1])
      .slice(0, 5)
      .map(([t]) => t);
-
-  // Build categorized digest text for LLM
-  const categorizedContent = Array.from(byCategory.entries())
-    .map(([catName, categoryDigests]) => {
-      const itemsList = categoryDigests
-        .map(d => {
-          // Build attribution line: sourceTitle + author + originalSource
-          const attributions: string[] = [];
-          if (d.sourceTitle) attributions.push(d.sourceTitle);
-          if (d.author) attributions.push(`by ${d.author}`);
-          if (d.originalSource && d.originalSource !== d.sourceTitle?.toLowerCase()) {
-            attributions.push(`on ${d.originalSource}`);
-          }
-          const attribution = attributions.join(" · ");
-          
-          return `- **[${d.title}](${d.url})** — *${attribution}*\n  ${d.whyItMatters}`;
-        })
-        .join("\n");
-      return `## ${catName}\n\n${itemsList}`;
-    })
-    .join("\n\n");
 
   if (!apiKey) {
     // Fallback: return basic structure
@@ -443,7 +397,7 @@ async function generateNewsletterFromDigestData(
   const markdown = buildNewsletterMarkdown(byCategory2, periodLabel, summaryText);
 
   // Build HTML from markdown
-  const html = buildNewsletterHTML(markdown, summaryText);
+  const html = buildNewsletterHTML(markdown);
 
   logger.info("Newsletter passed quality filters", {
     totalDigests: digests.length,
@@ -504,15 +458,13 @@ function generateNewsletterFallback(
   const title = `Code Intelligence Digest`;
   const subtitle = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update`;
   const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-  
+
   let markdown = `# ${title}\n`;
   markdown += `## ${subtitle}\n`;
   markdown += `**Published:** ${publishDate} | **Items:** ${items.length}\n\n`;
-  
-  // Get top items for insightful summary
-  const topItems = Array.from(items).sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 5);
+
   const topThemes = themes.slice(0, 4).map(t => t.replace(/-/g, " "));
-  
+
   // Build a more substantive executive summary
   const sourceScores = new Map<string, number>();
   for (const item of items) {
@@ -523,7 +475,7 @@ function generateNewsletterFallback(
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
     .map(([src]) => src);
-  
+
   markdown += `## Executive Summary\n\n`;
   markdown += `This ${periodLabel} digest features **${items.length} curated items** focused on code search, semantic IR, agentic workflows, and developer tooling. `;
   markdown += `Emerging themes: **${topThemes.join("**, **")}**. `;
@@ -535,15 +487,14 @@ function generateNewsletterFallback(
     if (!category || categoryItems.length === 0) continue;
     const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, " ");
     markdown += `## ${categoryLabel}\n\n`;
-    
+
     // Sort by score and take top items
     const topItems = categoryItems.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 7);
-    
+
     for (const item of topItems) {
-      const score = Math.round((item.finalScore || 0) * 100);
       const desc = item.summary || item.contentSnippet || "No description available.";
       const firstLine = desc.split("\n")[0].substring(0, 250);
-      
+
       markdown += `**[${item.title}](${item.url})**\n`;
       markdown += `*${item.sourceTitle}*\n\n`;
       markdown += `${firstLine}${firstLine.length >= 250 ? "..." : ""}\n\n`;
@@ -608,7 +559,7 @@ function generateNewsletterFallback(
     }
 
     const client = new OpenAI({ apiKey });
-    
+
     // Use more items for richer context
     const itemCount = Math.min(15, digests.length);
     const itemSummaries = digests
@@ -618,21 +569,21 @@ function generateNewsletterFallback(
 
     try {
        logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
-       
+
        const response = await client.chat.completions.create({
-         model: "gpt-5.2-chat-latest",
+         model: "gpt-4o-mini",
          max_completion_tokens: 600,
          messages: [
            {
              role: "user",
              content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
 
-    **Featured Topics:** ${themes.join(", ") || "code search, context management, agents, information retrieval, developer productivity"}
+    **Featured Topics:** ${themes.join(", ") || "benchmarking coding agents, code search, codebase understanding tools, developer workflows"}
 
     **Key Items Featured:**
     ${itemSummaries}
 
-    **Target Audience:** Sourcegraph engineering and leadership evaluating code search, coding agents, information retrieval, and developer productivity.
+    **Target Audience:** Sourcegraph engineering and leadership evaluating the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases.
 
     **What NOT to do:**
     - Avoid: "highlights," "underscores," "shapes," "fosters," "landscape," "emerging," "approaches," "methodologies"
@@ -661,16 +612,79 @@ function generateNewsletterFallback(
 
       const content = response.choices[0].message.content;
       if (!content || content.trim().length === 0) {
-        logger.warn("LLM returned empty response, using fallback");
+        logger.warn("LLM returned empty response, using fallback", {
+          model: "gpt-4o-mini",
+          responseId: response.id,
+          finishReason: response.choices[0]?.finish_reason,
+          usage: response.usage,
+        });
+        // Try fallback to gpt-4o-mini if primary model fails
+        try {
+          logger.info("Attempting fallback to gpt-4o-mini");
+          const fallbackResponse = await client.chat.completions.create({
+            model: "gpt-4o-mini",
+            max_completion_tokens: 600,
+            messages: [
+              {
+                role: "user",
+                content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
+
+**Featured Topics:** ${themes.join(", ") || "code search, context management, agents, information retrieval, developer productivity"}
+
+**Key Items Featured:**
+${itemSummaries}
+
+Write substantive paragraphs. Ground every claim in the actual items provided.`,
+              },
+            ],
+          });
+          const fallbackContent = fallbackResponse.choices[0].message.content;
+          if (fallbackContent && fallbackContent.trim().length > 0) {
+            logger.info(`Fallback model (gpt-4o-mini) generated summary: ${fallbackContent.length} chars`);
+            return fallbackContent;
+          }
+        } catch (fallbackError) {
+          logger.warn("Fallback model also failed", {
+            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          });
+        }
         return buildExecutiveSummaryFallback(digests, themes);
       }
       logger.info(`LLM summary generated: ${content.length} chars`);
       return content;
       } catch (e) {
-      logger.warn("Failed to generate LLM summary, using fallback", { 
-        error: e instanceof Error ? e.message : String(e),
-        stack: e instanceof Error ? e.stack : undefined
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      logger.warn("Failed to generate LLM summary, using fallback", {
+        error: errorMsg,
+        stack: e instanceof Error ? e.stack : undefined,
+        model: "gpt-4o-mini",
       });
+      // If it's a model error, try fallback model
+      if (errorMsg.includes("model") || errorMsg.includes("not found") || errorMsg.includes("invalid")) {
+        try {
+          logger.info("Model error detected, attempting fallback to gpt-4o-mini");
+          const client = new OpenAI({ apiKey });
+          const fallbackResponse = await client.chat.completions.create({
+            model: "gpt-4o-mini",
+            max_completion_tokens: 600,
+            messages: [
+              {
+                role: "user",
+                content: `Write a 300-400 word executive summary for a code intelligence digest focusing on: ${themes.join(", ")}`,
+              },
+            ],
+          });
+          const fallbackContent = fallbackResponse.choices[0].message.content;
+          if (fallbackContent && fallbackContent.trim().length > 0) {
+            logger.info(`Fallback model (gpt-4o-mini) generated summary: ${fallbackContent.length} chars`);
+            return fallbackContent;
+          }
+        } catch (fallbackError) {
+          logger.warn("Fallback model also failed", {
+            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          });
+        }
+      }
       return buildExecutiveSummaryFallback(digests, themes);
       }
   }
@@ -682,7 +696,7 @@ function generateNewsletterFallback(
     // Extract real, concrete insights from top digests
     const topItems = digests.slice(0, 10);
     const insights: string[] = [];
-    
+
     // Build specific insights from actual content (not templates)
     for (const item of topItems) {
       // Use whyItMatters if it contains actual findings
@@ -696,16 +710,16 @@ function generateNewsletterFallback(
         }
       }
     }
-    
+
     // Get unique insights
     const uniqueInsights = Array.from(new Set(insights.map(i => i.trim()))).slice(0, 4);
-    
+
     // Build summary with actual findings
     let summary = "";
-    
+
     // Start with what's actually being covered
     const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
-    
+
     if (uniqueInsights.length > 0) {
       summary = uniqueInsights.join(" ");
       if (summary.length < 200) {
@@ -718,7 +732,7 @@ function generateNewsletterFallback(
       const topThemes = themes.slice(0, 3).join(", ");
       summary = `This digest covers ${topThemes}. Content from ${topSources.join(", ")}.`;
     }
-    
+
     return summary;
   }
 
@@ -729,7 +743,7 @@ function generateNewsletterFallback(
     const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
     let markdown = `# Code Intelligence Digest\n\n`;
     markdown += `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Edition — ${publishDate}\n\n`;
-    
+
     if (summary) {
       markdown += `## Overview\n\n${summary}\n\n`;
     }
@@ -737,9 +751,9 @@ function generateNewsletterFallback(
     // Build each category section
     for (const [categoryName, items] of byCategory) {
       if (!categoryName || items.length === 0) continue;
-      
+
       markdown += `## ${categoryName}\n\n`;
-      
+
       for (const item of items) {
          // Only create a link if the URL is valid (not Inoreader, not empty)
          const urlValid = isValidUrl(item.url);
@@ -760,28 +774,28 @@ function generateNewsletterFallback(
   /**
    * Convert markdown newsletter to semantic HTML with light theme
    */
-  function buildNewsletterHTML(markdown: string, summary?: string): string {
+  function buildNewsletterHTML(markdown: string): string {
     let html = markdown;
-    
+
     // Convert markdown headers (before links, so we can detect them)
     html = html.replace(/^# (.*?)$/gm, '<h1 style="color: #1a1a1a; margin-bottom: 0.25rem; font-size: 2.5em; font-weight: 700;">$1</h1>');
     html = html.replace(/^## (.*?)$/gm, '<h2 style="color: #1a1a1a; margin-top: 2rem; margin-bottom: 0.75rem; font-size: 1.5em; font-weight: 600;">$1</h2>');
-    
+
     // Convert links BEFORE bold/italic (so we don't accidentally format link text)
     html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" style="color: #0066cc; text-decoration: none; font-weight: 500;" target="_blank" rel="noopener noreferrer">$1</a>');
-    
+
     // Convert bold and italic
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600; color: #1a1a1a;">$1</strong>');
     html = html.replace(/\*(.*?)\*/g, '<em style="font-style: italic; color: #555;">$1</em>');
-    
+
     // Convert list items: collapse consecutive lines starting with - into a list
     const lines = html.split('\n');
     const result: string[] = [];
     let inList = false;
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      
+
       if (line.match(/^- /)) {
         if (!inList) {
           result.push('<ul style="margin-left: 1.5rem; margin-bottom: 1.5rem; list-style: none; padding: 0;">');
@@ -795,7 +809,7 @@ function generateNewsletterFallback(
           result.push('</ul>');
           inList = false;
         }
-        
+
         // Handle paragraph breaks (empty lines)
         if (line.trim() === '') {
           // Skip empty lines; they'll be handled by CSS margins
@@ -808,11 +822,11 @@ function generateNewsletterFallback(
         }
       }
     }
-    
+
     if (inList) {
       result.push('</ul>');
     }
-    
+
     html = result.join('\n');
 
     return `<article style="font-family: system-ui, -apple-system, sans-serif; color: #333; background: #ffffff; padding: 3rem 2rem;">

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Category } from '@/src/lib/model';
 import AskBox from './ask-box';
 import AnswerDisplay from './answer-display';
+import { DateRange } from '@/src/components/common/date-range-picker';
 
 interface LLMAnswerResponse {
   question: string;
@@ -27,7 +28,12 @@ export default function QAPage() {
   const [hasAsked, setHasAsked] = useState(false);
   const [itemsSearched, setItemsSearched] = useState(0);
 
-  const handleAsk = async (question: string, category: Category | null, period: 'week' | 'month') => {
+  const handleAsk = async (
+    question: string,
+    category: Category | null,
+    period: 'week' | 'month' | 'custom',
+    customDateRange?: DateRange | null
+  ) => {
     setIsLoading(true);
     setError(null);
     setHasAsked(true);
@@ -43,19 +49,46 @@ export default function QAPage() {
         params.append('category', category);
       }
 
+      if (period === 'custom' && customDateRange) {
+        params.append('startDate', customDateRange.startDate);
+        params.append('endDate', customDateRange.endDate);
+      }
+
       const response = await fetch(`/api/ask?${params.toString()}`);
 
       if (!response.ok) {
-        throw new Error('Failed to get answer');
+        // Try to get error message from response
+        let errorMessage = `Failed to get answer (${response.status})`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorMessage;
+
+          // Handle rate limiting specifically
+          if (response.status === 429) {
+            errorMessage = errorData.error || 'Rate limit exceeded. Please try again later.';
+          }
+        } catch {
+          // If JSON parsing fails, use status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+
+      // Check if response has an error field (even with 200 status)
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
       setResponse(data);
       setItemsSearched(0); // itemsSearched not in response, would need API update
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       setError(message);
       setResponse(null);
+      // Log to console for debugging
+      console.error('Ask question failed:', message);
     } finally {
       setIsLoading(false);
     }

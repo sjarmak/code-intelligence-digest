@@ -75,8 +75,8 @@ export function encodeEmbedding(embedding: number[]): Buffer {
  */
 export function decodeEmbedding(buffer: Buffer): number[] {
   if (!buffer || buffer.length === 0) {
-    // Return zero vector if buffer is empty
-    return Array(768).fill(0);
+    // Return zero vector if buffer is empty (1536 dimensions for OpenAI embeddings)
+    return Array(1536).fill(0);
   }
   const float32Array = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.length / 4);
   return Array.from(float32Array);

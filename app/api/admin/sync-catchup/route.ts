@@ -1,35 +1,39 @@
 /**
  * POST /api/admin/sync-catchup?days=7
  * 
- * Fetch items from the last N days instead of just since last sync.
- * Useful for:
- * - Bootstrap: populate empty database with historical data
- * - Catch-up: if you missed syncs for a few days
- * - Backfill: test with recent content
+ * Smart catch-up sync that avoids re-fetching items already in database.
  * 
- * Duplicates are automatically handled by database constraints.
- * Items already in DB are updated (no duplicates created).
+ * By default, if the database has recent items, sync will only fetch items
+ * NEWER than the newest item (efficient - uses 1-2 API calls).
+ * 
+ * Use force=true to bypass this optimization and re-fetch ALL items from
+ * the last N days (expensive - may use 100+ API calls, useful for re-categorizing).
  * 
  * Query parameters:
  * - days: number of days to fetch (default: 3, max: 30)
+ * - force: if "true", bypass smart sync and re-fetch everything (expensive!)
  * 
- * Example:
- *   POST /api/admin/sync-catchup?days=7
- *   Fetches last 7 days of items
+ * Examples:
+ *   POST /api/admin/sync-catchup?days=3
+ *   → Smart sync: only fetches items newer than newest in DB (1-2 API calls)
+ * 
+ *   POST /api/admin/sync-catchup?days=7&force=true
+ *   → Force re-fetch: fetches ALL items from last 7 days (many API calls)
+ *   → Use this when you need to re-categorize existing items
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { runDailySync } from '@/src/lib/sync/daily-sync';
 import { logger } from '@/src/lib/logger';
-import { blockInProduction } from '@/src/lib/auth/guards';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
+  // Note: This endpoint requires authentication via middleware (cookie-based auth)
+  // No blockInProduction since authenticated users should be able to catch up
 
   try {
     const searchParams = request.nextUrl.searchParams;
     const daysParam = searchParams.get('days');
+    const forceParam = searchParams.get('force');
 
     // Parse days parameter
     let days = 3;  // Default: 3 days
@@ -50,20 +54,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       days = parsed;
     }
 
-    logger.info(`[SYNC-CATCHUP] Starting catch-up sync for last ${days} days`);
+    const force = forceParam === 'true';
+    const mode = force ? 'force' : 'smart';
+    
+    logger.info(`[SYNC-CATCHUP] Starting ${mode} catch-up sync for last ${days} days`);
+    
+    if (force) {
+      logger.warn(`[SYNC-CATCHUP] Force mode enabled - will re-fetch all items from last ${days} days (expensive!)`);
+    }
 
     // Run sync with lookback window
-    const result = await runDailySync({ lookbackDays: days });
+    const result = await runDailySync({ lookbackDays: days, forceLookback: force });
 
     logger.info('[SYNC-CATCHUP] Catch-up sync complete', {
       itemsAdded: result.itemsAdded,
       apiCallsUsed: result.apiCallsUsed,
       categoriesProcessed: result.categoriesProcessed.length,
+      mode,
     });
 
     return NextResponse.json({
       success: result.success,
-      message: `Catch-up sync completed for last ${days} days`,
+      message: `${mode === 'force' ? 'Force' : 'Smart'} catch-up sync completed for last ${days} days`,
+      mode,
       itemsAdded: result.itemsAdded,
       apiCallsUsed: result.apiCallsUsed,
       categoriesProcessed: result.categoriesProcessed,

@@ -535,69 +535,6 @@ export async function loadScoresForItems(
 }
 
 /**
- * Load pre-computed BM25 scores for items by category from the item_scores table.
- * Returns a map of item_id to bm25_score for the given category.
- * Used by rank.ts to skip BM25 computation for items with cached scores.
- */
-export async function loadBM25ScoresForItems(
-  itemIds: string[],
-  category: string
-): Promise<Record<string, number>> {
-  try {
-    if (itemIds.length === 0) {
-      return {};
-    }
-
-    const driver = detectDriver();
-
-    type ScoreRow = {
-      item_id: string;
-      bm25_score: number | null;
-    };
-
-    let rows: ScoreRow[];
-
-    if (driver === 'postgres') {
-      const client = await getDbClient();
-      // Use $1 for category, then $2, $3, etc. for item IDs
-      const itemPlaceholders = itemIds.map((_, i) => `$${i + 2}`).join(',');
-      const result = await client.query(
-        `SELECT DISTINCT ON (item_id) item_id, bm25_score
-         FROM item_scores
-         WHERE category = $1 AND item_id IN (${itemPlaceholders}) AND bm25_score IS NOT NULL
-         ORDER BY item_id, scored_at DESC`,
-        [category, ...itemIds]
-      );
-      rows = result.rows as ScoreRow[];
-    } else {
-      const sqlite = getSqlite();
-      const itemPlaceholders = itemIds.map(() => "?").join(",");
-      rows = sqlite
-        .prepare(
-          `SELECT item_id, bm25_score
-           FROM item_scores
-           WHERE category = ? AND item_id IN (${itemPlaceholders}) AND bm25_score IS NOT NULL
-           GROUP BY item_id
-           HAVING scored_at = MAX(scored_at)`
-        )
-        .all(category, ...itemIds) as ScoreRow[];
-    }
-
-    const scores: Record<string, number> = {};
-    for (const row of rows) {
-      if (row.bm25_score !== null) {
-        scores[row.item_id] = Number(row.bm25_score);
-      }
-    }
-
-    return scores;
-  } catch (error) {
-    logger.error("Failed to load BM25 scores for items", error);
-    throw error;
-  }
-}
-
-/**
  * Get the most recent created_at timestamp from all items in database
  * Used by daily sync to fetch only newer items from Inoreader
  * Uses created_at (when synced to DB) rather than published_at (when content was published)

@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { Category } from '@/src/lib/model';
+import { DateRangePicker, DateRange } from '@/src/components/common/date-range-picker';
 
 interface AskBoxProps {
-  onAsk: (question: string, category: Category | null, period: 'week' | 'month') => void;
+  onAsk: (question: string, category: Category | null, period: 'week' | 'month' | 'custom', customDateRange?: DateRange | null) => void;
   isLoading: boolean;
 }
 
@@ -21,12 +22,17 @@ const CATEGORIES: Array<{ id: Category; label: string }> = [
 export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
   const [question, setQuestion] = useState('');
   const [category, setCategory] = useState<Category | null>(null);
-  const [period, setPeriod] = useState<'week' | 'month'>('week');
+  const [period, setPeriod] = useState<'week' | 'month' | 'custom'>('week');
+  const [customDateRange, setCustomDateRange] = useState<DateRange | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (question.trim()) {
-      onAsk(question, category, period);
+      if (period === 'custom' && !customDateRange) {
+        alert('Please select a date range');
+        return;
+      }
+      onAsk(question, category, period, period === 'custom' ? customDateRange : null);
     }
   };
 
@@ -49,7 +55,7 @@ export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
       </div>
 
       {/* Filters */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="space-y-4">
         {/* Category Filter */}
         <div>
           <label htmlFor="ask-category" className="block text-sm font-medium mb-2">
@@ -59,7 +65,7 @@ export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
             id="ask-category"
             value={category || ''}
             onChange={(e) => setCategory((e.target.value as Category) || null)}
-            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent custom-select-arrow"
              disabled={isLoading}
             >
              <option value="">All Categories</option>
@@ -79,15 +85,27 @@ export default function AskBox({ onAsk, isLoading }: AskBoxProps) {
           <select
             id="ask-period"
             value={period}
-            onChange={(e) => setPeriod(e.target.value as 'week' | 'month')}
-            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+            onChange={(e) => setPeriod(e.target.value as 'week' | 'month' | 'custom')}
+            className="w-full px-4 py-2 bg-surface border border-surface-border rounded-md text-foreground focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent custom-select-arrow"
             disabled={isLoading}
           >
             <option value="week">This Week</option>
             <option value="month">This Month</option>
+            <option value="custom">Custom Range</option>
           </select>
         </div>
       </div>
+
+      {/* Custom date range picker */}
+      {period === 'custom' && (
+        <div>
+          <DateRangePicker
+            value={customDateRange}
+            onChange={setCustomDateRange}
+            disabled={isLoading}
+          />
+        </div>
+      )}
 
       {/* Submit Button */}
       <button

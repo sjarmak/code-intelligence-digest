@@ -71,6 +71,11 @@ export class NemoTtsProvider implements TtsProvider {
       const arrayBuffer = await response.arrayBuffer();
       const bytes = Buffer.from(arrayBuffer);
 
+      // Validate buffer has content
+      if (!bytes || bytes.length === 0) {
+        throw new Error("NeMo TTS returned empty audio buffer");
+      }
+
       logger.info("Audio rendered successfully", {
         provider: "nemo",
         bytes: bytes.length,

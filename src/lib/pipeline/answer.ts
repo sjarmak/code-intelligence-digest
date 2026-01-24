@@ -55,10 +55,18 @@ export async function generateAnswer(
     // Prepare source context for LLM
     const topItems = retrievedItems.slice(0, 5);
     const sourceContext = topItems
-      .map(
-        (item, idx) =>
-          `[${idx + 1}] ${item.title} (${item.sourceTitle}, relevance: ${(item.finalScore * 100).toFixed(0)}%)\n${item.summary || item.contentSnippet || "No summary available"}`
-      )
+      .map((item, idx) => {
+        // Prefer full text, fall back to summary/snippet
+        let content = item.fullText || item.summary || item.contentSnippet || "No content available";
+
+        // If full text is very long, use first 2000 chars + summary for context
+        if (content.length > 2000 && item.fullText) {
+          const summary = item.summary || item.contentSnippet || "";
+          content = item.fullText.substring(0, 2000) + (summary ? `\n\n[Summary: ${summary}]` : '...');
+        }
+
+        return `[${idx + 1}] ${item.title} (${item.sourceTitle}, relevance: ${(item.finalScore * 100).toFixed(0)}%)\n${content}`;
+      })
       .join("\n\n");
 
     let answer: string;
@@ -90,9 +98,19 @@ Guidelines:
           ],
         });
 
-        answer = response.choices[0].message.content || "Failed to generate answer";
+        const content = response.choices[0]?.message?.content;
+        if (!content || content.trim().length === 0) {
+          logger.warn("OpenAI API returned empty response, falling back to template synthesis");
+          answer = generateTemplateSynthesis(topItems);
+        } else {
+          answer = content.trim();
+        }
       } catch (error) {
-        logger.warn("Claude API call failed, falling back to template synthesis", { error });
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.warn("OpenAI API call failed, falling back to template synthesis", {
+          error: errorMsg,
+          model: "gpt-4o-mini"
+        });
         answer = generateTemplateSynthesis(topItems);
       }
     } else {
@@ -129,10 +147,12 @@ Guidelines:
 function generateTemplateSynthesis(items: RankedItem[]): string {
   const themes = extractCommonThemes(items);
   const keyPoints = items
-    .map(
-      (item) =>
-        `- ${item.title} from ${item.sourceTitle}: ${item.summary || item.contentSnippet || "No details"}`
-    )
+    .map((item) => {
+      // Use full text if available, otherwise fall back to summary/snippet
+      const content = item.fullText || item.summary || item.contentSnippet || "No details";
+      const truncated = content.length > 300 ? content.substring(0, 300) + "..." : content;
+      return `- ${item.title} from ${item.sourceTitle}: ${truncated}`;
+    })
     .join("\n");
 
   return `Based on recent content about code intelligence, here are the key insights:

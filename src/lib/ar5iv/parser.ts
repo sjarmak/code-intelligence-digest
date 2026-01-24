@@ -1,0 +1,1009 @@
+/**
+ * ar5iv HTML parser
+ * Fetches and parses ar5iv.org HTML renderings of arXiv papers
+ *
+ * ar5iv.org is a project that renders arXiv LaTeX sources as accessible HTML5
+ * See: https://ar5iv.org
+ */
+
+import { logger } from '../logger';
+
+export interface PaperSection {
+  id: string;
+  title: string;
+  level: number; // 1 = h1, 2 = h2, etc.
+  content?: string; // HTML content of section
+}
+
+export interface PaperFigure {
+  id: string;
+  src: string;
+  caption: string;
+  alt?: string;
+}
+
+export interface PaperTable {
+  id: string;
+  html: string;
+  caption?: string;
+}
+
+export interface ParsedPaperContent {
+  source: 'ar5iv' | 'arxiv' | 'ads' | 'abstract';
+  html: string; // Cleaned HTML content
+  title?: string;
+  authors?: string[];
+  abstract?: string;
+  sections: PaperSection[];
+  figures: PaperFigure[];
+  tables: PaperTable[];
+  tableOfContents: PaperSection[];
+  rawHtml?: string; // Original HTML for debugging
+}
+
+/**
+ * Extract arXiv ID from bibcode
+ * Examples:
+ *   "2025arXiv250100123A" -> "2501.00123"
+ *   "2024arXiv241234567X" -> "2412.34567"
+ */
+export function extractArxivId(bibcode: string): string | null {
+  // Pattern: YYYYarXivYYMMNNNNNL where YY=year, MM=month, NNNNN=number, L=letter
+  const match = bibcode.match(/^(\d{4})arXiv(\d{2})(\d{2})(\d{5})/);
+  if (match) {
+    const [, , yearSuffix, month, number] = match;
+    // arXiv ID format: YYMM.NNNNN
+    return `${yearSuffix}${month}.${number}`;
+  }
+
+  // Check for direct arXiv ID in the bibcode
+  const directMatch = bibcode.match(/(\d{4}\.\d{4,5})/);
+  if (directMatch) {
+    return directMatch[1];
+  }
+
+  return null;
+}
+
+/**
+ * Fetch paper HTML from ar5iv.org or arXiv HTML
+ * Tries multiple sources in order: ar5iv.labs, ar5iv.org, arxiv.org/html
+ */
+export async function fetchAr5ivHtml(arxivId: string): Promise<string> {
+  // Try ar5iv.labs.arxiv.org first (the actual HTML rendering service)
+  const urls = [
+    `https://ar5iv.labs.arxiv.org/html/${arxivId}`,
+    `https://ar5iv.org/html/${arxivId}`,
+    `https://arxiv.org/html/${arxivId}v1`, // arXiv's own HTML version
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const url of urls) {
+    logger.info('Fetching HTML', { arxivId, url, source: url.includes('ar5iv') ? 'ar5iv' : 'arxiv' });
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'CodeIntelDigest/1.0 (Research paper reader)',
+          'Accept': 'text/html',
+        },
+        // Add timeout to prevent hanging
+        signal: AbortSignal.timeout(30000), // 30 second timeout
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unable to read error response');
+        logger.warn('HTML fetch failed, trying next source', {
+          arxivId,
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          errorResponse: errorText?.slice(0, 200),
+        });
+        lastError = new Error(`HTML fetch failed: ${response.status} ${response.statusText}`);
+        continue; // Try next URL
+      }
+
+      const html = await response.text();
+
+      // Verify we got actual HTML content, not an error page
+      if (html.length < 100) {
+        logger.warn('HTML returned very short response, trying next source', {
+          arxivId,
+          url,
+          htmlLength: html.length,
+        });
+        lastError = new Error('HTML returned insufficient content');
+        continue; // Try next URL
+      }
+
+      // Check for common error indicators in HTML
+      const htmlLower = html.toLowerCase();
+      if (htmlLower.includes('404') || htmlLower.includes('not found') || htmlLower.includes('page not found')) {
+        logger.warn('HTML returned error page, trying next source', {
+          arxivId,
+          url,
+          htmlLength: html.length,
+        });
+        lastError = new Error('HTML returned error page (404)');
+        continue; // Try next URL
+      }
+
+      // Check for CAPTCHA or rate limiting pages
+      if (
+        htmlLower.includes('recaptcha') ||
+        htmlLower.includes('captcha') ||
+        htmlLower.includes('rate limit') ||
+        htmlLower.includes('too many requests') ||
+        htmlLower.includes('access denied') ||
+        htmlLower.includes('please verify') ||
+        htmlLower.includes('cloudflare') ||
+        htmlLower.includes('challenge-platform')
+      ) {
+        logger.warn('HTML returned CAPTCHA/rate limit page, trying next source', {
+          arxivId,
+          url,
+          htmlLength: html.length,
+        });
+        lastError = new Error('HTML returned CAPTCHA or rate limit page - please try again later');
+        continue; // Try next URL
+      }
+
+      // Check if we got redirected to abstract page (for ar5iv URLs)
+      if (url.includes('ar5iv') && (htmlLower.includes('arxiv.org/abs/') || html.includes('submission history'))) {
+        logger.warn('ar5iv redirected to abstract page, trying next source', {
+          arxivId,
+          url,
+        });
+        lastError = new Error('ar5iv returned abstract page');
+        continue; // Try next URL (arXiv HTML)
+      }
+
+      logger.info('HTML fetch successful', {
+        arxivId,
+        url,
+        htmlLength: html.length,
+        hasContent: html.length > 500,
+        source: url.includes('ar5iv') ? 'ar5iv' : 'arxiv',
+      });
+
+      return html;
+    } catch (error) {
+      // Handle fetch errors (network, timeout, etc.)
+      logger.warn('HTML fetch error, trying next source', {
+        arxivId,
+        url,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      lastError = error instanceof Error ? error : new Error(String(error));
+      continue; // Try next URL
+    }
+  }
+
+  // All URLs failed
+  throw new Error(`All HTML sources failed for ${arxivId}: ${lastError?.message || 'Unknown error'}`);
+}
+
+/**
+ * Clean and sanitize HTML content for safe rendering
+ * Removes scripts, styles, and potentially harmful elements
+ */
+function sanitizeHtml(html: string): string {
+  // Remove script tags and their content
+  let cleaned = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+
+  // Remove style tags and their content
+  cleaned = cleaned.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+
+  // Remove on* event handlers
+  cleaned = cleaned.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, '');
+  cleaned = cleaned.replace(/\s+on\w+\s*=\s*[^\s>]+/gi, '');
+
+  // Remove javascript: URLs
+  cleaned = cleaned.replace(/href\s*=\s*["']javascript:[^"']*["']/gi, 'href="#"');
+
+  // Remove data: URLs (except for images)
+  cleaned = cleaned.replace(/src\s*=\s*["']data:(?!image)[^"']*["']/gi, 'src=""');
+
+  return cleaned;
+}
+
+/**
+ * Parse ar5iv HTML into structured content
+ */
+export function parseAr5ivHtml(html: string): ParsedPaperContent {
+  const sections: PaperSection[] = [];
+  const figures: PaperFigure[] = [];
+  const tables: PaperTable[] = [];
+  const tableOfContents: PaperSection[] = [];
+
+  // Check if this is an abstract page (arxiv.org/abs/) rather than full HTML paper
+  // Also check if this is arXiv HTML (arxiv.org/html/) which has a different structure
+  const htmlLower = html.toLowerCase();
+  const isArxivHtml = htmlLower.includes('arxiv.org/html/') && !htmlLower.includes('arxiv.org/abs/');
+  const isAbstractPage = (htmlLower.includes('arxiv.org/abs/') ||
+                        html.includes('submission history') ||
+                        html.includes('Access Paper:')) && !isArxivHtml;
+
+  // Extract title from <h1 class="ltx_title"> or <title>
+  let title: string | undefined;
+  const titleMatch = html.match(/<h1[^>]*class="[^"]*ltx_title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i);
+  if (titleMatch) {
+    title = stripHtmlTags(titleMatch[1]).trim();
+  } else {
+    // Try to get title from abstract page
+    const abstractTitleMatch = html.match(/<h1[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i);
+    if (abstractTitleMatch) {
+      title = stripHtmlTags(abstractTitleMatch[1]).replace(/^Title:\s*/i, '').trim();
+    } else {
+      const pageTitleMatch = html.match(/<title>([^<]*)<\/title>/i);
+      if (pageTitleMatch) {
+        title = pageTitleMatch[1].replace(/\s*-\s*ar5iv$/i, '').replace(/^\[.*?\]\s*/, '').trim();
+      }
+    }
+  }
+
+  // Extract authors from <span class="ltx_personname">
+  const authors: string[] = [];
+  const authorMatches = html.matchAll(/<span[^>]*class="[^"]*ltx_personname[^"]*"[^>]*>([\s\S]*?)<\/span>/gi);
+  for (const match of authorMatches) {
+    const author = stripHtmlTags(match[1]).trim();
+    if (author && !authors.includes(author)) {
+      authors.push(author);
+    }
+  }
+
+  // Extract abstract
+  let abstract: string | undefined;
+  const abstractMatch = html.match(/<div[^>]*class="[^"]*ltx_abstract[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+  if (abstractMatch) {
+    abstract = stripHtmlTags(abstractMatch[1]).trim();
+  } else if (isAbstractPage) {
+    // Extract abstract from abstract page blockquote
+    const abstractBlockquoteMatch = html.match(/<blockquote[^>]*class="[^"]*abstract[^"]*"[^>]*>([\s\S]*?)<\/blockquote>/i);
+    if (abstractBlockquoteMatch) {
+      abstract = stripHtmlTags(abstractBlockquoteMatch[1]).replace(/^Abstract:\s*/i, '').trim();
+    }
+  }
+
+  // Extract sections from headings
+  // Try ar5iv.labs format first (with ltx_title class)
+  const sectionRegex = /<(h[1-6])[^>]*(?:id="([^"]*)")?[^>]*class="[^"]*ltx_title[^"]*"[^>]*>([\s\S]*?)<\/\1>/gi;
+  let sectionMatch;
+  let sectionIndex = 0;
+  let foundSections = false;
+
+  while ((sectionMatch = sectionRegex.exec(html)) !== null) {
+    const level = parseInt(sectionMatch[1].substring(1), 10);
+    const id = sectionMatch[2] || `section-${sectionIndex}`;
+    const sectionTitle = stripHtmlTags(sectionMatch[3]).trim();
+
+    if (sectionTitle && !sectionTitle.toLowerCase().includes('abstract')) {
+      const section: PaperSection = {
+        id,
+        title: sectionTitle,
+        level,
+      };
+      sections.push(section);
+      tableOfContents.push(section);
+      sectionIndex++;
+      foundSections = true;
+    }
+  }
+
+  // If no sections found with ltx_title, try regular headings in article content
+  // This handles ar5iv.org format or papers that haven't been fully processed
+  if (!foundSections) {
+    // Find the main article content area
+    const articleMatch = html.match(/<article[^>]*>([\s\S]*?)<\/article>/i) ||
+                        html.match(/<div[^>]*class="[^"]*ltx_document[^"]*"[^>]*>([\s\S]*?)<\/div>/i) ||
+                        html.match(/<main[^>]*>([\s\S]*?)<\/main>/i);
+
+    const contentHtml = articleMatch ? articleMatch[1] : html;
+
+    // Extract all headings that look like paper sections (not navigation/metadata)
+    const headingRegex = /<(h[1-6])[^>]*(?:id="([^"]*)")?[^>]*>([\s\S]*?)<\/\1>/gi;
+    const excludePatterns = [
+      /^(title|abstract|submission history|access paper|references|citation|bibtex|bookmark|bibliographic|code|data|media|demos|recommenders|arxivlabs|quick links|mobilemenulabel)$/i,
+      /^computer science/i,
+      /^title:/i,
+      /^access paper:/i,
+      /^references &/i,
+      /^bibliographic and citation/i,
+      /^code, data and media/i,
+      /^bibtex formatted citation/i,
+      /^recommenders and search tools/i,
+      /^arxivlabs:/i,
+      /^which authors/i,
+      /^disable mathjax/i,
+      /^full-text links/i,
+      /^current browse context/i,
+      /^change to browse by/i,
+      /^subjects:/i,
+      /^cite as:/i,
+      /^focus to learn more/i,
+      /^submission history/i,
+      /^from:/i,
+    ];
+
+    while ((sectionMatch = headingRegex.exec(contentHtml)) !== null) {
+      const level = parseInt(sectionMatch[1].substring(1), 10);
+      const id = sectionMatch[2] || `section-${sectionIndex}`;
+      const sectionTitle = stripHtmlTags(sectionMatch[3]).trim();
+
+      // Skip if it matches exclusion patterns
+      if (excludePatterns.some(pattern => pattern.test(sectionTitle))) {
+        continue;
+      }
+
+      if (sectionTitle && sectionTitle.length > 2 && level >= 1 && level <= 6) {
+        const section: PaperSection = {
+          id,
+          title: sectionTitle,
+          level,
+        };
+        sections.push(section);
+        tableOfContents.push(section);
+        sectionIndex++;
+        foundSections = true;
+      }
+    }
+  }
+
+  // Extract figures - try both <figure> tags and standalone images with captions
+  const figureRegex = /<figure[^>]*(?:id="([^"]*)")?[^>]*>([\s\S]*?)<\/figure>/gi;
+  let figureMatch;
+  let figureIndex = 0;
+  const processedImageSrcs = new Set<string>(); // Track processed images to avoid duplicates
+
+  // First, extract figures from <figure> tags
+  while ((figureMatch = figureRegex.exec(html)) !== null) {
+    const figureHtml = figureMatch[2];
+    const figureId = figureMatch[1] || `figure-${figureIndex}`;
+
+    // Extract image src - handle both double quotes, single quotes, and unquoted
+    let src = '';
+    const srcMatchDouble = figureHtml.match(/<img[^>]*src\s*=\s*"([^"]*)"[^>]*>/i);
+    const srcMatchSingle = figureHtml.match(/<img[^>]*src\s*=\s*'([^']*)'[^>]*>/i);
+    const srcMatchUnquoted = figureHtml.match(/<img[^>]*src\s*=\s*([^\s>]+)[^>]*>/i);
+
+    if (srcMatchDouble) {
+      src = srcMatchDouble[1];
+    } else if (srcMatchSingle) {
+      src = srcMatchSingle[1];
+    } else if (srcMatchUnquoted) {
+      src = srcMatchUnquoted[1];
+    }
+
+    // Extract alt text - handle both double and single quotes
+    let alt: string | undefined;
+    const altMatchDouble = figureHtml.match(/alt\s*=\s*"([^"]*)"/i);
+    const altMatchSingle = figureHtml.match(/alt\s*=\s*'([^']*)'/i);
+    if (altMatchDouble) {
+      alt = altMatchDouble[1];
+    } else if (altMatchSingle) {
+      alt = altMatchSingle[1];
+    }
+
+    // Extract caption
+    const captionMatch = figureHtml.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
+    const caption = captionMatch ? stripHtmlTags(captionMatch[1]).trim() : '';
+
+    if (src) {
+      // Determine base URL based on source
+      const baseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+      const normalizedSrc = normalizeImageSrc(src, baseUrl);
+      processedImageSrcs.add(normalizedSrc);
+      figures.push({
+        id: figureId,
+        src: normalizedSrc,
+        caption,
+        alt,
+      });
+      figureIndex++;
+    }
+  }
+
+  // Also extract standalone images that might be figures (images with captions nearby)
+  // Look for images followed by captions or in figure-like contexts
+  // ar5iv often uses <div class="ltx_figure"> or similar structures
+  const figureDivRegex = /<div[^>]*class="[^"]*ltx_figure[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+  let figureDivMatch;
+  let divFigureIndex = 0;
+
+  while ((figureDivMatch = figureDivRegex.exec(html)) !== null) {
+    const figureDivHtml = figureDivMatch[1];
+
+    // Extract image from within the div
+    let src = '';
+    const srcMatchDouble = figureDivHtml.match(/<img[^>]*src\s*=\s*"([^"]*)"[^>]*>/i);
+    const srcMatchSingle = figureDivHtml.match(/<img[^>]*src\s*=\s*'([^']*)'[^>]*>/i);
+    const srcMatchUnquoted = figureDivHtml.match(/<img[^>]*src\s*=\s*([^\s>]+)[^>]*>/i);
+
+    if (srcMatchDouble) {
+      src = srcMatchDouble[1];
+    } else if (srcMatchSingle) {
+      src = srcMatchSingle[1];
+    } else if (srcMatchUnquoted) {
+      src = srcMatchUnquoted[1];
+    }
+
+    if (src && !processedImageSrcs.has(src)) {
+      // Extract caption from div (could be in <p class="ltx_caption"> or similar)
+      const captionMatch = figureDivHtml.match(/<p[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/p>/i) ||
+                          figureDivHtml.match(/<span[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/span>/i) ||
+                          figureDivHtml.match(/<figcaption[^>]*>([\s\S]*?)<\/figcaption>/i);
+      const caption = captionMatch ? stripHtmlTags(captionMatch[1]).trim() : '';
+
+      // Extract alt text
+      const imgTagMatch = figureDivHtml.match(/<img[^>]*>/i);
+      const altMatch = imgTagMatch ? (imgTagMatch[0].match(/alt\s*=\s*"([^"]*)"/i) || imgTagMatch[0].match(/alt\s*=\s*'([^']*)'/i)) : null;
+      const alt = altMatch ? altMatch[1] : undefined;
+
+      const baseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+      const normalizedSrc = normalizeImageSrc(src, baseUrl);
+      processedImageSrcs.add(normalizedSrc);
+      figures.push({
+        id: `figure-div-${divFigureIndex}`,
+        src: normalizedSrc,
+        caption,
+        alt,
+      });
+      divFigureIndex++;
+    }
+  }
+
+  // Also extract standalone images that might be figures (images with captions nearby)
+  // Look for images followed by captions or in figure-like contexts
+  const standaloneImageRegex = /<img[^>]*src\s*=\s*"([^"]*)"[^>]*>/gi;
+  let imgMatch;
+  let standaloneIndex = 0;
+
+  while ((imgMatch = standaloneImageRegex.exec(html)) !== null) {
+    const src = imgMatch[1];
+    if (!src || processedImageSrcs.has(src)) {
+      continue; // Skip if already processed or empty
+    }
+
+    // Check if this image is likely a figure (has caption nearby or is in a figure-like context)
+    const imgStartPos = imgMatch.index;
+    const contextStart = Math.max(0, imgStartPos - 500); // Look 500 chars before
+    const contextEnd = Math.min(html.length, imgStartPos + 1000); // Look 1000 chars after
+    const context = html.substring(contextStart, contextEnd);
+
+    // Check for caption patterns near the image (including ltx_caption class)
+    const hasCaption = /(?:figure|caption|fig\.|figure\s+\d+|ltx_caption)/i.test(context);
+    const isInFigureContext = /<figure|class="[^"]*figure[^"]*"|class="[^"]*ltx_figure[^"]*"/i.test(context);
+
+    // Only extract if it looks like a figure and isn't a small icon/logo
+    if ((hasCaption || isInFigureContext) && !src.match(/(?:icon|logo|avatar|button|arrow|spacer)/i)) {
+      // Try to extract caption from nearby text (including ltx_caption)
+      const captionMatch = context.match(/(?:<figcaption[^>]*>([\s\S]*?)<\/figcaption>|<p[^>]*class="[^"]*caption[^"]*"[^>]*>([\s\S]*?)<\/p>|<p[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/p>|<span[^>]*class="[^"]*ltx_caption[^"]*"[^>]*>([\s\S]*?)<\/span>)/i);
+      const caption = captionMatch ? stripHtmlTags(captionMatch[1] || captionMatch[2] || captionMatch[3] || captionMatch[4]).trim() : '';
+
+      // Extract alt text
+      const fullImgTag = imgMatch[0];
+      const altMatch = fullImgTag.match(/alt\s*=\s*"([^"]*)"/i) || fullImgTag.match(/alt\s*=\s*'([^']*)'/i);
+      const alt = altMatch ? altMatch[1] : undefined;
+
+      const baseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+      const normalizedSrc = normalizeImageSrc(src, baseUrl);
+      processedImageSrcs.add(normalizedSrc);
+      figures.push({
+        id: `figure-standalone-${standaloneIndex}`,
+        src: normalizedSrc,
+        caption,
+        alt,
+      });
+      standaloneIndex++;
+    }
+  }
+
+  // Extract tables
+  const tableRegex = /<table[^>]*(?:id="([^"]*)")?[^>]*>([\s\S]*?)<\/table>/gi;
+  let tableMatch;
+  let tableIndex = 0;
+
+  while ((tableMatch = tableRegex.exec(html)) !== null) {
+    const tableHtml = tableMatch[2];
+    const tableId = tableMatch[1] || `table-${tableIndex}`;
+
+    // Extract caption (could be in <caption> tag or nearby)
+    let caption: string | undefined;
+    const captionMatch = tableHtml.match(/<caption[^>]*>([\s\S]*?)<\/caption>/i);
+    if (captionMatch) {
+      caption = stripHtmlTags(captionMatch[1]).trim();
+    } else {
+      // Try to find caption in nearby elements (ar5iv sometimes puts captions outside table)
+      const afterTable = html.substring(tableMatch.index + tableMatch[0].length, tableMatch.index + tableMatch[0].length + 200);
+      const nearbyCaption = afterTable.match(/<caption[^>]*>([\s\S]*?)<\/caption>/i) ||
+                           afterTable.match(/<p[^>]*class="[^"]*caption[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
+      if (nearbyCaption) {
+        caption = stripHtmlTags(nearbyCaption[1]).trim();
+      }
+    }
+
+    // Clean up table HTML (remove scripts, keep structure)
+    const cleanTableHtml = tableHtml
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/on\w+\s*=\s*["'][^"']*["']/gi, '');
+
+    tables.push({
+      id: tableId,
+      html: `<table>${cleanTableHtml}</table>`,
+      caption,
+    });
+    tableIndex++;
+  }
+
+  // Extract main article content
+  let mainContent = html;
+
+  // Handle arXiv HTML format (different from ar5iv)
+  if (isArxivHtml) {
+    // arXiv HTML has the paper content in <main> or <article> tags
+    // Extract the main content area
+    const mainMatch = html.match(/<main[^>]*>([\s\S]*?)<\/main>/i) ||
+                     html.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
+
+    if (mainMatch) {
+      mainContent = mainMatch[1];
+      logger.info('Extracted arXiv HTML content', { contentLength: mainContent.length });
+    } else {
+      // Fallback: try to find content between navigation elements
+      const contentMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      if (contentMatch) {
+        mainContent = contentMatch[1];
+        // Remove navigation, header, footer
+        mainContent = mainContent.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
+        mainContent = mainContent.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
+        mainContent = mainContent.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
+      }
+    }
+  } else if (isAbstractPage) {
+    // This is an abstract page, extract just the abstract and title
+    logger.warn('Received abstract page instead of full paper - extracting abstract only');
+
+    // Extract abstract from blockquote (already extracted above, but ensure we have it)
+    if (!abstract) {
+      const abstractBlockquoteMatch = html.match(/<blockquote[^>]*class="[^"]*abstract[^"]*"[^>]*>([\s\S]*?)<\/blockquote>/i);
+      if (abstractBlockquoteMatch) {
+        abstract = stripHtmlTags(abstractBlockquoteMatch[1]).replace(/^Abstract:\s*/i, '').trim();
+      }
+    }
+
+    // Extract arXiv ID from URL or HTML for the link
+    const arxivIdMatch = html.match(/arxiv\.org\/(?:abs|html)\/(\d{4}\.\d{4,5})/i) ||
+                        html.match(/citation_arxiv_id["\s]*content=["'](\d{4}\.\d{4,5})/i);
+    const arxivIdForLink = arxivIdMatch ? arxivIdMatch[1] : '';
+
+    // Create a minimal content with just abstract
+    mainContent = `
+      <div class="paper-reader-content paper-reader-abstract-only">
+        ${title ? `<h1 class="paper-title">${escapeHtml(title)}</h1>` : ''}
+        <section id="abstract" class="paper-section">
+          <h2>Abstract</h2>
+          <p>${escapeHtml(abstract || 'Abstract not available')}</p>
+        </section>
+        <div class="paper-notice">
+          <p>Full HTML paper is not yet available on ar5iv. This paper may be too recent or not yet processed.</p>
+          ${arxivIdForLink ? `<p><a href="https://arxiv.org/abs/${arxivIdForLink}" target="_blank" rel="noopener">View on arXiv</a> for the complete paper.</p>` : ''}
+        </div>
+      </div>
+    `;
+
+    // Add abstract as the only section
+    if (abstract) {
+      sections.push({
+        id: 'abstract',
+        title: 'Abstract',
+        level: 2,
+      });
+      tableOfContents.push({
+        id: 'abstract',
+        title: 'Abstract',
+        level: 2,
+      });
+    }
+  } else {
+    // Try to find the main article body (full paper)
+    const articleMatch = html.match(/<article[^>]*class="[^"]*ltx_document[^"]*"[^>]*>([\s\S]*?)<\/article>/i);
+    if (articleMatch) {
+      mainContent = articleMatch[1];
+    } else {
+      // Fallback: find content div
+      const contentMatch = html.match(/<div[^>]*class="[^"]*ltx_page_content[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?:<footer|<\/body)/i);
+      if (contentMatch) {
+        mainContent = contentMatch[1];
+      }
+    }
+  }
+
+  // Clean up the HTML (only if not already processed abstract page)
+  if (!isAbstractPage) {
+    mainContent = sanitizeHtml(mainContent);
+
+    // Rewrite image src URLs to absolute paths (before other processing)
+    // This ensures images load from ar5iv.org/arxiv.org instead of our server
+    const imageBaseUrl = isArxivHtml ? 'https://arxiv.org' : 'https://ar5iv.org';
+
+    // Handle img tags with various src formats (quoted, unquoted)
+    // Match the entire img tag and process attributes
+    mainContent = mainContent.replace(
+      /<img\s+([^>]*?)>/gi,
+      (match, attributes) => {
+        // Try to find src in various formats
+        const srcMatch = attributes.match(/\ssrc\s*=\s*"([^"]+)"/i) ||
+                      attributes.match(/\ssrc\s*=\s*'([^']+)'/i) ||
+                      attributes.match(/\ssrc\s*=\s*([^\s>]+)/i) ||
+                      attributes.match(/src\s*=\s*"([^"]+)"/i) ||
+                      attributes.match(/src\s*=\s*'([^']+)'/i) ||
+                      attributes.match(/src\s*=\s*([^\s>]+)/i);
+
+        if (!srcMatch || !srcMatch[1]) {
+          return match; // No src found, return as-is
+        }
+
+        const src = srcMatch[1];
+        const normalizedSrc = normalizeImageSrc(src, imageBaseUrl);
+
+        // Replace the src in the attributes
+        const updatedAttributes = attributes.replace(
+          srcMatch[0],
+          srcMatch[0].replace(src, normalizedSrc)
+        );
+
+        return `<img ${updatedAttributes}>`;
+      }
+    );
+
+    // Also handle background-image URLs in style attributes
+    mainContent = mainContent.replace(
+      /style=["']([^"']*background[^"']*url\(["']?([^"')]+)["']?\)[^"']*)["']/gi,
+      (match, styleContent, url) => {
+        if (url && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:') && !url.startsWith('//')) {
+          const normalizedUrl = normalizeImageSrc(url, imageBaseUrl);
+          return `style="${styleContent.replace(url, normalizedUrl)}"`;
+        }
+        return match;
+      }
+    );
+
+    // Remove navigation elements
+    mainContent = mainContent.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
+
+    // Remove header elements (but keep h1-h6)
+    mainContent = mainContent.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
+
+    // Remove footer elements
+    mainContent = mainContent.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
+
+    // Add IDs to sections for scroll anchoring if missing
+    mainContent = addSectionIds(mainContent);
+
+    // Wrap content in a reader-friendly container
+    const wrappedHtml = `
+      <div class="paper-reader-content">
+        ${mainContent}
+      </div>
+    `;
+    mainContent = wrappedHtml.trim();
+  } else {
+    // Abstract page content is already wrapped
+    mainContent = mainContent.trim();
+  }
+
+  return {
+    source: isAbstractPage ? 'abstract' : (isArxivHtml ? 'arxiv' : 'ar5iv'),
+    html: mainContent,
+    title,
+    authors: authors.length > 0 ? authors : undefined,
+    abstract,
+    sections,
+    figures,
+    tables,
+    tableOfContents,
+    rawHtml: html,
+  };
+}
+
+/**
+ * Strip HTML tags from a string
+ */
+function stripHtmlTags(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Normalize image src URLs to absolute paths
+ * @param src - The image source URL (may be relative)
+ * @param baseUrl - Base URL for the paper source (default: 'https://ar5iv.org')
+ */
+function normalizeImageSrc(src: string, baseUrl: string = 'https://ar5iv.org'): string {
+  if (src.startsWith('//')) {
+    return `https:${src}`;
+  }
+  if (src.startsWith('http://') || src.startsWith('https://')) {
+    return src; // Already absolute
+  }
+  if (src.startsWith('/')) {
+    return `${baseUrl}${src}`;
+  }
+  // Relative path without leading slash
+  return `${baseUrl}/${src}`;
+}
+
+/**
+ * Add IDs to sections that don't have them
+ */
+function addSectionIds(html: string): string {
+  let sectionCount = 0;
+
+  return html.replace(/<(section|div)[^>]*class="[^"]*ltx_section[^"]*"[^>]*>/gi, (match) => {
+    if (!match.includes('id=')) {
+      sectionCount++;
+      return match.replace(/^<(section|div)/, `<$1 id="section-${sectionCount}"`);
+    }
+    return match;
+  });
+}
+
+/**
+ * Convert ADS full text to HTML format with proper section extraction
+ */
+export function adsBodyToHtml(body: string, abstract?: string): ParsedPaperContent {
+  // Import section extraction function
+  const { extractSectionsFromBody } = require('../pipeline/section-summarization');
+
+  // Extract sections from body text
+  const extractedSections = extractSectionsFromBody(body);
+
+  const sections: PaperSection[] = [];
+  let htmlSections = '';
+
+  // Add abstract section if available
+  if (abstract) {
+    sections.push({
+      id: 'abstract',
+      title: 'Abstract',
+      level: 2,
+    });
+    htmlSections += `
+      <section id="abstract" class="paper-section">
+        <h2>Abstract</h2>
+        <p>${escapeHtml(abstract)}</p>
+      </section>
+    `;
+  }
+
+  // If we extracted meaningful sections, use them
+  // Always use extracted sections if we have any (even if just 2)
+  // The section extraction logic handles chunking properly
+  if (extractedSections.length > 0) {
+    // We have multiple sections - format them nicely
+    for (const section of extractedSections) {
+      // Preserve the original sectionId (could be chunk-N, section-N, etc.)
+      // This ensures it matches the IDs used in section summaries
+      const sectionId = section.sectionId || `section-${sections.length}`;
+      const headingLevel = Math.min(section.level + 1, 6); // h2-h6
+
+      sections.push({
+        id: sectionId,
+        title: section.sectionTitle,
+        level: section.level,
+      });
+
+      // Format section content with proper heading
+      const sectionHtml = section.fullText
+        .split(/\n\n+/)
+        .filter((p: string) => p.trim())
+        .map((p: string) => {
+          // Check if paragraph looks like a heading (short, all caps, or ends with colon)
+          const trimmed = p.trim();
+          if (trimmed.length < 100 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
+            return `<h${headingLevel + 1}>${escapeHtml(trimmed.replace(/[:]$/, ''))}</h${headingLevel + 1}>`;
+          }
+          return `<p>${escapeHtml(trimmed)}</p>`;
+        })
+        .join('\n');
+
+      htmlSections += `
+        <section id="${sectionId}" class="paper-section">
+          <h${headingLevel}>${escapeHtml(section.sectionTitle)}</h${headingLevel}>
+          ${sectionHtml}
+        </section>
+      `;
+    }
+  } else {
+    // Fallback: simple paragraph formatting
+    sections.push({
+      id: 'body',
+      title: 'Full Text',
+      level: 2,
+    });
+
+    const paragraphs = body
+      .split(/\n\n+/)
+      .filter(p => p.trim())
+      .map(p => {
+        const trimmed = p.trim();
+        // Check if paragraph looks like a heading
+        if (trimmed.length < 100 && (trimmed === trimmed.toUpperCase() || trimmed.endsWith(':'))) {
+          return `<h3>${escapeHtml(trimmed.replace(/[:]$/, ''))}</h3>`;
+        }
+        return `<p>${escapeHtml(trimmed)}</p>`;
+      })
+      .join('\n');
+
+    htmlSections += `
+      <section id="body" class="paper-section">
+        <h2>Full Text</h2>
+        ${paragraphs}
+      </section>
+    `;
+  }
+
+  const html = `
+    <div class="paper-reader-content paper-reader-ads">
+      ${htmlSections}
+    </div>
+  `;
+
+  return {
+    source: 'ads',
+    html: html.trim(),
+    abstract,
+    sections,
+    figures: [],
+    tables: [],
+    tableOfContents: sections,
+  };
+}
+
+/**
+ * Create abstract-only fallback HTML
+ */
+export function abstractToHtml(abstract: string, title?: string): ParsedPaperContent {
+  const html = `
+    <div class="paper-reader-content paper-reader-abstract-only">
+      ${title ? `<h1 class="paper-title">${escapeHtml(title)}</h1>` : ''}
+      <section id="abstract" class="paper-section">
+        <h2>Abstract</h2>
+        <p>${escapeHtml(abstract)}</p>
+      </section>
+      <div class="paper-notice">
+        <p>Full text is not available for this paper.
+        <a href="#" target="_blank" rel="noopener">View on arXiv</a> or
+        <a href="#" target="_blank" rel="noopener">View on ADS</a> for the complete paper.</p>
+      </div>
+    </div>
+  `;
+
+  return {
+    source: 'abstract',
+    html: html.trim(),
+    title,
+    abstract,
+    sections: [{
+      id: 'abstract',
+      title: 'Abstract',
+      level: 2,
+    }],
+    figures: [],
+    tables: [],
+    tableOfContents: [{
+      id: 'abstract',
+      title: 'Abstract',
+      level: 2,
+    }],
+  };
+}
+
+/**
+ * Escape HTML special characters
+ */
+function escapeHtml(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
+ * Fetch and parse paper content with fallbacks
+ */
+export async function fetchPaperContent(
+  bibcode: string,
+  options: {
+    adsBody?: string;
+    abstract?: string;
+    title?: string;
+    arxivUrl?: string;
+  } = {}
+): Promise<ParsedPaperContent> {
+  const arxivId = extractArxivId(bibcode);
+
+  // Try ar5iv first for arXiv papers
+  if (arxivId) {
+    try {
+      logger.info('Attempting ar5iv fetch', {
+        bibcode,
+        arxivId,
+        hasAdsBody: !!options.adsBody,
+        hasAbstract: !!options.abstract,
+      });
+
+      const html = await fetchAr5ivHtml(arxivId);
+      const parsed = parseAr5ivHtml(html);
+
+      // Verify we got meaningful content (not just abstract page)
+      // If we got an abstract page, fall back to ADS body
+      if (parsed.source === 'abstract') {
+        logger.warn('ar5iv returned abstract page, falling back to ADS body', {
+          bibcode,
+          arxivId,
+          hasAdsBody: !!options.adsBody,
+        });
+        // Don't return - fall through to ADS body fallback
+      } else if (parsed.html.length > 500) {
+        // Good content - return it
+        logger.info('ar5iv fetch successful', {
+          bibcode,
+          arxivId,
+          contentLength: parsed.html.length,
+          sectionsCount: parsed.sections.length,
+          figuresCount: parsed.figures.length,
+        });
+        return parsed;
+      } else {
+        logger.warn('ar5iv returned minimal content, falling back', {
+          bibcode,
+          arxivId,
+          htmlLength: parsed.html.length,
+          sectionsCount: parsed.sections.length,
+        });
+      }
+    } catch (error) {
+      logger.warn('ar5iv fetch failed, falling back', {
+        bibcode,
+        arxivId,
+        error: error instanceof Error ? error.message : String(error),
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+        hasAdsBody: !!options.adsBody,
+        hasAbstract: !!options.abstract,
+      });
+    }
+  } else {
+    logger.info('No arXiv ID found, skipping ar5iv', { bibcode });
+  }
+
+  // Fallback to ADS body (prefer this over abstract-only)
+  if (options.adsBody && options.adsBody.length > 100) {
+    logger.info('Using ADS body fallback', {
+      bibcode,
+      bodyLength: options.adsBody.length,
+      hasAbstract: !!options.abstract
+    });
+    return adsBodyToHtml(options.adsBody, options.abstract);
+  }
+
+  // Final fallback: abstract only (only if no body available)
+  if (options.abstract) {
+    logger.warn('Using abstract-only fallback - no body text available', {
+      bibcode,
+      hasAdsBody: !!options.adsBody,
+      adsBodyLength: options.adsBody?.length || 0
+    });
+    return abstractToHtml(options.abstract, options.title);
+  }
+
+  // No content available
+  throw new Error(`No content available for paper ${bibcode}`);
+}

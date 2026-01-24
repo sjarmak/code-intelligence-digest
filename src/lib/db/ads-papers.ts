@@ -4,6 +4,7 @@
  */
 
 import { getSqlite } from './index';
+import { detectDriver, getDbClient } from './driver';
 import { logger } from '../logger';
 
 export interface ADSPaperRecord {
@@ -22,68 +23,141 @@ export interface ADSPaperRecord {
 
 /**
  * Initialize ADS tables in database
+ * Works for both SQLite and PostgreSQL
  */
-export function initializeADSTables() {
-  const db = getSqlite();
+export async function initializeADSTables() {
+  const driver = detectDriver();
 
   try {
-    // Create ads_papers table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ads_papers (
-        bibcode TEXT PRIMARY KEY,
-        title TEXT,
-        authors TEXT,
-        pubdate TEXT,
-        abstract TEXT,
-        body TEXT,
-        year INTEGER,
-        journal TEXT,
-        ads_url TEXT,
-        arxiv_url TEXT,
-        fulltext_source TEXT,
-        fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-      );
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
 
-    // Create ads_library_papers junction table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ads_library_papers (
-        library_id TEXT NOT NULL,
-        bibcode TEXT NOT NULL,
-        added_at INTEGER DEFAULT (strftime('%s', 'now')),
-        PRIMARY KEY (library_id, bibcode),
-        FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
-      );
-    `);
+      // Create ads_papers table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS ads_papers (
+          bibcode TEXT PRIMARY KEY,
+          title TEXT,
+          authors TEXT,
+          pubdate TEXT,
+          abstract TEXT,
+          body TEXT,
+          year INTEGER,
+          journal TEXT,
+          ads_url TEXT,
+          arxiv_url TEXT,
+          fulltext_source TEXT,
+          html_content TEXT,
+          html_fetched_at INTEGER,
+          html_sections TEXT,
+          html_figures TEXT,
+          paper_notes TEXT,
+          is_favorite INTEGER DEFAULT 0,
+          favorited_at INTEGER,
+          fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+        );
+      `);
 
-    // Create ads_libraries cache table
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS ads_libraries (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        num_documents INTEGER NOT NULL DEFAULT 0,
-        is_public INTEGER NOT NULL DEFAULT 0,
-        fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-      );
-    `);
+      // Create ads_library_papers junction table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS ads_library_papers (
+          library_id TEXT NOT NULL,
+          bibcode TEXT NOT NULL,
+          added_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          PRIMARY KEY (library_id, bibcode),
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
+        );
+      `);
 
-    // Create indexes
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
-      CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
-      CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
-      CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
-    `);
+      // Create ads_libraries cache table
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS ads_libraries (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          num_documents INTEGER NOT NULL DEFAULT 0,
+          is_public INTEGER NOT NULL DEFAULT 0,
+          fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+          updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+        );
+      `);
 
-    logger.info('ADS database tables initialized');
+      // Create indexes
+      await client.exec(`
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
+      `);
+
+      logger.info('ADS database tables initialized (PostgreSQL)');
+    } else {
+      const db = getSqlite();
+
+      // Create ads_papers table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ads_papers (
+          bibcode TEXT PRIMARY KEY,
+          title TEXT,
+          authors TEXT,
+          pubdate TEXT,
+          abstract TEXT,
+          body TEXT,
+          year INTEGER,
+          journal TEXT,
+          ads_url TEXT,
+          arxiv_url TEXT,
+          fulltext_source TEXT,
+          is_favorite INTEGER DEFAULT 0,
+          favorited_at INTEGER,
+          fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
+          created_at INTEGER DEFAULT (strftime('%s', 'now')),
+          updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+      `);
+
+      // Create ads_library_papers junction table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ads_library_papers (
+          library_id TEXT NOT NULL,
+          bibcode TEXT NOT NULL,
+          added_at INTEGER DEFAULT (strftime('%s', 'now')),
+          PRIMARY KEY (library_id, bibcode),
+          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
+        );
+      `);
+
+      // Create ads_libraries cache table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ads_libraries (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          num_documents INTEGER NOT NULL DEFAULT 0,
+          is_public INTEGER NOT NULL DEFAULT 0,
+          fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
+          created_at INTEGER DEFAULT (strftime('%s', 'now')),
+          updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+      `);
+
+      // Create indexes
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
+        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
+      `);
+
+      logger.info('ADS database tables initialized (SQLite)');
+    }
   } catch (error) {
     logger.error('Failed to initialize ADS tables', {
+      driver,
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     throw error;
   }
@@ -92,106 +166,361 @@ export function initializeADSTables() {
 /**
  * Store or update a paper in the database
  */
-export function storePaper(paper: ADSPaperRecord): void {
-  const db = getSqlite();
+export async function storePaper(paper: ADSPaperRecord): Promise<void> {
+  const driver = detectDriver();
+  const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
+
+  // Sanitize text fields to remove null bytes (required for PostgreSQL)
+  const sanitizedPaper: ADSPaperRecord = {
+    ...paper,
+    title: sanitizeText(paper.title) || undefined,
+    authors: sanitizeText(paper.authors) || undefined,
+    pubdate: sanitizeText(paper.pubdate) || undefined,
+    abstract: sanitizeText(paper.abstract) || undefined,
+    body: sanitizeText(paper.body) || undefined,
+    journal: sanitizeText(paper.journal) || undefined,
+    adsUrl: sanitizeText(paper.adsUrl) || undefined,
+    arxivUrl: sanitizeText(paper.arxivUrl) || undefined,
+    fulltextSource: sanitizeText(paper.fulltextSource) || undefined,
+  };
 
   try {
-    // Extract year from pubdate if available
-    const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
-
-    const stmt = db.prepare(`
-      INSERT INTO ads_papers (
-        bibcode, title, authors, pubdate, abstract, body,
-        year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-      ON CONFLICT(bibcode) DO UPDATE SET
-        title = excluded.title,
-        authors = excluded.authors,
-        pubdate = excluded.pubdate,
-        abstract = excluded.abstract,
-        body = COALESCE(excluded.body, body),
-        year = COALESCE(excluded.year, year),
-        journal = excluded.journal,
-        ads_url = excluded.ads_url,
-        arxiv_url = excluded.arxiv_url,
-        fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
-        updated_at = strftime('%s', 'now')
-    `);
-
-    stmt.run(
-      paper.bibcode,
-      paper.title || null,
-      paper.authors || null,
-      paper.pubdate || null,
-      paper.abstract || null,
-      paper.body || null,
-      year || null,
-      paper.journal || null,
-      paper.adsUrl || null,
-      paper.arxivUrl || null,
-      paper.fulltextSource || null,
-    );
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const now = Math.floor(Date.now() / 1000);
+      await client.run(
+        `INSERT INTO ads_papers (
+          bibcode, title, authors, pubdate, abstract, body,
+          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT(bibcode) DO UPDATE SET
+          title = EXCLUDED.title,
+          authors = EXCLUDED.authors,
+          pubdate = EXCLUDED.pubdate,
+          abstract = EXCLUDED.abstract,
+          body = COALESCE(EXCLUDED.body, ads_papers.body),
+          year = COALESCE(EXCLUDED.year, ads_papers.year),
+          journal = EXCLUDED.journal,
+          ads_url = EXCLUDED.ads_url,
+          arxiv_url = EXCLUDED.arxiv_url,
+          fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
+          updated_at = $12`,
+        [
+          sanitizedPaper.bibcode,
+          sanitizedPaper.title || null,
+          sanitizedPaper.authors || null,
+          sanitizedPaper.pubdate || null,
+          sanitizedPaper.abstract || null,
+          sanitizedPaper.body || null,
+          year || null,
+          sanitizedPaper.journal || null,
+          sanitizedPaper.adsUrl || null,
+          sanitizedPaper.arxivUrl || null,
+          sanitizedPaper.fulltextSource || null,
+          now,
+        ]
+      );
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        INSERT INTO ads_papers (
+          bibcode, title, authors, pubdate, abstract, body,
+          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        ON CONFLICT(bibcode) DO UPDATE SET
+          title = excluded.title,
+          authors = excluded.authors,
+          pubdate = excluded.pubdate,
+          abstract = excluded.abstract,
+          body = COALESCE(excluded.body, body),
+          year = COALESCE(excluded.year, year),
+          journal = excluded.journal,
+          ads_url = excluded.ads_url,
+          arxiv_url = excluded.arxiv_url,
+          fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
+          updated_at = strftime('%s', 'now')
+      `);
+      stmt.run(
+        paper.bibcode,
+        paper.title || null,
+        paper.authors || null,
+        paper.pubdate || null,
+        paper.abstract || null,
+        paper.body || null,
+        year || null,
+        paper.journal || null,
+        paper.adsUrl || null,
+        paper.arxivUrl || null,
+        paper.fulltextSource || null,
+      );
+    }
 
     logger.info('Paper stored in database', { bibcode: paper.bibcode });
+
+    // Automatically process sections if body text is available
+    // Do this asynchronously to avoid blocking the store operation
+    if (paper.body && paper.body.length >= 100) {
+      // Process in background (fire and forget)
+      processPaperSectionsAsync(sanitizedPaper.bibcode).catch((err) => {
+        logger.warn('Background section processing failed', {
+          bibcode: sanitizedPaper.bibcode,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   } catch (error) {
     logger.error('Failed to store paper', {
-      bibcode: paper.bibcode,
+      bibcode: sanitizedPaper.bibcode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Process paper sections asynchronously (non-blocking)
+ */
+async function processPaperSectionsAsync(bibcode: string): Promise<void> {
+  try {
+    const { processPaperSections } = await import('../pipeline/section-summarization');
+    await processPaperSections(bibcode);
+  } catch (error) {
+    // Silently fail - this is background processing
+    logger.debug('Section processing skipped or failed', {
+      bibcode,
       error: error instanceof Error ? error.message : String(error),
     });
   }
 }
 
 /**
+ * Sanitize text fields for PostgreSQL (remove null bytes)
+ */
+function sanitizeText(value: string | null | undefined): string | null {
+  if (!value) return null;
+  // PostgreSQL doesn't allow null bytes in text fields
+  return value.replace(/\0/g, '');
+}
+
+/**
  * Store multiple papers in batch
  */
-export function storePapersBatch(papers: ADSPaperRecord[]): void {
-  const db = getSqlite();
+export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> {
+  if (papers.length === 0) {
+    return;
+  }
+
+  const driver = detectDriver();
+  const now = Math.floor(Date.now() / 1000);
+
+  // Sanitize all text fields to remove null bytes (required for PostgreSQL)
+  const sanitizedPapers: ADSPaperRecord[] = papers.map(paper => ({
+    ...paper,
+    title: sanitizeText(paper.title) || undefined,
+    authors: sanitizeText(paper.authors) || undefined,
+    pubdate: sanitizeText(paper.pubdate) || undefined,
+    abstract: sanitizeText(paper.abstract) || undefined,
+    body: sanitizeText(paper.body) || undefined,
+    journal: sanitizeText(paper.journal) || undefined,
+    adsUrl: sanitizeText(paper.adsUrl) || undefined,
+    arxivUrl: sanitizeText(paper.arxivUrl) || undefined,
+    fulltextSource: sanitizeText(paper.fulltextSource) || undefined,
+  }));
 
   try {
-    const stmt = db.prepare(`
-      INSERT INTO ads_papers (
-        bibcode, title, authors, pubdate, abstract, body,
-        year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-      ON CONFLICT(bibcode) DO UPDATE SET
-        title = excluded.title,
-        authors = excluded.authors,
-        pubdate = excluded.pubdate,
-        abstract = excluded.abstract,
-        body = COALESCE(excluded.body, body),
-        year = COALESCE(excluded.year, year),
-        journal = excluded.journal,
-        ads_url = excluded.ads_url,
-        arxiv_url = excluded.arxiv_url,
-        fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
-        updated_at = strftime('%s', 'now')
-    `);
+    if (driver === 'postgres') {
+      // Process in smaller batches to avoid connection timeouts and query size limits
+      // PostgreSQL can handle large queries, but with body text fields, we need smaller batches
+      const BATCH_SIZE = 5; // Reduced from 10 to handle very large body text fields
+      let processed = 0;
 
-    const insertMany = db.transaction((prs: ADSPaperRecord[]) => {
-      for (const paper of prs) {
-        const year =
-          paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
-        stmt.run(
-          paper.bibcode,
-          paper.title || null,
-          paper.authors || null,
-          paper.pubdate || null,
-          paper.abstract || null,
-          paper.body || null,
-          year || null,
-          paper.journal || null,
-          paper.adsUrl || null,
-          paper.arxivUrl || null,
-          paper.fulltextSource || null,
-        );
+      while (processed < sanitizedPapers.length) {
+        const batch = sanitizedPapers.slice(processed, processed + BATCH_SIZE);
+        const values: unknown[] = [];
+        const placeholders: string[] = [];
+        let paramIndex = 1;
+
+        for (const paper of batch) {
+          const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
+          placeholders.push(
+            `($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`
+          );
+          values.push(
+            paper.bibcode,
+            paper.title || null,
+            paper.authors || null,
+            paper.pubdate || null,
+            paper.abstract || null,
+            paper.body || null,
+            year || null,
+            paper.journal || null,
+            paper.adsUrl || null,
+            paper.arxivUrl || null,
+            paper.fulltextSource || null,
+            now,
+          );
+        }
+
+        // Retry logic for connection errors
+        let retries = 3;
+        let lastError: Error | null = null;
+
+        while (retries > 0) {
+          let pgClient: import('pg').PoolClient | null = null;
+          try {
+            // Get a fresh connection from the pool for each batch
+            const { getFreshPostgresConnection } = await import('./driver');
+            pgClient = await getFreshPostgresConnection();
+
+            // Convert placeholders and execute
+            const pgSql = `INSERT INTO ads_papers (
+              bibcode, title, authors, pubdate, abstract, body,
+              year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+            ) VALUES ${placeholders.join(', ')}
+            ON CONFLICT(bibcode) DO UPDATE SET
+              title = EXCLUDED.title,
+              authors = EXCLUDED.authors,
+              pubdate = EXCLUDED.pubdate,
+              abstract = EXCLUDED.abstract,
+              body = COALESCE(EXCLUDED.body, ads_papers.body),
+              year = COALESCE(EXCLUDED.year, ads_papers.year),
+              journal = EXCLUDED.journal,
+              ads_url = EXCLUDED.ads_url,
+              arxiv_url = EXCLUDED.arxiv_url,
+              fulltext_source = COALESCE(EXCLUDED.fulltext_source, ads_papers.fulltext_source),
+              updated_at = EXCLUDED.updated_at`;
+
+            await pgClient.query(pgSql, values);
+            processed += batch.length;
+            logger.debug(`Stored batch of ${batch.length} papers (${processed}/${sanitizedPapers.length} total)`);
+            break; // Success, exit retry loop
+          } catch (batchError) {
+            lastError = batchError instanceof Error ? batchError : new Error(String(batchError));
+            retries--;
+
+            // Check if it's a connection error that might be recoverable
+            const errorMsg = lastError.message.toLowerCase();
+            const isConnectionError = errorMsg.includes('connection') ||
+                                     errorMsg.includes('terminated') ||
+                                     errorMsg.includes('timeout') ||
+                                     errorMsg.includes('broken pipe');
+
+            if (isConnectionError && retries > 0) {
+              logger.warn(`Connection error on batch, retrying (${retries} retries left)`, {
+                batchSize: batch.length,
+                processed,
+                error: lastError.message,
+              });
+              // Wait a bit before retrying (exponential backoff)
+              const delay = (4 - retries) * 1000; // 1s, 2s, 3s
+              await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+              // Not a connection error or out of retries
+              logger.error('Failed to store batch', {
+                batchSize: batch.length,
+                processed,
+                total: sanitizedPapers.length,
+                error: lastError.message,
+                retriesLeft: retries,
+              });
+              throw lastError;
+            }
+          } finally {
+            // Always release the connection back to the pool
+            if (pgClient) {
+              pgClient.release();
+            }
+          }
+        }
       }
-    });
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        INSERT INTO ads_papers (
+          bibcode, title, authors, pubdate, abstract, body,
+          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        ON CONFLICT(bibcode) DO UPDATE SET
+          title = excluded.title,
+          authors = excluded.authors,
+          pubdate = excluded.pubdate,
+          abstract = excluded.abstract,
+          body = COALESCE(excluded.body, body),
+          year = COALESCE(excluded.year, year),
+          journal = excluded.journal,
+          ads_url = excluded.ads_url,
+          arxiv_url = excluded.arxiv_url,
+          fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
+          updated_at = strftime('%s', 'now')
+      `);
 
-    insertMany(papers);
-    logger.info('Papers batch stored in database', { count: papers.length });
+      const insertMany = db.transaction((prs: ADSPaperRecord[]) => {
+        for (const paper of prs) {
+          const year =
+            paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
+          stmt.run(
+            paper.bibcode,
+            paper.title || null,
+            paper.authors || null,
+            paper.pubdate || null,
+            paper.abstract || null,
+            paper.body || null,
+            year || null,
+            paper.journal || null,
+            paper.adsUrl || null,
+            paper.arxivUrl || null,
+            paper.fulltextSource || null,
+          );
+        }
+      });
+
+      insertMany(sanitizedPapers);
+    }
+
+    logger.info('Papers batch stored in database', { count: sanitizedPapers.length });
+
+    // Automatically process sections for papers with body text (async, non-blocking)
+    // processPaperSections will skip if sections already exist (unless forceRegenerate=true)
+    const papersWithBody = sanitizedPapers.filter((p) => p.body && p.body.length >= 100);
+    if (papersWithBody.length > 0) {
+      logger.info('Triggering section processing for papers with body text', {
+        count: papersWithBody.length,
+      });
+      // Process in background
+      processPapersSectionsAsync(papersWithBody.map((p) => p.bibcode)).catch((err) => {
+        logger.warn('Background batch section processing failed', {
+          count: papersWithBody.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   } catch (error) {
     logger.error('Failed to store papers batch', {
       count: papers.length,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Process multiple papers' sections asynchronously (non-blocking)
+ */
+async function processPapersSectionsAsync(bibcodes: string[]): Promise<void> {
+  try {
+    const { processPaperSections } = await import('../pipeline/section-summarization');
+    // Process sequentially to avoid overwhelming the API
+    for (const bibcode of bibcodes) {
+      await processPaperSections(bibcode).catch((err) => {
+        logger.debug('Section processing failed for paper in batch', {
+          bibcode,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  } catch (error) {
+    logger.debug('Batch section processing skipped or failed', {
+      count: bibcodes.length,
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -200,15 +529,52 @@ export function storePapersBatch(papers: ADSPaperRecord[]): void {
 /**
  * Get a paper from the database
  */
-export function getPaper(bibcode: string): ADSPaperRecord | null {
-  const db = getSqlite();
+export async function getPaper(bibcode: string): Promise<ADSPaperRecord | null> {
+  const driver = detectDriver();
 
   try {
-    const stmt = db.prepare(`
-      SELECT * FROM ads_papers WHERE bibcode = ?
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT * FROM ads_papers WHERE bibcode = $1`,
+        [bibcode]
+      );
+      const row = result.rows[0] as {
+        bibcode: string;
+        title?: string | null;
+        authors?: string | null;
+        pubdate?: string | null;
+        abstract?: string | null;
+        body?: string | null;
+        year?: number | null;
+        journal?: string | null;
+        ads_url?: string | null;
+        arxiv_url?: string | null;
+        fulltext_source?: string | null;
+      } | undefined;
+      if (!row) return null;
 
-    return stmt.get(bibcode) as ADSPaperRecord | undefined || null;
+      // Map PostgreSQL column names to camelCase
+      return {
+        bibcode: row.bibcode,
+        title: row.title || undefined,
+        authors: row.authors || undefined,
+        pubdate: row.pubdate || undefined,
+        abstract: row.abstract || undefined,
+        body: row.body || undefined,
+        year: row.year || undefined,
+        journal: row.journal || undefined,
+        adsUrl: row.ads_url || undefined,
+        arxivUrl: row.arxiv_url || undefined,
+        fulltextSource: row.fulltext_source || undefined,
+      };
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        SELECT * FROM ads_papers WHERE bibcode = ?
+      `);
+      return stmt.get(bibcode) as ADSPaperRecord | undefined || null;
+    }
   } catch (error) {
     logger.error('Failed to get paper', {
       bibcode,
@@ -221,23 +587,107 @@ export function getPaper(bibcode: string): ADSPaperRecord | null {
 /**
  * Get papers in a library
  */
-export function getLibraryPapers(libraryId: string, limit = 100, offset = 0): ADSPaperRecord[] {
-  const db = getSqlite();
+export async function getLibraryPapers(libraryId: string, limit = 100, offset = 0): Promise<ADSPaperRecord[]> {
+  const driver = detectDriver();
 
   try {
-    const stmt = db.prepare(`
-      SELECT p.* FROM ads_papers p
-      JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
-      WHERE lp.library_id = ?
-      ORDER BY p.fetched_at DESC
-      LIMIT ? OFFSET ?
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
 
-    return stmt.all(libraryId, limit, offset) as ADSPaperRecord[];
+      // First check if the library has any linked papers
+      const countResult = await client.query(
+        `SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = $1`,
+        [libraryId]
+      );
+      const linkCount = parseInt(countResult.rows[0]?.count as string || '0', 10);
+
+      logger.info('Getting library papers', {
+        libraryId,
+        linkedPapersCount: linkCount,
+        limit,
+        offset,
+      });
+
+      if (linkCount === 0) {
+        logger.warn('No papers linked to library', { libraryId });
+        return [];
+      }
+
+      // Use COALESCE to handle NULL fetched_at values, fallback to created_at or added_at
+      const result = await client.query(
+        `SELECT p.*, lp.added_at
+         FROM ads_papers p
+         JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+         WHERE lp.library_id = $1
+         ORDER BY COALESCE(p.fetched_at, p.created_at, lp.added_at, 0) DESC
+         LIMIT $2 OFFSET $3`,
+        [libraryId, limit, offset]
+      );
+
+      logger.info('Retrieved library papers', {
+        libraryId,
+        requested: limit,
+        returned: result.rows.length,
+      });
+
+      // Map PostgreSQL column names to camelCase
+      return result.rows.map((row: Record<string, unknown>) => ({
+        bibcode: row.bibcode as string,
+        title: (row.title as string | null) || undefined,
+        authors: (row.authors as string | null) || undefined,
+        pubdate: (row.pubdate as string | null) || undefined,
+        abstract: (row.abstract as string | null) || undefined,
+        body: (row.body as string | null) || undefined,
+        year: (row.year as number | null) || undefined,
+        journal: (row.journal as string | null) || undefined,
+        adsUrl: (row.ads_url as string | null) || undefined,
+        arxivUrl: (row.arxiv_url as string | null) || undefined,
+        fulltextSource: (row.fulltext_source as string | null) || undefined,
+      }));
+    } else {
+      const db = getSqlite();
+
+      // Check count first
+      const countStmt = db.prepare(`SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = ?`);
+      const countResult = countStmt.get(libraryId) as { count: number } | undefined;
+      const linkCount = countResult?.count || 0;
+
+      logger.info('Getting library papers', {
+        libraryId,
+        linkedPapersCount: linkCount,
+        limit,
+        offset,
+      });
+
+      if (linkCount === 0) {
+        logger.warn('No papers linked to library', { libraryId });
+        return [];
+      }
+
+      const stmt = db.prepare(`
+        SELECT p.* FROM ads_papers p
+        JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+        WHERE lp.library_id = ?
+        ORDER BY COALESCE(p.fetched_at, p.created_at, lp.added_at, 0) DESC
+        LIMIT ? OFFSET ?
+      `);
+
+      const results = stmt.all(libraryId, limit, offset) as ADSPaperRecord[];
+
+      logger.info('Retrieved library papers', {
+        libraryId,
+        requested: limit,
+        returned: results.length,
+      });
+
+      return results;
+    }
   } catch (error) {
     logger.error('Failed to get library papers', {
       libraryId,
+      driver,
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return [];
   }
@@ -269,24 +719,65 @@ export function linkPaperToLibrary(libraryId: string, bibcode: string): void {
 /**
  * Link multiple papers to a library in batch
  */
-export function linkPapersToLibraryBatch(libraryId: string, bibcodes: string[]): void {
-  const db = getSqlite();
+export async function linkPapersToLibraryBatch(libraryId: string, bibcodes: string[]): Promise<void> {
+  if (bibcodes.length === 0) {
+    return;
+  }
+
+  const driver = detectDriver();
 
   try {
-    const stmt = db.prepare(`
-      INSERT INTO ads_library_papers (library_id, bibcode)
-      VALUES (?, ?)
-      ON CONFLICT(library_id, bibcode) DO NOTHING
-    `);
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      // Use a single query with VALUES for batch insert
+      const values: unknown[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
 
-    const linkMany = db.transaction((codes: string[]) => {
-      for (const bibcode of codes) {
-        stmt.run(libraryId, bibcode);
+      for (const bibcode of bibcodes) {
+        placeholders.push(`($${paramIndex++}, $${paramIndex++})`);
+        values.push(libraryId, bibcode);
       }
-    });
 
-    linkMany(bibcodes);
-    logger.info('Papers linked to library', { libraryId, count: bibcodes.length });
+      const result = await client.run(
+        `INSERT INTO ads_library_papers (library_id, bibcode)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT(library_id, bibcode) DO NOTHING`,
+        values
+      );
+
+      logger.info('Linked papers to library', {
+        libraryId,
+        bibcodesCount: bibcodes.length,
+        inserted: result.changes,
+      });
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        INSERT INTO ads_library_papers (library_id, bibcode)
+        VALUES (?, ?)
+        ON CONFLICT(library_id, bibcode) DO NOTHING
+      `);
+
+      const linkMany = db.transaction((codes: string[]) => {
+        let inserted = 0;
+        for (const bibcode of codes) {
+          const result = stmt.run(libraryId, bibcode);
+          if (result.changes > 0) {
+            inserted++;
+          }
+        }
+        return inserted;
+      });
+
+      const inserted = linkMany(bibcodes);
+
+      logger.info('Linked papers to library', {
+        libraryId,
+        bibcodesCount: bibcodes.length,
+        inserted,
+      });
+    }
   } catch (error) {
     logger.error('Failed to link papers to library', {
       libraryId,
@@ -335,6 +826,55 @@ export function getPapersMissingFullText(limit = 50): ADSPaperRecord[] {
     return stmt.all(limit) as ADSPaperRecord[];
   } catch (error) {
     logger.error('Failed to get papers missing full text', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+/**
+ * Get favorited/bookmarked papers
+ */
+export async function getFavoritePapers(limit = 100): Promise<ADSPaperRecord[]> {
+  const driver = detectDriver();
+
+  try {
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT * FROM ads_papers
+         WHERE is_favorite = 1
+         ORDER BY favorited_at DESC NULLS LAST
+         LIMIT $1`,
+        [limit]
+      );
+
+      return result.rows.map((row: Record<string, unknown>) => ({
+        bibcode: row.bibcode as string,
+        title: (row.title as string | null) || undefined,
+        authors: (row.authors as string | null) || undefined,
+        pubdate: (row.pubdate as string | null) || undefined,
+        abstract: (row.abstract as string | null) || undefined,
+        body: (row.body as string | null) || undefined,
+        year: (row.year as number | null) || undefined,
+        journal: (row.journal as string | null) || undefined,
+        adsUrl: (row.ads_url as string | null) || undefined,
+        arxivUrl: (row.arxiv_url as string | null) || undefined,
+        fulltextSource: (row.fulltext_source as string | null) || undefined,
+      }));
+    } else {
+      const db = getSqlite();
+      const stmt = db.prepare(`
+        SELECT * FROM ads_papers
+        WHERE is_favorite = 1
+        ORDER BY favorited_at DESC
+        LIMIT ?
+      `);
+
+      return stmt.all(limit) as ADSPaperRecord[];
+    }
+  } catch (error) {
+    logger.error('Failed to get favorite papers', {
       error: error instanceof Error ? error.message : String(error),
     });
     return [];

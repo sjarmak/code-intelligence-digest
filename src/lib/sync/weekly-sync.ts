@@ -1,13 +1,13 @@
 /**
  * Weekly sync strategy: fetch last 7 days in a single optimized call
- * 
+ *
  * Features:
  * - Single batch fetch of last 7 days of items (n=1000)
  * - Only uses continuation if >1000 items in 7 days (rare)
  * - Resumable if interrupted by rate limits
  * - Expected cost: 1-2 API calls
  * - Minimal code, minimal overhead
- * 
+ *
  * Best for: Weekly digests where you want all content at once
  */
 
@@ -16,12 +16,93 @@ import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
 import { saveItems } from '../db/items';
 import { logger } from '../logger';
-import { Category, VALID_CATEGORIES } from '../model';
-import { getGlobalApiBudget, incrementGlobalApiCalls, getCachedUserId, setCachedUserId } from '../db/index';
-import { loadSyncState, saveSyncState, clearSyncState } from './sync-state';
+import { Category } from '../model';
+import { getSqlite, getGlobalApiBudget, getCachedUserId, setCachedUserId } from '../db/index';
+import { incrementApiCalls } from '../db/api-budget';
+
+interface SyncStateRow {
+  id: string;
+  continuation_token: string | null;
+  items_processed: number;
+  calls_used: number;
+  started_at: number;
+  last_updated_at: number;
+  status: string;
+  error: string | null;
+}
+
+const VALID_CATEGORIES: Category[] = [
+  'newsletters',
+  'podcasts',
+  'tech_articles',
+  'ai_news',
+  'product_news',
+  'community',
+  'research',
+];
 
 const SYNC_ID = 'weekly-sync';
 const LOOKBACK_DAYS = 7;
+
+/**
+ * Get current sync state from database
+ */
+function getSyncState(): SyncStateRow | null {
+  try {
+    const sqlite = getSqlite();
+    const row = sqlite
+      .prepare('SELECT * FROM sync_state WHERE id = ?')
+      .get(SYNC_ID) as SyncStateRow | undefined;
+    return row ?? null;
+  } catch (error) {
+    logger.warn('[WEEKLY-SYNC] Could not load sync state, starting fresh', error as Record<string, unknown>);
+    return null;
+  }
+}
+
+/**
+ * Save sync state to resume later if interrupted
+ */
+function saveSyncState(data: {
+  continuationToken?: string | null;
+  itemsProcessed: number;
+  callsUsed: number;
+  status: 'in_progress' | 'completed' | 'paused';
+  error?: string;
+}): void {
+  try {
+    const sqlite = getSqlite();
+    sqlite.prepare(`
+      INSERT OR REPLACE INTO sync_state
+      (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
+      VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), ?, ?)
+    `).run(
+      SYNC_ID,
+      data.continuationToken || null,
+      data.itemsProcessed,
+      data.callsUsed,
+      Math.floor(Date.now() / 1000),
+      data.status,
+      data.error || null
+    );
+    logger.debug('[WEEKLY-SYNC] Saved sync state', data);
+  } catch (error) {
+    logger.error('[WEEKLY-SYNC] Failed to save sync state', error);
+  }
+}
+
+/**
+ * Clear sync state when completed
+ */
+function clearSyncState(): void {
+  try {
+    const sqlite = getSqlite();
+    sqlite.prepare('DELETE FROM sync_state WHERE id = ?').run(SYNC_ID);
+    logger.info('[WEEKLY-SYNC] Cleared sync state (sync complete)');
+  } catch (error) {
+    logger.warn('[WEEKLY-SYNC] Could not clear sync state', error as Record<string, unknown>);
+  }
+}
 
 /**
  * Run weekly sync: fetch all items from the last 7 days
@@ -38,24 +119,24 @@ export async function runWeeklySync(): Promise<{
 }> {
   logger.info(`[WEEKLY-SYNC] Starting weekly sync (last ${LOOKBACK_DAYS} days)`);
 
-  const existingState = await loadSyncState(SYNC_ID);
+  const existingState = getSyncState();
   const resumed = existingState ? existingState.status === 'paused' : false;
 
   if (resumed) {
-    logger.info(`[WEEKLY-SYNC] Resuming from previous sync (${existingState!.itemsProcessed} items processed)`);
+    logger.info(`[WEEKLY-SYNC] Resuming from previous sync (${existingState!.items_processed} items processed)`);
   }
 
   const client = createInoreaderClient();
   const categoriesProcessed: Category[] = [];
   let totalItemsAdded = 0;
-  let callsUsed = existingState?.callsUsed ?? 0;
-  let continuation = existingState?.continuationToken || undefined;
+  let callsUsed = existingState?.calls_used ?? 0;
+  let continuation = existingState?.continuation_token || undefined;
 
   try {
     // Check global budget before starting
-    const budget = getGlobalApiBudget();
+    const budget = await getGlobalApiBudget();
     logger.info(`[WEEKLY-SYNC] Global API budget: ${budget.callsUsed}/${budget.quotaLimit} calls used`);
-    
+
     if (budget.remaining <= 1) {
       logger.warn(`[WEEKLY-SYNC] Only ${budget.remaining} calls remaining. Pausing to protect daily limit.`);
       return {
@@ -70,8 +151,8 @@ export async function runWeeklySync(): Promise<{
     }
 
     // Get user ID (cached, no API call)
-    let userId: string | null = getCachedUserId();
-    
+    let userId: string | null = await getCachedUserId();
+
     if (!userId) {
       logger.debug('[WEEKLY-SYNC] User ID not cached. Fetching from API...');
       const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
@@ -83,11 +164,11 @@ export async function runWeeklySync(): Promise<{
       }
 
       // Cache it for future syncs
-      setCachedUserId(userId);
+      await setCachedUserId(userId);
       logger.info('[WEEKLY-SYNC] Cached user ID for future syncs');
-      
+
       callsUsed++;
-      incrementGlobalApiCalls(1);
+      await incrementApiCalls(1);
     } else {
       logger.debug('[WEEKLY-SYNC] Using cached user ID');
     }
@@ -110,15 +191,16 @@ export async function runWeeklySync(): Promise<{
         `[WEEKLY-SYNC] Fetching batch ${batchNumber}${continuation ? ' (continuation)' : ''} (${callsUsed} calls used)`
       );
 
-      // Single optimized fetch: n=1000 to grab up to 1000 items in 7 days (usually gets all)
+      // Single optimized fetch: n=100 (Inoreader API limit) with continuation tokens for pagination
+      // Note: Inoreader caps at ~100 items per request, so we paginate with continuation tokens
       const response = await client.getStreamContents(allItemsStreamId, {
-        n: 1000,
+        n: 100, // Inoreader API limit is ~100 items per request
         continuation,
         xt: `user/${userId}/state/com.google/read/unix:${syncSinceTimestamp}`, // Exclude read items older than threshold
       });
 
       callsUsed++;
-      incrementGlobalApiCalls(1);
+      await incrementApiCalls(1);
 
       if (!response.items || response.items.length === 0) {
         logger.info('[WEEKLY-SYNC] No more items to fetch');
@@ -167,7 +249,7 @@ export async function runWeeklySync(): Promise<{
 
       // Check if there's more
       continuation = response.continuation || undefined;
-      await saveSyncState(SYNC_ID, {
+      saveSyncState({
         continuationToken: continuation,
         itemsProcessed: totalItemsAdded,
         callsUsed,
@@ -175,12 +257,12 @@ export async function runWeeklySync(): Promise<{
       });
 
       // Safety: check global budget after each batch
-      const currentBudget = getGlobalApiBudget();
+      const currentBudget = await getGlobalApiBudget();
       logger.debug(`[WEEKLY-SYNC] Global budget after batch: ${currentBudget.callsUsed}/${currentBudget.quotaLimit}`);
-      
+
       if (currentBudget.remaining <= 1) {
         logger.warn(`[WEEKLY-SYNC] Global budget critical (${currentBudget.remaining} calls remaining). Pausing.`);
-        await saveSyncState(SYNC_ID, {
+        saveSyncState({
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
           callsUsed,
@@ -203,7 +285,7 @@ export async function runWeeklySync(): Promise<{
     }
 
     // Sync complete
-    await clearSyncState(SYNC_ID);
+    clearSyncState();
 
     logger.info(
       `[WEEKLY-SYNC] Complete: ${totalItemsAdded} items, ${categoriesProcessed.length} categories, ${callsUsed} API calls`
@@ -221,7 +303,7 @@ export async function runWeeklySync(): Promise<{
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     // Save error state for resumption
-    await saveSyncState(SYNC_ID, {
+    saveSyncState({
       continuationToken: continuation,
       itemsProcessed: totalItemsAdded,
       callsUsed,

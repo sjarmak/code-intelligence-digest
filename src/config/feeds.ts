@@ -47,7 +47,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   "dev blogs": "tech_articles",
   engineering: "tech_articles",
   "engineering-blogs": "tech_articles",
-  "tech company blogs": "tech_articles",
+  // Note: "tech company blogs" moved to product_news below
 
   // Podcasts
   podcast: "podcasts",
@@ -60,6 +60,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   "product news": "product_news",
   "product updates": "product_news",
   "coding agent product updates": "product_news",
+  "tech company blogs": "product_news", // Product announcements from tech companies
   releases: "product_news",
   changelog: "product_news",
   announcements: "product_news",
@@ -72,6 +73,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   "hacker news": "community",
   "news": "community",
   discussion: "community",
+  "tech leaders": "community", // Tech leader social posts and updates
 
   // AI News / Articles
   "ai news": "ai_news",
@@ -86,6 +88,8 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   // Newsletters (fallback)
   newsletter: "newsletters",
   newsletters: "newsletters",
+  "newsletter misc": "newsletters",
+  "newsletter-misc": "newsletters",
   "dev-news": "newsletters",
   "weekly-digest": "newsletters",
 };
@@ -95,7 +99,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
  */
 function mapFolderToCategory(folderPath: string): Category | null {
   const parts = folderPath.toLowerCase().split("/").filter(p => p.length > 0);
-  
+
   for (const part of parts) {
     if (FOLDER_TO_CATEGORY[part]) {
       return FOLDER_TO_CATEGORY[part];
@@ -107,6 +111,18 @@ function mapFolderToCategory(folderPath: string): Category | null {
 }
 
 let cachedFeeds: FeedConfig[] | null = null;
+// Singleton promise to prevent race conditions when multiple calls happen simultaneously
+let feedsFetchPromise: Promise<FeedConfig[]> | null = null;
+
+/**
+ * Clear the in-memory feeds cache.
+ * Call this before getFeeds() to force a fresh fetch.
+ */
+export function clearFeedsCache(): void {
+  cachedFeeds = null;
+  feedsFetchPromise = null;
+  logger.info("[FEEDS] In-memory cache cleared");
+}
 
 const FEEDS_CACHE_FILE = path.join(process.cwd(), ".cache", "feeds.json");
 
@@ -144,16 +160,10 @@ function saveFeedsToCache(feeds: FeedConfig[]): void {
 }
 
 /**
- * Dynamically fetch all feeds from Inoreader
- * Organizes them by folder/label into categories
- * Uses database-backed cache with fallback to Inoreader API
+ * Internal function that actually fetches feeds
+ * Separated to allow singleton promise pattern in getFeeds()
  */
-export async function getFeeds(): Promise<FeedConfig[]> {
-  // Use in-memory cache if available
-  if (cachedFeeds) {
-    return cachedFeeds;
-  }
-
+async function fetchFeedsInternal(): Promise<FeedConfig[]> {
   try {
     // Initialize database on first use
     await initializeDatabase();
@@ -173,6 +183,10 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     const client = createInoreaderClient();
     const subscriptionList = await client.getSubscriptions();
 
+    // Track API call in budget
+    const { incrementApiCalls } = await import('../lib/db/api-budget');
+    await incrementApiCalls(1);
+
     const feeds: FeedConfig[] = [];
 
     if (subscriptionList.subscriptions && Array.isArray(subscriptionList.subscriptions)) {
@@ -180,7 +194,7 @@ export async function getFeeds(): Promise<FeedConfig[]> {
         // Extract folder/label information from the subscription
         // Categories come as objects with { id: "user/.../label/...", label: "..." }
         const folderLabels: string[] = [];
-        
+
         if (Array.isArray(sub.categories)) {
           for (const cat of sub.categories) {
             // cat can be a string (old format) or object with label property
@@ -210,20 +224,20 @@ export async function getFeeds(): Promise<FeedConfig[]> {
           vendor: sub.htmlUrl ? new URL(sub.htmlUrl).hostname : undefined,
         });
 
-        logger.info(`Loaded feed: ${sub.title} → ${category}`);
+        logger.debug(`Loaded feed: ${sub.title} → ${category}`);
       }
     }
 
     logger.info(`Loaded ${feeds.length} feeds from Inoreader`);
     cachedFeeds = feeds;
-    
+
     // Save to database cache and update metadata
     await saveFeedsDb(feeds);
     await updateFeedsCacheMetadata(feeds.length);
-    
+
     // Also keep disk cache in sync for backwards compatibility
     saveFeedsToCache(feeds);
-    
+
     return feeds;
   } catch (error) {
     logger.error("Failed to fetch feeds from Inoreader", error);
@@ -238,7 +252,7 @@ export async function getFeeds(): Promise<FeedConfig[]> {
     } catch (dbError) {
       logger.error("Also failed to load from database cache", dbError);
     }
-    
+
     // Final fallback: try disk cache
     const staleDiskCache = loadFeedsFromCache();
     if (staleDiskCache && staleDiskCache.length > 0) {
@@ -246,10 +260,40 @@ export async function getFeeds(): Promise<FeedConfig[]> {
       cachedFeeds = staleDiskCache;
       return staleDiskCache;
     }
-    
+
     logger.error("No feeds available - API error and no cache");
     return [];
   }
+}
+
+/**
+ * Dynamically fetch all feeds from Inoreader
+ * Organizes them by folder/label into categories
+ * Uses database-backed cache with fallback to Inoreader API
+ *
+ * Uses singleton promise pattern to prevent race conditions when
+ * multiple parallel calls (e.g., from normalizeItems) happen simultaneously.
+ */
+export async function getFeeds(): Promise<FeedConfig[]> {
+  // Use in-memory cache if available (fast path)
+  if (cachedFeeds) {
+    return cachedFeeds;
+  }
+
+  // If a fetch is already in progress, wait for it instead of starting a new one
+  // This prevents the race condition where 250+ parallel normalizeItem calls
+  // all see cachedFeeds=null and all try to fetch/save simultaneously
+  if (feedsFetchPromise) {
+    return feedsFetchPromise;
+  }
+
+  // Start fetch and store the promise so other callers can wait on it
+  feedsFetchPromise = fetchFeedsInternal().finally(() => {
+    // Clear the promise after completion so future calls can refresh if needed
+    feedsFetchPromise = null;
+  });
+
+  return feedsFetchPromise;
 }
 
 /**
@@ -258,6 +302,64 @@ export async function getFeeds(): Promise<FeedConfig[]> {
 export async function getFeedConfig(streamId: string): Promise<FeedConfig | undefined> {
   const feeds = await getFeeds();
   return feeds.find((f) => f.streamId === streamId);
+}
+
+/**
+ * Check if a stream ID is known (exists in the feeds cache)
+ */
+export async function isKnownFeed(streamId: string): Promise<boolean> {
+  const config = await getFeedConfig(streamId);
+  return config !== undefined;
+}
+
+/**
+ * Find unknown stream IDs from a list (feeds not in cache)
+ * Used to detect newly-added subscriptions that need cache refresh
+ */
+export async function findUnknownFeeds(streamIds: string[]): Promise<string[]> {
+  const feeds = await getFeeds();
+  const knownStreamIds = new Set(feeds.map((f) => f.streamId));
+  return streamIds.filter((id) => !knownStreamIds.has(id));
+}
+
+/**
+ * Force refresh the feeds cache from Inoreader API
+ * Call this when unknown feeds are detected to pick up new subscriptions
+ * Returns the number of new feeds discovered
+ */
+export async function forceRefreshFeedsCache(): Promise<{ total: number; newFeeds: string[] }> {
+  const oldFeeds = cachedFeeds ? [...cachedFeeds] : [];
+  const oldStreamIds = new Set(oldFeeds.map((f) => f.streamId));
+  
+  // Clear caches to force a fresh fetch
+  clearFeedsCache();
+  
+  // Also invalidate the database cache
+  try {
+    const { deleteFeedsCache } = await import('../lib/db/feeds');
+    await deleteFeedsCache();
+  } catch (error) {
+    logger.warn('[FEEDS] Could not clear database feeds cache', { error });
+  }
+  
+  // Fetch fresh from Inoreader
+  const newFeeds = await getFeeds();
+  
+  // Find newly discovered feeds
+  const newStreamIds = newFeeds
+    .filter((f) => !oldStreamIds.has(f.streamId))
+    .map((f) => f.streamId);
+  
+  if (newStreamIds.length > 0) {
+    logger.info(`[FEEDS] Discovered ${newStreamIds.length} new feeds after cache refresh`, {
+      newFeeds: newStreamIds.map((id) => {
+        const feed = newFeeds.find((f) => f.streamId === id);
+        return feed?.canonicalName || id;
+      }),
+    });
+  }
+  
+  return { total: newFeeds.length, newFeeds: newStreamIds };
 }
 
 /**

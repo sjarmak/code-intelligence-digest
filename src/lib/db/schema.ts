@@ -137,6 +137,9 @@ export const adsPapers = sqliteTable("ads_papers", {
   arxivUrl: text("arxiv_url"), // URL to arXiv if available
   fullText: text("full_text"), // Optional: cached full text or PDF content
   fulltextSource: text("fulltext_source"), // Where full text came from (e.g., "arxiv_api", "manual_upload")
+  htmlContent: text("html_content"), // Cached ar5iv HTML for reader
+  htmlFetchedAt: integer("html_fetched_at"), // When HTML was cached
+  paperNotes: text("paper_notes"), // Paper-level notes
   fetchedAt: integer("fetched_at").default(sql`(strftime('%s', 'now'))`),
   createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
   updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
@@ -191,4 +194,68 @@ export const generatedPodcastAudio = sqliteTable("generated_podcast_audio", {
   bytes: integer("bytes").notNull(), // File size in bytes
   generatedAt: integer("generated_at").default(sql`(strftime('%s', 'now'))`),
   createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+});
+
+/**
+ * Paper annotations table: stores highlights and notes for papers
+ * Allows users to annotate papers with highlights and notes
+ */
+export const paperAnnotations = sqliteTable("paper_annotations", {
+  id: text("id").primaryKey(), // UUID
+  bibcode: text("bibcode").notNull(), // Reference to adsPapers
+  type: text("type").notNull(), // 'note' | 'highlight'
+  content: text("content").notNull(), // Note text or highlighted text
+  note: text("note"), // Note attached to highlight (for type='highlight')
+  startOffset: integer("start_offset"), // Character position for highlights
+  endOffset: integer("end_offset"), // Character position for highlights
+  sectionId: text("section_id"), // Section identifier (e.g., "abstract", "section-3")
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
+});
+
+/**
+ * Paper tags table: stores custom tags for organizing papers
+ */
+export const paperTags = sqliteTable("paper_tags", {
+  id: text("id").primaryKey(), // UUID
+  name: text("name").notNull().unique(), // Tag name (e.g., "to-read", "important")
+  color: text("color"), // Optional hex color for UI
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+});
+
+/**
+ * Paper tag links table: junction table linking papers to tags
+ */
+export const paperTagLinks = sqliteTable(
+  "paper_tag_links",
+  {
+    bibcode: text("bibcode").notNull(),
+    tagId: text("tag_id").notNull(),
+    createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.bibcode, table.tagId] }),
+  })
+);
+
+/**
+ * Saved items table: general bookmark/save library for any item type
+ */
+export const savedItems = sqliteTable("saved_items", {
+  id: text("id").primaryKey(),
+  itemId: text("item_id").notNull().unique(), // Reference to items table
+  savedAt: integer("saved_at").notNull(), // When item was saved
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
+});
+
+/**
+ * Digest items table: items specifically marked for digest generation
+ */
+export const digestItems = sqliteTable("digest_items", {
+  id: text("id").primaryKey(),
+  itemId: text("item_id").notNull().unique(), // Reference to items table
+  addedAt: integer("added_at").notNull(), // When item was added to digest library
+  createdAt: integer("created_at").default(sql`(strftime('%s', 'now'))`),
+  updatedAt: integer("updated_at").default(sql`(strftime('%s', 'now'))`),
 });

@@ -223,18 +223,18 @@ export async function generatePodcastContent(
       const response = await client.chat.completions.create({
         model: "gpt-4o-mini",
         max_completion_tokens: 3500,
-        messages: [
-          {
-            role: "user",
-            content: `Generate a ${periodLabel} podcast episode transcript about code intelligence for tech leads and senior engineers.
-
-Voice style: ${voiceStyle}
-Duration target: ~20 minutes
-Categories: ${categoryLabels}
-${profile ? `Focus topics: ${profile.focusTopics.join(", ")}` : ""}
-
-Items (with references to use inline like (ref: item-0)):
-${synthesisContext}
+              messages: [
+                {
+                  role: "user",
+                  content: `Generate a ${periodLabel} podcast episode transcript for tech leads and senior engineers.
+        
+        Voice style: ${voiceStyle}
+        Duration target: ~20 minutes
+        Categories: ${categoryLabels}
+        User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
+        ${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
+        
+        Items (with references to use inline like (ref: item-0)):${synthesisContext}
 
 Requirements:
 - Start with [INTRO MUSIC]

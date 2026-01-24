@@ -108,12 +108,10 @@ function hasAILanguage(text: string): string[] {
   const lowerText = text.toLowerCase();
 
   // Check for overused AI vocabulary
-  let aiWordCount = 0;
   for (const word of AI_LANGUAGE_WORDS) {
     const regex = new RegExp(`\\b${word}\\b`, "gi");
     const matches = lowerText.match(regex);
     if (matches) {
-      aiWordCount += matches.length;
       issues.push(`Overused AI word: "${word}" (${matches.length}x)`);
     }
   }
@@ -240,7 +238,7 @@ export async function reviewNewsletterWithLLM(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 500,
       messages: [
         {

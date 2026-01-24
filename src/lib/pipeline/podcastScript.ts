@@ -1,6 +1,6 @@
 /**
  * Stage C: Podcast script generation
- * Uses gpt-5.2-pro to write conversational HOST + COHOST script
+ * Uses gpt-4o-mini to write conversational HOST + COHOST script
  * Facts-first tone, natural attribution, measured language
  */
 
@@ -90,7 +90,7 @@ function formatTime(seconds: number): string {
 export async function generatePodcastScript(
   digests: PodcastItemDigest[],
   rundown: PodcastRundown,
-  period: "week" | "month",
+  period: "week" | "month" | "all" | "custom",
   _categories: Category[],
   profile: PromptProfile | null,
   _voiceStyle: string = "conversational"
@@ -124,9 +124,8 @@ export async function generatePodcastScript(
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-5.2-chat-latest",
+      model: "gpt-4o-mini",
       max_completion_tokens: 5000,
-      // Note: gpt-5.2-chat-latest only supports temperature=1 (default)
       messages: [
         {
           role: "user",
@@ -157,7 +156,8 @@ ${rundown.attribution_plan.map((a) => `- ${a.url}: "${a.spoken_attribution}"`).j
 
 VOICE STYLE: ${_voiceStyle}
 Categories: ${_categories.join(", ")}
-${profile ? `USER FOCUS: ${profile.focusTopics.join(", ")}` : ""}
+USER FOCUS: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
+${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
 
 SCRIPT REQUIREMENTS:
 1. Two speakers: HOST and COHOST (natural back-and-forth)
@@ -283,7 +283,7 @@ function generateFallbackScript(
 
   let script = "[INTRO MUSIC]\n\n";
   script += `**HOST:** Welcome to this week's code intelligence digest. I'm your host.\n\n`;
-  script += `**COHOST:** And I'm your co-host. Today we're covering ${digests.length} stories on code search, agents, and developer tools.\n\n`;
+  script += `**COHOST:** And I'm your co-host. Today we're covering ${digests.length} stories focused on benchmarking coding agents and code search.\n\n`;
 
   for (let i = 0; i < rundown.segments.length; i++) {
     const segment = rundown.segments[i];

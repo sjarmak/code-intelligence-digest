@@ -6,10 +6,13 @@
 
 import { FeedItem } from "../model";
 import { logger } from "../logger";
+import { Readability } from "@mozilla/readability";
+import { JSDOM, VirtualConsole } from "jsdom";
+import { extractBibcodeFromUrl } from "../ads/client";
 
 export interface FullTextResult {
   text: string;
-  source: "web_scrape" | "arxiv" | "error";
+  source: "web_scrape" | "arxiv" | "ads_api" | "error";
   length: number;
   fetchedAt: Date;
 }
@@ -21,12 +24,18 @@ export interface FullTextResult {
 async function fetchWebPage(url: string): Promise<string> {
   const maxRetries = 3;
   const timeout = 10000; // 10 seconds
-  
+
+  // Check if this is a known problematic URL that won't have extractable content
+  const isGoogleNews = isGoogleNewsRedirect(url);
+  const isKnownProblematic = isGoogleNews ||
+    /podcasters\.spotify\.com/i.test(url) ||
+    /cursor-changelog\.com\/versions/i.test(url);
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
-      
+
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
@@ -34,46 +43,112 @@ async function fetchWebPage(url: string): Promise<string> {
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
       });
-      
+
       clearTimeout(timeoutId);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      
+
       const html = await response.text();
-      
-      // Extract text from HTML (basic cleaning)
-      const text = extractTextFromHTML(html);
-      
+
+      // Extract text from HTML (enhanced with Readability, fallback to basic)
+      const text = await extractTextFromHTML(html, url);
+
       if (text.length < 100) {
+        // For known problematic URLs, this is expected - don't retry
+        if (isKnownProblematic) {
+          logger.debug(`URL has no extractable content (expected): ${url.substring(0, 80)}...`);
+          throw new Error("No extractable content (expected for this URL type)");
+        }
         throw new Error("Extracted text too short");
       }
-      
+
       logger.info(`Fetched full text from ${url} (${text.length} chars)`);
       return text;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.warn(
-        `Attempt ${attempt}/${maxRetries} failed for ${url}: ${errorMsg}`
-      );
-      
+
+      // For known problematic URLs, use debug level instead of warn
+      if (isKnownProblematic && errorMsg.includes("expected")) {
+        // Don't log warnings for expected failures - they're not real errors
+        if (attempt === 1) {
+          logger.debug(`Skipping full text extraction for ${url.substring(0, 60)}... (no extractable content)`);
+        }
+      } else {
+        logger.warn(
+          `Attempt ${attempt}/${maxRetries} failed for ${url.substring(0, 80)}...: ${errorMsg}`
+        );
+      }
+
+      // Don't retry known problematic URLs
+      if (isKnownProblematic) {
+        break;
+      }
+
       if (attempt < maxRetries) {
         // Exponential backoff: 1s, 2s, 4s
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt - 1) * 1000));
       }
     }
   }
-  
+
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
 
 /**
  * Extract text from HTML
- * Removes scripts, styles, and cleans up whitespace
+ * Uses Readability for better extraction, falls back to basic cleaning if Readability fails
  */
-function extractTextFromHTML(html: string): string {
-  // Remove script and style elements
+async function extractTextFromHTML(html: string, url?: string): Promise<string> {
+  // Try Readability first for better extraction (removes nav, ads, sidebars)
+  if (url) {
+    try {
+      // Create a virtual console that suppresses CSS parsing errors
+      // We only need text content, not CSS rendering
+      const virtualConsole = new VirtualConsole();
+
+      // Suppress CSS parsing errors - they're not critical for text extraction
+      virtualConsole.on('error', (error: Error) => {
+        const message = error.message || String(error);
+        // Filter out CSS parsing errors silently
+        if (message.includes('Could not parse CSS stylesheet') ||
+            message.includes('css style sheet') ||
+            message.includes('CSSStyleSheet')) {
+          return; // Suppress CSS parsing errors
+        }
+        // Log other errors for debugging
+        logger.debug('JSDOM error (non-critical):', { error: message });
+      });
+
+      const dom = new JSDOM(html, {
+        url,
+        virtualConsole,
+        // Skip resource loading (stylesheets, images, etc.) - faster and avoids CSS errors
+        resources: 'usable',
+      });
+
+      const reader = new Readability(dom.window.document);
+      const article = reader.parse();
+
+      if (article && article.textContent && article.textContent.length > 200) {
+        logger.debug(`Using Readability extraction (${article.textContent.length} chars)`);
+        return article.textContent.trim();
+      }
+    } catch (error) {
+      // Suppress CSS parsing errors - they're not critical for text extraction
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (errorMsg.includes('CSS') || errorMsg.includes('stylesheet')) {
+        logger.debug("CSS parsing error (non-critical), using fallback");
+      } else {
+        logger.debug("Readability extraction failed, using fallback", {
+          error: errorMsg
+        });
+      }
+    }
+  }
+
+  // Fallback to basic extraction
   const text = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
@@ -89,8 +164,64 @@ function extractTextFromHTML(html: string): string {
     // Clean up whitespace
     .replace(/\s+/g, " ")
     .trim();
-  
+
   return text;
+}
+
+/**
+ * Fetch README from GitHub repository
+ * Converts GitHub repo URLs to raw README.md content
+ */
+async function fetchFromGitHub(url: string): Promise<string | null> {
+  try {
+    // Match GitHub repo URLs: https://github.com/owner/repo or https://github.com/owner/repo/tree/branch
+    const githubMatch = url.match(/github\.com\/([^\/]+)\/([^\/\?#]+)(?:\/(?:tree|blob)\/([^\/\?#]+))?/);
+    if (!githubMatch) {
+      return null; // Not a GitHub repo URL
+    }
+
+    const [, owner, repo, branchOrPath] = githubMatch;
+
+    // Default branch is usually 'main' or 'master', try both
+    const branches = branchOrPath ? [branchOrPath] : ['main', 'master'];
+
+    for (const branch of branches) {
+      // Try README.md first (most common)
+      const readmeUrls = [
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`,
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/readme.md`,
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/Readme.md`,
+      ];
+
+      for (const readmeUrl of readmeUrls) {
+        try {
+          const response = await fetch(readmeUrl, {
+            signal: AbortSignal.timeout(5000),
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Code Intelligence Digest)",
+              "Accept": "text/plain,text/markdown,*/*",
+            },
+          });
+
+          if (response.ok) {
+            const text = await response.text();
+            if (text && text.length > 100) {
+              logger.info(`Fetched GitHub README from ${readmeUrl} (${text.length} chars)`);
+              return text;
+            }
+          }
+        } catch (err) {
+          // Try next URL
+          continue;
+        }
+      }
+    }
+
+    return null; // No README found
+  } catch (error) {
+    logger.debug("GitHub README fetch failed", { error });
+    return null;
+  }
 }
 
 /**
@@ -103,30 +234,30 @@ async function fetchFromArxiv(url: string): Promise<string> {
   if (!arxivMatch) {
     throw new Error("Not an arXiv URL");
   }
-  
+
   const arxivId = arxivMatch[1];
-  
+
   try {
     // Try fetching from arXiv API
     const apiUrl = `http://export.arxiv.org/api/query?id_list=${arxivId}&max_results=1`;
     const response = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
-    
+
     if (!response.ok) {
       throw new Error(`arXiv API returned ${response.status}`);
     }
-    
+
     const xml = await response.text();
-    
+
     // Extract summary from XML (basic parsing)
     const summaryMatch = xml.match(/<summary[^>]*>([^<]+)<\/summary>/);
     if (!summaryMatch) {
       throw new Error("No summary in arXiv response");
     }
-    
+
     const summary = summaryMatch[1]
       .trim()
       .replace(/\s+/g, " ");
-    
+
     logger.info(`Fetched arXiv summary for ${arxivId} (${summary.length} chars)`);
     return summary;
   } catch (error) {
@@ -137,16 +268,169 @@ async function fetchFromArxiv(url: string): Promise<string> {
 }
 
 /**
+ * Get full text from ADS papers database if available
+ * Checks by bibcode (from ADS URL) or arXiv URL
+ */
+async function getFullTextFromADS(url: string): Promise<string | null> {
+  try {
+    const { detectDriver, getDbClient } = await import("../db/driver");
+    const driver = detectDriver();
+
+    // Extract bibcode from URL (works for ADS URLs)
+    const bibcode = extractBibcodeFromUrl(url);
+
+    if (bibcode) {
+      // Try to get by bibcode
+      if (driver === 'postgres') {
+        const client = await getDbClient();
+        const result = await client.query(
+          'SELECT body FROM ads_papers WHERE bibcode = $1 AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1',
+          [bibcode]
+        );
+        if (result.rows.length > 0) {
+          const body = (result.rows[0] as { body: string }).body;
+          if (body && body.length >= 100) {
+            logger.debug(`Found ADS body for bibcode ${bibcode} (${body.length} chars)`);
+            return body;
+          }
+        }
+      } else {
+        const { getSqlite } = await import("../db/index");
+        const sqlite = getSqlite();
+        const row = sqlite.prepare(
+          'SELECT body FROM ads_papers WHERE bibcode = ? AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1'
+        ).get(bibcode) as { body: string } | undefined;
+        if (row?.body) {
+          logger.debug(`Found ADS body for bibcode ${bibcode} (${row.body.length} chars)`);
+          return row.body;
+        }
+      }
+    }
+
+    // If URL is arXiv, try to find by arxiv_url
+    if (url.includes("arxiv.org")) {
+      const arxivMatch = url.match(/arxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5})/);
+      if (arxivMatch) {
+        const arxivId = arxivMatch[1];
+        const arxivUrl = `https://arxiv.org/abs/${arxivId}`;
+
+        if (driver === 'postgres') {
+          const client = await getDbClient();
+          const result = await client.query(
+            'SELECT body FROM ads_papers WHERE arxiv_url = $1 AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1',
+            [arxivUrl]
+          );
+          if (result.rows.length > 0) {
+            const body = (result.rows[0] as { body: string }).body;
+            if (body && body.length >= 100) {
+              logger.debug(`Found ADS body for arXiv ${arxivId} (${body.length} chars)`);
+              return body;
+            }
+          }
+        } else {
+          const { getSqlite } = await import("../db/index");
+          const sqlite = getSqlite();
+          const row = sqlite.prepare(
+            'SELECT body FROM ads_papers WHERE arxiv_url = ? AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1'
+          ).get(arxivUrl) as { body: string } | undefined;
+          if (row?.body) {
+            logger.debug(`Found ADS body for arXiv ${arxivId} (${row.body.length} chars)`);
+            return row.body;
+          }
+        }
+      }
+    }
+
+    return null;
+  } catch (error) {
+    logger.debug('Failed to get full text from ADS', { error });
+    return null;
+  }
+}
+
+/**
+ * Check if URL is a Google News RSS redirect (not a real article URL)
+ * These redirect pages don't contain extractable content
+ */
+function isGoogleNewsRedirect(url: string): boolean {
+  return /news\.google\.com\/rss\/articles\//i.test(url);
+}
+
+/**
+ * Check if URL is likely to have extractable content
+ */
+function isLikelyExtractable(url: string): boolean {
+  // Skip known redirect/aggregator URLs that don't have extractable content
+  const skipPatterns = [
+    /news\.google\.com\/rss\/articles\//i, // Google News RSS redirects
+    /podcasters\.spotify\.com/i, // Spotify podcast pages (no transcript)
+    /cursor-changelog\.com\/versions/i, // Changelog index pages
+  ];
+
+  return !skipPatterns.some(pattern => pattern.test(url));
+}
+
+/**
  * Fetch full text from a URL
  * Returns the full text of an article
- * Falls back to web scraping if arXiv fails
+ * Priority: 1. ADS database, 2. arXiv API, 3. Web scraping
  */
 export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   const { url } = item;
-  
+
+  // CRITICAL: Skip Inoreader URLs - they don't contain extractable article content
+  if (url.includes("inoreader.com")) {
+    logger.warn(`Skipping full text extraction for Inoreader URL: ${url} (item: ${item.title})`);
+    return {
+      text: "",
+      source: "error",
+      length: 0,
+      fetchedAt: new Date(),
+    };
+  }
+
+  // Skip URLs that are known to not have extractable content
+  if (!isLikelyExtractable(url)) {
+    logger.debug(`Skipping full text extraction for redirect/aggregator URL: ${url}`);
+    return {
+      text: "",
+      source: "error",
+      length: 0,
+      fetchedAt: new Date(),
+    };
+  }
+
   logger.info(`Fetching full text for: ${item.title} (${url})`);
-  
-  // Try arXiv first if URL looks like arXiv
+
+  // Try ADS database first (if available, it's already fetched and stored)
+  const adsBody = await getFullTextFromADS(url);
+  if (adsBody) {
+    return {
+      text: adsBody,
+      source: "ads_api", // Full text from ADS API body field
+      length: adsBody.length,
+      fetchedAt: new Date(),
+    };
+  }
+
+  // Try GitHub README if URL is a GitHub repository
+  if (url.includes("github.com")) {
+    try {
+      const text = await fetchFromGitHub(url);
+      if (text) {
+        return {
+          text,
+          source: "web_scrape", // GitHub README is still web content
+          length: text.length,
+          fetchedAt: new Date(),
+        };
+      }
+    } catch (error) {
+      logger.debug("GitHub README fetch failed, falling back to web scrape");
+    }
+  }
+
+  // Try arXiv API if URL looks like arXiv
   if (url.includes("arxiv")) {
     try {
       const text = await fetchFromArxiv(url);
@@ -160,7 +444,7 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
       logger.debug("arXiv fetch failed, falling back to web scrape");
     }
   }
-  
+
   // Fall back to web scraping
   try {
     const text = await fetchWebPage(url);
@@ -173,7 +457,7 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to fetch full text for ${url}`, { error: errorMsg });
-    
+
     return {
       text: "",
       source: "error",
@@ -193,26 +477,26 @@ export async function fetchFullTextBatch(
 ): Promise<Map<string, FullTextResult>> {
   const results = new Map<string, FullTextResult>();
   const domainQueue = new Map<string, number>(); // Track last fetch time per domain
-  
+
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-  
+
   const fetchWithRateLimit = async (item: FeedItem) => {
     try {
       // Extract domain from URL
       const domain = new URL(item.url).hostname || "unknown";
-      
+
       // Rate limit: max 1 request per 500ms per domain
       const lastFetch = domainQueue.get(domain) || 0;
       const timeSinceLastFetch = Date.now() - lastFetch;
       if (timeSinceLastFetch < 500) {
         await delay(500 - timeSinceLastFetch);
       }
-      
+
       domainQueue.set(domain, Date.now());
-      
+
       const result = await fetchFullText(item);
       results.set(item.id, result);
-      
+
       if (result.source !== "error") {
         logger.info(`Fetched full text for ${item.id} (${result.length} chars, ${result.source})`);
       }
@@ -226,13 +510,13 @@ export async function fetchFullTextBatch(
       });
     }
   };
-  
+
   // Process in batches to avoid overwhelming
   for (let i = 0; i < items.length; i += maxConcurrent) {
     const batch = items.slice(i, i + maxConcurrent);
     await Promise.all(batch.map(fetchWithRateLimit));
   }
-  
+
   return results;
 }
 

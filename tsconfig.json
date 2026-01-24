@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "ES2017",
+    "target": "ES2018",
     "lib": [
       "dom",
       "dom.iterable",
@@ -37,6 +37,10 @@
     "**/*.mts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "scripts/investigate-paper-content.ts",
+    "scripts/backfill-ads-items-to-items-table.ts",
+    "scripts/update-existing-items-fulltext-from-ads.ts",
+    "scripts/cleanup-invalid-urls.ts"
   ]
 }
