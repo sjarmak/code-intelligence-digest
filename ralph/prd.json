@@ -443,8 +443,8 @@
         "Typecheck passes"
       ],
       "priority": 30,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "File is used by /api/admin/sync-optimized/[...slug]/route.ts. Added @deprecated JSDoc tags to module and all exported functions, plus detailed TODO migration plan recommending integration with daily-sync.ts."
     }
   ]
 }

@@ -13,6 +13,18 @@
 
 ---
 
+## 2026-01-24 - US-030
+- What was implemented: Added deprecation notices to `src/lib/sync/inoreader-sync-optimized.ts` since the file is actively used by `/api/admin/sync-optimized` route
+- Files changed:
+  - `src/lib/sync/inoreader-sync-optimized.ts` (modified - added @deprecated JSDoc tags and TODO migration plan)
+- **Learnings for future iterations:**
+  - The `inoreader-sync-optimized.ts` file is imported by `/api/admin/sync-optimized/[...slug]/route.ts`
+  - This module has a valuable feature: bulk API fetching from "All Items" stream (1 call vs 30+ calls)
+  - Migration plan suggests integrating this bulk approach into daily-sync.ts as an "optimized mode"
+  - Pattern: when deprecating feature-rich code, document the unique features in TODO for future consideration
+  - Consistent deprecation pattern: module-level @deprecated with features list, function-level @deprecated with replacement, TODO migration plan, "Currently used by" note
+---
+
 ## 2026-01-24 - US-029
 - What was implemented: Added deprecation notices to `src/lib/sync/inoreader-sync.ts` since the file is actively used by `/api/admin/sync` route
 - Files changed:
