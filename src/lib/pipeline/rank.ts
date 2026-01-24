@@ -8,25 +8,7 @@ import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
-
-/**
- * Compute recency score with exponential decay
- * Score decays from 1.0 to 0.2 over the half-life period
- */
-function computeRecencyScore(
-  publishedAt: Date,
-  halfLifeDays: number
-): number {
-  const ageMs = Date.now() - publishedAt.getTime();
-  const ageDays = ageMs / (1000 * 60 * 60 * 24);
-
-  // Exponential decay: score = 2^(-ageDays / halfLifeDays)
-  // At halfLife, score = 0.5
-  const decayedScore = Math.pow(2, -ageDays / halfLifeDays);
-
-  // Clamp to [0.2, 1.0]
-  return Math.max(0.2, Math.min(1.0, decayedScore));
-}
+import { computeRecencyScore } from "./scoring-utils";
 
 /**
  * Rank items for a given category
