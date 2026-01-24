@@ -8,7 +8,7 @@ import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
-import { computeRecencyScore } from "./scoring-utils";
+import { computeRecencyScore, computeBoostMultiplier } from "./scoring-utils";
 import { filterLowQualityItem } from "../../config/filter-patterns";
 
 /**
@@ -97,58 +97,13 @@ export async function rankCategory(
     const recencyScore = computeRecencyScore(item.publishedAt, config.halfLifeDays);
 
     // Apply boosts for domain-specific terms (code search, agents, evaluation, etc.)
-    let boostMultiplier = 1.0;
-    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
-    const boostTags: string[] = [];
-    
-    // SOURCEGRAPH: Highest priority
-    const hasSourcegraph = contentToSearch.includes('sourcegraph');
-    
-    // Core domain terms
-    const coreTerms = [
-      'deep search',
-      'code search',
-      'code intelligence',
-      'coding agent',
-      'codebase understanding',
-      'information retrieval',
-      'context management',
-      'context window',
-      'software engineering',
-      'benchmark',
-      'evaluation',
-      'developer productivity',
-      'ai tooling',
-    ];
-    
-    if (hasSourcegraph) {
-      // Sourcegraph gets maximum boost - it's a core product we want to highlight
-      boostMultiplier = 5.0;
-      boostTags.push('sourcegraph');
-      logger.debug(`Applied 5x SOURCEGRAPH BOOST: "${item.title}"`);
-    } else {
-      // Count matching core terms (excluding sourcegraph)
-      const matchingCoreTerms = coreTerms.filter(term => contentToSearch.includes(term)).length;
-      
-      // Check for compound terms (agent + code search/intelligence/context)
-      const hasAgent = contentToSearch.includes('agent') || contentToSearch.includes('agentic') || contentToSearch.includes('coding agent');
-      const hasCodeContext = coreTerms.slice(1, 8).some(term => contentToSearch.includes(term)); // code search through context management
-      
-      if (matchingCoreTerms >= 3) {
-        // Multiple domain terms = strong signal
-        boostMultiplier = 3.0;
-        logger.debug(`Applied 3x boost (${matchingCoreTerms} core terms): "${item.title}"`);
-      } else if (matchingCoreTerms === 2) {
-        boostMultiplier = 2.0;
-        logger.debug(`Applied 2x boost (2 core terms): "${item.title}"`);
-      } else if (hasAgent && hasCodeContext) {
-        // Agent + code search/context = sweet spot
-        boostMultiplier = 2.5;
-        logger.debug(`Applied 2.5x boost (agent + code context): "${item.title}"`);
-      } else if (matchingCoreTerms === 1) {
-        boostMultiplier = 1.5;
-        logger.debug(`Applied 1.5x boost (1 core term): "${item.title}"`);
-      }
+    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`;
+    const boostResult = computeBoostMultiplier(contentToSearch, category);
+    const boostMultiplier = boostResult.multiplier;
+    const boostTags: string[] = boostResult.matchedTerms;
+
+    if (boostMultiplier > 1.0) {
+      logger.debug(`Applied ${boostMultiplier}x boost (${boostTags.join(', ')}): "${item.title}"`);
     }
 
     // Compute final score
