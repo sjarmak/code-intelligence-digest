@@ -13,6 +13,19 @@
 
 ---
 
+## 2026-01-24 - US-014
+- What was implemented: Added `computeBoostMultiplier` function to `src/lib/pipeline/scoring-utils.ts`
+- Files changed:
+  - `src/lib/pipeline/scoring-utils.ts` (modified - added BoostResult interface and computeBoostMultiplier function)
+- **Learnings for future iterations:**
+  - The computeBoostMultiplier function encapsulates the boost logic from rank.ts lines 99-152
+  - Boost tiers: 5.0x (sourcegraph), 3.5x (product names), 3.0x (3+ core terms), 2.5x (agent+code context), 2.0x (2 core terms), 1.5x (1 core term), 1.0x (baseline)
+  - Function takes `category` parameter even though unused, for future extensibility with category-specific boosts
+  - Returns BoostResult with both multiplier and matchedTerms for transparency/debugging
+  - The `eslint-disable-next-line @typescript-eslint/no-unused-vars` comment is needed for the unused category parameter
+  - Uses PRODUCT_NAMES and CORE_TERMS constants defined earlier in the file
+---
+
 ## 2026-01-24 - US-013
 - What was implemented: Added `PRODUCT_NAMES` and `CORE_TERMS` constants to `src/lib/pipeline/scoring-utils.ts`
 - Files changed:

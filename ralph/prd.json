@@ -207,8 +207,8 @@
         "Typecheck passes"
       ],
       "priority": 14,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added computeBoostMultiplier function with BoostResult interface. Implements boost tiers: 5.0x for sourcegraph, 3.5x for product names, 3.0x for 3+ core terms, 2.5x for agent+code context, 2.0x for 2 core terms, 1.5x for 1 core term, 1.0x baseline."
     },
     {
       "id": "US-015",
