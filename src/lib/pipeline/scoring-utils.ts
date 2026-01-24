@@ -6,6 +6,57 @@
  */
 
 /**
+ * Product names for coding assistants and AI-powered development tools.
+ * These get a significant boost (3.0-4.0x) when matched in content.
+ *
+ * Products include:
+ * - AI coding assistants (Claude Code, Cursor, Copilot, Cody)
+ * - Autonomous coding agents (Aider, Augment Code, Codegen)
+ * - IDE-integrated tools (Windsurf, Void, Trae, Roo)
+ */
+export const PRODUCT_NAMES = [
+  'augment code',
+  'claude code',
+  'cursor',
+  'copilot',
+  'cody',
+  'aider',
+  'codegen',
+  'windsurf',
+  'void',
+  'trae',
+  'roo',
+] as const;
+
+/**
+ * Core domain terms for code intelligence and developer productivity.
+ * These receive moderate boosts (1.5-3.0x) based on match count.
+ *
+ * Categories:
+ * - Code search/intelligence: deep search, code search, code intelligence
+ * - AI agents: coding agent, codebase understanding
+ * - Context handling: context management, context window
+ * - Retrieval: information retrieval
+ * - Development: software engineering, developer productivity, ai tooling
+ * - Quality: benchmark, evaluation
+ */
+export const CORE_TERMS = [
+  'deep search',
+  'code search',
+  'code intelligence',
+  'coding agent',
+  'codebase understanding',
+  'information retrieval',
+  'context management',
+  'context window',
+  'software engineering',
+  'benchmark',
+  'evaluation',
+  'developer productivity',
+  'ai tooling',
+] as const;
+
+/**
  * Compute recency score with exponential decay.
  *
  * The formula uses exponential decay to favor fresh content while maintaining
