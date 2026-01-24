@@ -313,3 +313,17 @@
   - Reasoning string now shows "Recency=disabled" when recency is turned off for better debugging
   - This enables callers to use `rankCategory(..., { includeRecency: false })` instead of needing a separate function
 ---
+
+## 2026-01-24 - US-027
+- What was implemented: Added BM25 score skip optimization to rank.ts
+- Files changed:
+  - `src/lib/db/items.ts` (added loadBM25ScoresForItems function - 42 lines)
+  - `src/lib/pipeline/rank.ts` (modified - added caching logic)
+- **Learnings for future iterations:**
+  - The `item_scores` table already stores `bm25_score` per item/category, so we can leverage existing cached scores
+  - The loadBM25ScoresForItems function queries by item_id AND category, returning most recent score for each item
+  - The optimization separates items into two groups: those with cached scores (use stored value) and those needing computation (add to BM25 index)
+  - When all items have cached scores, the BM25 index building is skipped entirely (saves CPU for large item sets)
+  - Log message "Skipped BM25 for N items with cached scores" provides visibility into optimization effectiveness
+  - The cached score lookup uses `cachedBM25Scores[item.id] ?? bm25Normalized.get(item.id) ?? 0` to prefer cached, then computed, then default to 0
+---

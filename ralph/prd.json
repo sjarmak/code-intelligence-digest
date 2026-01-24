@@ -397,8 +397,8 @@
         "Typecheck passes"
       ],
       "priority": 27,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added loadBM25ScoresForItems to items.ts. Updated rankCategory to load cached scores, only build BM25 index for items without cached scores, and log optimization stats."
     },
     {
       "id": "US-028",
