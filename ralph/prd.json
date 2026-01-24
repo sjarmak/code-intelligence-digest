@@ -356,8 +356,8 @@
         "Typecheck passes"
       ],
       "priority": 24,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added RankOptions interface and options parameter to rankCategory. skipDateFilter skips time window filter, includeRecency controls recency scoring (default true). Reasoning string updated to show 'disabled' when recency is off."
     },
     {
       "id": "US-025",
