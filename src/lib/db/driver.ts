@@ -114,9 +114,14 @@ async function createPostgresClient(): Promise<DatabaseClient> {
   // Dynamic import pg
   const { Pool } = await import('pg');
 
+  // Render databases always require SSL, regardless of NODE_ENV
+  const connectionString = process.env.DATABASE_URL || '';
+  const isRenderDb = connectionString.includes('render.com');
+  const requireSsl = process.env.NODE_ENV === 'production' || isRenderDb;
+
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production'
+    connectionString,
+    ssl: requireSsl
       ? { rejectUnauthorized: false }
       : undefined,
     max: 10, // Connection pool size
