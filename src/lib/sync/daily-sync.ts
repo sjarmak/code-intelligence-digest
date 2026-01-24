@@ -18,7 +18,7 @@ import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
 import { saveItems, getLastPublishedTimestamp } from '../db/items';
 import { logger } from '../logger';
-import { Category } from '../model';
+import { Category, VALID_CATEGORIES } from '../model';
 import { getSqlite } from '../db/index';
 
 interface SyncStateRow {
@@ -31,16 +31,6 @@ interface SyncStateRow {
   status: string;
   error: string | null;
 }
-
-const VALID_CATEGORIES: Category[] = [
-  'newsletters',
-  'podcasts',
-  'tech_articles',
-  'ai_news',
-  'product_news',
-  'community',
-  'research',
-];
 
 const SYNC_ID = 'daily-sync';
 const FALLBACK_HOURS_IF_EMPTY = 24; // Fallback window if database has no items

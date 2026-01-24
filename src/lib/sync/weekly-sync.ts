@@ -16,7 +16,7 @@ import { normalizeItems } from '../pipeline/normalize';
 import { categorizeItems } from '../pipeline/categorize';
 import { saveItems } from '../db/items';
 import { logger } from '../logger';
-import { Category } from '../model';
+import { Category, VALID_CATEGORIES } from '../model';
 import { getGlobalApiBudget, incrementGlobalApiCalls, getCachedUserId, setCachedUserId } from '../db/index';
 import { getDbClient } from '../db/driver';
 
@@ -30,16 +30,6 @@ interface SyncStateRow {
   status: string;
   error: string | null;
 }
-
-const VALID_CATEGORIES: Category[] = [
-  'newsletters',
-  'podcasts',
-  'tech_articles',
-  'ai_news',
-  'product_news',
-  'community',
-  'research',
-];
 
 const SYNC_ID = 'weekly-sync';
 const LOOKBACK_DAYS = 7;
