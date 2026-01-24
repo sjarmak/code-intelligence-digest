@@ -550,14 +550,6 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
                   <FileText className="w-4 h-4" />
                 </button>
               )}
-              {/* Debug: Always show a small indicator to verify component is rendering */}
-              <span
-                className="text-xs opacity-30"
-                title={`hasFullText: ${hasFullText}, itemId: ${item.id}, state: ${hasFullText ? 'YES' : 'NO'}`}
-                style={{ fontSize: '8px', marginLeft: '2px' }}
-              >
-                {hasFullText ? '✓' : '✗'}
-              </span>
 
               {/* Saved items library (folder-heart) - for all item types */}
               <button

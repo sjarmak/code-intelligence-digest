@@ -66,158 +66,138 @@ export default function Home() {
       {/* Main Tabs */}
       <div className="border-b border-surface-border bg-surface sticky top-20 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center">
-            <nav className="flex overflow-x-auto gap-6" role="tablist">
-              <button
-                  onClick={() => setActiveTab('resources')}
-                  className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                    activeTab === 'resources'
-                      ? 'border-black text-black'
-                      : 'border-transparent text-muted hover:text-black'
-                  }`}
-                  role="tab"
-                  aria-selected={activeTab === 'resources'}
-                >
-                  Resources
-                </button>
-               <button
-                 onClick={() => setActiveTab('search')}
-                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                   activeTab === 'search'
-                     ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black'
-                 }`}
-                 role="tab"
-                 aria-selected={activeTab === 'search'}
-               >
-                 Search
-               </button>
-               <button
-                 onClick={() => setActiveTab('ask')}
-                 className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                   activeTab === 'ask'
-                     ? 'border-black text-black'
-                     : 'border-transparent text-muted hover:text-black'
-                 }`}
-                 role="tab"
-                 aria-selected={activeTab === 'ask'}
-               >
-                 Ask
-               </button>
-             </nav>
-
-             {/* Right-aligned buttons */}
-             <div className="flex gap-2 ml-auto">
-               {/* Starred button - only in dev */}
-               {config.features.starred && (
-                 <button
-                   onClick={() => setActiveTab('starred')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                     activeTab === 'starred'
-                       ? 'bg-black text-white border border-black'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
-                   title="View starred items"
-                 >
-                   Starred
-                 </button>
-               )}
-               <a
-                 href="/libraries"
-                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                 title="View ADS research libraries"
-               >
-                 Libraries
-               </a>
-               <a
-                 href="/synthesis/newsletter"
-                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                 title="Generate newsletters"
-               >
-                 Newsletter Generator
-               </a>
-               <a
-                 href="/synthesis/podcast"
-                 className="px-3 py-2 rounded-md text-sm font-medium transition-colors bg-white border border-gray-400 text-black hover:bg-gray-50"
-                 title="Generate podcast episodes"
-               >
-                 Podcast Generator
-               </a>
-             </div>
-           </div>
+          <nav className="flex overflow-x-auto gap-6" role="tablist">
+            <button
+              onClick={() => setActiveTab('resources')}
+              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                activeTab === 'resources'
+                  ? 'border-black text-black'
+                  : 'border-transparent text-muted hover:text-black'
+              }`}
+              role="tab"
+              aria-selected={activeTab === 'resources'}
+            >
+              Resources
+            </button>
+            <button
+              onClick={() => setActiveTab('search')}
+              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                activeTab === 'search'
+                  ? 'border-black text-black'
+                  : 'border-transparent text-muted hover:text-black'
+              }`}
+              role="tab"
+              aria-selected={activeTab === 'search'}
+            >
+              Search
+            </button>
+            <button
+              onClick={() => setActiveTab('ask')}
+              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                activeTab === 'ask'
+                  ? 'border-black text-black'
+                  : 'border-transparent text-muted hover:text-black'
+              }`}
+              role="tab"
+              aria-selected={activeTab === 'ask'}
+            >
+              Ask
+            </button>
+            <a
+              href="/digest"
+              className="px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors border-transparent text-muted hover:text-black"
+            >
+              Generate Digest
+            </a>
+            <a
+              href="/libraries"
+              className="px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors border-transparent text-muted hover:text-black"
+            >
+              Libraries
+            </a>
+          </nav>
         </div>
       </div>
 
       {/* Category Tabs (only show for resources tab) */}
       {activeTab === 'resources' && (
-        <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center">
+        <>
+          <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <nav className="flex overflow-x-auto gap-2" role="tablist">
                 {categories.map((cat) => (
-                   <button
-                      key={cat.id}
-                      onClick={() => setActiveCategory(cat.id)}
-                      className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-                        activeCategory === cat.id
-                          ? 'border-black text-black'
-                          : 'border-transparent text-muted hover:text-black'
-                      }`}
-                      role="tab"
-                      aria-selected={activeCategory === cat.id}
-                    >
-                      {cat.label}
-                    </button>
-                  ))}
-               </nav>
+                  <button
+                    key={cat.id}
+                    onClick={() => setActiveCategory(cat.id)}
+                    className={`px-4 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+                      activeCategory === cat.id
+                        ? 'border-black text-black'
+                        : 'border-transparent text-muted hover:text-black'
+                    }`}
+                    role="tab"
+                    aria-selected={activeCategory === cat.id}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          </div>
 
-              {/* Period buttons on the right */}
-              <div className="flex gap-2 ml-auto">
+          {/* Time Period Filter Row */}
+          <div className="bg-surface sticky top-44 z-10 py-4">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex gap-2">
                 <button
-                   onClick={() => setPeriod('day')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'day'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
+                  onClick={() => setPeriod('day')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
+                    period === 'day'
+                      ? 'bg-black text-white border-black'
+                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
+                  }`}
                 >
-                   Daily
+                  Daily
                 </button>
                 <button
-                   onClick={() => setPeriod('week')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'week'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
+                  onClick={() => setPeriod('week')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
+                    period === 'week'
+                      ? 'bg-black text-white border-black'
+                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
+                  }`}
                 >
-                   Weekly
+                  Weekly
                 </button>
                 <button
-                   onClick={() => setPeriod('month')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'month'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
+                  onClick={() => setPeriod('month')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
+                    period === 'month'
+                      ? 'bg-black text-white border-black'
+                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
+                  }`}
                 >
-                   Monthly
+                  Monthly
                 </button>
                 <button
-                   onClick={() => setPeriod('all')}
-                   className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                     period === 'all'
-                       ? 'bg-black text-white'
-                       : 'bg-white border border-gray-400 text-black hover:bg-gray-50'
-                   }`}
+                  onClick={() => setPeriod('all')}
+                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
+                    period === 'all'
+                      ? 'bg-black text-white border-black'
+                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
+                  }`}
                 >
-                   All-time
+                  All-time
+                </button>
+                <button
+                  className="px-4 py-2 rounded-md text-sm font-medium transition-colors border bg-white border-gray-300 text-black hover:bg-gray-50"
+                >
+                  Custom Range
                 </button>
               </div>
             </div>
-           </div>
-         </div>
-       )}
+          </div>
+        </>
+      )}
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
