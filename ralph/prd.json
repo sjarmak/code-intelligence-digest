@@ -283,8 +283,8 @@
         "Typecheck passes"
       ],
       "priority": 19,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Replaced getSqlite import with shared sync-state imports. Removed local SyncStateRow interface and getSyncState/saveSyncState/clearSyncState functions. Updated all calls to use async shared functions with SYNC_ID parameter and camelCase property names."
     },
     {
       "id": "US-020",
