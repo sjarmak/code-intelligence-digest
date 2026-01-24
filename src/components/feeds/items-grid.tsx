@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import ItemCard from './item-card';
 
 interface RankedItemResponse {
@@ -9,6 +9,7 @@ interface RankedItemResponse {
   url: string;
   sourceTitle: string;
   publishedAt: string;
+  createdAt?: string | null;
   summary?: string;
   contentSnippet?: string;
   categories?: string[];
@@ -25,43 +26,101 @@ interface RankedItemResponse {
   diversityReason?: string;
 }
 
+import { DateRange } from '@/src/components/common/date-range-picker';
+
 interface ItemsGridProps {
   category: string;
-  period: 'day' | 'week' | 'month' | 'all';
+  period: 'day' | 'week' | 'month' | 'all' | 'custom';
+  customDateRange?: DateRange | null;
 }
 
-export default function ItemsGrid({ category, period }: ItemsGridProps) {
+export default function ItemsGrid({ category, period, customDateRange }: ItemsGridProps) {
   const [items, setItems] = useState<RankedItemResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreCount, setLoadMoreCount] = useState(0); // Track how many times "Load More" was clicked
+  const [hasMore, setHasMore] = useState(false);
+  const itemsRef = useRef<RankedItemResponse[]>([]); // Ref to track current items for excludeIds
 
   useEffect(() => {
     const fetchItems = async () => {
+      // Don't fetch if custom range is selected but not yet configured
+      if (period === 'custom' && !customDateRange) {
+        setLoading(false);
+        setItems([]);
+        return;
+      }
+
       setLoading(true);
       setError(null);
 
       try {
-        const response = await fetch(
-          `/api/items?category=${category}&period=${period}`
-        );
+        const params = new URLSearchParams({
+          category,
+          period,
+          limit: '10', // Always fetch 10 more items
+        });
+
+        if (period === 'custom' && customDateRange) {
+          params.append('startDate', customDateRange.startDate);
+          params.append('endDate', customDateRange.endDate);
+        }
+
+        // If loading more, exclude already-loaded items
+        if (loadMoreCount > 0 && itemsRef.current.length > 0) {
+          const excludeIds = itemsRef.current.map(item => item.id).join(',');
+          params.append('excludeIds', excludeIds);
+        }
+
+        const response = await fetch(`/api/items?${params.toString()}`);
 
         if (!response.ok) {
           throw new Error('Failed to fetch items');
         }
 
         const data = await response.json();
-        setItems(data.items || []);
+        const fetchedItems = data.items || [];
+
+        console.log(`[ItemsGrid] Fetched ${fetchedItems.length} items for ${category}/${period}`);
+
+        // If loading more (loadMoreCount > 0), append new items
+        // Otherwise, replace items (initial load or category/period change)
+        if (loadMoreCount > 0) {
+          setItems(prev => {
+            // Deduplicate by ID to avoid duplicates
+            const existingIds = new Set(prev.map((item: RankedItemResponse) => item.id));
+            const newItems = fetchedItems.filter((item: RankedItemResponse) => !existingIds.has(item.id));
+            const updated = [...prev, ...newItems];
+            itemsRef.current = updated; // Update ref
+            return updated;
+          });
+        } else {
+          setItems(fetchedItems);
+          itemsRef.current = fetchedItems; // Update ref
+        }
+
+        // Use hasMore from API response
+        setHasMore(data.hasMore === true);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         setError(message);
         setItems([]);
+        itemsRef.current = []; // Reset ref on error
       } finally {
         setLoading(false);
       }
     };
 
+    // Reset loadMoreCount when category or period changes
+    if (loadMoreCount === 0) {
+      itemsRef.current = []; // Reset ref when category/period changes
+    }
     fetchItems();
-  }, [category, period]);
+  }, [category, period, customDateRange, loadMoreCount]);
+
+  const handleLoadMore = () => {
+    setLoadMoreCount(prev => prev + 1);
+  };
 
   if (loading) {
     return (
@@ -87,11 +146,29 @@ export default function ItemsGrid({ category, period }: ItemsGridProps) {
     );
   }
 
+  console.log(`[ItemsGrid] Rendering ${items.length} items for ${category}/${period}`);
+
   return (
-    <div className="space-y-3 max-w-4xl">
-      {items.map((item, index) => (
-        <ItemCard key={item.id} item={item} rank={index + 1} />
-      ))}
+    <div className="space-y-3 w-full">
+      {items.map((item, index) => {
+        console.log(`[ItemsGrid] Rendering ItemCard ${index + 1}: ${item.id} - ${item.title.substring(0, 40)}...`);
+        return <ItemCard key={item.id} item={item} rank={index + 1} period={period} />;
+      })}
+      {hasMore ? (
+        <div className="text-center pt-4">
+          <button
+            onClick={handleLoadMore}
+            disabled={loading}
+            className="px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Loading...' : 'Load 10 More'}
+          </button>
+        </div>
+      ) : items.length > 0 ? (
+        <div className="text-center pt-4">
+          <p className="text-muted text-sm">No more items available that meet the relevance threshold.</p>
+        </div>
+      ) : null}
     </div>
   );
 }
