@@ -327,3 +327,17 @@
   - Log message "Skipped BM25 for N items with cached scores" provides visibility into optimization effectiveness
   - The cached score lookup uses `cachedBM25Scores[item.id] ?? bm25Normalized.get(item.id) ?? 0` to prefer cached, then computed, then default to 0
 ---
+
+## 2026-01-24 - US-028
+- What was implemented: Added comprehensive unit tests for content filter patterns in `src/config/filter-patterns.ts`
+- Files changed:
+  - `__tests__/config/filter-patterns.test.ts` (created - 493 lines, 127 tests)
+- **Learnings for future iterations:**
+  - Test file location: `__tests__/config/` mirrors `src/config/` structure
+  - FeedItem type from model.ts requires: id, streamId, sourceTitle, title, url, publishedAt, categories, category, raw
+  - Pattern tests should be parametrized with `it.each()` for clear individual test cases
+  - When testing filter order, choose test inputs carefully to avoid triggering earlier filters (e.g., use 13+ char titles to avoid length filter when testing pattern filter)
+  - URL patterns may overlap with domain filters - test domain filtering with URLs that don't match patterns (e.g., bonobopress.com)
+  - Pre-existing typecheck errors in `.next/`, `history/`, and `scripts/` directories should be ignored - they're unrelated to refactoring work
+  - Some test failures like `promptRerank.test.ts` are pre-existing (import missing module)
+---
