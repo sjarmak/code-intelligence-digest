@@ -17,7 +17,8 @@ import { categorizeItems } from '../pipeline/categorize';
 import { saveItems } from '../db/items';
 import { logger } from '../logger';
 import { Category } from '../model';
-import { getSqlite, getGlobalApiBudget, incrementGlobalApiCalls, getCachedUserId, setCachedUserId } from '../db/index';
+import { getGlobalApiBudget, incrementGlobalApiCalls, getCachedUserId, setCachedUserId } from '../db/index';
+import { getDbClient } from '../db/driver';
 
 interface SyncStateRow {
   id: string;
@@ -46,12 +47,14 @@ const LOOKBACK_DAYS = 7;
 /**
  * Get current sync state from database
  */
-function getSyncState(): SyncStateRow | null {
+async function getSyncState(): Promise<SyncStateRow | null> {
   try {
-    const sqlite = getSqlite();
-    const row = sqlite
-      .prepare('SELECT * FROM sync_state WHERE id = ?')
-      .get(SYNC_ID) as SyncStateRow | undefined;
+    const db = await getDbClient();
+    const result = await db.query(
+      'SELECT * FROM sync_state WHERE id = ?',
+      [SYNC_ID]
+    );
+    const row = result.rows[0] as unknown as SyncStateRow | undefined;
     return row ?? null;
   } catch (error) {
     logger.warn('[WEEKLY-SYNC] Could not load sync state, starting fresh', error as Record<string, unknown>);
@@ -62,28 +65,56 @@ function getSyncState(): SyncStateRow | null {
 /**
  * Save sync state to resume later if interrupted
  */
-function saveSyncState(data: {
+async function saveSyncState(data: {
   continuationToken?: string | null;
   itemsProcessed: number;
   callsUsed: number;
   status: 'in_progress' | 'completed' | 'paused';
   error?: string;
-}): void {
+}): Promise<void> {
   try {
-    const sqlite = getSqlite();
-    sqlite.prepare(`
-      INSERT OR REPLACE INTO sync_state 
-      (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
-      VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), ?, ?)
-    `).run(
-      SYNC_ID,
-      data.continuationToken || null,
-      data.itemsProcessed,
-      data.callsUsed,
-      Math.floor(Date.now() / 1000),
-      data.status,
-      data.error || null
-    );
+    const db = await getDbClient();
+    const now = Math.floor(Date.now() / 1000);
+
+    // Use driver-compatible upsert syntax
+    if (db.driver === 'postgres') {
+      await db.run(`
+        INSERT INTO sync_state
+        (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET
+          continuation_token = EXCLUDED.continuation_token,
+          items_processed = EXCLUDED.items_processed,
+          calls_used = EXCLUDED.calls_used,
+          last_updated_at = EXCLUDED.last_updated_at,
+          status = EXCLUDED.status,
+          error = EXCLUDED.error
+      `, [
+        SYNC_ID,
+        data.continuationToken || null,
+        data.itemsProcessed,
+        data.callsUsed,
+        now,
+        now,
+        data.status,
+        data.error || null
+      ]);
+    } else {
+      await db.run(`
+        INSERT OR REPLACE INTO sync_state
+        (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        SYNC_ID,
+        data.continuationToken || null,
+        data.itemsProcessed,
+        data.callsUsed,
+        now,
+        now,
+        data.status,
+        data.error || null
+      ]);
+    }
     logger.debug('[WEEKLY-SYNC] Saved sync state', data);
   } catch (error) {
     logger.error('[WEEKLY-SYNC] Failed to save sync state', error);
@@ -93,10 +124,10 @@ function saveSyncState(data: {
 /**
  * Clear sync state when completed
  */
-function clearSyncState(): void {
+async function clearSyncState(): Promise<void> {
   try {
-    const sqlite = getSqlite();
-    sqlite.prepare('DELETE FROM sync_state WHERE id = ?').run(SYNC_ID);
+    const db = await getDbClient();
+    await db.run('DELETE FROM sync_state WHERE id = ?', [SYNC_ID]);
     logger.info('[WEEKLY-SYNC] Cleared sync state (sync complete)');
   } catch (error) {
     logger.warn('[WEEKLY-SYNC] Could not clear sync state', error as Record<string, unknown>);
@@ -118,7 +149,7 @@ export async function runWeeklySync(): Promise<{
 }> {
   logger.info(`[WEEKLY-SYNC] Starting weekly sync (last ${LOOKBACK_DAYS} days)`);
 
-  const existingState = getSyncState();
+  const existingState = await getSyncState();
   const resumed = existingState ? existingState.status === 'paused' : false;
 
   if (resumed) {
@@ -247,7 +278,7 @@ export async function runWeeklySync(): Promise<{
 
       // Check if there's more
       continuation = response.continuation || undefined;
-      saveSyncState({
+      await saveSyncState({
         continuationToken: continuation,
         itemsProcessed: totalItemsAdded,
         callsUsed,
@@ -260,7 +291,7 @@ export async function runWeeklySync(): Promise<{
       
       if (currentBudget.remaining <= 1) {
         logger.warn(`[WEEKLY-SYNC] Global budget critical (${currentBudget.remaining} calls remaining). Pausing.`);
-        saveSyncState({
+        await saveSyncState({
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
           callsUsed,
@@ -283,7 +314,7 @@ export async function runWeeklySync(): Promise<{
     }
 
     // Sync complete
-    clearSyncState();
+    await clearSyncState();
 
     logger.info(
       `[WEEKLY-SYNC] Complete: ${totalItemsAdded} items, ${categoriesProcessed.length} categories, ${callsUsed} API calls`
@@ -301,7 +332,7 @@ export async function runWeeklySync(): Promise<{
     const errorMsg = error instanceof Error ? error.message : String(error);
 
     // Save error state for resumption
-    saveSyncState({
+    await saveSyncState({
       continuationToken: continuation,
       itemsProcessed: totalItemsAdded,
       callsUsed,
