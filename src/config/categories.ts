@@ -4,6 +4,7 @@
  */
 
 import { Category } from "../lib/model";
+import { buildTermWeightMap } from "./domain-terms";
 
 export interface CategoryConfig {
   name: string;
@@ -138,59 +139,9 @@ export function getCategoryConfig(category: Category): CategoryConfig {
 /**
  * Domain term categories and weights for BM25 query construction
  * These are used to boost relevance when domain-specific terms appear
+ *
+ * Generated from the shared domain-terms.ts module
  */
-export const DOMAIN_TERM_WEIGHTS: Record<string, number> = {
-  // Information Retrieval (1.5x)
-  "semantic search": 1.5,
-  embeddings: 1.5,
-  RAG: 1.5,
-  "vector databases": 1.5,
-  "vector search": 1.5,
-
-  // Context Management (1.5x)
-  "context window": 1.5,
-  "context management": 1.5,
-  "token budget": 1.5,
-  compression: 1.5,
-  summarization: 1.5,
-
-  // Code Search (1.6x)
-  "code search": 1.6,
-  "code navigation": 1.6,
-  indexing: 1.6,
-  symbols: 1.6,
-  "cross-references": 1.6,
-
-  // Agentic Workflows (1.4x)
-  agents: 1.4,
-  agentic: 1.4,
-  "tool use": 1.4,
-  orchestration: 1.4,
-  planning: 1.4,
-
-  // Enterprise Codebases (1.3x)
-  monorepo: 1.3,
-  "dependency management": 1.3,
-  modularization: 1.3,
-  scale: 1.3,
-  "legacy systems": 1.3,
-
-  // Developer Tools (1.2x)
-  IDE: 1.2,
-  debugging: 1.2,
-  refactoring: 1.2,
-  "dev productivity": 1.2,
-  "CI/CD": 1.2,
-
-  // LLM Code Architecture (1.2x)
-  transformers: 1.2,
-  "fine-tuning": 1.2,
-  "function calling": 1.2,
-  reasoning: 1.2,
-
-  // SDLC Processes (1.0x)
-  "code review": 1.0,
-  testing: 1.0,
-  "change management": 1.0,
-  deployment: 1.0,
-};
+export const DOMAIN_TERM_WEIGHTS: Record<string, number> = Object.fromEntries(
+  buildTermWeightMap()
+);
