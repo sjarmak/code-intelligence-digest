@@ -1,0 +1,450 @@
+{
+  "project": "Code Intelligence Digest",
+  "branchName": "ralph/codebase-refactoring",
+  "description": "Comprehensive codebase refactoring to eliminate duplication, ensure consistency, optimize performance, and add test coverage",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create scoring-utils.ts with unified recency score function",
+      "description": "As a developer, I need a single recency score formula so that items are scored consistently.",
+      "acceptanceCriteria": [
+        "Create src/lib/pipeline/scoring-utils.ts",
+        "Export computeRecencyScore(publishedAt: Date, halfLifeDays: number): number",
+        "Formula: 0.2 + 0.8 * Math.pow(2, -ageDays / halfLifeDays)",
+        "Add JSDoc explaining the formula and parameters",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Created src/lib/pipeline/scoring-utils.ts with computeRecencyScore function"
+    },
+    {
+      "id": "US-002",
+      "title": "Update compute-scores.ts to use shared recency function",
+      "description": "As a developer, I need compute-scores.ts to use the shared recency function.",
+      "acceptanceCriteria": [
+        "Import computeRecencyScore from scoring-utils.ts",
+        "Replace inline recency calculation with imported function",
+        "Remove duplicate computeRecencyScore function definition",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "N/A - compute-scores.ts does not exist in codebase. The recency function is in rank.ts (covered by US-003)."
+    },
+    {
+      "id": "US-003",
+      "title": "Update rank.ts to use shared recency function",
+      "description": "As a developer, I need rank.ts to use the shared recency function.",
+      "acceptanceCriteria": [
+        "Import computeRecencyScore from scoring-utils.ts",
+        "Replace inline recency calculation with imported function",
+        "Remove duplicate computeRecencyScore function definition from rank.ts",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Replaced local computeRecencyScore with import from scoring-utils.ts"
+    },
+    {
+      "id": "US-004",
+      "title": "Add unit tests for computeRecencyScore",
+      "description": "As a developer, I need tests to verify recency score behavior.",
+      "acceptanceCriteria": [
+        "Create src/lib/pipeline/__tests__/scoring-utils.test.ts",
+        "Test score is 1.0 at age=0",
+        "Test score is ~0.6 at half-life age",
+        "Test score approaches 0.2 floor at very old ages",
+        "Test with different halfLifeDays values",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Created __tests__/lib/pipeline/scoring-utils.test.ts with 14 tests covering: score at age=0, score at half-life, floor at old ages, different halfLifeDays values, score bounds, and monotonic decay"
+    },
+    {
+      "id": "US-005",
+      "title": "Fix weekly-sync.ts to use database driver abstraction",
+      "description": "As a developer, I need weekly-sync to work with PostgreSQL.",
+      "acceptanceCriteria": [
+        "Import getDbClient from driver.ts instead of getSqlite",
+        "Replace all getSqlite() calls with await getDbClient()",
+        "Update SQL to use driver-compatible syntax",
+        "Remove direct better-sqlite3 imports",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "Replaced getSqlite with getDbClient, converted state functions to async, added PostgreSQL-compatible upsert syntax"
+    },
+    {
+      "id": "US-006",
+      "title": "Export VALID_CATEGORIES from model.ts",
+      "description": "As a developer, I need a single definition of valid categories.",
+      "acceptanceCriteria": [
+        "Add VALID_CATEGORIES constant to src/lib/model.ts",
+        "Export as readonly array of Category type",
+        "Include all 7 categories: newsletters, podcasts, tech_articles, ai_news, product_news, community, research",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "Added VALID_CATEGORIES as readonly Category[] with all 7 categories and JSDoc"
+    },
+    {
+      "id": "US-007",
+      "title": "Update sync files to use shared VALID_CATEGORIES",
+      "description": "As a developer, I need sync files to import categories from model.ts.",
+      "acceptanceCriteria": [
+        "Update daily-sync.ts to import VALID_CATEGORIES from model.ts",
+        "Update weekly-sync.ts to import VALID_CATEGORIES from model.ts",
+        "Remove duplicate VALID_CATEGORIES definitions from both files",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Update API routes to use shared VALID_CATEGORIES",
+      "description": "As a developer, I need API routes to import categories from model.ts.",
+      "acceptanceCriteria": [
+        "Update app/api/items/route.ts to import VALID_CATEGORIES from model.ts",
+        "Remove duplicate VALID_CATEGORIES definition from route.ts",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Create filter-patterns.ts with bad title patterns",
+      "description": "As a developer, I need filter patterns defined in one place.",
+      "acceptanceCriteria": [
+        "Create src/config/filter-patterns.ts",
+        "Export BAD_TITLE_PATTERNS array with all 55+ regex patterns from rank.ts",
+        "Export BAD_URL_PATTERNS array with all 11 patterns from rank.ts",
+        "Add JSDoc explaining purpose of each pattern category",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Add filterLowQualityItem function to filter-patterns.ts",
+      "description": "As a developer, I need a shared function for quality filtering.",
+      "acceptanceCriteria": [
+        "Export filterLowQualityItem(item: FeedItem): { filtered: boolean; reason?: string }",
+        "Function checks title against BAD_TITLE_PATTERNS",
+        "Function checks URL against BAD_URL_PATTERNS",
+        "Function checks minimum title length (10 chars)",
+        "Returns reason string when filtered",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Update rank.ts rankCategory to use shared filter function",
+      "description": "As a developer, I need rankCategory to use the shared filter.",
+      "acceptanceCriteria": [
+        "Import filterLowQualityItem from filter-patterns.ts",
+        "Replace inline BAD_TITLE_PATTERNS and BAD_URL_PATTERNS usage",
+        "Remove duplicate pattern definitions from rankCategory function",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Update rank.ts rankCategoryWithoutRecency to use shared filter",
+      "description": "As a developer, I need rankCategoryWithoutRecency to use the shared filter.",
+      "acceptanceCriteria": [
+        "Import filterLowQualityItem if not already imported",
+        "Replace inline BAD_TITLE_PATTERNS and BAD_URL_PATTERNS usage",
+        "Remove duplicate pattern definitions from rankCategoryWithoutRecency",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Add boost constants to scoring-utils.ts",
+      "description": "As a developer, I need product names and core terms defined once.",
+      "acceptanceCriteria": [
+        "Add PRODUCT_NAMES array to scoring-utils.ts (11 products)",
+        "Add CORE_TERMS array to scoring-utils.ts (13 terms)",
+        "Export both as readonly arrays",
+        "Include: augment code, claude code, cursor, copilot, cody, aider, codegen, windsurf, void, trae, roo",
+        "Include core terms: deep search, code search, code intelligence, etc.",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Add computeBoostMultiplier function to scoring-utils.ts",
+      "description": "As a developer, I need a shared function for boost calculation.",
+      "acceptanceCriteria": [
+        "Export computeBoostMultiplier(content: string, category: Category): { multiplier: number; matchedTerms: string[] }",
+        "5.0x boost for 'sourcegraph'",
+        "3.0-4.0x boost for product names or 3+ core terms",
+        "2.0-2.5x boost for 2 core terms",
+        "1.5x boost for 1 core term",
+        "1.0x baseline",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Update compute-scores.ts to use shared boost function",
+      "description": "As a developer, I need compute-scores.ts to use the shared boost logic.",
+      "acceptanceCriteria": [
+        "Import computeBoostMultiplier, PRODUCT_NAMES, CORE_TERMS from scoring-utils.ts",
+        "Replace inline boost calculation with imported function",
+        "Remove duplicate coreTerms and productNames arrays",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Update rank.ts to use shared boost function",
+      "description": "As a developer, I need rank.ts to use the shared boost logic.",
+      "acceptanceCriteria": [
+        "Import computeBoostMultiplier, PRODUCT_NAMES, CORE_TERMS from scoring-utils.ts",
+        "Replace inline boost calculation with imported function",
+        "Remove duplicate coreTerms and productNames arrays from rank.ts",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Add unit tests for computeBoostMultiplier",
+      "description": "As a developer, I need tests to verify boost calculation.",
+      "acceptanceCriteria": [
+        "Add tests to scoring-utils.test.ts",
+        "Test 5x boost for 'sourcegraph' content",
+        "Test 3-4x boost for product name matches",
+        "Test 3x boost for 3+ core term matches",
+        "Test 1.5x boost for single core term",
+        "Test 1.0x for no matches",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Create sync-state.ts with shared state management",
+      "description": "As a developer, I need shared sync state functions.",
+      "acceptanceCriteria": [
+        "Create src/lib/sync/sync-state.ts",
+        "Define SyncState interface with all fields from daily-sync.ts",
+        "Export loadSyncState(syncId: string): Promise<SyncState | null>",
+        "Export saveSyncState(syncId: string, state: Partial<SyncState>): Promise<void>",
+        "Export clearSyncState(syncId: string): Promise<void>",
+        "Use database driver abstraction",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Update daily-sync.ts to use shared sync state",
+      "description": "As a developer, I need daily-sync to use the shared state module.",
+      "acceptanceCriteria": [
+        "Import loadSyncState, saveSyncState, clearSyncState from sync-state.ts",
+        "Replace inline state management functions with imports",
+        "Remove duplicate SyncStateRow interface",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Update weekly-sync.ts to use shared sync state",
+      "description": "As a developer, I need weekly-sync to use the shared state module.",
+      "acceptanceCriteria": [
+        "Import loadSyncState, saveSyncState, clearSyncState from sync-state.ts",
+        "Replace inline state management functions with imports",
+        "Remove duplicate SyncState interface and functions",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Create domain-terms.ts consolidating term configurations",
+      "description": "As a developer, I need domain terms defined in one place.",
+      "acceptanceCriteria": [
+        "Create src/config/domain-terms.ts",
+        "Export DOMAIN_TERMS with structure: { term: string, weight: number, category: string }[]",
+        "Migrate terms from bm25.ts DOMAIN_TERMS object",
+        "Migrate terms from categories.ts DOMAIN_TERM_WEIGHTS",
+        "Resolve any conflicting weights to single value",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Update bm25.ts to use shared domain terms",
+      "description": "As a developer, I need bm25.ts to import domain terms.",
+      "acceptanceCriteria": [
+        "Import DOMAIN_TERMS from domain-terms.ts",
+        "Adapt import to match existing DOMAIN_TERMS structure or update code",
+        "Remove duplicate DOMAIN_TERMS definition",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Update categories.ts to use shared domain terms",
+      "description": "As a developer, I need categories.ts to import domain terms.",
+      "acceptanceCriteria": [
+        "Import DOMAIN_TERMS from domain-terms.ts",
+        "Generate DOMAIN_TERM_WEIGHTS from DOMAIN_TERMS if still needed",
+        "Remove duplicate DOMAIN_TERM_WEIGHTS definition",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Add includeRecency option to rankCategory function",
+      "description": "As a developer, I need a single ranking function with optional recency.",
+      "acceptanceCriteria": [
+        "Add optional parameter: options?: { skipDateFilter?: boolean; includeRecency?: boolean }",
+        "Default includeRecency to true for backwards compatibility",
+        "Move recency calculation inside conditional based on includeRecency",
+        "Existing behavior unchanged when option not provided",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Update callers of rankCategoryWithoutRecency",
+      "description": "As a developer, I need callers to use the unified rankCategory.",
+      "acceptanceCriteria": [
+        "Find all callers of rankCategoryWithoutRecency",
+        "Update to use rankCategory(..., { includeRecency: false })",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "Remove rankCategoryWithoutRecency function",
+      "description": "As a developer, I need to delete the duplicate function.",
+      "acceptanceCriteria": [
+        "Delete rankCategoryWithoutRecency function from rank.ts",
+        "Remove from exports if exported",
+        "Typecheck passes"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "Add BM25 score skip optimization to rank.ts",
+      "description": "As a developer, I want to skip BM25 for items with cached scores.",
+      "acceptanceCriteria": [
+        "Check if item has pre-computed BM25 score before adding to index",
+        "Only build BM25 index for items without cached scores",
+        "Log: 'Skipped BM25 for N items with cached scores'",
+        "If all items have cached scores, skip index building entirely",
+        "Typecheck passes"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "Add unit tests for filter patterns",
+      "description": "As a developer, I need tests for content filtering.",
+      "acceptanceCriteria": [
+        "Create src/config/__tests__/filter-patterns.test.ts",
+        "Test BAD_TITLE_PATTERNS with positive examples (should filter)",
+        "Test BAD_TITLE_PATTERNS with negative examples (should not filter)",
+        "Test BAD_URL_PATTERNS with examples",
+        "Test filterLowQualityItem function end-to-end",
+        "Tests pass"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "Evaluate and remove deprecated inoreader-sync.ts",
+      "description": "As a developer, I need to handle deprecated sync code.",
+      "acceptanceCriteria": [
+        "Search codebase for imports of inoreader-sync.ts",
+        "Check if any API routes call deprecated sync",
+        "If unused: delete src/lib/sync/inoreader-sync.ts",
+        "If used: add TODO comment with deprecation plan",
+        "Typecheck passes"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "Evaluate and remove inoreader-sync-optimized.ts",
+      "description": "As a developer, I need to handle the optimized sync variant.",
+      "acceptanceCriteria": [
+        "Search codebase for imports of inoreader-sync-optimized.ts",
+        "Check if any API routes call this sync variant",
+        "If unused: delete src/lib/sync/inoreader-sync-optimized.ts",
+        "If used: add TODO comment with migration plan",
+        "Typecheck passes"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

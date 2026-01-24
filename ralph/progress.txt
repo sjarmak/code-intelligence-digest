@@ -1,0 +1,80 @@
+# Ralph Progress Log
+# Project: Code Intelligence Digest - Codebase Refactoring
+# Branch: ralph/codebase-refactoring
+# Started: 2026-01-24
+
+## Codebase Patterns
+- Existing typecheck errors in `.next/` directory (generated Next.js files) and `history/` and `scripts/` directories - these are pre-existing and unrelated to refactoring work
+- The `src/lib/pipeline/` directory contains the ranking pipeline components
+- Recency scoring uses exponential decay formula: `0.2 + 0.8 * 2^(-ageDays / halfLifeDays)`
+- Database abstraction: Use `getDbClient()` from `src/lib/db/driver.ts` for cross-database compatibility (SQLite dev, PostgreSQL prod)
+- When querying with driver abstraction, cast result rows through `unknown` for type safety: `result.rows[0] as unknown as MyType`
+- For upserts, check `db.driver` property and use PostgreSQL's `ON CONFLICT ... DO UPDATE SET col = EXCLUDED.col` vs SQLite's `INSERT OR REPLACE`
+
+---
+
+## 2026-01-24 - US-006
+- What was implemented: Added `VALID_CATEGORIES` constant to `src/lib/model.ts`
+- Files changed:
+  - `src/lib/model.ts` (modified - added VALID_CATEGORIES export)
+- **Learnings for future iterations:**
+  - The `Category` type in model.ts defines the 7 valid categories: newsletters, podcasts, tech_articles, ai_news, product_news, community, research
+  - VALID_CATEGORIES is exported as `readonly Category[]` with `as const` for type safety
+  - This constant can be used for validation and iteration over categories throughout the codebase
+---
+
+## 2026-01-24 - US-005
+- What was implemented: Updated `src/lib/sync/weekly-sync.ts` to use database driver abstraction
+- Files changed:
+  - `src/lib/sync/weekly-sync.ts` (modified - replaced getSqlite with getDbClient)
+- **Learnings for future iterations:**
+  - Replace `getSqlite` from `../db/index` with `getDbClient` from `../db/driver`
+  - Convert synchronous state functions (`getSyncState`, `saveSyncState`, `clearSyncState`) to async
+  - The `DatabaseClient` interface provides `query()` and `run()` methods returning Promises
+  - Query results use `result.rows` array, need to cast through `unknown` for type safety
+  - For upserts, check `db.driver === 'postgres'` and use appropriate syntax
+  - All callers of async state functions need `await`
+---
+
+## 2026-01-24 - US-004
+- What was implemented: Created unit tests for `computeRecencyScore` function in `scoring-utils.ts`
+- Files changed:
+  - `__tests__/lib/pipeline/scoring-utils.test.ts` (created - 14 tests)
+- **Learnings for future iterations:**
+  - Tests are in `__tests__/` directory mirroring the source structure (e.g., `__tests__/lib/pipeline/` for `src/lib/pipeline/`)
+  - Use vitest's `vi.useFakeTimers()` and `vi.setSystemTime()` to mock Date.now() for deterministic date-based tests
+  - The formula `0.2 + 0.8 * 2^(-ageDays / halfLifeDays)` produces:
+    - Score = 1.0 at age=0
+    - Score ≈ 0.6 at age=halfLifeDays
+    - Score approaches 0.2 floor for very old content
+  - Test covers edge cases: fresh content, half-life, old content, different half-life values, bounds, and monotonic decay
+---
+
+## 2026-01-24 - US-002
+- What was implemented: N/A - `compute-scores.ts` does not exist in codebase
+- Files changed: None
+- **Learnings for future iterations:**
+  - The PRD referenced `compute-scores.ts` but this file doesn't exist. The recency function was only in `rank.ts`
+  - When PRD references a file that doesn't exist, mark as N/A and document why
+---
+
+## 2026-01-24 - US-003
+- What was implemented: Updated `src/lib/pipeline/rank.ts` to use shared `computeRecencyScore` from `scoring-utils.ts`
+- Files changed:
+  - `src/lib/pipeline/rank.ts` (modified - removed local function, added import)
+- **Learnings for future iterations:**
+  - rank.ts is the main ranking pipeline file combining BM25, LLM scores, recency, and boosts
+  - The local function used a slightly different clamping approach (`Math.max(0.2, Math.min(1.0, decayedScore))`) vs the shared utils which uses the mathematically equivalent formula
+  - When replacing duplicated functions with imports, ensure the behavior is functionally equivalent
+---
+
+## 2026-01-24 - US-001
+- What was implemented: Created `src/lib/pipeline/scoring-utils.ts` with unified `computeRecencyScore` function
+- Files changed:
+  - `src/lib/pipeline/scoring-utils.ts` (created)
+- **Learnings for future iterations:**
+  - The original formula in rank.ts used `Math.max(0.2, Math.min(1.0, decayedScore))` as a clamp, but the PRD formula `0.2 + 0.8 * Math.pow(2, -ageDays / halfLifeDays)` is mathematically equivalent and cleaner
+  - JSDoc with `@example` blocks is helpful for documenting scoring functions
+  - Typecheck passes even though there are pre-existing errors in `.next/` generated files and some script files
+---
+
