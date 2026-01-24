@@ -12,12 +12,27 @@ import { computeRecencyScore, computeBoostMultiplier } from "./scoring-utils";
 import { filterLowQualityItem } from "../../config/filter-patterns";
 
 /**
+ * Options for the rankCategory function
+ */
+export interface RankOptions {
+  /** Skip filtering items by date/time window. Default: false */
+  skipDateFilter?: boolean;
+  /** Include recency score in final ranking. Default: true */
+  includeRecency?: boolean;
+}
+
+/**
  * Rank items for a given category
+ * @param items - Feed items to rank
+ * @param category - Category to rank for
+ * @param periodDays - Time window in days for filtering items
+ * @param options - Optional ranking options
  */
 export async function rankCategory(
   items: FeedItem[],
   category: Category,
-  periodDays: number
+  periodDays: number,
+  options?: RankOptions
 ): Promise<RankedItem[]> {
   if (items.length === 0) {
     return [];
@@ -26,16 +41,23 @@ export async function rankCategory(
   logger.info(`Ranking ${items.length} items for category: ${category}`);
 
   const config = getCategoryConfig(category);
+  const skipDateFilter = options?.skipDateFilter ?? false;
+  const includeRecency = options?.includeRecency ?? true;
 
-  // Filter to items within time window
-  const now = Date.now();
-  const windowMs = periodDays * 24 * 60 * 60 * 1000;
-  const recentItems = items.filter((item) => {
-    const ageMs = now - item.publishedAt.getTime();
-    return ageMs <= windowMs;
-  });
-
-  logger.info(`${recentItems.length} items within ${periodDays} day window`);
+  // Filter to items within time window (unless skipDateFilter is true)
+  let recentItems: FeedItem[];
+  if (skipDateFilter) {
+    recentItems = items;
+    logger.info(`Skipping date filter, using all ${items.length} items`);
+  } else {
+    const now = Date.now();
+    const windowMs = periodDays * 24 * 60 * 60 * 1000;
+    recentItems = items.filter((item) => {
+      const ageMs = now - item.publishedAt.getTime();
+      return ageMs <= windowMs;
+    });
+    logger.info(`${recentItems.length} items within ${periodDays} day window`);
+  }
 
   if (recentItems.length === 0) {
     return [];
@@ -94,7 +116,11 @@ export async function rankCategory(
     const llmScore = llmResult
       ? (0.7 * llmResult.relevance + 0.3 * llmResult.usefulness) / 10 // Normalize to [0, 1]
       : bm25Score; // Use BM25 as fallback when no LLM score
-    const recencyScore = computeRecencyScore(item.publishedAt, config.halfLifeDays);
+
+    // Compute recency score only if includeRecency is true, otherwise use 1.0 (neutral)
+    const recencyScore = includeRecency
+      ? computeRecencyScore(item.publishedAt, config.halfLifeDays)
+      : 1.0;
 
     // Apply boosts for domain-specific terms (code search, agents, evaluation, etc.)
     const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`;
@@ -116,10 +142,13 @@ export async function rankCategory(
     finalScore = finalScore * boostMultiplier;
 
     // Build reasoning string
+    const ageDays = Math.round((Date.now() - item.publishedAt.getTime()) / (1000 * 60 * 60 * 24));
     const reasoning = [
       `LLM: relevance=${llmResult?.relevance.toFixed(1)}, usefulness=${llmResult?.usefulness.toFixed(1)}`,
       `BM25=${bm25Score.toFixed(2)}`,
-      `Recency=${recencyScore.toFixed(2)} (age: ${Math.round((Date.now() - item.publishedAt.getTime()) / (1000 * 60 * 60 * 24))}d)`,
+      includeRecency
+        ? `Recency=${recencyScore.toFixed(2)} (age: ${ageDays}d)`
+        : `Recency=disabled (age: ${ageDays}d)`,
       boostMultiplier > 1.0 ? `[BOOST] ${boostMultiplier}x (core domain terms)` : '',
       `Tags: ${llmResult?.tags.join(", ") || "none"}`,
     ].filter(Boolean).join(" | ");
