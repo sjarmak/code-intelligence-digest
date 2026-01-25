@@ -288,7 +288,7 @@ export async function GET(request: NextRequest) {
   const category = searchParams.get("category") as Category | null;
   const period = searchParams.get("period") || "week";
   const limitParam = searchParams.get("limit");
-  const excludeIdsParam = searchParams.get("excludeIds"); // Comma-separated list of item IDs to exclude
+  const offsetParam = searchParams.get("offset"); // Offset for pagination (skip N items)
   const startDateParam = searchParams.get("startDate");
   const endDateParam = searchParams.get("endDate");
 
@@ -308,10 +308,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Parse excludeIds for pagination
-    const excludeIds = excludeIdsParam
-      ? new Set(excludeIdsParam.split(",").filter((id) => id.trim().length > 0))
-      : undefined;
+    // Parse offset for pagination
+    let offset = 0;
+    if (offsetParam) {
+      const parsed = parseInt(offsetParam, 10);
+      if (!isNaN(parsed) && parsed >= 0) {
+        offset = parsed;
+      }
+    }
 
     // Validate category
     if (!category || !VALID_CATEGORIES.includes(category)) {
@@ -857,25 +861,34 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // Get all items that pass diversity selection (no excludeIds - we'll paginate after)
+    // Use a higher limit to get all valid items for pagination
+    const maxItemsForSelection = Math.max(100, (customLimit || 10) + offset);
     const selectionResult = selectWithDiversity(
       rankedItems,
       category,
       maxPerSource,
-      customLimit, // Pass custom limit to override category config
-      excludeIds, // Exclude already-loaded items for pagination
+      maxItemsForSelection,
+      undefined, // No excludeIds - we use offset-based pagination
     );
     logger.info(
       `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`,
     );
 
-    // Check if there are more items available beyond the current selection
-    // We need to check if there are any items in rankedItems that weren't selected
-    // and that meet the quality threshold (finalScore >= 0.05)
-    const selectedIds = new Set(selectionResult.items.map((item) => item.id));
-    const remainingItems = rankedItems.filter(
-      (item) => !selectedIds.has(item.id) && item.finalScore >= 0.05,
+    // Apply pagination: slice items based on offset and limit
+    const pageSize = customLimit || 10;
+    const paginatedItems = selectionResult.items.slice(
+      offset,
+      offset + pageSize,
     );
-    const hasMore = remainingItems.length > 0;
+    const totalCount = selectionResult.items.length;
+    const hasMore = offset + pageSize < totalCount;
+    const currentPage = Math.floor(offset / pageSize) + 1;
+    const totalPages = Math.ceil(totalCount / pageSize);
+
+    logger.info(
+      `Pagination: page ${currentPage}/${totalPages}, showing items ${offset + 1}-${offset + paginatedItems.length} of ${totalCount}`,
+    );
 
     // Collect all unique products mentioned in the results (for filter UI)
     const allMentionedProducts = new Set<string>();
@@ -892,10 +905,19 @@ export async function GET(request: NextRequest) {
       category,
       period,
       periodDays,
-      totalItems: selectionResult.items.length,
+      // Pagination metadata
+      pagination: {
+        currentPage,
+        totalPages,
+        pageSize,
+        totalCount,
+        offset,
+        hasMore,
+      },
+      totalItems: paginatedItems.length,
       itemsRanked: rankedItems.length,
       itemsFiltered: rankedItems.length - selectionResult.items.length,
-      hasMore, // Indicate if more items are available
+      hasMore, // Keep for backwards compatibility
       // Products mentioned in results (for building filter UI)
       productsMentioned: Array.from(allMentionedProducts)
         .map((id) => {
@@ -905,7 +927,7 @@ export async function GET(request: NextRequest) {
             : null;
         })
         .filter(Boolean),
-      items: selectionResult.items.map((item) => ({
+      items: paginatedItems.map((item, index) => ({
         id: item.id,
         title: decodeHtmlEntities(item.title), // Decode HTML entities in title
         url: item.url,
@@ -927,6 +949,8 @@ export async function GET(request: NextRequest) {
         reasoning: item.reasoning,
         diversityReason: selectionResult.reasons.get(item.id),
         productMentions: item.productMentions, // Include detected products
+        // Include the overall rank (1-indexed, accounting for offset)
+        rank: offset + index + 1,
       })),
     });
 
@@ -948,7 +972,7 @@ export async function GET(request: NextRequest) {
       category,
       period,
       limitParam,
-      excludeIdsParam,
+      offsetParam,
     });
     return NextResponse.json(
       {
