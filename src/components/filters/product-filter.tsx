@@ -249,7 +249,7 @@ export function ProductFilter({
               <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
                 Include Products
               </h4>
-              <div className="max-h-32 overflow-y-auto space-y-1">
+              <div className="max-h-64 overflow-y-auto space-y-1">
                 {displayProducts.length === 0 ? (
                   <p className="text-xs text-gray-400 italic">
                     No products detected in results
@@ -283,7 +283,7 @@ export function ProductFilter({
               <h4 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
                 Exclude Products
               </h4>
-              <div className="max-h-32 overflow-y-auto space-y-1">
+              <div className="max-h-64 overflow-y-auto space-y-1">
                 {displayProducts.length === 0 ? (
                   <p className="text-xs text-gray-400 italic">
                     No products detected in results
