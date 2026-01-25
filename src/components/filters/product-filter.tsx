@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, X, Filter } from 'lucide-react';
-import { useProducts } from '@/src/hooks/useProducts';
+import { useState, useRef, useEffect } from "react";
+import { ChevronDown, X, Filter } from "lucide-react";
+import { useProducts } from "@/src/hooks/useProducts";
 
 /**
  * State for product filtering
@@ -85,24 +85,36 @@ export function ProductFilter({
   // Close panel when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
+      if (
+        panelRef.current &&
+        !panelRef.current.contains(event.target as Node)
+      ) {
         setIsOpen(false);
       }
     };
 
     if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener("mousedown", handleClickOutside);
     }
 
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isOpen]);
 
-  const handleToggleProduct = (productId: string, list: 'selected' | 'excluded') => {
+  const handleToggleProduct = (
+    productId: string,
+    list: "selected" | "excluded",
+  ) => {
     const newState = { ...value };
-    const targetSet = list === 'selected' ? newState.selectedProducts : newState.excludedProducts;
-    const otherSet = list === 'selected' ? newState.excludedProducts : newState.selectedProducts;
+    const targetSet =
+      list === "selected"
+        ? newState.selectedProducts
+        : newState.excludedProducts;
+    const otherSet =
+      list === "selected"
+        ? newState.excludedProducts
+        : newState.selectedProducts;
 
     const newTargetSet = new Set(targetSet);
     const newOtherSet = new Set(otherSet);
@@ -115,7 +127,7 @@ export function ProductFilter({
       newOtherSet.delete(productId);
     }
 
-    if (list === 'selected') {
+    if (list === "selected") {
       newState.selectedProducts = newTargetSet;
       newState.excludedProducts = newOtherSet;
     } else {
@@ -144,10 +156,12 @@ export function ProductFilter({
     onChange(createEmptyProductFilter());
   };
 
-  // Get product list to display - prefer available products if provided
-  const displayProducts = availableProducts && availableProducts.length > 0
-    ? availableProducts
-    : competitors.map(p => ({ id: p.id, name: p.name, category: p.category }));
+  // Always show all products for filtering (not just those in current results)
+  const displayProducts = products.map((p) => ({
+    id: p.id,
+    name: p.name,
+    category: p.category,
+  }));
 
   return (
     <div ref={panelRef} className="relative">
@@ -158,20 +172,26 @@ export function ProductFilter({
         disabled={disabled}
         className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors border ${
           activeCount > 0
-            ? 'bg-black text-white border-black'
-            : 'bg-white border-gray-300 text-black hover:bg-gray-50'
+            ? "bg-black text-white border-black"
+            : "bg-white border-gray-300 text-black hover:bg-gray-50"
         } disabled:opacity-50 disabled:cursor-not-allowed`}
       >
         <Filter className="w-4 h-4" />
         <span className="hidden sm:inline">Products</span>
         {activeCount > 0 && (
-          <span className={`px-1.5 py-0.5 rounded-full text-xs ${
-            activeCount > 0 ? 'bg-white text-black' : 'bg-gray-200 text-gray-700'
-          }`}>
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-xs ${
+              activeCount > 0
+                ? "bg-white text-black"
+                : "bg-gray-200 text-gray-700"
+            }`}
+          >
             {activeCount}
           </span>
         )}
-        <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`w-4 h-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+        />
       </button>
 
       {/* Dropdown Panel */}
@@ -180,7 +200,9 @@ export function ProductFilter({
           <div className="p-4 space-y-4">
             {/* Header */}
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900">Filter by Products</h3>
+              <h3 className="text-sm font-semibold text-gray-900">
+                Filter by Products
+              </h3>
               {activeCount > 0 && (
                 <button
                   type="button"
@@ -213,7 +235,9 @@ export function ProductFilter({
                   disabled={disabled}
                   className="rounded border-gray-300 text-black focus:ring-black accent-black"
                 />
-                <span className="text-sm text-gray-700">Exclude Sourcegraph/Cody</span>
+                <span className="text-sm text-gray-700">
+                  Exclude Sourcegraph/Cody
+                </span>
               </label>
             </div>
 
@@ -227,7 +251,9 @@ export function ProductFilter({
               </h4>
               <div className="max-h-32 overflow-y-auto space-y-1">
                 {displayProducts.length === 0 ? (
-                  <p className="text-xs text-gray-400 italic">No products detected in results</p>
+                  <p className="text-xs text-gray-400 italic">
+                    No products detected in results
+                  </p>
                 ) : (
                   displayProducts.map((product) => (
                     <label
@@ -237,11 +263,15 @@ export function ProductFilter({
                       <input
                         type="checkbox"
                         checked={value.selectedProducts.has(product.id)}
-                        onChange={() => handleToggleProduct(product.id, 'selected')}
+                        onChange={() =>
+                          handleToggleProduct(product.id, "selected")
+                        }
                         disabled={disabled}
                         className="rounded border-gray-300 text-black focus:ring-black accent-black"
                       />
-                      <span className="text-sm text-gray-700">{product.name}</span>
+                      <span className="text-sm text-gray-700">
+                        {product.name}
+                      </span>
                     </label>
                   ))
                 )}
@@ -255,7 +285,9 @@ export function ProductFilter({
               </h4>
               <div className="max-h-32 overflow-y-auto space-y-1">
                 {displayProducts.length === 0 ? (
-                  <p className="text-xs text-gray-400 italic">No products detected in results</p>
+                  <p className="text-xs text-gray-400 italic">
+                    No products detected in results
+                  </p>
                 ) : (
                   displayProducts.map((product) => (
                     <label
@@ -265,11 +297,15 @@ export function ProductFilter({
                       <input
                         type="checkbox"
                         checked={value.excludedProducts.has(product.id)}
-                        onChange={() => handleToggleProduct(product.id, 'excluded')}
+                        onChange={() =>
+                          handleToggleProduct(product.id, "excluded")
+                        }
                         disabled={disabled}
                         className="rounded border-gray-300 text-black focus:ring-black accent-black"
                       />
-                      <span className="text-sm text-gray-700">{product.name}</span>
+                      <span className="text-sm text-gray-700">
+                        {product.name}
+                      </span>
                     </label>
                   ))
                 )}
@@ -277,18 +313,25 @@ export function ProductFilter({
             </div>
 
             {/* Selected Summary */}
-            {(value.selectedProducts.size > 0 || value.excludedProducts.size > 0) && (
+            {(value.selectedProducts.size > 0 ||
+              value.excludedProducts.size > 0) && (
               <>
                 <hr className="border-gray-200" />
                 <div className="text-xs text-gray-500">
                   {value.selectedProducts.size > 0 && (
                     <p>
-                      Including: {Array.from(value.selectedProducts).map(id => getProductName(id)).join(', ')}
+                      Including:{" "}
+                      {Array.from(value.selectedProducts)
+                        .map((id) => getProductName(id))
+                        .join(", ")}
                     </p>
                   )}
                   {value.excludedProducts.size > 0 && (
                     <p>
-                      Excluding: {Array.from(value.excludedProducts).map(id => getProductName(id)).join(', ')}
+                      Excluding:{" "}
+                      {Array.from(value.excludedProducts)
+                        .map((id) => getProductName(id))
+                        .join(", ")}
                     </p>
                   )}
                 </div>
@@ -322,13 +365,22 @@ export function MobileProductFilter({
   isOpen,
   onToggle,
 }: MobileProductFilterProps) {
-  const { competitors, getProductName } = useProducts();
+  const { products, getProductName } = useProducts();
   const activeCount = countActiveFilters(value);
 
-  const handleToggleProduct = (productId: string, list: 'selected' | 'excluded') => {
+  const handleToggleProduct = (
+    productId: string,
+    list: "selected" | "excluded",
+  ) => {
     const newState = { ...value };
-    const targetSet = list === 'selected' ? newState.selectedProducts : newState.excludedProducts;
-    const otherSet = list === 'selected' ? newState.excludedProducts : newState.selectedProducts;
+    const targetSet =
+      list === "selected"
+        ? newState.selectedProducts
+        : newState.excludedProducts;
+    const otherSet =
+      list === "selected"
+        ? newState.excludedProducts
+        : newState.selectedProducts;
 
     const newTargetSet = new Set(targetSet);
     const newOtherSet = new Set(otherSet);
@@ -340,7 +392,7 @@ export function MobileProductFilter({
       newOtherSet.delete(productId);
     }
 
-    if (list === 'selected') {
+    if (list === "selected") {
       newState.selectedProducts = newTargetSet;
       newState.excludedProducts = newOtherSet;
     } else {
@@ -351,9 +403,12 @@ export function MobileProductFilter({
     onChange(newState);
   };
 
-  const displayProducts = availableProducts && availableProducts.length > 0
-    ? availableProducts
-    : competitors.map(p => ({ id: p.id, name: p.name, category: p.category }));
+  // Always show all products for filtering (not just those in current results)
+  const displayProducts = products.map((p) => ({
+    id: p.id,
+    name: p.name,
+    category: p.category,
+  }));
 
   return (
     <div className="relative">
@@ -367,7 +422,9 @@ export function MobileProductFilter({
           <Filter className="w-4 h-4" />
           Products {activeCount > 0 && `(${activeCount})`}
         </span>
-        <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown
+          className={`w-4 h-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+        />
       </button>
 
       {isOpen && (
@@ -378,7 +435,12 @@ export function MobileProductFilter({
               <input
                 type="checkbox"
                 checked={value.competitorsOnly}
-                onChange={() => onChange({ ...value, competitorsOnly: !value.competitorsOnly })}
+                onChange={() =>
+                  onChange({
+                    ...value,
+                    competitorsOnly: !value.competitorsOnly,
+                  })
+                }
                 disabled={disabled}
                 className="rounded border-gray-300 text-black focus:ring-black accent-black"
               />
@@ -388,7 +450,9 @@ export function MobileProductFilter({
               <input
                 type="checkbox"
                 checked={value.excludeOwn}
-                onChange={() => onChange({ ...value, excludeOwn: !value.excludeOwn })}
+                onChange={() =>
+                  onChange({ ...value, excludeOwn: !value.excludeOwn })
+                }
                 disabled={disabled}
                 className="rounded border-gray-300 text-black focus:ring-black accent-black"
               />
@@ -399,7 +463,9 @@ export function MobileProductFilter({
 
             {/* Products List */}
             <div>
-              <p className="text-xs font-medium text-gray-500 uppercase mb-2">Filter by product</p>
+              <p className="text-xs font-medium text-gray-500 uppercase mb-2">
+                Filter by product
+              </p>
               {displayProducts.map((product) => (
                 <label
                   key={product.id}
@@ -408,7 +474,7 @@ export function MobileProductFilter({
                   <input
                     type="checkbox"
                     checked={value.selectedProducts.has(product.id)}
-                    onChange={() => handleToggleProduct(product.id, 'selected')}
+                    onChange={() => handleToggleProduct(product.id, "selected")}
                     disabled={disabled}
                     className="rounded border-gray-300 text-black focus:ring-black accent-black"
                   />
