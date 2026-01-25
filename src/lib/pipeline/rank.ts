@@ -8,6 +8,11 @@ import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
+import {
+  findProductMentions,
+  getProductById,
+  getCompetitorProducts,
+} from "../../config/products";
 
 /**
  * Compute recency score with exponential decay
@@ -328,32 +333,15 @@ export async function rankCategory(
     const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
     const boostTags: string[] = [];
 
+    // Detect product mentions in content (used for filtering and boosting)
+    const detectedProductIds = findProductMentions(contentToSearch);
+
     // For product_news category, heavily boost mentions of specific products
-    if (category === "product_news") {
-      const productNames = [
-        'augment code',
-        'claude code',
-        'cursor',
-        'windsurf',
-        'warp',
-        'greptile',
-        'coderabbit',
-        'codex',
-        'gemini cli',
-        'github copilot',
-        'kilo',
-      ];
-
-      const matchingProducts = productNames.filter(product =>
-        contentToSearch.includes(product)
-      );
-
-      if (matchingProducts.length > 0) {
-        // Heavy boost for product mentions: 4x for 2+ products, 3x for 1 product
-        boostMultiplier = matchingProducts.length >= 2 ? 4.0 : 3.0;
-        boostTags.push(...matchingProducts);
-        logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${matchingProducts.join(", ")}: "${item.title}"`);
-      }
+    if (category === "product_news" && detectedProductIds.length > 0) {
+      // Heavy boost for product mentions: 4x for 2+ products, 3x for 1 product
+      boostMultiplier = detectedProductIds.length >= 2 ? 4.0 : 3.0;
+      boostTags.push(...detectedProductIds);
+      logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${detectedProductIds.join(", ")}: "${item.title}"`);
     }
 
     // SOURCEGRAPH: Highest priority
@@ -444,6 +432,7 @@ export async function rankCategory(
       recencyScore,
       finalScore,
       reasoning,
+      productMentions: detectedProductIds.length > 0 ? detectedProductIds : undefined,
     };
   });
 
@@ -721,30 +710,13 @@ export async function rankCategoryWithoutRecency(
     const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
     const boostTags: string[] = [];
 
-    if (category === "product_news") {
-      const productNames = [
-        'augment code',
-        'claude code',
-        'cursor',
-        'windsurf',
-        'warp',
-        'greptile',
-        'coderabbit',
-        'codex',
-        'gemini cli',
-        'github copilot',
-        'kilo',
-      ];
+    // Detect product mentions in content (used for filtering and boosting)
+    const detectedProductIds = findProductMentions(contentToSearch);
 
-      const matchingProducts = productNames.filter(product =>
-        contentToSearch.includes(product)
-      );
-
-      if (matchingProducts.length > 0) {
-        boostMultiplier = matchingProducts.length >= 2 ? 4.0 : 3.0;
-        boostTags.push(...matchingProducts);
-        logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${matchingProducts.join(", ")}: "${item.title}"`);
-      }
+    if (category === "product_news" && detectedProductIds.length > 0) {
+      boostMultiplier = detectedProductIds.length >= 2 ? 4.0 : 3.0;
+      boostTags.push(...detectedProductIds);
+      logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${detectedProductIds.join(", ")}: "${item.title}"`);
     }
 
     const hasSourcegraph = contentToSearch.includes('sourcegraph');
@@ -812,6 +784,7 @@ export async function rankCategoryWithoutRecency(
       recencyScore: 0, // Set to 0 since it's not used
       finalScore,
       reasoning,
+      productMentions: detectedProductIds.length > 0 ? detectedProductIds : undefined,
     };
   });
 

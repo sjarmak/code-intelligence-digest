@@ -60,4 +60,6 @@ export interface RankedItem extends FeedItem {
   engagementScore?: number;
   finalScore: number;
   reasoning: string;
+  /** Product IDs mentioned in the content (e.g., ["cursor", "claude-code"]) */
+  productMentions?: string[];
 }

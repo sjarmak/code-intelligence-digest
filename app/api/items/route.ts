@@ -15,6 +15,12 @@ import { getCategoryConfig } from "@/src/config/categories";
 import { PERIOD_CONFIG } from "@/src/config/periods";
 import { decodeHtmlEntities } from "@/src/lib/utils/html-entities";
 import { filterLowQualityItem } from "@/src/config/filter-patterns";
+import {
+  getProductById,
+  getCompetitorProducts,
+  getOwnProducts,
+  getAllProductIds,
+} from "@/src/config/products";
 
 /**
  * Decode tracking URLs to get the real destination URL
@@ -242,6 +248,12 @@ export async function GET(request: NextRequest) {
   const excludeIdsParam = searchParams.get("excludeIds"); // Comma-separated list of item IDs to exclude
   const startDateParam = searchParams.get("startDate");
   const endDateParam = searchParams.get("endDate");
+
+  // Product filtering parameters
+  const productsParam = searchParams.get("products"); // Comma-separated product IDs to filter TO
+  const excludeProductsParam = searchParams.get("excludeProducts"); // Comma-separated product IDs to filter OUT
+  const competitorsOnlyParam = searchParams.get("competitorsOnly"); // Only show items mentioning competitors
+  const excludeOwnParam = searchParams.get("excludeOwn"); // Exclude Sourcegraph/Cody mentions
 
   try {
 
@@ -646,13 +658,69 @@ export async function GET(request: NextRequest) {
     // Rank items (no filtering - it's fine for ai_news to show items from newsletters if they're relevant)
     // If we had to fall back (no items in-window), skip the internal date filter in rankCategory
     // so that "week" doesn't become empty after we already chose to display stale data.
-    const rankedItems = await rankCategory(items, category, periodDays, period, { skipDateFilter: usedCutoffFallback });
+    let rankedItems = await rankCategory(items, category, periodDays, period, { skipDateFilter: usedCutoffFallback });
     logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`);
 
     // Debug: Check if scores are loading
     if (rankedItems.length > 0) {
       const firstItem = rankedItems[0];
       logger.info(`[API] First ranked item: title="${firstItem.title.substring(0, 50)}...", finalScore=${firstItem.finalScore.toFixed(3)}, llmRelevance=${firstItem.llmScore.relevance}, llmUsefulness=${firstItem.llmScore.usefulness}`);
+    }
+
+    // Apply product filtering if any product filters are specified
+    const beforeProductFilter = rankedItems.length;
+    if (productsParam || excludeProductsParam || competitorsOnlyParam === "true" || excludeOwnParam === "true") {
+      // Parse product filter lists
+      const includeProducts = productsParam
+        ? new Set(productsParam.split(",").map((p) => p.trim().toLowerCase()))
+        : null;
+      const excludeProducts = excludeProductsParam
+        ? new Set(excludeProductsParam.split(",").map((p) => p.trim().toLowerCase()))
+        : null;
+      const competitorsOnly = competitorsOnlyParam === "true";
+      const excludeOwn = excludeOwnParam === "true";
+
+      // Get sets for quick lookup
+      const competitorIds = new Set(getCompetitorProducts().map((p) => p.id));
+      const ownProductIds = new Set(getOwnProducts().map((p) => p.id));
+
+      rankedItems = rankedItems.filter((item) => {
+        const mentions = item.productMentions || [];
+
+        // Filter: only include items mentioning specific products
+        if (includeProducts && includeProducts.size > 0) {
+          if (!mentions.some((m) => includeProducts.has(m))) {
+            return false;
+          }
+        }
+
+        // Filter: exclude items mentioning specific products
+        if (excludeProducts && excludeProducts.size > 0) {
+          if (mentions.some((m) => excludeProducts.has(m))) {
+            return false;
+          }
+        }
+
+        // Filter: only show items mentioning competitor products
+        if (competitorsOnly) {
+          if (!mentions.some((m) => competitorIds.has(m))) {
+            return false;
+          }
+        }
+
+        // Filter: exclude items mentioning own products (Sourcegraph/Cody)
+        if (excludeOwn) {
+          if (mentions.some((m) => ownProductIds.has(m))) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+
+      logger.info(
+        `[API] Product filter: ${beforeProductFilter} -> ${rankedItems.length} items (filters: products=${productsParam || "none"}, excludeProducts=${excludeProductsParam || "none"}, competitorsOnly=${competitorsOnly}, excludeOwn=${excludeOwn})`
+      );
     }
 
     // Apply diversity selection based on period
@@ -696,6 +764,16 @@ export async function GET(request: NextRequest) {
     );
     const hasMore = remainingItems.length > 0;
 
+    // Collect all unique products mentioned in the results (for filter UI)
+    const allMentionedProducts = new Set<string>();
+    for (const item of selectionResult.items) {
+      if (item.productMentions) {
+        for (const productId of item.productMentions) {
+          allMentionedProducts.add(productId);
+        }
+      }
+    }
+
     // Return response with cache control headers to prevent Next.js caching
     const response = NextResponse.json({
       category,
@@ -705,6 +783,11 @@ export async function GET(request: NextRequest) {
       itemsRanked: rankedItems.length,
       itemsFiltered: rankedItems.length - selectionResult.items.length,
       hasMore, // Indicate if more items are available
+      // Products mentioned in results (for building filter UI)
+      productsMentioned: Array.from(allMentionedProducts).map((id) => {
+        const product = getProductById(id);
+        return product ? { id: product.id, name: product.name, category: product.category } : null;
+      }).filter(Boolean),
       items: selectionResult.items.map((item) => ({
         id: item.id,
         title: decodeHtmlEntities(item.title), // Decode HTML entities in title
@@ -726,6 +809,7 @@ export async function GET(request: NextRequest) {
         finalScore: Number(item.finalScore.toFixed(3)),
         reasoning: item.reasoning,
         diversityReason: selectionResult.reasons.get(item.id),
+        productMentions: item.productMentions, // Include detected products
       })),
     });
 

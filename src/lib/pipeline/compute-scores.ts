@@ -10,6 +10,7 @@ import { scoreWithLLM } from "./llmScore";
 import { saveItemScores } from "../db/scores";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
+import { findProductMentions } from "../../config/products";
 
 /**
  * Compute recency score with exponential decay
@@ -124,32 +125,15 @@ export async function computeAndSaveScoresForCategory(
       const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
       const boostTags: string[] = [];
 
+      // Detect product mentions using the comprehensive products config
+      const detectedProductIds = findProductMentions(contentToSearch);
+
       // For product_news category, heavily boost mentions of specific products
-      if (category === "product_news") {
-        const productNames = [
-          'augment code',
-          'claude code',
-          'cursor',
-          'windsurf',
-          'warp',
-          'greptile',
-          'coderabbit',
-          'codex',
-          'gemini cli',
-          'github copilot',
-          'kilo',
-        ];
-
-        const matchingProducts = productNames.filter(product =>
-          contentToSearch.includes(product)
-        );
-
-        if (matchingProducts.length > 0) {
-          // Heavy boost for product mentions: 4x for 2+ products, 3x for 1 product
-          boostMultiplier = matchingProducts.length >= 2 ? 4.0 : 3.0;
-          boostTags.push(...matchingProducts);
-          logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${matchingProducts.join(", ")}: "${item.title}"`);
-        }
+      if (category === "product_news" && detectedProductIds.length > 0) {
+        // Heavy boost for product mentions: 4x for 2+ products, 3x for 1 product
+        boostMultiplier = detectedProductIds.length >= 2 ? 4.0 : 3.0;
+        boostTags.push(...detectedProductIds);
+        logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${detectedProductIds.join(", ")}: "${item.title}"`);
       }
 
       // SOURCEGRAPH: Highest priority
@@ -218,6 +202,7 @@ export async function computeAndSaveScoresForCategory(
         recencyScore,
         finalScore,
         reasoning,
+        productMentions: detectedProductIds.length > 0 ? detectedProductIds : undefined,
       };
     });
 

@@ -6,6 +6,7 @@
 import { FeedItem, LLMScoreResult, Category } from "../model";
 import { logger } from "../logger";
 import OpenAI from "openai";
+import { getCompetitorProducts } from "../../config/products";
 
 /**
  * Lazy-initialized OpenAI client
@@ -72,11 +73,17 @@ Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
 
     case "product_news":
+      // Get comprehensive list of competitor products for the prompt
+      const competitorNames = getCompetitorProducts()
+        .map((p) => p.name)
+        .slice(0, 25) // Limit to avoid overly long prompt
+        .join(", ");
+
       return `You are an expert evaluator of product news for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
-1. **Relevance** (0-10): Focus on updates from competitors or potential partners: Augment Code, Windsurf, Cursor, Claude Code, Codex CLI, Gemini CLI/Antigravity, and any other products that add codebase context to coding agents.
-2. **Usefulness** (0-10): How useful/valuable is this for a senior developer or tech lead tracking coding agent tools?
+1. **Relevance** (0-10): Focus on updates from coding agent products and competitors including: ${competitorNames}. Also relevant: any products that add codebase context to coding agents, code search tools, or AI coding assistants.
+2. **Usefulness** (0-10): How useful/valuable is this for a senior developer or tech lead tracking coding agent tools and the competitive landscape?
 3. **Tags**: Assign relevant domain tags from: ${baseTags.join(", ")}
 
 Return JSON with exactly this structure:

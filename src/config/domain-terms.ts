@@ -107,11 +107,15 @@ export const DOMAIN_TERMS: readonly DomainTerm[] = [
   { term: "cross-references", weight: 1.6, category: "code_search" },
   { term: "symbol indexing", weight: 1.6, category: "code_search" },
   { term: "code indexing", weight: 1.6, category: "code_search" },
+  { term: "codebase indexing", weight: 1.6, category: "code_search" },
   { term: "indexing", weight: 1.6, category: "code_search" },
   { term: "function lookup", weight: 1.6, category: "code_search" },
   { term: "variable tracking", weight: 1.6, category: "code_search" },
   { term: "semantic code", weight: 1.6, category: "code_search" },
   { term: "symbols", weight: 1.6, category: "code_search" },
+  { term: "code understanding", weight: 1.6, category: "code_search" },
+  { term: "codebase understanding", weight: 1.6, category: "code_search" },
+  { term: "code graph", weight: 1.6, category: "code_search" },
 
   // Information Retrieval (1.5x) - Core AI/ML concepts
   { term: "semantic search", weight: 1.5, category: "ir" },
@@ -139,6 +143,10 @@ export const DOMAIN_TERMS: readonly DomainTerm[] = [
   { term: "prompt optimization", weight: 1.5, category: "context" },
   { term: "long context", weight: 1.5, category: "context" },
   { term: "token limit", weight: 1.5, category: "context" },
+  { term: "memory", weight: 1.5, category: "context" },
+  { term: "persistent context", weight: 1.5, category: "context" },
+  { term: "context retrieval", weight: 1.5, category: "context" },
+  { term: "context injection", weight: 1.5, category: "context" },
 
   // Agentic Workflows (1.4x) - Emerging paradigm
   { term: "agent", weight: 1.4, category: "agentic" },
@@ -152,6 +160,14 @@ export const DOMAIN_TERMS: readonly DomainTerm[] = [
   { term: "reasoning loop", weight: 1.4, category: "agentic" },
   { term: "agent framework", weight: 1.4, category: "agentic" },
   { term: "tool calling", weight: 1.4, category: "agentic" },
+  { term: "mcp", weight: 1.4, category: "agentic" },
+  { term: "model context protocol", weight: 1.4, category: "agentic" },
+  { term: "computer use", weight: 1.4, category: "agentic" },
+  { term: "browser automation", weight: 1.4, category: "agentic" },
+  { term: "coding agent", weight: 1.4, category: "agentic" },
+  { term: "ai coding", weight: 1.4, category: "agentic" },
+  { term: "vibe coding", weight: 1.4, category: "agentic" },
+  { term: "ai pair programming", weight: 1.4, category: "agentic" },
 
   // Enterprise Codebases (1.3x) - Scale and complexity
   { term: "monorepo", weight: 1.3, category: "enterprise" },
