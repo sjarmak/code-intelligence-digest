@@ -21,6 +21,9 @@ export default function Home() {
   const [period, setPeriod] = useState<Period>('week');
   const [activeCategory, setActiveCategory] = useState<string>('newsletters');
   const [activeTab, setActiveTab] = useState<TabType>('resources');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileCategoryOpen, setMobileCategoryOpen] = useState(false);
+  const [mobilePeriodOpen, setMobilePeriodOpen] = useState(false);
 
   const categories = [
     { id: 'newsletters', label: 'Newsletters' },
@@ -32,25 +35,52 @@ export default function Home() {
     { id: 'research', label: 'Research' },
   ];
 
+  const periods = [
+    { id: 'day', label: 'Daily' },
+    { id: 'week', label: 'Weekly' },
+    { id: 'month', label: 'Monthly' },
+    { id: 'all', label: 'All-time' },
+  ];
+
+  const getCategoryLabel = (id: string) => categories.find(c => c.id === id)?.label || id;
+  const getPeriodLabel = (id: string) => periods.find(p => p.id === id)?.label || id;
+
   return (
     <div className="min-h-screen bg-white text-black">
       {/* Header */}
-      <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex justify-between items-start">
+      <header className="border-b border-surface-border sticky top-0 z-20 bg-surface w-full">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+          <div className="flex justify-between items-center">
             {/* Title */}
-            <div>
-              <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
-              <p className="text-muted mt-2">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-xl sm:text-3xl font-bold truncate">Code Intelligence Digest</h1>
+              <p className="text-muted mt-1 sm:mt-2 text-sm sm:text-base hidden sm:block">
                 Daily, weekly, and monthly digests of code intelligence, tools, and AI agents
               </p>
             </div>
 
-            {/* Settings icon - only in dev */}
+            {/* Mobile menu button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-md hover:bg-gray-100 ml-2"
+              aria-label="Toggle menu"
+            >
+              {mobileMenuOpen ? (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              )}
+            </button>
+
+            {/* Settings icon - only in dev (desktop) */}
             {config.adminUIEnabled && (
               <a
                 href="/admin"
-                className="p-1 rounded-md transition-colors hover:bg-gray-100"
+                className="hidden md:block p-1 rounded-md transition-colors hover:bg-gray-100 ml-4"
                 title="Manage relevance tuning and content sync"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -61,10 +91,62 @@ export default function Home() {
             )}
           </div>
         </div>
+
+        {/* Mobile Menu Dropdown */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-surface-border bg-surface">
+            <nav className="px-4 py-2 space-y-1">
+              <button
+                onClick={() => { setActiveTab('resources'); setMobileMenuOpen(false); }}
+                className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium ${
+                  activeTab === 'resources' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Resources
+              </button>
+              <button
+                onClick={() => { setActiveTab('search'); setMobileMenuOpen(false); }}
+                className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium ${
+                  activeTab === 'search' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Search
+              </button>
+              <button
+                onClick={() => { setActiveTab('ask'); setMobileMenuOpen(false); }}
+                className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium ${
+                  activeTab === 'ask' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Ask
+              </button>
+              <a
+                href="/digest"
+                className="block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                Generate Digest
+              </a>
+              <a
+                href="/libraries"
+                className="block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                Libraries
+              </a>
+              {config.adminUIEnabled && (
+                <a
+                  href="/admin"
+                  className="block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+                >
+                  Settings
+                </a>
+              )}
+            </nav>
+          </div>
+        )}
       </header>
 
-      {/* Main Tabs */}
-      <div className="border-b border-surface-border bg-surface sticky top-20 z-10">
+      {/* Desktop Main Tabs */}
+      <div className="hidden md:block border-b border-surface-border bg-surface sticky top-[73px] z-10 w-full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <nav className="flex overflow-x-auto gap-6" role="tablist">
             <button
@@ -119,10 +201,11 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Category Tabs (only show for resources tab) */}
+      {/* Category and Period Filters (only show for resources tab) */}
       {activeTab === 'resources' && (
         <>
-          <div className="border-b border-surface-border bg-surface sticky top-32 z-10">
+          {/* Desktop Category Tabs */}
+          <div className="hidden md:block border-b border-surface-border bg-surface sticky top-[121px] z-10 w-full">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <nav className="flex overflow-x-auto gap-2" role="tablist">
                 {categories.map((cat) => (
@@ -144,50 +227,23 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Time Period Filter Row */}
-          <div className="bg-surface sticky top-44 z-10 py-4">
+          {/* Desktop Time Period Filter Row */}
+          <div className="hidden md:block bg-surface sticky top-[169px] z-10 py-4 w-full">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setPeriod('day')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
-                    period === 'day'
-                      ? 'bg-black text-white border-black'
-                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
-                  }`}
-                >
-                  Daily
-                </button>
-                <button
-                  onClick={() => setPeriod('week')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
-                    period === 'week'
-                      ? 'bg-black text-white border-black'
-                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
-                  }`}
-                >
-                  Weekly
-                </button>
-                <button
-                  onClick={() => setPeriod('month')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
-                    period === 'month'
-                      ? 'bg-black text-white border-black'
-                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
-                  }`}
-                >
-                  Monthly
-                </button>
-                <button
-                  onClick={() => setPeriod('all')}
-                  className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
-                    period === 'all'
-                      ? 'bg-black text-white border-black'
-                      : 'bg-white border-gray-300 text-black hover:bg-gray-50'
-                  }`}
-                >
-                  All-time
-                </button>
+              <div className="flex flex-wrap gap-2">
+                {periods.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => setPeriod(p.id as Period)}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors border ${
+                      period === p.id
+                        ? 'bg-black text-white border-black'
+                        : 'bg-white border-gray-300 text-black hover:bg-gray-50'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
                 <button
                   className="px-4 py-2 rounded-md text-sm font-medium transition-colors border bg-white border-gray-300 text-black hover:bg-gray-50"
                 >
@@ -196,11 +252,86 @@ export default function Home() {
               </div>
             </div>
           </div>
+
+          {/* Mobile Filters */}
+          <div className="md:hidden bg-surface border-b border-surface-border sticky top-[57px] z-10 w-full">
+            <div className="px-4 py-3 flex gap-2">
+              {/* Category Dropdown */}
+              <div className="relative flex-1">
+                <button
+                  onClick={() => { setMobileCategoryOpen(!mobileCategoryOpen); setMobilePeriodOpen(false); }}
+                  className="w-full flex items-center justify-between px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium"
+                >
+                  <span className="truncate">{getCategoryLabel(activeCategory)}</span>
+                  <svg className={`w-4 h-4 ml-2 transition-transform ${mobileCategoryOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {mobileCategoryOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-64 overflow-y-auto">
+                    {categories.map((cat) => (
+                      <button
+                        key={cat.id}
+                        onClick={() => { setActiveCategory(cat.id); setMobileCategoryOpen(false); }}
+                        className={`block w-full text-left px-3 py-2 text-sm ${
+                          activeCategory === cat.id ? 'bg-gray-100 font-medium' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Period Dropdown */}
+              <div className="relative flex-1">
+                <button
+                  onClick={() => { setMobilePeriodOpen(!mobilePeriodOpen); setMobileCategoryOpen(false); }}
+                  className="w-full flex items-center justify-between px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium"
+                >
+                  <span className="truncate">{getPeriodLabel(period)}</span>
+                  <svg className={`w-4 h-4 ml-2 transition-transform ${mobilePeriodOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {mobilePeriodOpen && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-20">
+                    {periods.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => { setPeriod(p.id as Period); setMobilePeriodOpen(false); }}
+                        className={`block w-full text-left px-3 py-2 text-sm ${
+                          period === p.id ? 'bg-gray-100 font-medium' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => setMobilePeriodOpen(false)}
+                      className="block w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                    >
+                      Custom Range
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </>
       )}
 
+      {/* Click outside to close dropdowns */}
+      {(mobileCategoryOpen || mobilePeriodOpen) && (
+        <div
+          className="fixed inset-0 z-10 md:hidden"
+          onClick={() => { setMobileCategoryOpen(false); setMobilePeriodOpen(false); }}
+        />
+      )}
+
       {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-8">
         {activeTab === 'resources' && (
           <Suspense fallback={<Loading />}>
             <ItemsGrid category={activeCategory} period={period} />
