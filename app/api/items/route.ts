@@ -28,14 +28,14 @@ import {
  */
 function decodeTrackingUrl(url: string): string {
   // ConvertKit: https://xxx.click.convertkit-mail2.com/.../BASE64_ENCODED_URL
-  if (url.includes('convertkit-mail') || url.includes('convertkit.com')) {
+  if (url.includes("convertkit-mail") || url.includes("convertkit.com")) {
     // The base64 encoded URL is usually the last path segment
-    const parts = url.split('/');
+    const parts = url.split("/");
     const lastPart = parts[parts.length - 1];
     if (lastPart && lastPart.length > 20) {
       try {
-        const decoded = Buffer.from(lastPart, 'base64').toString('utf-8');
-        if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+        const decoded = Buffer.from(lastPart, "base64").toString("utf-8");
+        if (decoded.startsWith("http://") || decoded.startsWith("https://")) {
           logger.info(`[API] Decoded ConvertKit URL: ${decoded}`);
           return decoded;
         }
@@ -49,14 +49,16 @@ function decodeTrackingUrl(url: string): string {
   // For now, we'll let them through and filter based on the final URL patterns
 
   // Substack redirect: https://substack.com/redirect/2/BASE64_JSON
-  if (url.includes('substack.com/redirect/')) {
-    const base64Match = url.match(/substack\.com\/redirect\/\d+\/([A-Za-z0-9_-]+)/);
+  if (url.includes("substack.com/redirect/")) {
+    const base64Match = url.match(
+      /substack\.com\/redirect\/\d+\/([A-Za-z0-9_-]+)/,
+    );
     if (base64Match) {
       try {
-        const base64 = base64Match[1].replace(/-/g, '+').replace(/_/g, '/');
-        const decoded = Buffer.from(base64, 'base64').toString('utf-8');
+        const base64 = base64Match[1].replace(/-/g, "+").replace(/_/g, "/");
+        const decoded = Buffer.from(base64, "base64").toString("utf-8");
         const payload = JSON.parse(decoded);
-        if (payload.e && typeof payload.e === 'string') {
+        if (payload.e && typeof payload.e === "string") {
           logger.info(`[API] Decoded Substack redirect URL: ${payload.e}`);
           return payload.e;
         }
@@ -82,30 +84,59 @@ function extractOrFilterUrl(url: string): string | null {
 
   // Try to extract article URL from subscribe/membership/paywall redirects first
   // Example: https://www.interconnects.ai/subscribe?...&next=https%3A%2F%2Fwww.interconnects.ai%2Fp%2Fget-good-at-agents
-  const subscriptionPaths = ['/subscribe', '/signup', '/sign-up', '/join', '/register',
-                             '/membership', '/pricing', '/premium', '/upgrade', '/plans'];
-  if (subscriptionPaths.some(path => urlLower.includes(path))) {
+  const subscriptionPaths = [
+    "/subscribe",
+    "/signup",
+    "/sign-up",
+    "/join",
+    "/register",
+    "/membership",
+    "/pricing",
+    "/premium",
+    "/upgrade",
+    "/plans",
+  ];
+  if (subscriptionPaths.some((path) => urlLower.includes(path))) {
     try {
       const parsed = new URL(decodedUrl);
       // Check for 'next' or 'redirect' or 'url' or 'return' params that might contain the real article
-      const redirectParams = ['next', 'redirect', 'url', 'return', 'return_to', 'redirect_uri', 'continue'];
+      const redirectParams = [
+        "next",
+        "redirect",
+        "url",
+        "return",
+        "return_to",
+        "redirect_uri",
+        "continue",
+      ];
       for (const param of redirectParams) {
         const redirectUrl = parsed.searchParams.get(param);
         if (redirectUrl) {
           // Decode and validate the redirect URL
           const paramDecodedUrl = decodeURIComponent(redirectUrl);
-          if (paramDecodedUrl.startsWith('http://') || paramDecodedUrl.startsWith('https://')) {
+          if (
+            paramDecodedUrl.startsWith("http://") ||
+            paramDecodedUrl.startsWith("https://")
+          ) {
             // Check if the extracted URL is an actual article (has /p/ or other article path)
-            if (paramDecodedUrl.includes('/p/') || paramDecodedUrl.includes('/post/') ||
-                paramDecodedUrl.includes('/article/') || paramDecodedUrl.includes('/blog/')) {
-              logger.info(`[API] Extracted article URL from subscribe redirect: ${paramDecodedUrl}`);
+            if (
+              paramDecodedUrl.includes("/p/") ||
+              paramDecodedUrl.includes("/post/") ||
+              paramDecodedUrl.includes("/article/") ||
+              paramDecodedUrl.includes("/blog/")
+            ) {
+              logger.info(
+                `[API] Extracted article URL from subscribe redirect: ${paramDecodedUrl}`,
+              );
               return paramDecodedUrl;
             }
           }
         }
       }
       // No valid article URL found in params, filter out this subscribe page
-      logger.info(`[API] Filtering subscription URL (no article param): ${decodedUrl}`);
+      logger.info(
+        `[API] Filtering subscription URL (no article param): ${decodedUrl}`,
+      );
       return null;
     } catch {
       return null;
@@ -113,19 +144,28 @@ function extractOrFilterUrl(url: string): string | null {
   }
 
   // Filter Substack URLs that don't have /p/ (article path)
-  if (urlLower.includes('.substack.com') || urlLower.includes('substack.com/')) {
-    if (!decodedUrl.includes('/p/')) {
+  if (
+    urlLower.includes(".substack.com") ||
+    urlLower.includes("substack.com/")
+  ) {
+    if (!decodedUrl.includes("/p/")) {
       return null; // Reject - this is a home page or subscription page
     }
-    if (urlLower.includes('/subscribe') || urlLower.includes('/payment') ||
-        urlLower.includes('/checkout') || urlLower.includes('/upgrade')) {
+    if (
+      urlLower.includes("/subscribe") ||
+      urlLower.includes("/payment") ||
+      urlLower.includes("/checkout") ||
+      urlLower.includes("/upgrade")
+    ) {
       return null;
     }
   }
 
   // Filter newsletter home pages that redirect to subscription
-  if (urlLower.includes('newsletter.') && urlLower.includes('.com')) {
-    const hasArticlePath = /\/(p|post|article|story|archive)\//i.test(decodedUrl);
+  if (urlLower.includes("newsletter.") && urlLower.includes(".com")) {
+    const hasArticlePath = /\/(p|post|article|story|archive)\//i.test(
+      decodedUrl,
+    );
     const isJustDomain = /newsletter\.\w+\.com\/?(\?|$)/i.test(decodedUrl);
     if (!hasArticlePath && isJustDomain) {
       return null;
@@ -136,10 +176,10 @@ function extractOrFilterUrl(url: string): string | null {
   try {
     const parsed = new URL(decodedUrl);
     const pathname = parsed.pathname;
-    const hasOnlyRootPath = pathname === '/' || pathname === '';
+    const hasOnlyRootPath = pathname === "/" || pathname === "";
 
     if (hasOnlyRootPath) {
-      if (!parsed.hash || parsed.hash === '#' || parsed.hash.length < 3) {
+      if (!parsed.hash || parsed.hash === "#" || parsed.hash.length < 3) {
         return null; // Reject - this is a homepage URL
       }
     }
@@ -182,13 +222,15 @@ async function maybeKickoffLocalCatchupSync(args: {
   }
 
   const isLocalHost =
-    host === "localhost" || host === "127.0.0.1" || host?.endsWith(".local") === true;
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host?.endsWith(".local") === true;
   if (!isLocalHost) return;
 
   const nowMs = Date.now();
   const cooldownRemainingMs = Math.max(
     0,
-    AUTO_CATCHUP_COOLDOWN_MS - (nowMs - lastAutoCatchupAttemptAtMs)
+    AUTO_CATCHUP_COOLDOWN_MS - (nowMs - lastAutoCatchupAttemptAtMs),
   );
 
   if (autoCatchupInFlight) return;
@@ -209,7 +251,8 @@ async function maybeKickoffLocalCatchupSync(args: {
   // Fire-and-forget; never block /api/items on sync
   void (async () => {
     try {
-      const { syncProdToLocalPostgres } = await import("@/src/lib/db/sync-prod-to-local");
+      const { syncProdToLocalPostgres } =
+        await import("@/src/lib/db/sync-prod-to-local");
       const result = await syncProdToLocalPostgres(AUTO_CATCHUP_LOOKBACK_DAYS);
       logger.info("[AUTO-CATCHUP] prod->local sync finished", result);
     } catch (e) {
@@ -256,7 +299,6 @@ export async function GET(request: NextRequest) {
   const excludeOwnParam = searchParams.get("excludeOwn"); // Exclude Sourcegraph/Cody mentions
 
   try {
-
     // Parse limit, clamp to [1, 50]
     let customLimit: number | undefined;
     if (limitParam) {
@@ -268,7 +310,7 @@ export async function GET(request: NextRequest) {
 
     // Parse excludeIds for pagination
     const excludeIds = excludeIdsParam
-      ? new Set(excludeIdsParam.split(',').filter(id => id.trim().length > 0))
+      ? new Set(excludeIdsParam.split(",").filter((id) => id.trim().length > 0))
       : undefined;
 
     // Validate category
@@ -278,7 +320,7 @@ export async function GET(request: NextRequest) {
           error: "Invalid or missing category",
           validCategories: VALID_CATEGORIES,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -289,7 +331,7 @@ export async function GET(request: NextRequest) {
           {
             error: "Custom period requires startDate and endDate parameters",
           },
-          { status: 400 }
+          { status: 400 },
         );
       }
       const startDate = new Date(startDateParam);
@@ -299,7 +341,7 @@ export async function GET(request: NextRequest) {
           {
             error: "Invalid date format. Use YYYY-MM-DD",
           },
-          { status: 400 }
+          { status: 400 },
         );
       }
       if (startDate > endDate) {
@@ -307,7 +349,7 @@ export async function GET(request: NextRequest) {
           {
             error: "Start date must be before end date",
           },
-          { status: 400 }
+          { status: 400 },
         );
       }
     } else if (!PERIOD_DAYS[period]) {
@@ -316,7 +358,7 @@ export async function GET(request: NextRequest) {
           error: "Invalid period",
           validPeriods: [...Object.keys(PERIOD_DAYS), "custom"],
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -332,22 +374,31 @@ export async function GET(request: NextRequest) {
       endDate.setHours(23, 59, 59, 999);
       loadOptions = { startDate, endDate };
       // Calculate approximate days for logging/config
-      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+      periodDays = Math.ceil(
+        (endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000),
+      );
     } else {
       periodDays = PERIOD_DAYS[period];
 
       // For research, product_news, and newsletters: use created_at for day period to show recently synced items
       // This ensures items show up based on when they were added to the database, not when they were published
       // "Daily" means "what's new today" = items synced in the last 24 hours
-      if ((category === "research" || category === "product_news" || category === "newsletters") && period === "day") {
+      if (
+        (category === "research" ||
+          category === "product_news" ||
+          category === "newsletters") &&
+        period === "day"
+      ) {
         // Use 1 day for day period (today only)
         periodDays = 1;
-        logger.info(`[API] Using 1 day window with created_at for ${category} day period to show recently synced items`);
+        logger.info(
+          `[API] Using 1 day window with created_at for ${category} day period to show recently synced items`,
+        );
       }
     }
 
     logger.info(
-      `API request: category=${category}, period=${period}${period === "custom" ? ` (${startDateParam} to ${endDateParam})` : ` (${periodDays}d)`}`
+      `API request: category=${category}, period=${period}${period === "custom" ? ` (${startDateParam} to ${endDateParam})` : ` (${periodDays}d)`}`,
     );
 
     // Initialize database (creates tables if needed)
@@ -363,7 +414,11 @@ export async function GET(request: NextRequest) {
     let items: FeedItem[];
     let usedCutoffFallback = false;
     if (loadOptions?.startDate && loadOptions?.endDate) {
-      items = await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate);
+      items = await loadItemsByCategoryWithDateRange(
+        category,
+        loadOptions.startDate,
+        loadOptions.endDate,
+      );
     } else {
       // Direct database query to ensure fresh data (using driver abstraction)
       const client = await getDbClient();
@@ -391,41 +446,51 @@ export async function GET(request: NextRequest) {
 
       // Standard logic for all categories/periods
       const nowMs = Date.now();
-      cutoffTime = Math.floor((nowMs - periodDays * 24 * 60 * 60 * 1000) / 1000);
+      cutoffTime = Math.floor(
+        (nowMs - periodDays * 24 * 60 * 60 * 1000) / 1000,
+      );
 
       // For research:
       // - Daily/Weekly/Monthly: All show top-ranked results (no date filtering for backfilled papers)
       //   New papers added after backfill will have recent created_at and show in daily/weekly
       // - All-time: Filter by published_at (last 3 years)
-      if (category === 'research') {
-        if (period === 'all') {
+      if (category === "research") {
+        if (period === "all") {
           // Research all-time: limit to last 3 years using published_at
-          const threeYearsAgo = Math.floor((Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000);
+          const threeYearsAgo = Math.floor(
+            (Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000,
+          );
           cutoffTime = threeYearsAgo;
           useCreatedAt = false;
-          dateColumn = 'published_at';
-          logger.info(`[API] Research all-time: limiting to last 3 years using published_at`);
+          dateColumn = "published_at";
+          logger.info(
+            `[API] Research all-time: limiting to last 3 years using published_at`,
+          );
         } else {
           // Research daily/weekly/monthly: no date filtering, just show top ranked results
           // This treats all backfilled papers as "current" and shows most relevant
           // New papers added after backfill will have recent created_at and show in daily/weekly
           useCreatedAt = false; // Not used since we're not filtering
-          dateColumn = 'created_at'; // For ordering, but no cutoff
-          logger.info(`[API] Research ${period} period: no date filtering, showing top ranked results`);
+          dateColumn = "created_at"; // For ordering, but no cutoff
+          logger.info(
+            `[API] Research ${period} period: no date filtering, showing top ranked results`,
+          );
         }
       } else {
         // For most categories: use published_at for date filtering
         // This ensures items show up based on when they were published, not when they were synced
         useCreatedAt = false;
-        dateColumn = 'published_at';
-        
+        dateColumn = "published_at";
+
         // Exception: For newsletters with day period, use created_at to show recently synced items
         // "Daily" means items synced in the last 24 hours, regardless of when they were published
         // This ensures users see fresh content even if newsletter published_at is delayed
         if (category === "newsletters" && period === "day") {
           useCreatedAt = true;
-          dateColumn = 'created_at';
-          logger.info(`[API] Newsletters day period: using created_at with ${periodDays} day window (${new Date(cutoffTime * 1000).toISOString()})`);
+          dateColumn = "created_at";
+          logger.info(
+            `[API] Newsletters day period: using created_at with ${periodDays} day window (${new Date(cutoffTime * 1000).toISOString()})`,
+          );
         }
       }
 
@@ -457,18 +522,18 @@ export async function GET(request: NextRequest) {
 
       // For research, include full_text in query so we can check if it exists (but don't return it in response)
       // This allows the frontend to know which items have full_text available
-      const selectColumns = category === "research"
-        ? "id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, created_at, updated_at, extracted_url, full_text, full_text_fetched_at, full_text_source"
-        : "*";
+      const selectColumns =
+        category === "research"
+          ? "id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, created_at, updated_at, extracted_url, full_text, full_text_fetched_at, full_text_source"
+          : "*";
 
       const sqlQuery = `SELECT ${selectColumns} FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`;
-      logger.info(`[API] Executing query: ${sqlQuery} with params: [${queryParams.map(p => typeof p === 'number' ? p : `'${p}'`).join(', ')}]`);
+      logger.info(
+        `[API] Executing query: ${sqlQuery} with params: [${queryParams.map((p) => (typeof p === "number" ? p : `'${p}'`)).join(", ")}]`,
+      );
       const maxTimestampISO: string | null = null;
 
-      const result = await client.query(
-        sqlQuery,
-        queryParams
-      );
+      const result = await client.query(sqlQuery, queryParams);
       let rawRows = result.rows as ItemRow[];
 
       // Fallback: if no items match the date cutoff, return the most recent items instead
@@ -479,7 +544,7 @@ export async function GET(request: NextRequest) {
         const skipFallback = period === "day";
         if (!skipFallback) {
           logger.info(
-            `[API] No items found within cutoff window (${new Date(cutoffTime * 1000).toISOString()}), falling back to most recent items`
+            `[API] No items found within cutoff window (${new Date(cutoffTime * 1000).toISOString()}), falling back to most recent items`,
           );
           const fallbackQuery = `SELECT ${selectColumns} FROM items WHERE category = ? ORDER BY ${dateColumn} DESC${limitClause}`;
           const fallbackResult = await client.query(fallbackQuery, [category]);
@@ -495,7 +560,9 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      logger.info(`[API] Direct query returned ${rawRows.length} rows for category=${category}, periodDays=${periodDays}, dateColumn=${dateColumn}, cutoffTime=${cutoffTime} (${new Date(cutoffTime * 1000).toISOString()})`);
+      logger.info(
+        `[API] Direct query returned ${rawRows.length} rows for category=${category}, periodDays=${periodDays}, dateColumn=${dateColumn}, cutoffTime=${cutoffTime} (${new Date(cutoffTime * 1000).toISOString()})`,
+      );
 
       // Helper function to extract real URL from tracking links
       function extractUrlFromTracking(trackingUrl: string): string | null {
@@ -505,7 +572,10 @@ export async function GET(request: NextRequest) {
           try {
             const encoded = awstrackMatch[1];
             const decoded = decodeURIComponent(encoded);
-            if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+            if (
+              decoded.startsWith("http://") ||
+              decoded.startsWith("https://")
+            ) {
               return decoded;
             }
           } catch {
@@ -522,10 +592,19 @@ export async function GET(request: NextRequest) {
         let finalUrl = row.url;
 
         // Check if URL is a tracking/Inoreader link
-        if (row.url && (row.url.includes("inoreader.com") || row.url.includes("google.com/reader") ||
-          row.url.includes("awstrack.me") || row.url.includes("tracking"))) {
+        if (
+          row.url &&
+          (row.url.includes("inoreader.com") ||
+            row.url.includes("google.com/reader") ||
+            row.url.includes("awstrack.me") ||
+            row.url.includes("tracking"))
+        ) {
           // First try extracted_url from database
-          if (row.extracted_url && !row.extracted_url.includes("inoreader.com") && !row.extracted_url.includes("google.com/reader")) {
+          if (
+            row.extracted_url &&
+            !row.extracted_url.includes("inoreader.com") &&
+            !row.extracted_url.includes("google.com/reader")
+          ) {
             finalUrl = row.extracted_url;
           } else {
             // Try to extract URL from tracking link
@@ -563,40 +642,52 @@ export async function GET(request: NextRequest) {
       });
 
       items = mappedItems.filter((item): item is FeedItem => item !== null);
-      logger.info(`[API] Mapped to ${items.length} items from ${rawRows.length} rows`);
+      logger.info(
+        `[API] Mapped to ${items.length} items from ${rawRows.length} rows`,
+      );
     }
 
-    logger.info(`[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`);
+    logger.info(
+      `[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`,
+    );
 
     // Filter out items with bad URLs (Substack sign-up pages, subscription pages, etc.)
     // Also extract real article URLs from subscribe redirects when possible
     // This runs for ALL code paths (custom date range and standard periods)
     const itemsBeforeUrlFilter = items.length;
     logger.info(`[API] Checking ${items.length} items for bad URLs...`);
-    items = items.map((item) => {
-      // Try to extract article URL or filter out bad URLs
-      logger.info(`[API] Checking URL: ${item.url}`);
-      const extractedUrl = extractOrFilterUrl(item.url);
-      if (extractedUrl === null) {
-        logger.info(`[API] Filtering out item with bad URL: "${item.title}" (${item.url})`);
-        return null;
-      }
-      // Update URL if we extracted a better one
-      if (extractedUrl !== item.url) {
-        logger.info(`[API] Updated item URL: "${item.title}" from ${item.url} to ${extractedUrl}`);
-        return { ...item, url: extractedUrl };
-      }
-      return item;
-    }).filter((item): item is FeedItem => {
-      if (item === null) return false;
-      // Check title and URL patterns from filter-patterns config
-      const filterResult = filterLowQualityItem(item);
-      if (filterResult.filtered) {
-        logger.info(`[API] Filtering out low-quality item: "${item.title}" - ${filterResult.reason}`);
-        return false;
-      }
-      return true;
-    });
+    items = items
+      .map((item) => {
+        // Try to extract article URL or filter out bad URLs
+        logger.info(`[API] Checking URL: ${item.url}`);
+        const extractedUrl = extractOrFilterUrl(item.url);
+        if (extractedUrl === null) {
+          logger.info(
+            `[API] Filtering out item with bad URL: "${item.title}" (${item.url})`,
+          );
+          return null;
+        }
+        // Update URL if we extracted a better one
+        if (extractedUrl !== item.url) {
+          logger.info(
+            `[API] Updated item URL: "${item.title}" from ${item.url} to ${extractedUrl}`,
+          );
+          return { ...item, url: extractedUrl };
+        }
+        return item;
+      })
+      .filter((item): item is FeedItem => {
+        if (item === null) return false;
+        // Check title and URL patterns from filter-patterns config
+        const filterResult = filterLowQualityItem(item);
+        if (filterResult.filtered) {
+          logger.info(
+            `[API] Filtering out low-quality item: "${item.title}" - ${filterResult.reason}`,
+          );
+          return false;
+        }
+        return true;
+      });
     const urlFilteredCount = itemsBeforeUrlFilter - items.length;
     if (urlFilteredCount > 0) {
       logger.info(`[API] Filtered out ${urlFilteredCount} items with bad URLs`);
@@ -613,10 +704,8 @@ export async function GET(request: NextRequest) {
         typeof it.sourceTitle === "string" &&
         typeof it.url === "string" &&
         (it.url.includes("twitter.com/") || it.url.includes("x.com/")) &&
-        (
-          it.sourceTitle.toLowerCase().includes("twitter") ||
-          /(\(@|\/\s*@)\w+/.test(it.sourceTitle)
-        );
+        (it.sourceTitle.toLowerCase().includes("twitter") ||
+          /(\(@|\/\s*@)\w+/.test(it.sourceTitle));
 
       const twitterFeedItems = items.filter(isTwitterFeedItem);
       if (twitterFeedItems.length > 0) {
@@ -630,7 +719,10 @@ export async function GET(request: NextRequest) {
             const localUrl = process.env.LOCAL_DATABASE_URL;
             if (!localUrl?.startsWith("postgres")) return;
             const u = new URL(localUrl);
-            const isLocalHost = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname.endsWith(".local");
+            const isLocalHost =
+              u.hostname === "localhost" ||
+              u.hostname === "127.0.0.1" ||
+              u.hostname.endsWith(".local");
             if (!isLocalHost) return;
 
             const { getDbClient } = await import("@/src/lib/db/driver");
@@ -644,7 +736,7 @@ export async function GET(request: NextRequest) {
               WHERE category = 'newsletters'
                 AND (url ILIKE '%twitter.com/%' OR url ILIKE '%x.com/%')
                 AND (source_title ILIKE '%twitter%' OR source_title ~ '(\\(@|/\\s*@)\\w+')
-            `
+            `,
             );
           } catch (e) {
             logger.warn("[API] Recategorize twitter feed items failed", {
@@ -658,24 +750,37 @@ export async function GET(request: NextRequest) {
     // Rank items (no filtering - it's fine for ai_news to show items from newsletters if they're relevant)
     // If we had to fall back (no items in-window), skip the internal date filter in rankCategory
     // so that "week" doesn't become empty after we already chose to display stale data.
-    let rankedItems = await rankCategory(items, category, periodDays, period, { skipDateFilter: usedCutoffFallback });
-    logger.info(`[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`);
+    let rankedItems = await rankCategory(items, category, periodDays, period, {
+      skipDateFilter: usedCutoffFallback,
+    });
+    logger.info(
+      `[API] Ranked to ${rankedItems.length} items (input was ${items.length} items)`,
+    );
 
     // Debug: Check if scores are loading
     if (rankedItems.length > 0) {
       const firstItem = rankedItems[0];
-      logger.info(`[API] First ranked item: title="${firstItem.title.substring(0, 50)}...", finalScore=${firstItem.finalScore.toFixed(3)}, llmRelevance=${firstItem.llmScore.relevance}, llmUsefulness=${firstItem.llmScore.usefulness}`);
+      logger.info(
+        `[API] First ranked item: title="${firstItem.title.substring(0, 50)}...", finalScore=${firstItem.finalScore.toFixed(3)}, llmRelevance=${firstItem.llmScore.relevance}, llmUsefulness=${firstItem.llmScore.usefulness}`,
+      );
     }
 
     // Apply product filtering if any product filters are specified
     const beforeProductFilter = rankedItems.length;
-    if (productsParam || excludeProductsParam || competitorsOnlyParam === "true" || excludeOwnParam === "true") {
+    if (
+      productsParam ||
+      excludeProductsParam ||
+      competitorsOnlyParam === "true" ||
+      excludeOwnParam === "true"
+    ) {
       // Parse product filter lists
       const includeProducts = productsParam
         ? new Set(productsParam.split(",").map((p) => p.trim().toLowerCase()))
         : null;
       const excludeProducts = excludeProductsParam
-        ? new Set(excludeProductsParam.split(",").map((p) => p.trim().toLowerCase()))
+        ? new Set(
+            excludeProductsParam.split(",").map((p) => p.trim().toLowerCase()),
+          )
         : null;
       const competitorsOnly = competitorsOnlyParam === "true";
       const excludeOwn = excludeOwnParam === "true";
@@ -702,8 +807,13 @@ export async function GET(request: NextRequest) {
         }
 
         // Filter: only show items mentioning competitor products
+        // Also implicitly excludes own products when competitorsOnly is true
         if (competitorsOnly) {
           if (!mentions.some((m) => competitorIds.has(m))) {
+            return false;
+          }
+          // Exclude items that also mention our own products
+          if (mentions.some((m) => ownProductIds.has(m))) {
             return false;
           }
         }
@@ -719,7 +829,7 @@ export async function GET(request: NextRequest) {
       });
 
       logger.info(
-        `[API] Product filter: ${beforeProductFilter} -> ${rankedItems.length} items (filters: products=${productsParam || "none"}, excludeProducts=${excludeProductsParam || "none"}, competitorsOnly=${competitorsOnly}, excludeOwn=${excludeOwn})`
+        `[API] Product filter: ${beforeProductFilter} -> ${rankedItems.length} items (filters: products=${productsParam || "none"}, excludeProducts=${excludeProductsParam || "none"}, competitorsOnly=${competitorsOnly}, excludeOwn=${excludeOwn})`,
       );
     }
 
@@ -728,7 +838,7 @@ export async function GET(request: NextRequest) {
     // For other categories, allow more items per source
     const isNewsletters = category === "newsletters";
     const perSourceCaps = isNewsletters
-      ? { day: 2, week: 2, month: 3, all: 4 }  // Stricter for newsletters
+      ? { day: 2, week: 2, month: 3, all: 4 } // Stricter for newsletters
       : { day: 5, week: 4, month: 5, all: 6 };
     let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
 
@@ -738,7 +848,10 @@ export async function GET(request: NextRequest) {
       const expansionRatio = customLimit / getCategoryConfig(category).maxItems;
       if (isNewsletters) {
         // For newsletters, increase more conservatively to maintain diversity
-        maxPerSource = Math.min(Math.ceil(maxPerSource * Math.sqrt(expansionRatio)), 6);
+        maxPerSource = Math.min(
+          Math.ceil(maxPerSource * Math.sqrt(expansionRatio)),
+          6,
+        );
       } else {
         maxPerSource = Math.ceil(maxPerSource * expansionRatio);
       }
@@ -749,18 +862,18 @@ export async function GET(request: NextRequest) {
       category,
       maxPerSource,
       customLimit, // Pass custom limit to override category config
-      excludeIds // Exclude already-loaded items for pagination
+      excludeIds, // Exclude already-loaded items for pagination
     );
     logger.info(
-      `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`
+      `Applied diversity selection: ${selectionResult.items.length} items selected from ${rankedItems.length}`,
     );
 
     // Check if there are more items available beyond the current selection
     // We need to check if there are any items in rankedItems that weren't selected
     // and that meet the quality threshold (finalScore >= 0.05)
-    const selectedIds = new Set(selectionResult.items.map(item => item.id));
+    const selectedIds = new Set(selectionResult.items.map((item) => item.id));
     const remainingItems = rankedItems.filter(
-      item => !selectedIds.has(item.id) && item.finalScore >= 0.05
+      (item) => !selectedIds.has(item.id) && item.finalScore >= 0.05,
     );
     const hasMore = remainingItems.length > 0;
 
@@ -784,10 +897,14 @@ export async function GET(request: NextRequest) {
       itemsFiltered: rankedItems.length - selectionResult.items.length,
       hasMore, // Indicate if more items are available
       // Products mentioned in results (for building filter UI)
-      productsMentioned: Array.from(allMentionedProducts).map((id) => {
-        const product = getProductById(id);
-        return product ? { id: product.id, name: product.name, category: product.category } : null;
-      }).filter(Boolean),
+      productsMentioned: Array.from(allMentionedProducts)
+        .map((id) => {
+          const product = getProductById(id);
+          return product
+            ? { id: product.id, name: product.name, category: product.category }
+            : null;
+        })
+        .filter(Boolean),
       items: selectionResult.items.map((item) => ({
         id: item.id,
         title: decodeHtmlEntities(item.title), // Decode HTML entities in title
@@ -814,9 +931,12 @@ export async function GET(request: NextRequest) {
     });
 
     // Set cache control headers to prevent Next.js from caching API responses
-    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    response.headers.set('Pragma', 'no-cache');
-    response.headers.set('Expires', '0');
+    response.headers.set(
+      "Cache-Control",
+      "no-store, no-cache, must-revalidate, proxy-revalidate",
+    );
+    response.headers.set("Pragma", "no-cache");
+    response.headers.set("Expires", "0");
 
     return response;
   } catch (error) {
@@ -837,7 +957,7 @@ export async function GET(request: NextRequest) {
         category,
         period,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
