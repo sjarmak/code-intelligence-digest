@@ -151,7 +151,13 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "continue",
     name: "Continue",
-    aliases: ["continue", "continue.dev", "continue ai"],
+    // Removed "continue" alone - too common a word, many false positives
+    aliases: [
+      "continue.dev",
+      "continue ai",
+      "continue extension",
+      "continue ide",
+    ],
     category: "ide_extension",
     isOwnProduct: false,
     isCompetitor: true,
