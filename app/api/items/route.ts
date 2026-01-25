@@ -14,6 +14,136 @@ import { logger } from "@/src/lib/logger";
 import { getCategoryConfig } from "@/src/config/categories";
 import { PERIOD_CONFIG } from "@/src/config/periods";
 import { decodeHtmlEntities } from "@/src/lib/utils/html-entities";
+import { filterLowQualityItem } from "@/src/config/filter-patterns";
+
+/**
+ * Decode tracking URLs to get the real destination URL
+ * Handles: ConvertKit, Beehiiv, Substack redirect URLs
+ */
+function decodeTrackingUrl(url: string): string {
+  // ConvertKit: https://xxx.click.convertkit-mail2.com/.../BASE64_ENCODED_URL
+  if (url.includes('convertkit-mail') || url.includes('convertkit.com')) {
+    // The base64 encoded URL is usually the last path segment
+    const parts = url.split('/');
+    const lastPart = parts[parts.length - 1];
+    if (lastPart && lastPart.length > 20) {
+      try {
+        const decoded = Buffer.from(lastPart, 'base64').toString('utf-8');
+        if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+          logger.info(`[API] Decoded ConvertKit URL: ${decoded}`);
+          return decoded;
+        }
+      } catch {
+        // Not valid base64, continue with original URL
+      }
+    }
+  }
+
+  // Beehiiv: https://link.mail.beehiiv.com/ss/c/... - these redirect, harder to decode
+  // For now, we'll let them through and filter based on the final URL patterns
+
+  // Substack redirect: https://substack.com/redirect/2/BASE64_JSON
+  if (url.includes('substack.com/redirect/')) {
+    const base64Match = url.match(/substack\.com\/redirect\/\d+\/([A-Za-z0-9_-]+)/);
+    if (base64Match) {
+      try {
+        const base64 = base64Match[1].replace(/-/g, '+').replace(/_/g, '/');
+        const decoded = Buffer.from(base64, 'base64').toString('utf-8');
+        const payload = JSON.parse(decoded);
+        if (payload.e && typeof payload.e === 'string') {
+          logger.info(`[API] Decoded Substack redirect URL: ${payload.e}`);
+          return payload.e;
+        }
+      } catch {
+        // Failed to decode
+      }
+    }
+  }
+
+  return url;
+}
+
+/**
+ * Extract real article URL from subscribe/redirect URLs, or return null if should be excluded
+ * Returns: the cleaned URL (original or extracted), or null if item should be filtered out
+ */
+function extractOrFilterUrl(url: string): string | null {
+  if (!url) return null;
+
+  // First, decode any tracking URLs to get the real destination
+  const decodedUrl = decodeTrackingUrl(url);
+  const urlLower = decodedUrl.toLowerCase();
+
+  // Try to extract article URL from subscribe/membership/paywall redirects first
+  // Example: https://www.interconnects.ai/subscribe?...&next=https%3A%2F%2Fwww.interconnects.ai%2Fp%2Fget-good-at-agents
+  const subscriptionPaths = ['/subscribe', '/signup', '/sign-up', '/join', '/register',
+                             '/membership', '/pricing', '/premium', '/upgrade', '/plans'];
+  if (subscriptionPaths.some(path => urlLower.includes(path))) {
+    try {
+      const parsed = new URL(decodedUrl);
+      // Check for 'next' or 'redirect' or 'url' or 'return' params that might contain the real article
+      const redirectParams = ['next', 'redirect', 'url', 'return', 'return_to', 'redirect_uri', 'continue'];
+      for (const param of redirectParams) {
+        const redirectUrl = parsed.searchParams.get(param);
+        if (redirectUrl) {
+          // Decode and validate the redirect URL
+          const paramDecodedUrl = decodeURIComponent(redirectUrl);
+          if (paramDecodedUrl.startsWith('http://') || paramDecodedUrl.startsWith('https://')) {
+            // Check if the extracted URL is an actual article (has /p/ or other article path)
+            if (paramDecodedUrl.includes('/p/') || paramDecodedUrl.includes('/post/') ||
+                paramDecodedUrl.includes('/article/') || paramDecodedUrl.includes('/blog/')) {
+              logger.info(`[API] Extracted article URL from subscribe redirect: ${paramDecodedUrl}`);
+              return paramDecodedUrl;
+            }
+          }
+        }
+      }
+      // No valid article URL found in params, filter out this subscribe page
+      logger.info(`[API] Filtering subscription URL (no article param): ${decodedUrl}`);
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Filter Substack URLs that don't have /p/ (article path)
+  if (urlLower.includes('.substack.com') || urlLower.includes('substack.com/')) {
+    if (!decodedUrl.includes('/p/')) {
+      return null; // Reject - this is a home page or subscription page
+    }
+    if (urlLower.includes('/subscribe') || urlLower.includes('/payment') ||
+        urlLower.includes('/checkout') || urlLower.includes('/upgrade')) {
+      return null;
+    }
+  }
+
+  // Filter newsletter home pages that redirect to subscription
+  if (urlLower.includes('newsletter.') && urlLower.includes('.com')) {
+    const hasArticlePath = /\/(p|post|article|story|archive)\//i.test(decodedUrl);
+    const isJustDomain = /newsletter\.\w+\.com\/?(\?|$)/i.test(decodedUrl);
+    if (!hasArticlePath && isJustDomain) {
+      return null;
+    }
+  }
+
+  // Filter homepage URLs (domain root with no article path)
+  try {
+    const parsed = new URL(decodedUrl);
+    const pathname = parsed.pathname;
+    const hasOnlyRootPath = pathname === '/' || pathname === '';
+
+    if (hasOnlyRootPath) {
+      if (!parsed.hash || parsed.hash === '#' || parsed.hash.length < 3) {
+        return null; // Reject - this is a homepage URL
+      }
+    }
+  } catch {
+    // If URL parsing fails, let other checks handle it
+  }
+
+  // Return the decoded URL (which may be different from original if it was a tracking URL)
+  return decodedUrl;
+}
 
 // Local auto-catchup sync (dev-only)
 // If the local DB is stale (no items within requested time window),
@@ -421,11 +551,44 @@ export async function GET(request: NextRequest) {
       });
 
       items = mappedItems.filter((item): item is FeedItem => item !== null);
-
-      logger.info(`[API] Mapped to ${items.length} items (filtered out ${rawRows.length - items.length} invalid items)`);
+      logger.info(`[API] Mapped to ${items.length} items from ${rawRows.length} rows`);
     }
 
     logger.info(`[API] Loaded ${items.length} items from database for category=${category}, periodDays=${periodDays}`);
+
+    // Filter out items with bad URLs (Substack sign-up pages, subscription pages, etc.)
+    // Also extract real article URLs from subscribe redirects when possible
+    // This runs for ALL code paths (custom date range and standard periods)
+    const itemsBeforeUrlFilter = items.length;
+    logger.info(`[API] Checking ${items.length} items for bad URLs...`);
+    items = items.map((item) => {
+      // Try to extract article URL or filter out bad URLs
+      logger.info(`[API] Checking URL: ${item.url}`);
+      const extractedUrl = extractOrFilterUrl(item.url);
+      if (extractedUrl === null) {
+        logger.info(`[API] Filtering out item with bad URL: "${item.title}" (${item.url})`);
+        return null;
+      }
+      // Update URL if we extracted a better one
+      if (extractedUrl !== item.url) {
+        logger.info(`[API] Updated item URL: "${item.title}" from ${item.url} to ${extractedUrl}`);
+        return { ...item, url: extractedUrl };
+      }
+      return item;
+    }).filter((item): item is FeedItem => {
+      if (item === null) return false;
+      // Check title and URL patterns from filter-patterns config
+      const filterResult = filterLowQualityItem(item);
+      if (filterResult.filtered) {
+        logger.info(`[API] Filtering out low-quality item: "${item.title}" - ${filterResult.reason}`);
+        return false;
+      }
+      return true;
+    });
+    const urlFilteredCount = itemsBeforeUrlFilter - items.length;
+    if (urlFilteredCount > 0) {
+      logger.info(`[API] Filtered out ${urlFilteredCount} items with bad URLs`);
+    }
 
     // Dev-only safety: Twitter/X feed items shouldn't appear in Newsletters; they're Community.
     // We filter them out of the newsletters response and (in dev/local only) recategorize them in the DB

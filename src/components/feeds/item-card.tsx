@@ -541,15 +541,18 @@ export default function ItemCard({ item, rank, period }: ItemCardProps) {
             {/* Action buttons - right aligned */}
             <div className="flex items-center gap-1">
               {/* Full text icon */}
-              {hasFullText && (
-                <button
-                  onClick={() => setShowFullText(true)}
-                  className="p-1.5 rounded transition-colors text-blue-600 hover:text-blue-700 hover:bg-blue-50 border border-blue-200"
-                  title="View full text"
-                >
-                  <FileText className="w-4 h-4" />
-                </button>
-              )}
+              <button
+                onClick={() => hasFullText && setShowFullText(true)}
+                disabled={!hasFullText}
+                className={`p-1.5 rounded transition-colors ${
+                  hasFullText
+                    ? 'text-black hover:text-gray-700 hover:bg-gray-100 cursor-pointer'
+                    : 'text-gray-300 cursor-default'
+                }`}
+                title={hasFullText ? 'View full text' : 'Full text not available'}
+              >
+                <FileText className="w-4 h-4" />
+              </button>
 
               {/* Saved items library (folder-heart) - for all item types */}
               <button
