@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import ItemsGrid from '@/src/components/feeds/items-grid';
 import SearchPage from '@/src/components/search/search-page';
 import QAPage from '@/src/components/qa/qa-page';
@@ -18,12 +19,19 @@ function Loading() {
 
 export default function Home() {
   const { config } = useAppConfig();
+  const router = useRouter();
   const [period, setPeriod] = useState<Period>('week');
   const [activeCategory, setActiveCategory] = useState<string>('newsletters');
   const [activeTab, setActiveTab] = useState<TabType>('resources');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [mobileCategoryOpen, setMobileCategoryOpen] = useState(false);
   const [mobilePeriodOpen, setMobilePeriodOpen] = useState(false);
+  const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
+
+  const handleNavigation = (path: string) => {
+    setNavigatingTo(path);
+    router.push(path);
+  };
 
   const categories = [
     { id: 'newsletters', label: 'Newsletters' },
@@ -120,18 +128,24 @@ export default function Home() {
               >
                 Ask
               </button>
-              <a
-                href="/digest"
-                className="block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+              <button
+                onClick={() => { setMobileMenuOpen(false); handleNavigation('/digest'); }}
+                disabled={navigatingTo === '/digest'}
+                className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 ${
+                  navigatingTo === '/digest' ? 'animate-pulse' : ''
+                }`}
               >
-                Generate Digest
-              </a>
-              <a
-                href="/libraries"
-                className="block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+                {navigatingTo === '/digest' ? 'Loading...' : 'Generate Digest'}
+              </button>
+              <button
+                onClick={() => { setMobileMenuOpen(false); handleNavigation('/libraries'); }}
+                disabled={navigatingTo === '/libraries'}
+                className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 ${
+                  navigatingTo === '/libraries' ? 'animate-pulse' : ''
+                }`}
               >
-                Libraries
-              </a>
+                {navigatingTo === '/libraries' ? 'Loading...' : 'Libraries'}
+              </button>
               {config.adminUIEnabled && (
                 <a
                   href="/admin"
@@ -185,18 +199,24 @@ export default function Home() {
             >
               Ask
             </button>
-            <a
-              href="/digest"
-              className="px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors border-transparent text-muted hover:text-black"
+            <button
+              onClick={() => handleNavigation('/digest')}
+              disabled={navigatingTo === '/digest'}
+              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors border-transparent text-muted hover:text-black disabled:opacity-50 ${
+                navigatingTo === '/digest' ? 'animate-pulse' : ''
+              }`}
             >
-              Generate Digest
-            </a>
-            <a
-              href="/libraries"
-              className="px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors border-transparent text-muted hover:text-black"
+              {navigatingTo === '/digest' ? 'Loading...' : 'Generate Digest'}
+            </button>
+            <button
+              onClick={() => handleNavigation('/libraries')}
+              disabled={navigatingTo === '/libraries'}
+              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors border-transparent text-muted hover:text-black disabled:opacity-50 ${
+                navigatingTo === '/libraries' ? 'animate-pulse' : ''
+              }`}
             >
-              Libraries
-            </a>
+              {navigatingTo === '/libraries' ? 'Loading...' : 'Libraries'}
+            </button>
           </nav>
         </div>
       </div>
@@ -254,7 +274,7 @@ export default function Home() {
           </div>
 
           {/* Mobile Filters */}
-          <div className="md:hidden bg-surface border-b border-surface-border sticky top-[57px] z-10 w-full">
+          <div className="md:hidden bg-surface border-b border-surface-border sticky top-[57px] z-20 w-full">
             <div className="px-4 py-3 flex gap-2">
               {/* Category Dropdown */}
               <div className="relative flex-1">
@@ -268,7 +288,7 @@ export default function Home() {
                   </svg>
                 </button>
                 {mobileCategoryOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-64 overflow-y-auto">
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-30 max-h-64 overflow-y-auto">
                     {categories.map((cat) => (
                       <button
                         key={cat.id}
@@ -296,7 +316,7 @@ export default function Home() {
                   </svg>
                 </button>
                 {mobilePeriodOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-20">
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-30">
                     {periods.map((p) => (
                       <button
                         key={p.id}
@@ -325,7 +345,7 @@ export default function Home() {
       {/* Click outside to close dropdowns */}
       {(mobileCategoryOpen || mobilePeriodOpen) && (
         <div
-          className="fixed inset-0 z-10 md:hidden"
+          className="fixed inset-0 z-[15] md:hidden"
           onClick={() => { setMobileCategoryOpen(false); setMobilePeriodOpen(false); }}
         />
       )}
