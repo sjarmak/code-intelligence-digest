@@ -19,7 +19,7 @@ export function FullTextViewer({ itemId, itemTitle, isOpen, onClose }: FullTextV
     if (isOpen && itemId) {
       setLoading(true);
       setError(null);
-      fetch(`/api/items/${encodeURIComponent(itemId)}/fulltext`)
+      fetch(`/api/items/${encodeURIComponent(itemId)}/fulltext?include_content=true`)
         .then((res) => {
           if (!res.ok) {
             throw new Error('Failed to fetch full text');
@@ -27,7 +27,7 @@ export function FullTextViewer({ itemId, itemTitle, isOpen, onClose }: FullTextV
           return res.json();
         })
         .then((data) => {
-          setFullText(data.fullText);
+          setFullText(data.text || null);
           if (!data.hasFullText) {
             setError('Full text not available for this item');
           }

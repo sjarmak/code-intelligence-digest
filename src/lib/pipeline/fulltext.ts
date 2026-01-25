@@ -364,10 +364,91 @@ function isLikelyExtractable(url: string): boolean {
   const skipPatterns = [
     /news\.google\.com\/rss\/articles\//i, // Google News RSS redirects
     /podcasters\.spotify\.com/i, // Spotify podcast pages (no transcript)
-    /cursor-changelog\.com\/versions/i, // Changelog index pages
+    /cursor-changelog\.com\/versions\//i, // Changelog index pages
   ];
 
   return !skipPatterns.some(pattern => pattern.test(url));
+}
+
+/**
+ * Decode tracking URLs to get the actual destination
+ * Handles Substack redirects, ConvertKit, Beehiiv, etc.
+ */
+function decodeTrackingUrl(url: string): string {
+  // Substack redirect: https://substack.com/redirect/2/BASE64_JSON
+  if (url.includes('substack.com/redirect/')) {
+    const base64Match = url.match(/substack\.com\/redirect\/\d+\/([A-Za-z0-9_-]+)/);
+    if (base64Match) {
+      try {
+        const base64 = base64Match[1].replace(/-/g, '+').replace(/_/g, '/');
+        const decoded = Buffer.from(base64, 'base64').toString('utf-8');
+        const payload = JSON.parse(decoded);
+        if (payload.e && typeof payload.e === 'string') {
+          logger.debug(`Decoded Substack redirect URL: ${payload.e}`);
+          return payload.e;
+        }
+      } catch { /* ignore decode errors */ }
+    }
+  }
+
+  // ConvertKit: https://xxx.click.convertkit-mail2.com/.../BASE64_ENCODED_URL
+  if (url.includes('convertkit-mail') || url.includes('convertkit.com')) {
+    const parts = url.split('/');
+    const lastPart = parts[parts.length - 1];
+    if (lastPart && lastPart.length > 20) {
+      try {
+        const decoded = Buffer.from(lastPart, 'base64').toString('utf-8');
+        if (decoded.startsWith('http://') || decoded.startsWith('https://')) {
+          logger.debug(`Decoded ConvertKit URL: ${decoded}`);
+          return decoded;
+        }
+      } catch { /* ignore decode errors */ }
+    }
+  }
+
+  return url;
+}
+
+/**
+ * Extract actual article URL from subscribe/redirect pages
+ * If URL points to a subscribe page with a next/redirect param, extract the article URL
+ */
+function extractArticleUrl(url: string): string {
+  // First decode any tracking wrapper
+  let decodedUrl = decodeTrackingUrl(url);
+
+  // Check if it's a subscribe page with a next/redirect param
+  try {
+    const urlObj = new URL(decodedUrl);
+    const urlLower = decodedUrl.toLowerCase();
+
+    // Check for subscription paths
+    const isSubscribePage = ['/subscribe', '/signup', '/membership', '/join'].some(
+      path => urlLower.includes(path)
+    );
+
+    if (isSubscribePage) {
+      // Try to extract article URL from redirect params
+      const redirectParams = ['next', 'redirect', 'url', 'return', 'return_to', 'redirect_uri', 'continue'];
+      for (const param of redirectParams) {
+        const redirectUrl = urlObj.searchParams.get(param);
+        if (redirectUrl) {
+          try {
+            const redirectDecoded = decodeURIComponent(redirectUrl);
+            // Check if it looks like a valid article URL
+            if (redirectDecoded.startsWith('http') &&
+                (redirectDecoded.includes('/p/') || redirectDecoded.includes('/post/') ||
+                 redirectDecoded.includes('/article/') || redirectDecoded.includes('/blog/'))) {
+              logger.debug(`Extracted article URL from subscribe page: ${redirectDecoded}`);
+              return redirectDecoded;
+            }
+          } catch { /* ignore decode errors */ }
+        }
+      }
+    }
+  } catch { /* ignore URL parse errors */ }
+
+  return decodedUrl;
 }
 
 /**
@@ -376,7 +457,13 @@ function isLikelyExtractable(url: string): boolean {
  * Priority: 1. ADS database, 2. arXiv API, 3. Web scraping
  */
 export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
-  const { url } = item;
+  // Decode tracking URLs and extract actual article URL
+  const originalUrl = item.url;
+  const url = extractArticleUrl(originalUrl);
+
+  if (url !== originalUrl) {
+    logger.info(`Decoded URL for fulltext: ${originalUrl.substring(0, 60)}... -> ${url}`);
+  }
 
   // CRITICAL: Skip Inoreader URLs - they don't contain extractable article content
   if (url.includes("inoreader.com")) {
@@ -392,6 +479,18 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   // Skip URLs that are known to not have extractable content
   if (!isLikelyExtractable(url)) {
     logger.debug(`Skipping full text extraction for redirect/aggregator URL: ${url}`);
+    return {
+      text: "",
+      source: "error",
+      length: 0,
+      fetchedAt: new Date(),
+    };
+  }
+
+  // Skip subscription/membership pages that we couldn't extract an article URL from
+  const urlLower = url.toLowerCase();
+  if (['/subscribe', '/signup', '/membership', '/join', '/pricing'].some(path => urlLower.includes(path))) {
+    logger.debug(`Skipping full text extraction for subscription page: ${url}`);
     return {
       text: "",
       source: "error",
