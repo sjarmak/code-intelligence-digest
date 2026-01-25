@@ -519,10 +519,15 @@ export async function GET(request: NextRequest) {
         queryParams = [category, cutoffTime];
       }
 
-      // Add LIMIT for research to prevent loading too many items and causing memory issues
-      // Research items have full_text which can be very large, so use smaller limit
-      // Also exclude full_text from initial query to reduce memory usage (load it only if needed)
-      const limitClause = category === "research" ? " LIMIT 500" : "";
+      // Add LIMIT to prevent loading too many items and causing timeouts
+      // For "all" period, limit to 1000 items (enough for 100 pages of 10)
+      // For research, use smaller limit due to large full_text fields
+      let limitClause = "";
+      if (category === "research") {
+        limitClause = " LIMIT 500";
+      } else if (period === "all") {
+        limitClause = " LIMIT 1000";
+      }
 
       // For research, include full_text in query so we can check if it exists (but don't return it in response)
       // This allows the frontend to know which items have full_text available
