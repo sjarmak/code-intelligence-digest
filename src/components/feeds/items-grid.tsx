@@ -186,7 +186,8 @@ export default function ItemsGrid({
     setLoadMoreCount((prev) => prev + 1);
   };
 
-  if (loading) {
+  // Only show full loading state on initial load (no items yet)
+  if (loading && items.length === 0) {
     return (
       <div className="text-center py-12">
         <p className="text-muted">Loading items...</p>
