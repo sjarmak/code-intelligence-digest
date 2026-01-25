@@ -838,32 +838,18 @@ export async function GET(request: NextRequest) {
     }
 
     // Apply diversity selection based on period
-    // For newsletters, use stricter per-source caps to ensure diversity (max 2-3 per source)
-    // For other categories, allow more items per source
+    // For pagination, we need higher per-source caps to allow more items
+    // The caps here are per-source limits to ensure variety, but we increase them
+    // significantly to allow proper pagination through all available content
     const isNewsletters = category === "newsletters";
     const perSourceCaps = isNewsletters
-      ? { day: 2, week: 2, month: 3, all: 4 } // Stricter for newsletters
-      : { day: 5, week: 4, month: 5, all: 6 };
-    let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 2;
-
-    // Increase per-source caps proportionally if custom limit is higher
-    // But for newsletters, still keep it relatively strict to maintain diversity
-    if (customLimit && customLimit > getCategoryConfig(category).maxItems) {
-      const expansionRatio = customLimit / getCategoryConfig(category).maxItems;
-      if (isNewsletters) {
-        // For newsletters, increase more conservatively to maintain diversity
-        maxPerSource = Math.min(
-          Math.ceil(maxPerSource * Math.sqrt(expansionRatio)),
-          6,
-        );
-      } else {
-        maxPerSource = Math.ceil(maxPerSource * expansionRatio);
-      }
-    }
+      ? { day: 3, week: 4, month: 8, all: 15 } // Higher caps for pagination
+      : { day: 6, week: 8, month: 12, all: 20 };
+    let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 4;
 
     // Get all items that pass diversity selection (no excludeIds - we'll paginate after)
-    // Use a higher limit to get all valid items for pagination
-    const maxItemsForSelection = Math.max(100, (customLimit || 10) + offset);
+    // Use a high limit to get all valid items for pagination
+    const maxItemsForSelection = 200; // Allow up to 200 items for pagination
     const selectionResult = selectWithDiversity(
       rankedItems,
       category,
