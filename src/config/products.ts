@@ -62,7 +62,8 @@ export const PRODUCT_CATEGORIES: readonly ProductCategoryConfig[] = [
   {
     id: "ide_extension",
     name: "IDE Extensions",
-    description: "IDE-integrated coding assistants with full editor integration",
+    description:
+      "IDE-integrated coding assistants with full editor integration",
   },
   {
     id: "cli_agent",
@@ -109,7 +110,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "sourcegraph",
     name: "Sourcegraph",
-    aliases: ["sourcegraph", "src", "sourcegraph search"],
+    // Removed "src" - too many false positives (src= in HTML, src/ paths)
+    aliases: ["sourcegraph", "sourcegraph search", "sourcegraph code search"],
     category: "code_search",
     isOwnProduct: true,
     isCompetitor: false,
@@ -158,7 +160,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "void",
     name: "Void",
-    aliases: ["void", "void editor", "voideditor"],
+    // Removed "void" alone - too common in programming (void type, void functions)
+    aliases: ["void editor", "voideditor", "void ide"],
     category: "ide_extension",
     isOwnProduct: false,
     isCompetitor: true,
@@ -167,7 +170,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "pearai",
     name: "PearAI",
-    aliases: ["pearai", "pear ai", "pear"],
+    // Removed "pear" alone - common word
+    aliases: ["pearai", "pear ai", "pear editor", "pear ide"],
     category: "ide_extension",
     isOwnProduct: false,
     isCompetitor: true,
@@ -176,12 +180,7 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "jetbrains-ai",
     name: "JetBrains AI Assistant",
-    aliases: [
-      "jetbrains ai",
-      "jetbrains ai assistant",
-      "intellij ai",
-      "junie",
-    ],
+    aliases: ["jetbrains ai", "jetbrains ai assistant", "intellij ai", "junie"],
     category: "ide_extension",
     isOwnProduct: false,
     isCompetitor: true,
@@ -248,7 +247,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "goose",
     name: "Goose",
-    aliases: ["goose", "goose ai", "block goose"],
+    // Removed "goose" alone - could match in other contexts
+    aliases: ["goose ai", "block goose", "goose agent", "goose cli"],
     category: "cli_agent",
     isOwnProduct: false,
     isCompetitor: true,
@@ -257,7 +257,9 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "amp",
     name: "Amp",
-    aliases: ["amp", "amp code", "ampcode"],
+    // Removed "amp" alone - matches &amp; HTML entities
+    // Using longer aliases to avoid false positives
+    aliases: ["amp code", "ampcode", "amp agent", "amp cli"],
     category: "cli_agent",
     isOwnProduct: false,
     isCompetitor: true,
@@ -416,7 +418,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "kilo",
     name: "Kilo",
-    aliases: ["kilo", "kilo code"],
+    // Removed "kilo" alone - common prefix (kilobyte, kilometer, etc.)
+    aliases: ["kilo code", "kilo ai", "kilo search"],
     category: "code_search",
     isOwnProduct: false,
     isCompetitor: true,
@@ -573,7 +576,9 @@ export function getProductById(id: string): Product | undefined {
 /**
  * Get all products by category
  */
-export function getProductsByCategory(category: ProductCategory): readonly Product[] {
+export function getProductsByCategory(
+  category: ProductCategory,
+): readonly Product[] {
   return PRODUCTS.filter((p) => p.category === category);
 }
 
