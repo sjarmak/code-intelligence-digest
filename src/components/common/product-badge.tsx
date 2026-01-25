@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { useProducts } from "@/src/hooks/useProducts";
 
 interface ProductBadgeProps {
@@ -66,13 +65,11 @@ export function ProductBadge({
 }
 
 /**
- * Component to display a list of product badges with overflow handling
+ * Component to display a list of product badges
  */
 interface ProductBadgeListProps {
   /** Array of product IDs */
   productIds: string[];
-  /** Maximum badges to show before "+N more" */
-  maxDisplay?: number;
   /** Optional click handler for badges */
   onProductClick?: (productId: string) => void;
   /** Size variant */
@@ -81,25 +78,16 @@ interface ProductBadgeListProps {
 
 export function ProductBadgeList({
   productIds,
-  maxDisplay = 3,
   onProductClick,
   size = "sm",
 }: ProductBadgeListProps) {
-  const [expanded, setExpanded] = useState(false);
-
   if (!productIds || productIds.length === 0) {
     return null;
   }
 
-  const hasOverflow = productIds.length > maxDisplay;
-  const displayProducts = expanded
-    ? productIds
-    : productIds.slice(0, maxDisplay);
-  const remaining = productIds.length - maxDisplay;
-
   return (
     <div className="flex flex-wrap gap-1">
-      {displayProducts.map((productId) => (
+      {productIds.map((productId) => (
         <ProductBadge
           key={productId}
           productId={productId}
@@ -107,34 +95,6 @@ export function ProductBadgeList({
           size={size}
         />
       ))}
-      {hasOverflow && !expanded && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setExpanded(true);
-          }}
-          className="text-xs text-muted hover:text-foreground self-center cursor-pointer transition-colors"
-          title={`Show ${remaining} more`}
-        >
-          +{remaining}
-        </button>
-      )}
-      {hasOverflow && expanded && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setExpanded(false);
-          }}
-          className="text-xs text-muted hover:text-foreground self-center cursor-pointer transition-colors"
-          title="Show less"
-        >
-          −
-        </button>
-      )}
     </div>
   );
 }

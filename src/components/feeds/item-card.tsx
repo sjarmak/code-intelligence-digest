@@ -713,7 +713,6 @@ export default function ItemCard({
             {item.productMentions && item.productMentions.length > 0 && (
               <ProductBadgeList
                 productIds={item.productMentions}
-                maxDisplay={3}
                 onProductClick={onProductClick}
                 size="sm"
               />
