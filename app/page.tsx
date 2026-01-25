@@ -31,6 +31,8 @@ export default function Home() {
   const handleNavigation = (path: string) => {
     setNavigatingTo(path);
     router.push(path);
+    // Reset loading state after navigation (component may unmount, but this handles edge cases)
+    setTimeout(() => setNavigatingTo(null), 3000);
   };
 
   const categories = [
