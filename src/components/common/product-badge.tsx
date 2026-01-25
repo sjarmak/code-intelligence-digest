@@ -1,6 +1,7 @@
-'use client';
+"use client";
 
-import { useProducts } from '@/src/hooks/useProducts';
+import { useState } from "react";
+import { useProducts } from "@/src/hooks/useProducts";
 
 interface ProductBadgeProps {
   /** Product ID from the products config */
@@ -8,7 +9,7 @@ interface ProductBadgeProps {
   /** Optional click handler to filter by this product */
   onClick?: (productId: string) => void;
   /** Size variant */
-  size?: 'sm' | 'md';
+  size?: "sm" | "md";
 }
 
 /**
@@ -18,7 +19,11 @@ interface ProductBadgeProps {
  * - Own products (Sourcegraph/Cody): purple
  * - Other (frameworks, etc.): gray
  */
-export function ProductBadge({ productId, onClick, size = 'sm' }: ProductBadgeProps) {
+export function ProductBadge({
+  productId,
+  onClick,
+  size = "sm",
+}: ProductBadgeProps) {
   const { getProductName, isCompetitor, isOwnProduct } = useProducts();
 
   const name = getProductName(productId);
@@ -28,16 +33,15 @@ export function ProductBadge({ productId, onClick, size = 'sm' }: ProductBadgePr
   // Determine color scheme based on product type
   let colorClasses: string;
   if (own) {
-    colorClasses = 'bg-purple-50 text-purple-700 border-purple-200';
+    colorClasses = "bg-purple-50 text-purple-700 border-purple-200";
   } else if (competitor) {
-    colorClasses = 'bg-blue-50 text-blue-700 border-blue-200';
+    colorClasses = "bg-blue-50 text-blue-700 border-blue-200";
   } else {
-    colorClasses = 'bg-gray-100 text-gray-700 border-gray-300';
+    colorClasses = "bg-gray-100 text-gray-700 border-gray-300";
   }
 
-  const sizeClasses = size === 'sm'
-    ? 'text-xs px-1.5 py-0.5'
-    : 'text-sm px-2 py-1';
+  const sizeClasses =
+    size === "sm" ? "text-xs px-1.5 py-0.5" : "text-sm px-2 py-1";
 
   const baseClasses = `inline-block rounded border font-medium ${sizeClasses} ${colorClasses}`;
 
@@ -72,20 +76,25 @@ interface ProductBadgeListProps {
   /** Optional click handler for badges */
   onProductClick?: (productId: string) => void;
   /** Size variant */
-  size?: 'sm' | 'md';
+  size?: "sm" | "md";
 }
 
 export function ProductBadgeList({
   productIds,
   maxDisplay = 3,
   onProductClick,
-  size = 'sm',
+  size = "sm",
 }: ProductBadgeListProps) {
+  const [expanded, setExpanded] = useState(false);
+
   if (!productIds || productIds.length === 0) {
     return null;
   }
 
-  const displayProducts = productIds.slice(0, maxDisplay);
+  const hasOverflow = productIds.length > maxDisplay;
+  const displayProducts = expanded
+    ? productIds
+    : productIds.slice(0, maxDisplay);
   const remaining = productIds.length - maxDisplay;
 
   return (
@@ -98,8 +107,33 @@ export function ProductBadgeList({
           size={size}
         />
       ))}
-      {remaining > 0 && (
-        <span className="text-xs text-muted self-center">+{remaining}</span>
+      {hasOverflow && !expanded && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setExpanded(true);
+          }}
+          className="text-xs text-muted hover:text-foreground self-center cursor-pointer transition-colors"
+          title={`Show ${remaining} more`}
+        >
+          +{remaining}
+        </button>
+      )}
+      {hasOverflow && expanded && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setExpanded(false);
+          }}
+          className="text-xs text-muted hover:text-foreground self-center cursor-pointer transition-colors"
+          title="Show less"
+        >
+          −
+        </button>
       )}
     </div>
   );

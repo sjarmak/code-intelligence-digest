@@ -238,7 +238,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "mentat",
     name: "Mentat",
-    aliases: ["mentat", "mentat ai"],
+    // Removed "mentat" alone - appears inside words like "implementation", "documentation"
+    aliases: ["mentat ai", "mentat coding", "mentat agent", "abanteai mentat"],
     category: "cli_agent",
     isOwnProduct: false,
     isCompetitor: true,
