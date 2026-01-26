@@ -1,6 +1,6 @@
 /**
  * Database initialization and client
- * 
+ *
  * Supports both SQLite (development) and PostgreSQL (production).
  * Driver detection is automatic based on DATABASE_URL env var.
  */
@@ -21,11 +21,11 @@ let initialized = false;
  */
 export function resetSqliteConnection(): void {
   const driver = detectDriver();
-  if (driver === 'sqlite' && sqlite) {
+  if (driver === "sqlite" && sqlite) {
     // Close existing connection
     sqlite.close();
     sqlite = null;
-    logger.debug('SQLite connection reset');
+    logger.debug("SQLite connection reset");
   }
 }
 
@@ -64,7 +64,7 @@ export async function initializeDatabase() {
   const driver = detectDriver();
   logger.info(`Initializing database with ${driver} driver`);
 
-  if (driver === 'postgres') {
+  if (driver === "postgres") {
     await initializePostgresSchema();
   } else {
     await initializeSqliteSchema();
@@ -80,10 +80,10 @@ async function initializePostgresSchema() {
   try {
     const client = await getDbClient();
     const schema = getPostgresSchema();
-    
+
     // Execute schema in segments (extensions, tables, indexes)
     await client.exec(schema);
-    
+
     // Add full_text column if it doesn't exist (for migration)
     try {
       await client.run(`
@@ -92,7 +92,7 @@ async function initializePostgresSchema() {
     } catch {
       // Column may already exist
     }
-    
+
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
     logger.error("Failed to initialize PostgreSQL schema", error);
@@ -194,7 +194,7 @@ async function initializeSqliteSchema() {
 
     // Create index for efficient lookups
     sqlite.exec(`
-      CREATE INDEX IF NOT EXISTS idx_embeddings_generated_at 
+      CREATE INDEX IF NOT EXISTS idx_embeddings_generated_at
       ON item_embeddings(generated_at);
     `);
 
@@ -336,22 +336,30 @@ async function initializeSqliteSchema() {
  * Tracks all Inoreader API calls made in a single day
  */
 
-export function getGlobalApiBudget(): { callsUsed: number; remaining: number; quotaLimit: number } {
+export function getGlobalApiBudget(): {
+  callsUsed: number;
+  remaining: number;
+  quotaLimit: number;
+} {
   const sqlite = getSqlite();
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  
+  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+
   const row = sqlite
-    .prepare('SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?')
+    .prepare(
+      "SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?",
+    )
     .get(today) as { calls_used: number; quota_limit: number } | undefined;
-  
+
   if (!row) {
     // Initialize for today
     sqlite
-      .prepare('INSERT OR IGNORE INTO global_api_budget (date, calls_used) VALUES (?, 0)')
+      .prepare(
+        "INSERT OR IGNORE INTO global_api_budget (date, calls_used) VALUES (?, 0)",
+      )
       .run(today);
     return { callsUsed: 0, remaining: 100, quotaLimit: 100 };
   }
-  
+
   return {
     callsUsed: row.calls_used,
     remaining: row.quota_limit - row.calls_used,
@@ -359,20 +367,25 @@ export function getGlobalApiBudget(): { callsUsed: number; remaining: number; qu
   };
 }
 
-export function incrementGlobalApiCalls(count: number): { callsUsed: number; remaining: number } {
+export function incrementGlobalApiCalls(count: number): {
+  callsUsed: number;
+  remaining: number;
+} {
   const sqlite = getSqlite();
-  const today = new Date().toISOString().split('T')[0];
-  
+  const today = new Date().toISOString().split("T")[0];
+
   sqlite
-    .prepare(`
-      INSERT INTO global_api_budget (date, calls_used) 
+    .prepare(
+      `
+      INSERT INTO global_api_budget (date, calls_used)
       VALUES (?, ?)
-      ON CONFLICT(date) DO UPDATE SET 
+      ON CONFLICT(date) DO UPDATE SET
         calls_used = calls_used + ?,
         last_updated_at = strftime('%s', 'now')
-    `)
+    `,
+    )
     .run(today, count, count);
-  
+
   const budget = getGlobalApiBudget();
   return {
     callsUsed: budget.callsUsed,
@@ -385,20 +398,46 @@ export function incrementGlobalApiCalls(count: number): { callsUsed: number; rem
  * First run: fetch from API (1 call)
  * Subsequent runs: retrieve from cache (0 calls)
  */
-export function getCachedUserId(): string | null {
-  const sqlite = getSqlite();
-  const row = sqlite
-    .prepare('SELECT user_id FROM user_cache WHERE key = ?')
-    .get('inoreader_user_id') as { user_id: string } | undefined;
-  return row?.user_id || null;
+export async function getCachedUserId(): Promise<string | null> {
+  const driver = detectDriver();
+
+  if (driver === "postgres") {
+    const client = await getDbClient();
+    const result = await client.query(
+      "SELECT user_id FROM user_cache WHERE key = $1",
+      ["inoreader_user_id"],
+    );
+    const row = result.rows[0] as { user_id: string } | undefined;
+    return row?.user_id || null;
+  } else {
+    const sqlite = getSqlite();
+    const row = sqlite
+      .prepare("SELECT user_id FROM user_cache WHERE key = ?")
+      .get("inoreader_user_id") as { user_id: string } | undefined;
+    return row?.user_id || null;
+  }
 }
 
-export function setCachedUserId(userId: string): void {
-  const sqlite = getSqlite();
-  sqlite
-    .prepare(`
-      INSERT OR REPLACE INTO user_cache (key, user_id) 
-      VALUES (?, ?)
-    `)
-    .run('inoreader_user_id', userId);
+export async function setCachedUserId(userId: string): Promise<void> {
+  const driver = detectDriver();
+
+  if (driver === "postgres") {
+    const client = await getDbClient();
+    await client.run(
+      `INSERT INTO user_cache (key, user_id)
+       VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET user_id = EXCLUDED.user_id, cached_at = EXTRACT(EPOCH FROM NOW())::INTEGER`,
+      ["inoreader_user_id", userId],
+    );
+  } else {
+    const sqlite = getSqlite();
+    sqlite
+      .prepare(
+        `
+        INSERT OR REPLACE INTO user_cache (key, user_id)
+        VALUES (?, ?)
+      `,
+      )
+      .run("inoreader_user_id", userId);
+  }
 }
