@@ -576,8 +576,8 @@ export default function ItemCard({
               {/* Tags */}
               {item.llmScore.tags.length > 0 && (
                 <>
-                  <div className="flex gap-1">
-                    {item.llmScore.tags.slice(0, 2).map((tag, tagIndex) => (
+                  <div className="flex flex-wrap gap-1">
+                    {item.llmScore.tags.map((tag, tagIndex) => (
                       <span
                         key={`${item.id}-tag-${tagIndex}-${tag}`}
                         className="inline-block px-1.5 py-0.5 bg-surface border border-surface-border rounded text-gray-600"
@@ -585,11 +585,6 @@ export default function ItemCard({
                         {tag}
                       </span>
                     ))}
-                    {item.llmScore.tags.length > 2 && (
-                      <span className="text-gray-500">
-                        +{item.llmScore.tags.length - 2}
-                      </span>
-                    )}
                   </div>
                   <span>•</span>
                 </>

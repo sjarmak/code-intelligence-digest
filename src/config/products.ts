@@ -133,7 +133,15 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "cursor",
     name: "Cursor",
-    aliases: ["cursor", "cursor ai", "cursor editor", "cursor ide"],
+    // Removed "cursor" alone - too common a word (mouse cursor, database cursor)
+    aliases: [
+      "cursor ai",
+      "cursor editor",
+      "cursor ide",
+      "cursor tab",
+      "anysphere cursor",
+      "anysphere",
+    ],
     category: "ide_extension",
     isOwnProduct: false,
     isCompetitor: true,
@@ -217,7 +225,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "codex-cli",
     name: "Codex CLI",
-    aliases: ["codex cli", "codex", "openai codex", "codex agent"],
+    // Removed "codex" alone - used in other contexts (codex alimentarius, historical codex)
+    aliases: ["codex cli", "openai codex", "codex agent"],
     category: "cli_agent",
     isOwnProduct: false,
     isCompetitor: true,
@@ -279,7 +288,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "devin",
     name: "Devin",
-    aliases: ["devin", "devin ai", "cognition devin", "cognition labs"],
+    // Removed "devin" alone - common first name
+    aliases: ["devin ai", "cognition devin", "cognition labs"],
     category: "autonomous_agent",
     isOwnProduct: false,
     isCompetitor: true,
@@ -288,7 +298,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "augment-code",
     name: "Augment Code",
-    aliases: ["augment code", "augment", "augmentcode", "augment ai"],
+    // Removed "augment" alone - too common an English word ("to augment their capabilities")
+    aliases: ["augment code", "augmentcode", "augment ai", "augment coding"],
     category: "autonomous_agent",
     isOwnProduct: false,
     isCompetitor: true,
@@ -315,7 +326,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "factory",
     name: "Factory",
-    aliases: ["factory", "factory ai", "factory.ai"],
+    // Removed "factory" alone - too common (factory pattern, factory method)
+    aliases: ["factory ai", "factory.ai", "factory agent"],
     category: "autonomous_agent",
     isOwnProduct: false,
     isCompetitor: true,
@@ -324,7 +336,8 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "poolside",
     name: "Poolside",
-    aliases: ["poolside", "poolside ai"],
+    // Removed "poolside" alone - could match casual usage
+    aliases: ["poolside ai", "poolside coding"],
     category: "autonomous_agent",
     isOwnProduct: false,
     isCompetitor: true,
@@ -457,7 +470,13 @@ export const PRODUCTS: readonly Product[] = [
   {
     id: "graphite",
     name: "Graphite",
-    aliases: ["graphite", "graphite.dev"],
+    // Removed "graphite" alone - also a mineral/material
+    aliases: [
+      "graphite.dev",
+      "graphite dev",
+      "graphite stacking",
+      "graphite pr",
+    ],
     category: "code_review",
     isOwnProduct: false,
     isCompetitor: true,
@@ -545,20 +564,13 @@ export function findProductMentions(text: string): string[] {
 
   for (const product of PRODUCTS) {
     for (const alias of product.aliases) {
-      // Use word boundary matching for short aliases to avoid false positives
-      if (alias.length < 5) {
-        // For short aliases, require word boundaries
-        const regex = new RegExp(`\\b${escapeRegex(alias)}\\b`, "i");
-        if (regex.test(lowerText)) {
-          found.add(product.id);
-          break;
-        }
-      } else {
-        // For longer aliases, simple includes is fine
-        if (lowerText.includes(alias)) {
-          found.add(product.id);
-          break;
-        }
+      // Always use word boundary matching to avoid false positives
+      // e.g. "augment" should not match "to augment their moderation"
+      // and "cursor" should not match "database cursor" or "cursor position"
+      const regex = new RegExp(`\\b${escapeRegex(alias)}\\b`, "i");
+      if (regex.test(lowerText)) {
+        found.add(product.id);
+        break;
       }
     }
   }
