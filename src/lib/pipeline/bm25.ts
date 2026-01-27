@@ -16,7 +16,10 @@ const DOMAIN_TERMS = getTermsByCategory();
  * Category-specific BM25 queries built from domain terms
  * Each category gets a weighted combination of relevant domain terms
  */
-const CATEGORY_QUERIES: Record<Category, { terms: string[]; weight: number }[]> = {
+const CATEGORY_QUERIES: Record<
+  Category,
+  { terms: string[]; weight: number }[]
+> = {
   newsletters: [
     { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
     { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
@@ -53,6 +56,10 @@ const CATEGORY_QUERIES: Record<Category, { terms: string[]; weight: number }[]> 
     { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.context.terms, weight: 1.5 },
   ],
+  marketing: [
+    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
+    { terms: DOMAIN_TERMS.enterprise.terms, weight: 1.3 },
+  ],
 };
 
 /**
@@ -72,15 +79,17 @@ export class BM25Index {
   /**
    * Add documents to the index
    */
-  addDocuments(items: Array<{
-    id: string;
-    title?: string;
-    summary?: string;
-    contentSnippet?: string;
-    fullText?: string;
-    sourceTitle?: string;
-    categories?: string[]
-  }>) {
+  addDocuments(
+    items: Array<{
+      id: string;
+      title?: string;
+      summary?: string;
+      contentSnippet?: string;
+      fullText?: string;
+      sourceTitle?: string;
+      categories?: string[];
+    }>,
+  ) {
     this.documents.clear();
     this.docFreq.clear();
     this.docLengths.clear();
@@ -105,10 +114,9 @@ export class BM25Index {
     this.totalDocs = items.length;
     const totalLength = Array.from(this.docLengths.values()).reduce(
       (a, b) => a + b,
-      0
+      0,
     );
-    this.avgDocLength =
-      totalLength / Math.max(this.totalDocs, 1);
+    this.avgDocLength = totalLength / Math.max(this.totalDocs, 1);
   }
 
   /**
@@ -128,17 +136,16 @@ export class BM25Index {
       for (const docId of docsWithTerm) {
         const docText = this.documents.get(docId)!;
         const docTokens = this.tokenize(docText);
-        const termFreq = docTokens.filter((t) => t === term.toLowerCase()).length;
+        const termFreq = docTokens.filter(
+          (t) => t === term.toLowerCase(),
+        ).length;
         const docLen = this.docLengths.get(docId) || 0;
 
         // BM25 formula
         const numerator = termFreq * (this.K1 + 1);
         const denominator =
           termFreq +
-          this.K1 *
-            (1 -
-              this.B +
-              this.B * (docLen / this.avgDocLength));
+          this.K1 * (1 - this.B + this.B * (docLen / this.avgDocLength));
 
         const currentScore = scores.get(docId) || 0;
         scores.set(docId, currentScore + idf * (numerator / denominator));
@@ -173,7 +180,7 @@ export class BM25Index {
     contentSnippet?: string;
     fullText?: string;
     sourceTitle?: string;
-    categories?: string[]
+    categories?: string[];
   }): string {
     const parts = [
       item.title || "",
@@ -190,10 +197,12 @@ export class BM25Index {
    * Tokenize text into lowercase terms
    */
   private tokenize(text: string): string[] {
-    return text
-      .toLowerCase()
-      .match(/\b\w+\b/g)
-      ?.filter((t) => t.length > 2) || [];
+    return (
+      text
+        .toLowerCase()
+        .match(/\b\w+\b/g)
+        ?.filter((t) => t.length > 2) || []
+    );
   }
 
   /**

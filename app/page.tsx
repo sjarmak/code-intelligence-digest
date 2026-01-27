@@ -78,6 +78,7 @@ export default function Home() {
     { id: "product_news", label: "Product News" },
     { id: "community", label: "Community" },
     { id: "research", label: "Research" },
+    { id: "marketing", label: "Marketing" },
   ];
 
   const periods = [

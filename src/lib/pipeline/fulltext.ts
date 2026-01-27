@@ -50,6 +50,16 @@ async function fetchWebPage(url: string): Promise<string> {
         throw new Error(`HTTP ${response.status}`);
       }
 
+      // Detect paywall/membership redirects: the server returned 200 but
+      // the final URL (after following 3xx redirects) is a sign-up gate.
+      const finalUrl = response.url;
+      if (finalUrl !== url && isPaywallUrl(finalUrl)) {
+        logger.info(
+          `Paywall redirect detected: ${url.substring(0, 80)} -> ${finalUrl}`
+        );
+        throw new Error(`Redirected to paywall page: ${finalUrl}`);
+      }
+
       const html = await response.text();
 
       // Extract text from HTML (enhanced with Readability, fallback to basic)
@@ -81,8 +91,8 @@ async function fetchWebPage(url: string): Promise<string> {
         );
       }
 
-      // Don't retry known problematic URLs
-      if (isKnownProblematic) {
+      // Don't retry known problematic URLs or paywall redirects
+      if (isKnownProblematic || errorMsg.includes("Redirected to paywall")) {
         break;
       }
 
@@ -357,6 +367,32 @@ function isGoogleNewsRedirect(url: string): boolean {
 }
 
 /**
+ * Paywall / gate path segments that indicate a URL is a sign-up wall, not an article.
+ * Shared across static pre-checks and post-redirect detection.
+ */
+const PAYWALL_PATH_PATTERNS = [
+  '/subscribe',
+  '/signup',
+  '/sign-up',
+  '/membership',
+  '/join',
+  '/pricing',
+  '/login',
+  '/sign-in',
+  '/register',
+  '/paywall',
+  '/premium',
+];
+
+/**
+ * Check if a URL points to a paywall / membership gate
+ */
+function isPaywallUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return PAYWALL_PATH_PATTERNS.some(path => lower.includes(path));
+}
+
+/**
  * Check if URL is likely to have extractable content
  */
 function isLikelyExtractable(url: string): boolean {
@@ -423,9 +459,7 @@ function extractArticleUrl(url: string): string {
     const urlLower = decodedUrl.toLowerCase();
 
     // Check for subscription paths
-    const isSubscribePage = ['/subscribe', '/signup', '/membership', '/join'].some(
-      path => urlLower.includes(path)
-    );
+    const isSubscribePage = isPaywallUrl(decodedUrl);
 
     if (isSubscribePage) {
       // Try to extract article URL from redirect params
@@ -488,8 +522,7 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   }
 
   // Skip subscription/membership pages that we couldn't extract an article URL from
-  const urlLower = url.toLowerCase();
-  if (['/subscribe', '/signup', '/membership', '/join', '/pricing'].some(path => urlLower.includes(path))) {
+  if (isPaywallUrl(url)) {
     logger.debug(`Skipping full text extraction for subscription page: ${url}`);
     return {
       text: "",

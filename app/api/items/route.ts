@@ -273,6 +273,7 @@ const VALID_CATEGORIES: Category[] = [
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 const PERIOD_DAYS: Record<string, number> = {

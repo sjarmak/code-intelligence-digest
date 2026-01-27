@@ -50,6 +50,7 @@ const VALID_CATEGORIES: Category[] = [
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 const SYNC_ID = "daily-sync";

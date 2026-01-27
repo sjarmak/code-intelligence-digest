@@ -9,7 +9,8 @@ export type Category =
   | "ai_news"
   | "product_news"
   | "community"
-  | "research";
+  | "research"
+  | "marketing";
 
 /**
  * All valid category values as a readonly array.
@@ -23,6 +24,7 @@ export const VALID_CATEGORIES: readonly Category[] = [
   "product_news",
   "community",
   "research",
+  "marketing",
 ] as const;
 
 export interface FeedItem {

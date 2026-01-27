@@ -9,7 +9,11 @@ import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { loadItemsByCategory } from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
-import { extractThemes, getTopThemes, generateDigestSummary } from "@/src/lib/pipeline/digest";
+import {
+  extractThemes,
+  getTopThemes,
+  generateDigestSummary,
+} from "@/src/lib/pipeline/digest";
 
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
@@ -19,6 +23,7 @@ const VALID_CATEGORIES: Category[] = [
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 interface DigestResponse {
@@ -30,13 +35,16 @@ interface DigestResponse {
   summary: string;
   themes: string[];
   itemCount: number;
-  highlights: Record<string, Array<{
-    id: string;
-    title: string;
-    url: string;
-    sourceTitle: string;
-    finalScore: number;
-  }>>;
+  highlights: Record<
+    string,
+    Array<{
+      id: string;
+      title: string;
+      url: string;
+      sourceTitle: string;
+      finalScore: number;
+    }>
+  >;
   generatedAt: string;
 }
 
@@ -63,7 +71,9 @@ export async function GET(req: NextRequest) {
     const periodDays = periodConfig.days;
     const periodLabel = periodConfig.label;
 
-    logger.info(`[DIGEST] Generating ${periodLabel} digest (${periodDays}d window)`);
+    logger.info(
+      `[DIGEST] Generating ${periodLabel} digest (${periodDays}d window)`,
+    );
 
     // Initialize database
     await initializeDatabase();
@@ -117,13 +127,19 @@ export async function GET(req: NextRequest) {
     }
 
     // Extract themes
-    logger.info(`[DIGEST] Extracting themes from ${allRankedItems.length} items`);
+    logger.info(
+      `[DIGEST] Extracting themes from ${allRankedItems.length} items`,
+    );
     const themeMap = extractThemes(allRankedItems);
     const themes = getTopThemes(themeMap, 10);
 
     // Generate summary
     logger.info(`[DIGEST] Generating AI summary`);
-    const summary = await generateDigestSummary(themes, allRankedItems.length, periodLabel);
+    const summary = await generateDigestSummary(
+      themes,
+      allRankedItems.length,
+      periodLabel,
+    );
 
     const response: DigestResponse = {
       period,
@@ -136,7 +152,7 @@ export async function GET(req: NextRequest) {
     };
 
     logger.info(
-      `[DIGEST] Generated ${periodLabel} digest with ${themes.length} themes and ${Object.keys(highlights).length} category highlights`
+      `[DIGEST] Generated ${periodLabel} digest with ${themes.length} themes and ${Object.keys(highlights).length} category highlights`,
     );
 
     return NextResponse.json(response);
@@ -145,9 +161,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Failed to generate digest",
+        error:
+          error instanceof Error ? error.message : "Failed to generate digest",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

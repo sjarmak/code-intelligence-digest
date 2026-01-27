@@ -1,9 +1,9 @@
 /**
  * Admin API for full text management
- * 
+ *
  * GET /api/admin/fulltext/status
  *   Returns cache statistics
- * 
+ *
  * POST /api/admin/fulltext/fetch
  *   Fetch full text for items
  *   Body: { category?, limit?, skip_cached? }
@@ -25,6 +25,7 @@ const VALID_CATEGORIES: Category[] = [
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 /**
@@ -41,13 +42,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       status: "ok",
       cache: stats,
-      percentCached: stats.total > 0 ? Math.round((stats.cached / stats.total) * 100) : 0,
+      percentCached:
+        stats.total > 0 ? Math.round((stats.cached / stats.total) * 100) : 0,
     });
   } catch (error) {
     logger.error("Failed to get full text stats", { error });
     return NextResponse.json(
       { error: "Failed to get full text stats" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -73,12 +75,12 @@ export async function POST(request: NextRequest) {
         {
           error: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(", ")}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     logger.info(
-      `Fetching full text for ${category || "all categories"}, limit: ${limit}, skip_cached: ${skipCached}`
+      `Fetching full text for ${category || "all categories"}, limit: ${limit}, skip_cached: ${skipCached}`,
     );
 
     // Load items
@@ -98,9 +100,9 @@ export async function POST(request: NextRequest) {
     // Filter out items that already have full text if skip_cached is true
     let itemsToFetch = items;
     if (skipCached) {
-      itemsToFetch = items.filter(item => !(item as any).fullText);
+      itemsToFetch = items.filter((item) => !(item as any).fullText);
       logger.info(
-        `Filtered to ${itemsToFetch.length} items (${items.length - itemsToFetch.length} already cached)`
+        `Filtered to ${itemsToFetch.length} items (${items.length - itemsToFetch.length} already cached)`,
       );
     }
 
@@ -146,7 +148,7 @@ export async function POST(request: NextRequest) {
     const stats = await getFullTextCacheStats();
 
     logger.info(
-      `Full text fetch complete: ${successful} successful, ${failed} failed in ${fetchDuration}ms`
+      `Full text fetch complete: ${successful} successful, ${failed} failed in ${fetchDuration}ms`,
     );
 
     return NextResponse.json({
@@ -167,7 +169,7 @@ export async function POST(request: NextRequest) {
         error: "Failed to fetch full text",
         message: errorMsg,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

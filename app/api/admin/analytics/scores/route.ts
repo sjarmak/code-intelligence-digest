@@ -19,6 +19,7 @@ const VALID_CATEGORIES: Category[] = [
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 /**
@@ -33,7 +34,10 @@ function computeHistogram(scores: number[], buckets: number = 10): number[] {
   const histogram = Array(buckets).fill(0);
 
   for (const score of scores) {
-    const bucket = Math.min(buckets - 1, Math.floor(((score - min) / range) * buckets));
+    const bucket = Math.min(
+      buckets - 1,
+      Math.floor(((score - min) / range) * buckets),
+    );
     histogram[bucket]++;
   }
 
@@ -57,14 +61,14 @@ export async function GET(req: NextRequest) {
         {
           error: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(", ")}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const periodDays = period === "month" ? 30 : 7;
 
     logger.info(
-      `[ANALYTICS] Computing score stats for category: ${category}, period: ${periodDays}d`
+      `[ANALYTICS] Computing score stats for category: ${category}, period: ${periodDays}d`,
     );
 
     // Initialize database
@@ -109,24 +113,32 @@ export async function GET(req: NextRequest) {
           mean: bm25Scores.reduce((a, b) => a + b, 0) / bm25Scores.length,
           median:
             bm25Scores.length > 0
-              ? bm25Scores.sort((a, b) => a - b)[Math.floor(bm25Scores.length / 2)]
+              ? bm25Scores.sort((a, b) => a - b)[
+                  Math.floor(bm25Scores.length / 2)
+                ]
               : 0,
         },
         llmRelevance: {
           histogram: computeHistogram(llmRelevanceScores),
           min: Math.min(...llmRelevanceScores),
           max: Math.max(...llmRelevanceScores),
-          mean: llmRelevanceScores.reduce((a, b) => a + b, 0) / llmRelevanceScores.length,
+          mean:
+            llmRelevanceScores.reduce((a, b) => a + b, 0) /
+            llmRelevanceScores.length,
           median:
             llmRelevanceScores.length > 0
-              ? llmRelevanceScores.sort((a, b) => a - b)[Math.floor(llmRelevanceScores.length / 2)]
+              ? llmRelevanceScores.sort((a, b) => a - b)[
+                  Math.floor(llmRelevanceScores.length / 2)
+                ]
               : 0,
         },
         llmUsefulness: {
           histogram: computeHistogram(llmUsefulnessScores),
           min: Math.min(...llmUsefulnessScores),
           max: Math.max(...llmUsefulnessScores),
-          mean: llmUsefulnessScores.reduce((a, b) => a + b, 0) / llmUsefulnessScores.length,
+          mean:
+            llmUsefulnessScores.reduce((a, b) => a + b, 0) /
+            llmUsefulnessScores.length,
           median:
             llmUsefulnessScores.length > 0
               ? llmUsefulnessScores.sort((a, b) => a - b)[
@@ -141,7 +153,9 @@ export async function GET(req: NextRequest) {
           mean: recencyScores.reduce((a, b) => a + b, 0) / recencyScores.length,
           median:
             recencyScores.length > 0
-              ? recencyScores.sort((a, b) => a - b)[Math.floor(recencyScores.length / 2)]
+              ? recencyScores.sort((a, b) => a - b)[
+                  Math.floor(recencyScores.length / 2)
+                ]
               : 0,
         },
         final: {
@@ -151,7 +165,9 @@ export async function GET(req: NextRequest) {
           mean: finalScores.reduce((a, b) => a + b, 0) / finalScores.length,
           median:
             finalScores.length > 0
-              ? finalScores.sort((a, b) => a - b)[Math.floor(finalScores.length / 2)]
+              ? finalScores.sort((a, b) => a - b)[
+                  Math.floor(finalScores.length / 2)
+                ]
               : 0,
         },
       };
@@ -181,7 +197,7 @@ export async function GET(req: NextRequest) {
     }
 
     logger.info(
-      `[ANALYTICS] Computed stats for ${category}: ${rankedItems.length} items analyzed`
+      `[ANALYTICS] Computed stats for ${category}: ${rankedItems.length} items analyzed`,
     );
 
     return NextResponse.json(stats);
@@ -190,9 +206,12 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : "Failed to compute analytics",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to compute analytics",
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
 }

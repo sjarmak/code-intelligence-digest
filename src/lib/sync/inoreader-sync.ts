@@ -6,24 +6,25 @@
  * saving it to the database. Read requests always hit the database cache.
  */
 
-import { createInoreaderClient } from '../inoreader/client';
-import { getStreamsByCategory } from '@/src/config/feeds';
-import { normalizeItems } from '../pipeline/normalize';
-import { categorizeItems } from '../pipeline/categorize';
-import { decomposeFeedItems } from '../pipeline/decompose';
-import { saveItems } from '../db/items';
-import { incrementApiCalls } from '../db/api-budget';
-import { logger } from '../logger';
-import { Category, FeedItem } from '../model';
+import { createInoreaderClient } from "../inoreader/client";
+import { getStreamsByCategory } from "@/src/config/feeds";
+import { normalizeItems } from "../pipeline/normalize";
+import { categorizeItems } from "../pipeline/categorize";
+import { decomposeFeedItems } from "../pipeline/decompose";
+import { saveItems } from "../db/items";
+import { incrementApiCalls } from "../db/api-budget";
+import { logger } from "../logger";
+import { Category, FeedItem } from "../model";
 
 const VALID_CATEGORIES: Category[] = [
-  'newsletters',
-  'podcasts',
-  'tech_articles',
-  'ai_news',
-  'product_news',
-  'community',
-  'research',
+  "newsletters",
+  "podcasts",
+  "tech_articles",
+  "ai_news",
+  "product_news",
+  "community",
+  "research",
+  "marketing",
 ];
 
 /**
@@ -45,8 +46,10 @@ export async function syncAllCategories(): Promise<{
   let totalItemsAdded = 0;
   let totalApiCalls = 0;
 
-  logger.warn('[DEPRECATED] syncAllCategories is deprecated - use runDailySync() instead. This function makes 100+ API calls!');
-  logger.info('Starting full Inoreader sync for all categories');
+  logger.warn(
+    "[DEPRECATED] syncAllCategories is deprecated - use runDailySync() instead. This function makes 100+ API calls!",
+  );
+  logger.info("Starting full Inoreader sync for all categories");
 
   for (const category of VALID_CATEGORIES) {
     try {
@@ -55,7 +58,7 @@ export async function syncAllCategories(): Promise<{
       totalItemsAdded += result.itemsAdded;
       totalApiCalls += result.apiCallsUsed;
       logger.info(
-        `Synced category: ${category}, added: ${result.itemsAdded} items, used ${result.apiCallsUsed} API calls`
+        `Synced category: ${category}, added: ${result.itemsAdded} items, used ${result.apiCallsUsed} API calls`,
       );
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -65,7 +68,7 @@ export async function syncAllCategories(): Promise<{
   }
 
   logger.info(
-    `Sync completed: ${categoriesProcessed.length}/${VALID_CATEGORIES.length} categories, ${totalItemsAdded} total items added, ${totalApiCalls} API calls used`
+    `Sync completed: ${categoriesProcessed.length}/${VALID_CATEGORIES.length} categories, ${totalItemsAdded} total items added, ${totalApiCalls} API calls used`,
   );
 
   return {
@@ -87,7 +90,9 @@ export async function syncCategory(category: Category): Promise<{
   apiCallsUsed: number;
 }> {
   let apiCallsUsed = 0;
-  logger.warn(`[DEPRECATED] syncCategory is inefficient - makes 1 API call per stream`);
+  logger.warn(
+    `[DEPRECATED] syncCategory is inefficient - makes 1 API call per stream`,
+  );
   logger.info(`Syncing category: ${category}`);
 
   // Get all streams for this category
@@ -97,9 +102,7 @@ export async function syncCategory(category: Category): Promise<{
     return { itemsAdded: 0, itemsSkipped: 0, apiCallsUsed: 0 };
   }
 
-  logger.debug(
-    `Found ${streamIds.length} streams for category: ${category}`
-  );
+  logger.debug(`Found ${streamIds.length} streams for category: ${category}`);
 
   // Create Inoreader client
   const client = createInoreaderClient();
@@ -165,7 +168,7 @@ export async function syncCategory(category: Category): Promise<{
   try {
     await saveItems(items);
     logger.info(
-      `Saved ${items.length} total items to database (${categoryItems.length} in requested category: ${category})`
+      `Saved ${items.length} total items to database (${categoryItems.length} in requested category: ${category})`,
     );
   } catch (error) {
     logger.error(`Failed to save items for category: ${category}`, error);
@@ -173,7 +176,9 @@ export async function syncCategory(category: Category): Promise<{
   }
 
   itemsSkipped = allItems.length - categoryItems.length;
-  logger.info(`[syncCategory] Used ${apiCallsUsed} API calls for category: ${category}`);
+  logger.info(
+    `[syncCategory] Used ${apiCallsUsed} API calls for category: ${category}`,
+  );
   return { itemsAdded: categoryItems.length, itemsSkipped, apiCallsUsed };
 }
 
@@ -185,9 +190,11 @@ export async function syncCategory(category: Category): Promise<{
  * @deprecated Use runDailySync() instead for better efficiency
  */
 export async function syncStream(
-  streamId: string
+  streamId: string,
 ): Promise<{ itemsAdded: number; apiCallsUsed: number }> {
-  logger.warn(`[DEPRECATED] syncStream is deprecated - use runDailySync() instead`);
+  logger.warn(
+    `[DEPRECATED] syncStream is deprecated - use runDailySync() instead`,
+  );
   logger.info(`Syncing stream: ${streamId}`);
 
   const client = createInoreaderClient();
