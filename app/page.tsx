@@ -410,7 +410,7 @@ export default function Home() {
                   </svg>
                 </button>
                 {mobileCategoryOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-30 max-h-64 overflow-y-auto">
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-30">
                     {categories.map((cat) => (
                       <button
                         key={cat.id}
