@@ -12,9 +12,11 @@ import { extractBibcodeFromUrl } from "../ads/client";
 
 export interface FullTextResult {
   text: string;
-  source: "web_scrape" | "arxiv" | "ads_api" | "error";
+  source: "web_scrape" | "arxiv" | "ads_api" | "web_archive" | "error";
   length: number;
   fetchedAt: Date;
+  /** When the original URL redirected to a paywall, this holds the Wayback Machine URL */
+  archivedUrl?: string;
 }
 
 /**
@@ -230,6 +232,74 @@ async function fetchFromGitHub(url: string): Promise<string | null> {
     return null; // No README found
   } catch (error) {
     logger.debug("GitHub README fetch failed", { error });
+    return null;
+  }
+}
+
+/**
+ * Fetch article content from the Wayback Machine (Internet Archive)
+ * Used as a fallback when the original URL redirects to a paywall/membership page.
+ * Returns { text, archiveUrl } or null if no snapshot exists.
+ */
+async function fetchFromWebArchive(
+  url: string
+): Promise<{ text: string; archiveUrl: string } | null> {
+  try {
+    // 1. Check availability via the Wayback API
+    const availabilityUrl = `https://archive.org/wayback/available?url=${encodeURIComponent(url)}`;
+    const availResp = await fetch(availabilityUrl, {
+      signal: AbortSignal.timeout(8000),
+      headers: { "User-Agent": "Mozilla/5.0 (Code Intelligence Digest)" },
+    });
+
+    if (!availResp.ok) {
+      logger.debug(`Wayback availability check failed: HTTP ${availResp.status}`);
+      return null;
+    }
+
+    const availData = (await availResp.json()) as {
+      archived_snapshots?: {
+        closest?: { available?: boolean; url?: string; status?: string };
+      };
+    };
+
+    const snapshot = availData.archived_snapshots?.closest;
+    if (!snapshot?.available || !snapshot.url || snapshot.status !== "200") {
+      logger.debug(`No Wayback snapshot for ${url.substring(0, 80)}`);
+      return null;
+    }
+
+    const archiveUrl = snapshot.url;
+
+    // 2. Fetch the archived page
+    const pageResp = await fetch(archiveUrl, {
+      signal: AbortSignal.timeout(12000),
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Code Intelligence Digest)",
+        Accept: "text/html,application/xhtml+xml,*/*",
+      },
+    });
+
+    if (!pageResp.ok) {
+      logger.debug(`Wayback page fetch failed: HTTP ${pageResp.status}`);
+      return null;
+    }
+
+    const html = await pageResp.text();
+    const text = await extractTextFromHTML(html, archiveUrl);
+
+    if (text.length < 200) {
+      logger.debug(`Wayback content too short (${text.length} chars) for ${url.substring(0, 80)}`);
+      return null;
+    }
+
+    logger.info(
+      `Fetched article from Wayback Machine: ${url.substring(0, 80)} -> ${archiveUrl} (${text.length} chars)`
+    );
+    return { text, archiveUrl };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.debug(`Wayback Machine fetch failed for ${url.substring(0, 80)}: ${msg}`);
     return null;
   }
 }
@@ -588,6 +658,23 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
+
+    // If the page redirected to a paywall, try the Wayback Machine
+    if (errorMsg.includes("Redirected to paywall")) {
+      logger.info(`Trying Wayback Machine for paywalled article: ${url.substring(0, 80)}`);
+      const archived = await fetchFromWebArchive(url);
+      if (archived) {
+        return {
+          text: archived.text,
+          source: "web_archive",
+          length: archived.text.length,
+          fetchedAt: new Date(),
+          archivedUrl: archived.archiveUrl,
+        };
+      }
+      logger.warn(`No Wayback snapshot available for paywalled article: ${url.substring(0, 80)}`);
+    }
+
     logger.error(`Failed to fetch full text for ${url}`, { error: errorMsg });
 
     return {

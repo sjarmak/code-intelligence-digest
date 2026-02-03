@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/src/lib/logger";
 import { loadItemsByCategory } from "@/src/lib/db/items";
-import { saveFullText, getFullTextCacheStats } from "@/src/lib/db/items";
+import { saveFullText, getFullTextCacheStats, saveExtractedUrl } from "@/src/lib/db/items";
 import { fetchFullTextBatch } from "@/src/lib/pipeline/fulltext";
 import { Category } from "@/src/lib/model";
 import { blockInProduction } from "@/src/lib/auth/guards";
@@ -22,6 +22,7 @@ const VALID_CATEGORIES: Category[] = [
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",
@@ -134,6 +135,12 @@ export async function POST(request: NextRequest) {
     for (const [itemId, result] of results.entries()) {
       try {
         await saveFullText(itemId, result.text, result.source);
+        // If we resolved via Wayback Machine, save the archive URL so users get a working link
+        if (result.archivedUrl) {
+          await saveExtractedUrl(itemId, result.archivedUrl).catch(err => {
+            logger.warn(`Failed to save archived URL for ${itemId}`, { error: err });
+          });
+        }
         if (result.source !== "error") {
           successful++;
         } else {

@@ -87,6 +87,7 @@ const ALLOWED_CATEGORIES: Category[] = [
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",

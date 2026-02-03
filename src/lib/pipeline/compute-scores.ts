@@ -10,7 +10,7 @@ import { scoreWithLLM } from "./llmScore";
 import { saveItemScores } from "../db/scores";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
-import { findProductMentions } from "../../config/products";
+import { computeProductBoost, findProductMentions } from "../../config/products";
 
 /**
  * Compute recency score with exponential decay
@@ -122,22 +122,17 @@ export async function computeAndSaveScoresForCategory(
 
       // Apply boosts for domain-specific terms
       let boostMultiplier = 1.0;
-      const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
+      const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`;
+      const lowerContent = contentToSearch.toLowerCase();
       const boostTags: string[] = [];
 
-      // Detect product mentions using the comprehensive products config
-      const detectedProductIds = findProductMentions(contentToSearch);
-
-      // For product_news category, heavily boost mentions of specific products
-      if (category === "product_news" && detectedProductIds.length > 0) {
-        // Heavy boost for product mentions: 4x for 2+ products, 3x for 1 product
-        boostMultiplier = detectedProductIds.length >= 2 ? 4.0 : 3.0;
-        boostTags.push(...detectedProductIds);
-        logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${detectedProductIds.join(", ")}: "${item.title}"`);
-      }
+      // Product-specific boost (stronger for key competitors/own products in product_news)
+      const productBoost = computeProductBoost(category, contentToSearch);
+      boostMultiplier *= productBoost.multiplier;
+      boostTags.push(...productBoost.tags);
 
       // SOURCEGRAPH: Highest priority
-      const hasSourcegraph = contentToSearch.includes('sourcegraph');
+      const hasSourcegraph = lowerContent.includes('sourcegraph');
 
       // Core domain terms
       const coreTerms = [
@@ -160,9 +155,9 @@ export async function computeAndSaveScoresForCategory(
         boostMultiplier = 5.0;
         boostTags.push('sourcegraph');
       } else {
-        const matchingCoreTerms = coreTerms.filter(term => contentToSearch.includes(term)).length;
-        const hasAgent = contentToSearch.includes('agent') || contentToSearch.includes('agentic') || contentToSearch.includes('coding agent');
-        const hasCodeContext = coreTerms.slice(1, 8).some(term => contentToSearch.includes(term));
+        const matchingCoreTerms = coreTerms.filter(term => lowerContent.includes(term)).length;
+        const hasAgent = lowerContent.includes('agent') || lowerContent.includes('agentic') || lowerContent.includes('coding agent');
+        const hasCodeContext = coreTerms.slice(1, 8).some(term => lowerContent.includes(term));
 
         if (matchingCoreTerms >= 3) {
           boostMultiplier = 3.0;
@@ -202,7 +197,8 @@ export async function computeAndSaveScoresForCategory(
         recencyScore,
         finalScore,
         reasoning,
-        productMentions: detectedProductIds.length > 0 ? detectedProductIds : undefined,
+        // Preserve productMentions for existing consumers using the older helper
+        productMentions: findProductMentions(lowerContent) || undefined,
       };
     });
 

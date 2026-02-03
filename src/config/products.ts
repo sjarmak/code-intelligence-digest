@@ -1,3 +1,5 @@
+import type { Category } from "../lib/model";
+
 /**
  * Product and competitor configuration
  *
@@ -122,6 +124,28 @@ export const PRODUCTS: readonly Product[] = [
     name: "Cody",
     aliases: ["cody", "sourcegraph cody", "cody ai"],
     category: "ide_extension",
+    isOwnProduct: true,
+    isCompetitor: false,
+    vendor: "Sourcegraph",
+  },
+
+  {
+    id: "sourcebot",
+    name: "Sourcebot",
+    // Treat Sourcebot as our own coding agent product
+    aliases: ["sourcebot", "sourcebot ai", "sourcebot agent"],
+    category: "cli_agent",
+    isOwnProduct: true,
+    isCompetitor: false,
+    vendor: "Sourcegraph",
+  },
+
+  {
+    id: "sourcebot",
+    name: "Sourcebot",
+    // Treat Sourcebot as our own coding agent product
+    aliases: ["sourcebot", "sourcebot ai", "sourcebot agent"],
+    category: "cli_agent",
     isOwnProduct: true,
     isCompetitor: false,
     vendor: "Sourcegraph",
@@ -664,3 +688,132 @@ export function getProductCategories(productIds: string[]): ProductCategory[] {
   }
   return Array.from(categories);
 }
+
+// ============================================
+// PRODUCT PRIORITIES & BOOSTING HELPERS
+// ============================================
+
+export type ProductPriority = "tier1" | "tier2" | "other";
+
+/**
+ * Priority tiers for products when boosting product_news ranking.
+ *
+ * - tier1: Major competitors / own products we care most about
+ * - tier2: Relevant but secondary products
+ * - other: Everything else
+ */
+const PRODUCT_PRIORITY: Record<string, ProductPriority> = {
+  // Major competitors / own products in coding workflows & context management
+  cursor: "tier1",
+  "augment-code": "tier1",
+  sourcebot: "tier1",
+  "claude-code": "tier1",
+  "gemini-cli": "tier1",
+  cody: "tier1",
+
+  // Other notable agents/tools (can be expanded over time)
+  aider: "tier2",
+  "github-copilot": "tier2",
+  "amazon-q": "tier2",
+};
+
+export function getProductPriority(id: string): ProductPriority {
+  return PRODUCT_PRIORITY[id] ?? "other";
+}
+
+// Tools that provide deep code/context capabilities
+const TOOL_PRODUCTS = new Set<string>(["cursor", "sourcebot", "augment-code"]);
+
+// Agents/clients that use tools (CLI agents, assistants, etc.)
+const AGENT_PRODUCTS = new Set<string>([
+  "claude-code",
+  "gemini-cli",
+  "cody",
+  "aider",
+]);
+
+// Context-management-related phrases for product updates
+const CONTEXT_TERMS = [
+  "context window",
+  "context management",
+  "context caching",
+  "codebase context",
+  "deep search",
+  "code search",
+  "repositories context",
+  "multi-repo context",
+];
+
+export interface ProductBoostResult {
+  multiplier: number;
+  tags: string[];
+}
+
+/**
+ * Compute product-specific boost for ranking/scoring, with special handling
+ * for product_news category.
+ *
+ * Rules:
+ * - Only applies to product_news
+ * - Tier 1 products (Cursor, Sourcebot, Augment Code, Claude Code, Gemini CLI, Cody)
+ *   get the strongest boost
+ * - Additional boost when combined with context-management terms
+ * - Additional boost when a tool product is combined with an agent product
+ */
+export function computeProductBoost(
+  category: Category,
+  content: string,
+): ProductBoostResult {
+  if (category !== "product_news") {
+    return { multiplier: 1.0, tags: [] };
+  }
+
+  const lower = content.toLowerCase();
+  const detectedProductIds = findProductMentions(lower);
+
+  if (detectedProductIds.length === 0) {
+    return { multiplier: 1.0, tags: [] };
+  }
+
+  let tier1Count = 0;
+  let tier2Count = 0;
+  let otherCount = 0;
+
+  for (const id of detectedProductIds) {
+    const priority = getProductPriority(id);
+    if (priority === "tier1") tier1Count++;
+    else if (priority === "tier2") tier2Count++;
+    else otherCount++;
+  }
+
+  // Base product boost by tier composition
+  let multiplier = 1.0;
+  if (tier1Count > 0) {
+    // Strongest boost for major products
+    multiplier = tier1Count >= 2 ? 5.0 : 4.0;
+  } else if (tier2Count > 0) {
+    multiplier = tier2Count >= 2 ? 3.0 : 2.5;
+  } else {
+    // Long tail of other products still gets a modest boost
+    multiplier = 2.0;
+  }
+
+  // Extra boost for context-management focused updates from tier1 products
+  const hasContextTerm = CONTEXT_TERMS.some(term => lower.includes(term));
+  if (hasContextTerm && tier1Count > 0) {
+    multiplier *= 1.5;
+  }
+
+  // Workflow / integration stories: tool + agent together
+  const hasTool = detectedProductIds.some(id => TOOL_PRODUCTS.has(id));
+  const hasAgent = detectedProductIds.some(id => AGENT_PRODUCTS.has(id));
+  if (hasTool && hasAgent) {
+    multiplier *= 1.25;
+  }
+
+  return {
+    multiplier,
+    tags: detectedProductIds,
+  };
+}
+

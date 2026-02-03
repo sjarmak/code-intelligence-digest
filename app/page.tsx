@@ -75,6 +75,7 @@ export default function Home() {
     { id: "podcasts", label: "Podcasts" },
     { id: "tech_articles", label: "Tech Articles" },
     { id: "ai_news", label: "AI News" },
+    { id: "ai_dev", label: "AI Dev" },
     { id: "product_news", label: "Product News" },
     { id: "community", label: "Community" },
     { id: "research", label: "Research" },

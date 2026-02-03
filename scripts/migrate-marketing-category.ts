@@ -43,11 +43,21 @@ async function main(): Promise<void> {
 
   try {
     // 1. Count items to migrate
+    // We treat an item as TLDR Marketing if ANY of the following hold:
+    // - URL contains utm_source=tldrmarketing
+    // - source_title includes "TLDR Marketing"
+    // - title starts with "TLDR Marketing"
+    const marketingWhereClause = `
+      category = 'newsletters'
+      AND (
+        url LIKE '%utm_source=tldrmarketing%'
+        OR source_title ILIKE '%TLDR Marketing%'
+        OR title ILIKE 'TLDR Marketing%'
+      )
+    `;
+
     const countResult = await pool.query(
-      `SELECT COUNT(*) as count FROM items
-       WHERE source_title = 'TLDR'
-       AND url LIKE '%utm_source=tldrmarketing%'
-       AND category = 'newsletters'`,
+      `SELECT COUNT(*) as count FROM items WHERE ${marketingWhereClause}`,
     );
     const count = parseInt(countResult.rows[0].count, 10);
     logger.info(
@@ -61,10 +71,8 @@ async function main(): Promise<void> {
 
     // Show sample items
     const sampleResult = await pool.query(
-      `SELECT id, title, url FROM items
-       WHERE source_title = 'TLDR'
-       AND url LIKE '%utm_source=tldrmarketing%'
-       AND category = 'newsletters'
+      `SELECT id, title, url, source_title FROM items
+       WHERE ${marketingWhereClause}
        ORDER BY published_at DESC
        LIMIT 5`,
     );
@@ -82,10 +90,7 @@ async function main(): Promise<void> {
 
     // 2. Update category
     const updateResult = await pool.query(
-      `UPDATE items SET category = 'marketing'
-       WHERE source_title = 'TLDR'
-       AND url LIKE '%utm_source=tldrmarketing%'
-       AND category = 'newsletters'`,
+      `UPDATE items SET category = 'marketing' WHERE ${marketingWhereClause}`,
     );
     logger.info(
       `Updated ${updateResult.rowCount} items to category='marketing'`,
@@ -163,7 +168,7 @@ async function main(): Promise<void> {
     );
     const remainingNewsletter = await pool.query(
       `SELECT COUNT(*) as count FROM items
-       WHERE category = 'newsletters' AND url LIKE '%utm_source=tldrmarketing%'`,
+       WHERE ${marketingWhereClause}`,
     );
 
     logger.info("\n=== Migration Complete ===");

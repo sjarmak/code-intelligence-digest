@@ -41,6 +41,13 @@ const CATEGORY_QUERIES: Record<
     { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
     { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
   ],
+  ai_dev: [
+    { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
+    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.3 },
+    { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
+    { terms: DOMAIN_TERMS.context.terms, weight: 1.2 },
+    { terms: DOMAIN_TERMS.ir.terms, weight: 1.2 },
+  ],
   product_news: [
     { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },

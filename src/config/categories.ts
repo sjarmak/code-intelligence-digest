@@ -82,6 +82,21 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     },
   },
 
+  ai_dev: {
+    name: "AI Dev",
+    description:
+      "Incorporating AI into developer workflows: tips, best practices, coding assistants, and productivity from TLDR, newsletters, tech blogs, and community",
+    query:
+      "AI coding assistant developer workflow productivity Cursor Copilot pair programming prompt engineering RAG agent devops automation code generation",
+    halfLifeDays: 3,
+    maxItems: 10,
+    minRelevance: 5,
+    weights: {
+      llm: 0.6,
+      bm25: 0.4,
+    },
+  },
+
   product_news: {
     name: "Product News",
     description:

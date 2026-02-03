@@ -14,6 +14,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Allow public config (used by UI before/without auth)
+  if (pathname === '/api/config') {
+    return NextResponse.next();
+  }
+
   // Allow access to populate-embeddings endpoint (one-time operation)
   // This endpoint generates embeddings for the database
   if (pathname.startsWith('/api/admin/populate-embeddings')) {
@@ -29,9 +34,14 @@ export function middleware(request: NextRequest) {
   const authCookie = request.cookies.get('ui-auth');
   const isAuthenticated = authCookie?.value === 'authenticated';
 
-  // If not authenticated, redirect to login
+  // If not authenticated: API routes get 401 JSON, pages redirect to login
   if (!isAuthenticated) {
-    // Preserve the original URL for redirect after login
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { error: 'Unauthorized', message: 'Authentication required' },
+        { status: 401 }
+      );
+    }
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);

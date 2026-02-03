@@ -80,6 +80,25 @@ Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
 
+    case "ai_dev":
+      return `You are an expert evaluator of AI-in-developer-workflow content for a "Code Intelligence Digest" service.
+
+Evaluate each item for:
+1. **Relevance** (0-10): Focus on incorporating AI into developer workflows: tips, best practices, coding assistant usage (Cursor, Copilot, etc.), AI pair programming, prompt engineering for code, RAG for codebases, AI in devops/automation, developer productivity with AI. Include content from TLDR, newsletters, tech blogs, and community that helps developers use AI effectively.
+2. **Usefulness** (0-10): How useful/valuable is this for a senior developer or tech lead wanting to integrate AI into their daily workflow?
+3. **Tags**: Assign relevant domain tags from: ${baseTags.join(", ")}
+
+Return JSON with exactly this structure:
+{
+  "relevance": <number 0-10>,
+  "usefulness": <number 0-10>,
+  "tags": ["tag1", "tag2", ...]
+}
+
+Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
+
+CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
+
     case "product_news":
       // Get comprehensive list of competitor products for the prompt
       const competitorNames = getCompetitorProducts()
@@ -196,13 +215,17 @@ CRITICAL: Items with minimal content (only a title, no summary or content) shoul
 function createBatchPrompt(items: FeedItem[], category: Category): string {
   const itemTexts = items
     .map((item, idx) => {
+      // Truncate summary/content to avoid token overflow (newsletter HTML can be 100k+ chars)
+      const summaryText = item.summary || "N/A";
+      const summaryTruncated = summaryText.length > 1500 ? summaryText.substring(0, 1500) + "..." : summaryText;
+
       const parts = [
         `[${idx}] Title: ${item.title}`,
         `Source: ${item.sourceTitle}`,
-        `Summary: ${item.summary || "N/A"}`,
+        `Summary: ${summaryTruncated}`,
       ];
 
-      // Include content snippet if available
+      // Include content snippet if available (truncate to 500 chars)
       if (item.contentSnippet && item.contentSnippet.length > 50) {
         parts.push(`Content: ${item.contentSnippet.substring(0, 500)}`);
       }

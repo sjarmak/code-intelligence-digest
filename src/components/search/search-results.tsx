@@ -32,6 +32,7 @@ function getCategoryColor(category: string): string {
     podcasts: 'bg-gray-100 text-gray-800 border-gray-300',
     tech_articles: 'bg-gray-100 text-gray-800 border-gray-300',
     ai_news: 'bg-gray-100 text-gray-800 border-gray-300',
+    ai_dev: 'bg-gray-100 text-gray-800 border-gray-300',
     product_news: 'bg-gray-100 text-gray-800 border-gray-300',
     community: 'bg-gray-100 text-gray-800 border-gray-300',
     research: 'bg-gray-100 text-gray-800 border-gray-300',

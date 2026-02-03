@@ -227,32 +227,33 @@ export async function normalizeItem(raw: InoreaderArticle): Promise<FeedItem> {
       category = "community";
       logger.debug(`Detected Reddit URL, overriding category to community: ${url}`);
     }
-    // Twitter/X feeds should be community, but avoid reclassifying normal newsletter articles that merely link to Twitter
-    // Check if this is a dedicated Twitter feed by:
-    // 1. URL points to twitter.com/x.com AND source title contains "twitter" or "@handle"
-    // 2. OR the URL or feed stream comes from Twitter RSS proxy services (xcancel, xgo.ing, rss.app for Twitter)
+    // Twitter/X feeds should be community, unless the feed is in Product Updates (product_news)
+    // so xcancel/changelog feeds placed there (e.g. sourcebot) stay in Product News.
     else if (
-      // Direct xcancel.com URLs are always Twitter content
-      url.includes("xcancel.com/") ||
-      // Other Twitter/X URLs need additional validation
+      category !== "product_news" &&
       (
-        (url.includes("twitter.com/") || url.includes("x.com/")) &&
+        // Direct xcancel.com URLs are always Twitter content
+        url.includes("xcancel.com/") ||
+        // Other Twitter/X URLs need additional validation
         (
-          (feedConfig?.canonicalName ?? "").toLowerCase().includes("twitter") ||
-          (raw.origin?.title ?? "").toLowerCase().includes("twitter") ||
-          // Check for @handle pattern in source title (indicates dedicated Twitter feed)
-          // Matches both "(@handle)" and "/ @handle" patterns
-          /(\(@|\/\s*@)\w+/.test(feedConfig?.canonicalName ?? "") ||
-          /(\(@|\/\s*@)\w+/.test(raw.origin?.title ?? "") ||
-          // Check if feed stream is from Twitter RSS proxy services
-          (streamId && (
-            streamId.includes("xcancel.com") ||
-            streamId.includes("xgo.ing") ||
-            (streamId.includes("rss.app") && (
-              (feedConfig?.canonicalName ?? "").toLowerCase().includes("twitter") ||
-              (feedConfig?.vendor ?? "").toLowerCase() === "x.com"
+          (url.includes("twitter.com/") || url.includes("x.com/")) &&
+          (
+            (feedConfig?.canonicalName ?? "").toLowerCase().includes("twitter") ||
+            (raw.origin?.title ?? "").toLowerCase().includes("twitter") ||
+            // Check for @handle pattern in source title (indicates dedicated Twitter feed)
+            // Matches both "(@handle)" and "/ @handle" patterns
+            /(\(@|\/\s*@)\w+/.test(feedConfig?.canonicalName ?? "") ||
+            /(\(@|\/\s*@)\w+/.test(raw.origin?.title ?? "") ||
+            // Check if feed stream is from Twitter RSS proxy services
+            (streamId && (
+              streamId.includes("xcancel.com") ||
+              streamId.includes("xgo.ing") ||
+              (streamId.includes("rss.app") && (
+                (feedConfig?.canonicalName ?? "").toLowerCase().includes("twitter") ||
+                (feedConfig?.vendor ?? "").toLowerCase() === "x.com"
+              ))
             ))
-          ))
+          )
         )
       )
     ) {

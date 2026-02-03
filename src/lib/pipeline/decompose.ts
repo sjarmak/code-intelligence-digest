@@ -277,35 +277,105 @@ export function isNewsletterSource(sourceTitle: string): boolean {
   return NEWSLETTER_SOURCES.some((name) => sourceTitle.includes(name));
 }
 
+/** AI Dev patterns - used by migration script */
+const AI_DEV_PATTERNS = [
+  /(ai coding|ai pair programming|coding agent|ai agent|agentic|vibe coding)/i,
+  /(cursor|copilot|tabnine|codeium|windsurf|claude code|cody)/i,
+  /(prompt engineering|prompting) (for|with|in) (code|developers?)/i,
+  /(openai|anthropic|claude|gpt-4|gpt-3|llama|mistral|gemini) (for|in) (code|coding|dev)/i,
+  /(rag|retrieval augmented|fine-tuning) (for|in) (code|codebase)/i,
+  /(ai|llm) (in|for) (devops|ci\/cd|automation|developer workflow)/i,
+  /(code generation|code completion) (with|using) (ai|llm)/i,
+  /(developer productivity|dev productivity) (with|using) (ai|llm)/i,
+  /(llm|large language model) (for|in) (code|coding|development)/i,
+  /(ai|llm) (assistant|tool) (for|in) (code|developers?)/i,
+];
+
+/** Product News patterns - exclude these from AI Dev */
+const PRODUCT_NEWS_PATTERNS = [
+  /(release notes|changelog|what's new|version \d+\.\d+)/i,
+  /(feature announcement|new feature|product update)/i,
+  /(cursor|copilot|tabnine|codeium) (release|update|feature|changelog)/i,
+  /(ide|editor|debugger|vscode|intellij|jetbrains) (release|update|announcement)/i,
+  /(github|gitlab|bitbucket|jira|linear|notion) (release|update|feature)/i,
+];
+
 /**
- * Re-categorize a decomposed article based on URL patterns and content
- * Only re-categorizes if the original category is "newsletters" (generic newsletter folder)
- * Otherwise preserves the feed's category from Inoreader folder (ai_news, product_news, etc.)
+ * Check if an item matches AI Dev patterns (for migration/backfill).
+ * Returns true if item would be recategorized to ai_dev from newsletters.
  */
+export function itemMatchesAiDevPatterns(item: {
+  title?: string;
+  summary?: string;
+  contentSnippet?: string;
+  url?: string;
+  sourceTitle?: string;
+}): boolean {
+  const url = (item.url || "").toLowerCase();
+  const title = (item.title || "").toLowerCase();
+  const summary = (item.summary || item.contentSnippet || "").toLowerCase();
+  const combinedText = `${title} ${summary}`;
+
+  for (const pattern of PRODUCT_NEWS_PATTERNS) {
+    if (pattern.test(url) || pattern.test(combinedText)) return false;
+  }
+  for (const pattern of AI_DEV_PATTERNS) {
+    if (pattern.test(url) || pattern.test(combinedText)) return true;
+  }
+  return false;
+}
+
 function recategorizeDecomposedArticle(item: FeedItem): Category {
-  // TLDR Marketing: route to "marketing" category based on utm_source in URL
+  // TLDR Marketing: route to "marketing" category
+  // Detection rules:
+  // - utm_source=tldrmarketing in URL (primary signal from TLDR tracking)
+  // - Source title includes "TLDR Marketing" (special-edition newsletter branding)
+  // - Article title starts with "TLDR Marketing" (subject-style branding)
+  //
   // This check must come BEFORE the newsletter source check to intercept TLDR Marketing items
-  if (item.url && item.url.includes("utm_source=tldrmarketing")) {
+  const sourceTitleLower = (item.sourceTitle || "").toLowerCase();
+  const titleLower = (item.title || "").toLowerCase();
+  const isTldrMarketing =
+    (item.url && item.url.includes("utm_source=tldrmarketing")) ||
+    sourceTitleLower.includes("tldr marketing") ||
+    titleLower.startsWith("tldr marketing");
+
+  if (isTldrMarketing) {
     logger.debug(
-      `Categorizing as "marketing" for article "${item.title}" (TLDR Marketing URL detected)`,
+      `Categorizing as "marketing" for article "${item.title}" (TLDR Marketing signal detected from url/title/sourceTitle)`,
     );
     return "marketing";
   }
 
-  // CRITICAL: ALWAYS keep items from newsletter sources in "newsletters" category
-  // This check must come FIRST (after marketing check), before any other category logic
-  // This ensures they show up in the newsletters view even if they're also relevant to other categories
-  // The user expects to see Elevate, Byte Byte Go, TLDR, etc. items in newsletters
+  // Build combined text for pattern matching (used for both newsletter and non-newsletter items)
+  const url = (item.url || "").toLowerCase();
+  const title = (item.title || "").toLowerCase();
+  const summary = (item.summary || item.contentSnippet || "").toLowerCase();
+  const combinedText = `${title} ${summary}`;
+
+  // For newsletter sources (TLDR, Byte Byte Go, etc.): allow recategorization to AI Dev or Product News
+  // when content strongly matches. This surfaces TLDR Dev, TLDR AI, TLDR DevOps outputs in AI Dev tab.
   if (isNewsletterSource(item.sourceTitle)) {
-    logger.debug(
-      `Keeping "newsletters" category for article "${item.title}" from newsletter source "${item.sourceTitle}"`,
-    );
+    for (const pattern of PRODUCT_NEWS_PATTERNS) {
+      if (pattern.test(url) || pattern.test(combinedText)) {
+        logger.debug(
+          `Re-categorizing "${item.title}" from newsletter to product_news (content match)`,
+        );
+        return "product_news";
+      }
+    }
+    for (const pattern of AI_DEV_PATTERNS) {
+      if (pattern.test(url) || pattern.test(combinedText)) {
+        logger.debug(
+          `Re-categorizing "${item.title}" from newsletter to ai_dev (AI Dev content match)`,
+        );
+        return "ai_dev";
+      }
+    }
     return "newsletters";
   }
 
   // If the item is already in a specific category (not "newsletters"), keep it
-  // This preserves the category from the Inoreader folder (ai_news, product_news, etc.)
-  // BUT only if it's NOT from a newsletter source (checked above)
   if (item.category !== "newsletters") {
     logger.debug(
       `Keeping original category "${item.category}" for article "${item.title}" (from Inoreader folder)`,
@@ -313,61 +383,32 @@ function recategorizeDecomposedArticle(item: FeedItem): Category {
     return item.category;
   }
 
-  // Only re-categorize if it's from a generic "newsletters" folder (not a known newsletter source)
-  // Use content-based patterns to determine the correct category
-  const url = item.url.toLowerCase();
-  const title = (item.title || "").toLowerCase();
-  const summary = (item.summary || item.contentSnippet || "").toLowerCase();
-  const combinedText = `${title} ${summary}`;
-
-  // REMOVED: TLDR recategorization logic
-  // TLDR items should stay in newsletters category, not be moved to ai_news or product_news
-  // AI News should only come from the AI Articles feed, not from TLDR newsletters
-  // This prevents TLDR articles from appearing in ai_news category
-
-  // AI News patterns
+  // AI News patterns (model releases, breakthroughs - for generic newsletter folder items)
   const aiNewsPatterns = [
     /(openai|anthropic|claude|gpt-4|gpt-3|llama|mistral|gemini|deepmind)/i,
     /(large language model|llm|transformer model|foundation model)/i,
     /(ai model release|model announcement|ai infrastructure)/i,
-    /(prompt engineering|fine-tuning|rag|retrieval augmented)/i,
     /(ai coding|ai agent|autonomous agent|agentic)/i,
-    /(multimodal ai|vision model|text-to-image)/i,
     /anthropic\.com|openai\.com|deepmind\.com|huggingface\.co/i,
   ];
 
-  // Product News patterns
-  const productNewsPatterns = [
-    /(release notes|changelog|what's new|version \d+\.\d+)/i,
-    /(feature announcement|new feature|product update)/i,
-    /(tool release|launch|beta|general availability|ga)/i,
-    /(ide|editor|debugger|code review tool|dev tool) (release|update|announcement)/i,
-    /(github|gitlab|bitbucket|jira|linear|notion) (release|update|feature)/i,
-    /(vscode|vim|emacs|jetbrains|intellij) (release|update)/i,
-    /(cursor|copilot|tabnine|codeium) (release|update|feature)/i,
-  ];
-
-  // Check for AI News
-  for (const pattern of aiNewsPatterns) {
+  // For generic newsletters folder (non-newsletter sources): use content patterns
+  for (const pattern of PRODUCT_NEWS_PATTERNS) {
     if (pattern.test(url) || pattern.test(combinedText)) {
-      logger.debug(
-        `Re-categorizing article "${item.title}" from newsletters to ai_news based on content`,
-      );
-      return "ai_news";
-    }
-  }
-
-  // Check for Product News
-  for (const pattern of productNewsPatterns) {
-    if (pattern.test(url) || pattern.test(combinedText)) {
-      logger.debug(
-        `Re-categorizing article "${item.title}" from newsletters to product_news based on content`,
-      );
       return "product_news";
     }
   }
+  for (const pattern of aiNewsPatterns) {
+    if (pattern.test(url) || pattern.test(combinedText)) {
+      return "ai_news";
+    }
+  }
+  for (const pattern of AI_DEV_PATTERNS) {
+    if (pattern.test(url) || pattern.test(combinedText)) {
+      return "ai_dev";
+    }
+  }
 
-  // Keep original category (newsletters) if no patterns match
   return item.category;
 }
 

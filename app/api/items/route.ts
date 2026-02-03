@@ -270,6 +270,7 @@ const VALID_CATEGORIES: Category[] = [
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",
@@ -455,10 +456,10 @@ export async function GET(request: NextRequest) {
         (nowMs - periodDays * 24 * 60 * 60 * 1000) / 1000,
       );
 
-      // For research:
-      // - Daily/Weekly/Monthly: All show top-ranked results (no date filtering for backfilled papers)
-      //   New papers added after backfill will have recent created_at and show in daily/weekly
-      // - All-time: Filter by published_at (last 3 years)
+      // For research and ai_dev:
+      // - Daily/Weekly/Monthly: Show top-ranked results (no date filtering)
+      //   ai_dev is populated by migration from newsletters; items may be older
+      // - All-time: Filter by published_at (research: last 3 years; ai_dev: standard period)
       if (category === "research") {
         if (period === "all") {
           // Research all-time: limit to last 3 years using published_at
@@ -473,14 +474,19 @@ export async function GET(request: NextRequest) {
           );
         } else {
           // Research daily/weekly/monthly: no date filtering, just show top ranked results
-          // This treats all backfilled papers as "current" and shows most relevant
-          // New papers added after backfill will have recent created_at and show in daily/weekly
-          useCreatedAt = false; // Not used since we're not filtering
-          dateColumn = "created_at"; // For ordering, but no cutoff
+          useCreatedAt = false;
+          dateColumn = "created_at";
           logger.info(
             `[API] Research ${period} period: no date filtering, showing top ranked results`,
           );
         }
+      } else if (category === "ai_dev" && period !== "all") {
+        // ai_dev: migration-populated from newsletters; items may be old - show top ranked without date filter
+        useCreatedAt = false;
+        dateColumn = "created_at";
+        logger.info(
+          `[API] AI Dev ${period} period: no date filtering, showing top ranked results`,
+        );
       } else {
         // For most categories: use published_at for date filtering
         // This ensures items show up based on when they were published, not when they were synced
@@ -511,8 +517,11 @@ export async function GET(request: NextRequest) {
         // have -article- in ID OR are from newsletter sources without -article- in ID
         whereClause = `category = ? AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
-      } else if (category === "research" && period !== "all") {
-        // Research day/week/month: no date filter, just get all research items (limited for performance)
+      } else if (
+        (category === "research" || category === "ai_dev") &&
+        period !== "all"
+      ) {
+        // Research/ai_dev day/week/month: no date filter, show top ranked
         whereClause = `category = ?`;
         queryParams = [category];
       } else {

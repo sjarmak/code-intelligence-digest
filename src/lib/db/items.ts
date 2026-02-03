@@ -671,7 +671,7 @@ export async function updateItemsCacheMetadata(
 export async function saveFullText(
   itemId: string,
   fullText: string,
-  source: "web_scrape" | "arxiv" | "ads_api" | "error",
+  source: "web_scrape" | "arxiv" | "ads_api" | "web_archive" | "error",
 ): Promise<void> {
   try {
     const sqlite = getSqlite();
