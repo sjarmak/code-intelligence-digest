@@ -330,8 +330,13 @@ export async function rankCategory(
       : 1.0; // No recency boost for non-all-time periods (neutral score)
 
     // Apply boosts for domain-specific terms (code search, agents, evaluation, etc.)
-    let boostMultiplier = 1.0;
-    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`;
+    // Include fullText when available so newsletter articles that mention code search/Sourcegraph
+    // in the body get the boost even if the short snippet doesn't (e.g. roam from TLDR - Topics)
+    const FULLTEXT_TRUNCATE = 8000;
+    const fullTextSnippet = item.fullText
+      ? item.fullText.slice(0, FULLTEXT_TRUNCATE)
+      : "";
+    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''} ${fullTextSnippet}`.trim();
     const lowerContent = contentToSearch.toLowerCase();
     const boostTags: string[] = [];
 
@@ -705,7 +710,8 @@ export async function rankCategoryWithoutRecency(
 
     // Apply boosts for domain-specific terms (same as rankCategory)
     let boostMultiplier = 1.0;
-    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
+    const fullTextSnippet = item.fullText ? item.fullText.slice(0, 8000) : "";
+    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''} ${fullTextSnippet}`.trim().toLowerCase();
     const boostTags: string[] = [];
 
     // Detect product mentions in content (used for filtering and boosting)
