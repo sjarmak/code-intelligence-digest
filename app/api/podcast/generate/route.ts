@@ -8,7 +8,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 import { v4 as uuid } from "uuid";
+import { LEGACY_USER_ID } from "@/src/lib/db/digestItems";
 import {
   loadItemsByCategory,
   loadItemsByCategoryWithDateRange,
@@ -55,6 +57,12 @@ import {
 } from "@/src/lib/pipeline/podcastVerify";
 import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import {
+  getDateRangeForPeriodDays,
+  formatDateRangeLabel,
+  formatDateLong,
+} from "@/src/lib/dateRange";
 
 interface PodcastRequest {
   sourceMode: "auto" | "manual" | "categories";
@@ -65,6 +73,8 @@ interface PodcastRequest {
   prompt?: string;
   format?: string;
   voiceStyle?: string;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   customDateRange?: {
     startDate: string;
     endDate: string;
@@ -212,11 +222,16 @@ function validateRequest(body: unknown): {
   // Normalize prompt
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
 
+  const openaiApiKey = typeof req.openaiApiKey === "string" ? req.openaiApiKey.trim() : undefined;
+  const openaiBaseUrl = typeof req.openaiBaseUrl === "string" ? req.openaiBaseUrl.trim() : undefined;
+
   const data: PodcastRequest = {
     sourceMode: sourceMode as "auto" | "manual" | "categories",
     prompt: prompt || undefined,
     format: "transcript",
     voiceStyle,
+    openaiApiKey: openaiApiKey || undefined,
+    openaiBaseUrl: openaiBaseUrl || undefined,
   };
 
   if (sourceMode === "categories") {
@@ -416,6 +431,35 @@ export async function POST(
 
     const req = validation.data!;
 
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
+
+    // Resolve LLM options (BYOK from body; session for Sourcegraph.com exception)
+    const llmOptions = resolveLLMOptions(
+      {
+        openaiApiKey: req.openaiApiKey,
+        openaiBaseUrl: req.openaiBaseUrl,
+      },
+      undefined,
+      sessionUser,
+    );
+    const llmClient = getOpenAICompatibleClient(llmOptions);
+    if (!llmClient) {
+      return NextResponse.json(
+        {
+          error:
+            "LLM is required for podcast generation. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.",
+        },
+        { status: 400 },
+      );
+    }
+
     logger.info(
       `Podcast request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library (${req.categories?.join(",") || "all"})` : `selectedItemIds=${req.selectedItemIds?.length} items`}, voice=${req.voiceStyle}, prompt="${(req.prompt || "").substring(0, 50)}..."`,
     );
@@ -428,7 +472,7 @@ export async function POST(
       // Auto mode: load from digest_items
       // In source mode, do NOT filter by category/period - use all items from digest library
       const { getDigestItems } = await import("@/src/lib/db/digestItems");
-      allItems = await getDigestItems();
+      allItems = await getDigestItems(undefined, undefined, userId);
       logger.info(
         `Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`,
       );
@@ -665,6 +709,7 @@ export async function POST(
     const digests = await extractPodcastBatchDigests(
       selectedItems,
       req.prompt || "",
+      llmOptions,
     );
     logger.info(`Stage A complete: ${digests.length} digests extracted`);
 
@@ -675,6 +720,7 @@ export async function POST(
       req.period || "all",
       (req.categories as Category[]) || [],
       profile,
+      llmOptions,
     );
     logger.info(
       `Stage B complete: ${rundown.segments.length} segments, ${rundown.total_time_seconds}s total`,
@@ -690,6 +736,7 @@ export async function POST(
         (req.categories as Category[]) || [],
         profile,
         req.voiceStyle,
+        llmOptions,
       );
     logger.info(
       `Stage C complete: ${transcript.split(/\s+/).length} words, ${estimatedDuration} duration`,
@@ -697,7 +744,7 @@ export async function POST(
 
     // Stage D: Verify script
     logger.info("Stage D: Verifying script accuracy (gpt-4o-mini)...");
-    const verificationResult = await verifyPodcastScript(transcript, digests);
+    const verificationResult = await verifyPodcastScript(transcript, digests, llmOptions);
     const verificationReport = generateVerificationReport(verificationResult);
     const errorCount = verificationResult.issues.filter(
       (i) => i.severity === "error",
@@ -709,17 +756,37 @@ export async function POST(
     // Build show notes from rundown
     const showNotes = buildShowNotes(digests, rundown);
 
-    // Build response
+    // Build response with date-aware title
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     const id = `pod-${uuid()}`;
 
+    const dateRangeLabel = ((): string | null => {
+      if (req.sourceMode === "manual") return null;
+      if (req.sourceMode === "auto") return formatDateLong(new Date());
+      const period = req.period || "all";
+      if (period === "custom" && req.customDateRange) {
+        return formatDateRangeLabel(
+          { start: req.customDateRange.startDate, end: req.customDateRange.endDate },
+          "custom",
+        );
+      }
+      if (period === "week" || period === "month") {
+        const range = getDateRangeForPeriodDays(period === "week" ? 7 : 30);
+        return formatDateRangeLabel(range, period);
+      }
+      return formatDateLong(new Date());
+    })();
+
+    const baseTitle =
+      req.sourceMode === "manual"
+        ? "Code Intelligence Digest – Curated Selection"
+        : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : req.period === "all" ? "All Time" : "Custom Range"}`;
+    const podcastTitle = (rundown.episode_title || baseTitle) +
+      (dateRangeLabel ? ` – ${dateRangeLabel}` : "");
+
     const response: PodcastResponse = {
       id,
-      title:
-        rundown.episode_title ||
-        (req.sourceMode === "manual"
-          ? `Code Intelligence Digest – Curated Selection`
-          : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : req.period === "all" ? "All Time" : "Custom Range"}`),
+      title: podcastTitle,
       generatedAt: new Date().toISOString(),
       categories: req.categories || [],
       period: req.period || "all",

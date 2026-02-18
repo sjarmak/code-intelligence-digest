@@ -4,7 +4,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/auth";
 import { v4 as uuid } from "uuid";
+import { LEGACY_USER_ID } from "@/src/lib/db/digestItems";
 import {
   loadItemsByCategory,
   loadItemsByCategoryWithDateRange,
@@ -23,6 +25,12 @@ import { generateNewsletterFromDigests } from "@/src/lib/pipeline/newsletter";
 import { extractBatchDigests } from "@/src/lib/pipeline/extract";
 import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import {
+  getDateRangeForPeriodDays,
+  formatDateRangeLabel,
+  formatDateLong,
+} from "@/src/lib/dateRange";
 
 // Helper function to deduplicate by URL (same logic as in select.ts)
 function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
@@ -54,6 +62,8 @@ interface NewsletterRequest {
   limit?: number;
   selectedItemIds?: string[];
   prompt?: string;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   customDateRange?: {
     startDate: string;
     endDate: string;
@@ -114,12 +124,16 @@ function validateRequest(body: unknown): {
     };
   }
 
-  // Normalize prompt
+  // Normalize prompt and optional BYOK
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
+  const openaiApiKey = typeof req.openaiApiKey === "string" ? req.openaiApiKey.trim() : undefined;
+  const openaiBaseUrl = typeof req.openaiBaseUrl === "string" ? req.openaiBaseUrl.trim() : undefined;
 
   const data: NewsletterRequest = {
     sourceMode: sourceMode as "auto" | "manual" | "categories",
     prompt: prompt || undefined,
+    openaiApiKey: openaiApiKey || undefined,
+    openaiBaseUrl: openaiBaseUrl || undefined,
   };
 
   if (sourceMode === "categories") {
@@ -332,6 +346,32 @@ export async function POST(
       );
     }
 
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
+
+    // Resolve LLM options (BYOK from body; session for Sourcegraph.com exception)
+    const llmOptions = resolveLLMOptions(
+      { openaiApiKey: req.openaiApiKey, openaiBaseUrl: req.openaiBaseUrl },
+      undefined,
+      sessionUser,
+    );
+    const llmClient = getOpenAICompatibleClient(llmOptions);
+    if (!llmClient) {
+      return NextResponse.json(
+        {
+          error:
+            "LLM is required for newsletter generation. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.",
+        },
+        { status: 400 },
+      );
+    }
+
     logger.info(
       `Newsletter request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library` : `selectedItemIds=${req.selectedItemIds?.length} items`}, prompt="${(req.prompt || "").substring(0, 50)}..."`,
     );
@@ -343,7 +383,7 @@ export async function POST(
       // Auto mode: load from digest_items
       // In source mode, do NOT filter by category/period - use all items from digest library
       const { getDigestItems } = await import("@/src/lib/db/digestItems");
-      allItems = await getDigestItems();
+      allItems = await getDigestItems(undefined, undefined, userId);
       logger.info(
         `Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`,
       );
@@ -610,7 +650,7 @@ export async function POST(
     }
 
     // Step 6: Extract item digests (Pass 1)
-    const digests = await extractBatchDigests(selectedItems, req.prompt || "");
+    const digests = await extractBatchDigests(selectedItems, req.prompt || "", llmOptions);
     logger.info(
       `Extracted ${digests.length} item digests from ${selectedItems.length} selected items`,
     );
@@ -648,6 +688,7 @@ export async function POST(
         (req.categories as Category[]) || [],
         profile,
         req.prompt,
+        llmOptions,
       );
 
     // Build response
@@ -657,12 +698,34 @@ export async function POST(
     // Record successful usage
     await recordUsage(request, "/api/newsletter/generate");
 
+    const newsletterTitle = ((): string => {
+      if (req.sourceMode === "manual") {
+        return "Code Intelligence Digest – Curated Selection";
+      }
+      if (req.sourceMode === "auto") {
+        return `Code Intelligence Digest – Digest Library · ${formatDateLong(new Date())}`;
+      }
+      const period = req.period || "all";
+      if (period === "custom" && req.customDateRange) {
+        const range = {
+          start: req.customDateRange.startDate,
+          end: req.customDateRange.endDate,
+        };
+        return `Code Intelligence Digest – ${formatDateRangeLabel(range, "custom")}`;
+      }
+      if (period === "week" || period === "month") {
+        const days = period === "week" ? 7 : 30;
+        const range = getDateRangeForPeriodDays(days);
+        const label = formatDateRangeLabel(range, period);
+        const periodWord = period === "week" ? "Week" : "Month";
+        return `Code Intelligence Digest – ${periodWord} of ${label}`;
+      }
+      return `Code Intelligence Digest – All Time · ${formatDateLong(new Date())}`;
+    })();
+
     const response: NewsletterResponse = {
       id,
-      title:
-        req.sourceMode === "manual"
-          ? `Code Intelligence Digest – Curated Selection`
-          : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : "All Time"} of ${new Date().toLocaleDateString()}`,
+      title: newsletterTitle,
       generatedAt: new Date().toISOString(),
       categories: req.categories || [],
       period: req.period || "all",

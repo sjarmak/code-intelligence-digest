@@ -14,6 +14,10 @@ import {
   getTopThemes,
   generateDigestSummary,
 } from "@/src/lib/pipeline/digest";
+import {
+  getDateRangeForPeriodDays,
+  formatDateRangeLabel,
+} from "@/src/lib/dateRange";
 
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
@@ -118,7 +122,7 @@ export async function GET(req: NextRequest) {
       logger.warn(`[DIGEST] No items found for ${periodLabel} digest`);
       return NextResponse.json({
         period,
-        dateRange: getDateRange(periodDays),
+        dateRange: getDateRangeForPeriodDays(periodDays),
         summary: `No content available for this ${periodLabel.toLowerCase()} period.`,
         themes: [],
         itemCount: 0,
@@ -134,17 +138,21 @@ export async function GET(req: NextRequest) {
     const themeMap = extractThemes(allRankedItems);
     const themes = getTopThemes(themeMap, 10);
 
-    // Generate summary
+    // Generate summary with actual date range so the model doesn't invent a date
+    const dateRange = getDateRangeForPeriodDays(periodDays);
+    const dateRangeLabel = formatDateRangeLabel(dateRange, period as "day" | "week" | "month");
     logger.info(`[DIGEST] Generating AI summary`);
     const summary = await generateDigestSummary(
       themes,
       allRankedItems.length,
       periodLabel,
+      undefined,
+      dateRangeLabel,
     );
 
     const response: DigestResponse = {
       period,
-      dateRange: getDateRange(periodDays),
+      dateRange,
       summary,
       themes,
       itemCount: allRankedItems.length,
@@ -170,15 +178,3 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/**
- * Calculate date range for a given number of days
- */
-function getDateRange(days: number): { start: string; end: string } {
-  const end = new Date();
-  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-
-  return {
-    start: start.toISOString().split("T")[0],
-    end: end.toISOString().split("T")[0],
-  };
-}
