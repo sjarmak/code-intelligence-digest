@@ -342,7 +342,7 @@ export async function rankCategory(
 
     // Product-specific boost (stronger for key competitors/own products in product_news)
     const productBoost = computeProductBoost(category, contentToSearch);
-    boostMultiplier *= productBoost.multiplier;
+    let boostMultiplier = productBoost.multiplier;
     boostTags.push(...productBoost.tags);
 
     // SOURCEGRAPH: Highest priority
