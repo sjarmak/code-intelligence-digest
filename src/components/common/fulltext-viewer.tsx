@@ -12,6 +12,7 @@ interface FullTextViewerProps {
 
 export function FullTextViewer({ itemId, itemTitle, isOpen, onClose }: FullTextViewerProps) {
   const [fullText, setFullText] = useState<string | null>(null);
+  const [isFallback, setIsFallback] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,6 +20,7 @@ export function FullTextViewer({ itemId, itemTitle, isOpen, onClose }: FullTextV
     if (isOpen && itemId) {
       setLoading(true);
       setError(null);
+      setIsFallback(false);
       fetch(`/api/items/${encodeURIComponent(itemId)}/fulltext?include_content=true`)
         .then((res) => {
           if (!res.ok) {
@@ -28,7 +30,8 @@ export function FullTextViewer({ itemId, itemTitle, isOpen, onClose }: FullTextV
         })
         .then((data) => {
           setFullText(data.text || null);
-          if (!data.hasFullText) {
+          setIsFallback(data.isFallback ?? false);
+          if (!data.text && !data.hasFullText) {
             setError('Full text not available for this item');
           }
         })
@@ -41,6 +44,7 @@ export function FullTextViewer({ itemId, itemTitle, isOpen, onClose }: FullTextV
     } else {
       setFullText(null);
       setError(null);
+      setIsFallback(false);
     }
   }, [isOpen, itemId]);
 
@@ -56,8 +60,15 @@ export function FullTextViewer({ itemId, itemTitle, isOpen, onClose }: FullTextV
           <div className="flex items-center gap-3">
             <FileText className="w-5 h-5 text-gray-600" />
             <div>
-              <h2 className="text-lg font-semibold text-black">Full Text</h2>
-              <p className="text-sm text-gray-600 mt-1 line-clamp-1">{itemTitle}</p>
+              <h2 className="text-lg font-semibold text-black">
+                {isFallback ? 'Summary' : 'Full Text'}
+              </h2>
+              <p className="text-sm text-gray-600 mt-1 line-clamp-1">
+                {itemTitle}
+                {isFallback && (
+                  <span className="ml-2 text-amber-600">(RSS summary; full article not yet fetched)</span>
+                )}
+              </p>
             </div>
           </div>
           <button

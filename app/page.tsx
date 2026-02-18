@@ -35,6 +35,11 @@ export default function Home() {
   const [mobileProductFilterOpen, setMobileProductFilterOpen] = useState(false);
   const [navigatingTo, setNavigatingTo] = useState<string | null>(null);
 
+  // Research: filter by when indexed (ADS sync) vs paper publication date
+  const [researchDateFilter, setResearchDateFilter] = useState<
+    "indexed" | "published"
+  >("indexed");
+
   // Product filtering state
   const [productFilter, setProductFilter] = useState<ProductFilterState>(
     createEmptyProductFilter(),
@@ -368,6 +373,34 @@ export default function Home() {
                   Custom Range
                 </button>
 
+                {/* Research date filter: indexed (when synced) vs published (paper date) */}
+                {activeCategory === "research" && (
+                  <div className="flex items-center gap-1 ml-2 pl-2 border-l border-gray-200">
+                    <span className="text-xs text-muted mr-1">Date by:</span>
+                    {[
+                      { id: "indexed" as const, label: "Indexed" },
+                      { id: "published" as const, label: "Published" },
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        onClick={() => setResearchDateFilter(opt.id)}
+                        className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                          researchDateFilter === opt.id
+                            ? "bg-gray-800 text-white"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        }`}
+                        title={
+                          opt.id === "indexed"
+                            ? "When synced from ADS"
+                            : "Paper publication date"
+                        }
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {/* Product Filter */}
                 <div className="ml-auto">
                   <ProductFilter
@@ -485,6 +518,26 @@ export default function Home() {
                 )}
               </div>
 
+              {/* Research date filter (mobile) */}
+              {activeCategory === "research" && (
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-muted">Date:</span>
+                  {(["indexed", "published"] as const).map((opt) => (
+                    <button
+                      key={opt}
+                      onClick={() => setResearchDateFilter(opt)}
+                      className={`px-2 py-1 rounded text-xs ${
+                        researchDateFilter === opt
+                          ? "bg-gray-800 text-white"
+                          : "bg-gray-100"
+                      }`}
+                    >
+                      {opt === "indexed" ? "Indexed" : "Published"}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               {/* Mobile Product Filter */}
               <div className="relative flex-1">
                 <MobileProductFilter
@@ -524,6 +577,9 @@ export default function Home() {
               category={activeCategory}
               period={period}
               productFilter={productFilter}
+              researchDateFilter={
+                activeCategory === "research" ? researchDateFilter : undefined
+              }
               onAvailableProductsChange={setAvailableProducts}
               onProductClick={handleProductClick}
             />

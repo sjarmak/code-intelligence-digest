@@ -15,8 +15,6 @@ import { loadItemsByCategory } from "@/src/lib/db/items";
 import { saveFullText, getFullTextCacheStats, saveExtractedUrl } from "@/src/lib/db/items";
 import { fetchFullTextBatch } from "@/src/lib/pipeline/fulltext";
 import { Category } from "@/src/lib/model";
-import { blockInProduction } from "@/src/lib/auth/guards";
-
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
   "podcasts",
@@ -34,9 +32,6 @@ const VALID_CATEGORIES: Category[] = [
  * Get cache statistics
  */
 export async function GET(request: NextRequest) {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
-
   try {
     const stats = await getFullTextCacheStats();
 
@@ -60,9 +55,6 @@ export async function GET(request: NextRequest) {
  * Fetch full text for items
  */
 export async function POST(request: NextRequest) {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
-
   try {
     const body = await request.json();
 

@@ -67,24 +67,46 @@ function isSubscriptionBoilerplate(text: string): boolean {
   return false;
 }
 
-async function loadFullTextFromDb(itemId: string): Promise<{ text: string; source: string } | null> {
+async function loadFullTextFromDb(itemId: string): Promise<{
+  text: string;
+  source: string;
+  isFallback?: boolean;
+} | null> {
   try {
     const db = await getDbClient();
 
     const result = await db.query(
-      `SELECT full_text, full_text_source FROM items WHERE id = ?`,
+      `SELECT full_text, full_text_source, summary FROM items WHERE id = ?`,
       [itemId]
     );
 
-    if (result.rows.length === 0 || !result.rows[0].full_text) {
-      return null;
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0] as {
+      full_text: string | null;
+      full_text_source: string | null;
+      summary: string | null;
+    };
+
+    // Return full text when available and valid
+    if (row.full_text && row.full_text.length > 100) {
+      return {
+        text: row.full_text,
+        source: row.full_text_source || "unknown",
+      };
     }
 
-    const row = result.rows[0] as { full_text: string | null; full_text_source: string | null };
-    return {
-      text: row.full_text!,
-      source: row.full_text_source || "unknown",
-    };
+    // Fallback to RSS summary when full text is missing
+    const summary = row.summary?.trim();
+    if (summary && summary.length > 50) {
+      return {
+        text: summary,
+        source: "rss_summary",
+        isFallback: true,
+      };
+    }
+
+    return null;
   } catch (error) {
     console.error(`Failed to load full text for item ${itemId}:`, error);
     return null;
@@ -100,27 +122,31 @@ export async function GET(
     const itemId = decodeURIComponent(id);
     const driver = detectDriver();
 
-    // Check if full text exists
+    // Check if full text exists (or summary as fallback)
     const fullText = await loadFullTextFromDb(itemId);
 
-    // Validate that the full text is actual content, not subscription boilerplate
-    const hasValidFullText = fullText !== null && !isSubscriptionBoilerplate(fullText.text);
+    // Validate full text from scrape (not for RSS summary fallback)
+    const hasValidFullText =
+      fullText !== null &&
+      (fullText.isFallback || !isSubscriptionBoilerplate(fullText.text));
 
     // Check if caller wants the full content
     const includeContent = request.nextUrl.searchParams.get("include_content") === "true";
 
-    if (includeContent && hasValidFullText && fullText) {
+    if (includeContent && fullText) {
       return NextResponse.json({
-        hasFullText: true,
+        hasFullText: !fullText.isFallback,
         text: fullText.text,
         source: fullText.source,
+        isFallback: fullText.isFallback ?? false,
         driver,
       });
     }
 
     return NextResponse.json({
-      hasFullText: hasValidFullText,
-      source: hasValidFullText ? fullText?.source || null : null,
+      hasFullText: hasValidFullText || (fullText?.isFallback ?? false),
+      source: fullText?.source ?? null,
+      isFallback: fullText?.isFallback ?? false,
       driver,
     });
   } catch (error) {

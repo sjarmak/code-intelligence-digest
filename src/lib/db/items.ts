@@ -674,20 +674,28 @@ export async function saveFullText(
   source: "web_scrape" | "arxiv" | "ads_api" | "web_archive" | "error",
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
-    sqlite
-      .prepare(
-        `
-      UPDATE items
-      SET full_text = ?,
-          full_text_fetched_at = strftime('%s', 'now'),
-          full_text_source = ?,
-          updated_at = strftime('%s', 'now')
-      WHERE id = ?
-    `,
-      )
-      .run(fullText || null, source, itemId);
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      await client.run(
+        `UPDATE items
+         SET full_text = ?, full_text_fetched_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
+             full_text_source = ?, updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
+         WHERE id = ?`,
+        [fullText || null, source, itemId],
+      );
+    } else {
+      const sqlite = getSqlite();
+      sqlite
+        .prepare(
+          `UPDATE items
+           SET full_text = ?, full_text_fetched_at = strftime('%s', 'now'),
+               full_text_source = ?, updated_at = strftime('%s', 'now')
+           WHERE id = ?`,
+        )
+        .run(fullText || null, source, itemId);
+    }
 
     logger.info(
       `Saved full text for item ${itemId} (${fullText?.length || 0} chars, source: ${source})`,
@@ -705,22 +713,30 @@ export async function loadFullText(
   itemId: string,
 ): Promise<{ text: string; source: string } | null> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT full_text, full_text_source FROM items WHERE id = ?`,
+        [itemId],
+      );
+      const row = result.rows[0] as
+        | { full_text: string | null; full_text_source: string | null }
+        | undefined;
+      if (!row || !row.full_text) return null;
+      return { text: row.full_text, source: row.full_text_source || "unknown" };
+    }
+
+    const sqlite = getSqlite();
     const row = sqlite
       .prepare(`SELECT full_text, full_text_source FROM items WHERE id = ?`)
       .get(itemId) as
       | { full_text: string | null; full_text_source: string | null }
       | undefined;
 
-    if (!row || !row.full_text) {
-      return null;
-    }
-
-    return {
-      text: row.full_text,
-      source: row.full_text_source || "unknown",
-    };
+    if (!row || !row.full_text) return null;
+    return { text: row.full_text, source: row.full_text_source || "unknown" };
   } catch (error) {
     logger.error(`Failed to load full text for item ${itemId}`, error);
     return null;
@@ -736,14 +752,41 @@ export async function getFullTextCacheStats(): Promise<{
   bySource: Record<string, number>;
 }> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const [totalRes, cachedRes, bySourceRes] = await Promise.all([
+        client.query(`SELECT COUNT(*) as count FROM items`),
+        client.query(
+          `SELECT COUNT(*) as count FROM items WHERE full_text IS NOT NULL`,
+        ),
+        client.query(
+          `SELECT full_text_source, COUNT(*)::int as count FROM items
+           WHERE full_text IS NOT NULL GROUP BY full_text_source`,
+        ),
+      ]);
+      const total = Number((totalRes.rows[0] as { count: string | number }).count);
+      const cached = Number((cachedRes.rows[0] as { count: string | number }).count);
+      const bySource = bySourceRes.rows as Array<{
+        full_text_source: string;
+        count: number;
+      }>;
+      return {
+        total,
+        cached,
+        bySource: Object.fromEntries(
+          bySource.map((row) => [row.full_text_source, row.count]),
+        ),
+      };
+    }
+
+    const sqlite = getSqlite();
     const total = (
       sqlite.prepare(`SELECT COUNT(*) as count FROM items`).get() as {
         count: number;
       }
     ).count;
-
     const cached = (
       sqlite
         .prepare(
@@ -751,7 +794,6 @@ export async function getFullTextCacheStats(): Promise<{
         )
         .get() as { count: number }
     ).count;
-
     const bySource = sqlite
       .prepare(
         `SELECT full_text_source, COUNT(*) as count FROM items
@@ -780,18 +822,22 @@ export async function saveExtractedUrl(
   extractedUrl: string,
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
-    sqlite
-      .prepare(
-        `
-      UPDATE items
-      SET extracted_url = ?,
-          updated_at = strftime('%s', 'now')
-      WHERE id = ?
-    `,
-      )
-      .run(extractedUrl, itemId);
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      await client.run(
+        `UPDATE items SET extracted_url = ?, updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER WHERE id = ?`,
+        [extractedUrl, itemId],
+      );
+    } else {
+      const sqlite = getSqlite();
+      sqlite
+        .prepare(
+          `UPDATE items SET extracted_url = ?, updated_at = strftime('%s', 'now') WHERE id = ?`,
+        )
+        .run(extractedUrl, itemId);
+    }
 
     logger.debug(`Saved extracted URL for item ${itemId}: ${extractedUrl}`);
   } catch (error) {

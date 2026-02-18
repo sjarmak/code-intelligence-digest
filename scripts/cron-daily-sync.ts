@@ -5,7 +5,8 @@
  * This script is designed to run hourly via Render cron job service.
  * It:
  * 1. Runs the hourly sync to fetch new items from Inoreader (last 4 hours)
- * 2. Populates embeddings for newly synced items (last 7 days)
+ * 2. Populates full text for items without it (research, tech articles, AI news)
+ * 3. Populates embeddings for newly synced items (last 7 days)
  *
  * Usage:
  *   npx tsx scripts/cron-daily-sync.ts
@@ -81,6 +82,9 @@ function shouldRunCronNow(date: Date): { shouldRun: boolean; reason: string } {
   };
 }
 
+const RECENT_DAYS_FOR_FULLTEXT = 7;
+const FULLTEXT_ITEMS_PER_RUN = 25; // Limit per cron run to avoid timeout
+
 interface Stats {
   sync: {
     success: boolean;
@@ -88,6 +92,12 @@ interface Stats {
     apiCallsUsed: number;
     paused: boolean;
     error?: string;
+  };
+  fulltext: {
+    fetched: number;
+    successful: number;
+    failed: number;
+    duration: number;
   };
   embeddings: {
     totalChecked: number;
@@ -212,6 +222,67 @@ async function populateEmbeddingsForRecentItems(): Promise<Stats['embeddings']> 
   return stats;
 }
 
+async function populateFullTextForRecentItems(): Promise<Stats['fulltext']> {
+  const startTime = Date.now();
+  const stats: Stats['fulltext'] = {
+    fetched: 0,
+    successful: 0,
+    failed: 0,
+    duration: 0,
+  };
+
+  try {
+    const { fetchFullTextBatch } = await import('../src/lib/pipeline/fulltext');
+    const { saveFullText, saveExtractedUrl } = await import('../src/lib/db/items');
+
+    const priorityCategories: Category[] = ['research', 'tech_articles', 'ai_news', 'newsletters'];
+    const itemsToFetch: FeedItem[] = [];
+
+    for (const category of priorityCategories) {
+      const items = await loadItemsByCategory(category, RECENT_DAYS_FOR_FULLTEXT);
+      const withoutFullText = items.filter(
+        (item) => !item.fullText || (item.fullText?.length ?? 0) < 100
+      );
+      itemsToFetch.push(...withoutFullText);
+      if (itemsToFetch.length >= FULLTEXT_ITEMS_PER_RUN) break;
+    }
+
+    const batch = itemsToFetch.slice(0, FULLTEXT_ITEMS_PER_RUN);
+    if (batch.length === 0) {
+      logger.info('✅ All recent items already have full text');
+      stats.duration = Date.now() - startTime;
+      return stats;
+    }
+
+    logger.info(`\n📄 Populating full text for ${batch.length} items...`);
+    const results = await fetchFullTextBatch(batch, 3);
+    stats.fetched = results.size;
+
+    for (const [itemId, result] of results.entries()) {
+      try {
+        await saveFullText(itemId, result.text, result.source);
+        if (result.archivedUrl) {
+          await saveExtractedUrl(itemId, result.archivedUrl).catch(() => {});
+        }
+        if (result.source !== 'error' && result.text.length > 100) {
+          stats.successful++;
+        } else {
+          stats.failed++;
+        }
+      } catch {
+        stats.failed++;
+      }
+    }
+
+    logger.info(`  Full text: ${stats.successful} successful, ${stats.failed} failed`);
+  } catch (error) {
+    logger.error('Failed to populate full text', error);
+  }
+
+  stats.duration = Date.now() - startTime;
+  return stats;
+}
+
 async function main() {
   const overallStartTime = Date.now();
   const stats: Stats = {
@@ -220,6 +291,12 @@ async function main() {
       itemsAdded: 0,
       apiCallsUsed: 0,
       paused: false,
+    },
+    fulltext: {
+      fetched: 0,
+      successful: 0,
+      failed: 0,
+      duration: 0,
     },
     embeddings: {
       totalChecked: 0,
@@ -344,7 +421,15 @@ async function main() {
       }
     }
 
-    // Step 4: Populate embeddings for recent items (even if sync was paused)
+    // Step 4: Populate full text for recent items
+    if (syncResult.itemsAdded > 0 || !syncResult.paused) {
+      logger.info('\n📄 Populating full text for recent items...');
+      stats.fulltext = await populateFullTextForRecentItems();
+    } else {
+      logger.info('\n⏭️  Skipping full text population (sync was paused)');
+    }
+
+    // Step 5: Populate embeddings for recent items
     if (syncResult.itemsAdded > 0 || !syncResult.paused) {
       logger.info('\n🧮 Populating embeddings for recent items...');
       stats.embeddings = await populateEmbeddingsForRecentItems();
@@ -363,6 +448,10 @@ async function main() {
     if (stats.sync.error) {
       console.log(`Sync Error:         ${stats.sync.error}`);
     }
+    console.log(`\nFull Text Fetched:   ${stats.fulltext.fetched}`);
+    console.log(`Full Text Success:   ${stats.fulltext.successful}`);
+    console.log(`Full Text Failed:    ${stats.fulltext.failed}`);
+    console.log(`Full Text Duration:  ${(stats.fulltext.duration / 1000).toFixed(1)}s`);
     console.log(`\nEmbeddings Checked:  ${stats.embeddings.totalChecked}`);
     console.log(`Embeddings Skipped:  ${stats.embeddings.skipped} (already exist)`);
     console.log(`Embeddings Generated: ${stats.embeddings.generated}`);

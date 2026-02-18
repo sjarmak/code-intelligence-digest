@@ -300,6 +300,9 @@ export async function GET(request: NextRequest) {
   const competitorsOnlyParam = searchParams.get("competitorsOnly"); // Only show items mentioning competitors
   const excludeOwnParam = searchParams.get("excludeOwn"); // Exclude Sourcegraph/Cody mentions
 
+  // Research only: "indexed" (created_at) = when we synced from ADS; "published" = paper publication date
+  const researchDateFilter = searchParams.get("researchDateFilter") || "indexed";
+
   try {
     // Parse limit, clamp to [1, 50]
     let customLimit: number | undefined;
@@ -461,23 +464,24 @@ export async function GET(request: NextRequest) {
       //   ai_dev is populated by migration from newsletters; items may be older
       // - All-time: Filter by published_at (research: last 3 years; ai_dev: standard period)
       if (category === "research") {
+        cutoffTime = Math.floor(
+          (nowMs - periodDays * 24 * 60 * 60 * 1000) / 1000,
+        );
+        useCreatedAt = false;
+        // Default: created_at = when we indexed from ADS. Optional: published_at = paper publication date
+        const usePublicationDate =
+          researchDateFilter === "published" || period === "all";
+        dateColumn = usePublicationDate ? "published_at" : "created_at";
         if (period === "all") {
-          // Research all-time: limit to last 3 years using published_at
-          const threeYearsAgo = Math.floor(
+          cutoffTime = Math.floor(
             (Date.now() - 3 * 365 * 24 * 60 * 60 * 1000) / 1000,
           );
-          cutoffTime = threeYearsAgo;
-          useCreatedAt = false;
-          dateColumn = "published_at";
           logger.info(
-            `[API] Research all-time: limiting to last 3 years using published_at`,
+            `[API] Research all-time: last 3 years using published_at`,
           );
         } else {
-          // Research daily/weekly/monthly: no date filtering, just show top ranked results
-          useCreatedAt = false;
-          dateColumn = "created_at";
           logger.info(
-            `[API] Research ${period} period: no date filtering, showing top ranked results`,
+            `[API] Research ${period}: filtering by ${dateColumn} >= ${new Date(cutoffTime * 1000).toISOString()} (${periodDays}d, filter=${researchDateFilter})`,
           );
         }
       } else if (category === "ai_dev" && period !== "all") {
@@ -517,11 +521,8 @@ export async function GET(request: NextRequest) {
         // have -article- in ID OR are from newsletter sources without -article- in ID
         whereClause = `category = ? AND ${dateColumn} >= ?`;
         queryParams = [category, cutoffTime];
-      } else if (
-        (category === "research" || category === "ai_dev") &&
-        period !== "all"
-      ) {
-        // Research/ai_dev day/week/month: no date filter, show top ranked
+      } else if (category === "ai_dev" && period !== "all") {
+        // ai_dev: migration-populated from newsletters; items may be old - show top ranked without date filter
         whereClause = `category = ?`;
         queryParams = [category];
       } else {

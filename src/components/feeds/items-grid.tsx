@@ -51,6 +51,8 @@ interface ItemsGridProps {
   period: "day" | "week" | "month" | "all" | "custom";
   customDateRange?: DateRange | null;
   productFilter?: ProductFilterState;
+  /** Research only: "indexed" = when synced from ADS; "published" = paper publication date */
+  researchDateFilter?: "indexed" | "published";
   onAvailableProductsChange?: (products: AvailableProduct[]) => void;
   onProductClick?: (productId: string) => void;
 }
@@ -62,6 +64,7 @@ export default function ItemsGrid({
   period,
   customDateRange,
   productFilter,
+  researchDateFilter,
   onAvailableProductsChange,
   onProductClick,
 }: ItemsGridProps) {
@@ -74,7 +77,7 @@ export default function ItemsGrid({
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [category, period, customDateRange, productFilter]);
+  }, [category, period, customDateRange, productFilter, researchDateFilter]);
 
   useEffect(() => {
     const fetchItems = async () => {
@@ -100,6 +103,11 @@ export default function ItemsGrid({
         if (period === "custom" && customDateRange) {
           params.append("startDate", customDateRange.startDate);
           params.append("endDate", customDateRange.endDate);
+        }
+
+        // Research only: date filter (indexed vs published)
+        if (category === "research" && researchDateFilter) {
+          params.append("researchDateFilter", researchDateFilter);
         }
 
         // Add product filter params
@@ -157,6 +165,7 @@ export default function ItemsGrid({
     customDateRange,
     currentPage,
     productFilter,
+    researchDateFilter,
     onAvailableProductsChange,
   ]);
 
