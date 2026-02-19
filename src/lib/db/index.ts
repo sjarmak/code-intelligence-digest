@@ -10,7 +10,12 @@ import * as path from "path";
 import * as fs from "fs";
 import { logger } from "../logger";
 import { detectDriver, getDbClient, DatabaseDriver } from "./driver";
-import { getPostgresSchema } from "./schema-postgres";
+import {
+  getPostgresSchema,
+  ITEMS_SEARCH_TRIGGER_FUNCTION_SQL,
+  ITEMS_SEARCH_TRIGGER_DROP_SQL,
+  ITEMS_SEARCH_TRIGGER_CREATE_SQL,
+} from "./schema-postgres";
 import { ensurePostgresUserIdColumns } from "./ensure-user-id";
 
 let sqlite: Database.Database | null = null;
@@ -91,10 +96,49 @@ async function initializePostgresSchema() {
     // Execute schema in segments (extensions, tables, indexes)
     await client.exec(schema);
 
+    // Items search_vector trigger only when column is not generated (PG 12+ GENERATED STORED; PG 11 nullable)
+    // Use pg_catalog to avoid "is_generated" in SQL (parsed as "is" + "GENERATED" on some PG versions)
+    try {
+      const check = await client.query(
+        `SELECT a.attgenerated FROM pg_catalog.pg_attribute a
+         JOIN pg_catalog.pg_class c ON a.attrelid = c.oid
+         JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+         WHERE n.nspname = 'public' AND c.relname = 'items' AND a.attname = 'search_vector'
+         AND a.attnum > 0 AND NOT a.attisdropped`,
+      );
+      const row = check.rows[0] as { attgenerated?: string } | undefined;
+      const isGenerated = row?.attgenerated === "s";
+      if (!isGenerated) {
+        await client.query(ITEMS_SEARCH_TRIGGER_FUNCTION_SQL);
+        await client.query(ITEMS_SEARCH_TRIGGER_DROP_SQL);
+        await client.query(ITEMS_SEARCH_TRIGGER_CREATE_SQL);
+      }
+    } catch (e) {
+      // PG 11 has no attgenerated; or column missing: create trigger anyway (safe for nullable column)
+      try {
+        await client.query(ITEMS_SEARCH_TRIGGER_FUNCTION_SQL);
+        await client.query(ITEMS_SEARCH_TRIGGER_DROP_SQL);
+        await client.query(ITEMS_SEARCH_TRIGGER_CREATE_SQL);
+      } catch (e2) {
+        logger.warn("Items search trigger setup failed (non-fatal)", {
+          error: e2 instanceof Error ? e2.message : String(e2),
+        });
+      }
+    }
+
     // Add full_text column if it doesn't exist (for migration)
     try {
       await client.run(`
         ALTER TABLE items ADD COLUMN IF NOT EXISTS full_text TEXT;
+      `);
+    } catch {
+      // Column may already exist
+    }
+
+    // Add search_vector column if missing (e.g. migrated from GENERATED column or old schema)
+    try {
+      await client.run(`
+        ALTER TABLE items ADD COLUMN IF NOT EXISTS search_vector tsvector;
       `);
     } catch {
       // Column may already exist
@@ -356,6 +400,26 @@ async function initializeSqliteSchema() {
       );
     `);
 
+    // Generated newsletters (per-user)
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS generated_newsletters (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL DEFAULT 'legacy',
+        title TEXT NOT NULL,
+        markdown TEXT,
+        html TEXT,
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+    `);
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS user_podcast_audio (
+        user_id TEXT NOT NULL DEFAULT 'legacy',
+        audio_id TEXT NOT NULL REFERENCES generated_podcast_audio(id) ON DELETE CASCADE,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        PRIMARY KEY (user_id, audio_id)
+      );
+    `);
+
     // Create indexes for common queries
     sqlite.exec(`
       CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);
@@ -372,6 +436,10 @@ async function initializeSqliteSchema() {
       CREATE INDEX IF NOT EXISTS idx_item_relevance_rating ON item_relevance(relevance_rating);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_hash ON generated_podcast_audio(transcript_hash);
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
+      CREATE INDEX IF NOT EXISTS idx_generated_newsletters_user_id ON generated_newsletters(user_id);
+      CREATE INDEX IF NOT EXISTS idx_generated_newsletters_created_at ON generated_newsletters(created_at);
+      CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_user_id ON user_podcast_audio(user_id);
+      CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_created_at ON user_podcast_audio(created_at);
     `);
 
     logger.info("SQLite schema initialized successfully");

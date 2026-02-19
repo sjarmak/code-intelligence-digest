@@ -213,12 +213,13 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     },
 
     async exec(sql: string): Promise<void> {
-      // Split multiple statements and execute
-      const statements = sql.split(';').filter(s => s.trim());
+      // Split on semicolons only at end of line (avoids splitting inside comments like "-- foo; bar")
+      const statements = sql
+        .split(/\s*;\s*(?=[\r\n]|$)/)
+        .map((s) => s.trim())
+        .filter(Boolean);
       for (const stmt of statements) {
-        if (stmt.trim()) {
-          await pool.query(stmt);
-        }
+        await pool.query(stmt);
       }
     },
 

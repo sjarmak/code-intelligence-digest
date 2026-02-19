@@ -8,6 +8,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
+import { auth } from "@/src/auth";
+import { LEGACY_USER_ID } from "@/src/lib/db/constants";
+import { addUserPodcastAudio } from "@/src/lib/db/user-podcast-audio";
 import {
   RenderAudioEndpointResponse,
   AudioProvider,
@@ -148,6 +151,9 @@ export async function POST(
     // Initialize database to ensure tables exist
     await initializeDatabase();
 
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+
     // Check rate limits
     const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
     const rateLimitResponse = await enforceRateLimit(request, '/api/podcast/render-audio');
@@ -226,6 +232,12 @@ export async function POST(
         id: cached.id,
         audioUrl: cached.audioUrl,
       });
+
+      try {
+        await addUserPodcastAudio(userId, cached.id);
+      } catch {
+        // Non-fatal: user list add failed
+      }
 
       const response: RenderAudioEndpointResponse = {
         id: cached.id,
@@ -400,6 +412,11 @@ export async function POST(
         audioUrl,
         bytes: fileBytes,
       });
+      try {
+        await addUserPodcastAudio(userId, audioId);
+      } catch {
+        // Non-fatal
+      }
     } catch (error) {
       // Handle duplicate key error (race condition - another request already saved this)
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -415,6 +432,11 @@ export async function POST(
             id: existing.id,
             audioUrl: existing.audioUrl,
           });
+          try {
+            await addUserPodcastAudio(userId, existing.id);
+          } catch {
+            // Non-fatal
+          }
 
           // Return the existing record instead
           const response: RenderAudioEndpointResponse = {

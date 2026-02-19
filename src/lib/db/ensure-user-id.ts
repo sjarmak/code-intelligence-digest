@@ -33,4 +33,26 @@ export async function ensurePostgresUserIdColumns(
       throw e;
     }
   }
+  // Ensure digest_items has unique (user_id, item_id) so ON CONFLICT works (for DBs created before UNIQUE was in schema)
+  try {
+    await client.run(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_items_user_item ON digest_items(user_id, item_id)"
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("already exists")) {
+      logger.warn("Ensure digest_items unique index failed", { error: msg });
+    }
+  }
+  // Drop legacy UNIQUE(item_id) so multiple users can add the same item (per-user digest)
+  try {
+    await client.run(
+      "ALTER TABLE digest_items DROP CONSTRAINT IF EXISTS digest_items_item_id_key"
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("does not exist")) {
+      logger.warn("Drop digest_items item_id constraint failed", { error: msg });
+    }
+  }
 }

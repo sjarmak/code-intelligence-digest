@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useState, useCallback } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ItemsGrid, { AvailableProduct } from "@/src/components/feeds/items-grid";
 import SearchPage from "@/src/components/search/search-page";
@@ -13,6 +14,7 @@ import {
   ProductFilterState,
   createEmptyProductFilter,
 } from "@/src/components/filters/product-filter";
+import { AccountBadge } from "@/src/components/account/account-badge";
 
 export const dynamic = "force-dynamic";
 
@@ -106,14 +108,21 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
           <div className="flex justify-between items-center">
             {/* Title */}
-            <div className="min-w-0 flex-1">
-              <h1 className="text-xl sm:text-3xl font-bold truncate">
-                Code Intelligence Digest
-              </h1>
-              <p className="text-muted mt-1 sm:mt-2 text-sm sm:text-base hidden sm:block">
-                Daily, weekly, and monthly digests of code intelligence, tools,
-                and AI agents
-              </p>
+            <div className="min-w-0 flex-1 flex items-center gap-2 sm:gap-3">
+              <img
+                src="/icons/cid_book_prompt.svg"
+                alt=""
+                className="h-8 w-8 sm:h-10 sm:w-10 shrink-0"
+              />
+              <div className="min-w-0">
+                <h1 className="text-xl sm:text-3xl font-bold truncate">
+                  Code Intelligence Digest
+                </h1>
+                <p className="text-muted mt-1 sm:mt-2 text-sm sm:text-base hidden sm:block">
+                  Daily, weekly, and monthly digests of code intelligence, tools,
+                  and AI agents
+                </p>
+              </div>
             </div>
 
             {/* Mobile menu button */}
@@ -153,14 +162,8 @@ export default function Home() {
               )}
             </button>
 
-            {/* Sign out */}
-            <a
-              href="/api/auth/logout"
-              className="hidden md:block p-2 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 ml-2"
-              title="Sign out"
-            >
-              Sign out
-            </a>
+            {/* Account (multi-account testing) + Sign out */}
+            <AccountBadge />
             {/* Settings icon - only in dev (desktop) */}
             {config.adminUIEnabled && (
               <a
@@ -267,12 +270,12 @@ export default function Home() {
                   Settings
                 </a>
               )}
-              <a
+              <Link
                 href="/api/auth/logout"
                 className="block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
               >
                 Sign out
-              </a>
+              </Link>
             </nav>
           </div>
         )}

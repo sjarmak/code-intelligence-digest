@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS feeds (
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 
--- Items table with full-text search vector
+-- Items table with full-text search vector (nullable + trigger for PG 11 compatibility, GENERATED STORED requires PG 12+)
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   stream_id TEXT NOT NULL,
@@ -52,13 +52,7 @@ CREATE TABLE IF NOT EXISTS items (
   extracted_url TEXT,
   categories TEXT,
   category TEXT NOT NULL,
-  -- Full-text search vector (auto-generated)
-  search_vector tsvector GENERATED ALWAYS AS (
-    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(summary, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(content_snippet, '')), 'C') ||
-    setweight(to_tsvector('english', coalesce(full_text, '')), 'D')
-  ) STORED,
+  search_vector tsvector,
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
@@ -163,8 +157,8 @@ CREATE TABLE IF NOT EXISTS admin_settings (
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 
--- Generated podcast audio table
-CREATE TABLE IF NOT EXISTS generated_podcast_audio (
+-- Generated podcast audio table (quote name so "generated" is not parsed as keyword)
+CREATE TABLE IF NOT EXISTS "generated_podcast_audio" (
   id TEXT PRIMARY KEY,
   podcast_id TEXT,
   transcript_hash TEXT NOT NULL UNIQUE,
@@ -201,6 +195,32 @@ CREATE TABLE IF NOT EXISTS digest_items (
   updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   UNIQUE(user_id, item_id)
 );
+
+-- Generated newsletters (per-user, store past newsletters for list/delete)
+CREATE TABLE IF NOT EXISTS "generated_newsletters" (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  title TEXT NOT NULL,
+  markdown TEXT,
+  html TEXT,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
+-- User's podcast audio list (per-user, links user to generated_podcast_audio for list/delete)
+CREATE TABLE IF NOT EXISTS user_podcast_audio (
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  audio_id TEXT NOT NULL REFERENCES "generated_podcast_audio"(id) ON DELETE CASCADE,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  PRIMARY KEY (user_id, audio_id)
+);
+
+-- Per-user paper bookmarks (research "favorites")
+CREATE TABLE IF NOT EXISTS user_paper_favorites (
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  bibcode TEXT NOT NULL,
+  favorited_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, bibcode)
+);
 `;
 
 /**
@@ -212,8 +232,8 @@ CREATE INDEX IF NOT EXISTS idx_items_stream_id ON items(stream_id);
 CREATE INDEX IF NOT EXISTS idx_items_category ON items(category);
 CREATE INDEX IF NOT EXISTS idx_items_published_at ON items(published_at);
 
--- Full-text search index (GIN for tsvector)
-CREATE INDEX IF NOT EXISTS idx_items_search ON items USING GIN(search_vector);
+-- Full-text search index (GIN on tsvector, partial so nulls are not indexed)
+CREATE INDEX IF NOT EXISTS idx_items_search ON items USING GIN(search_vector) WHERE search_vector IS NOT NULL;
 
 -- Trigram index for fuzzy matching on title
 CREATE INDEX IF NOT EXISTS idx_items_title_trgm ON items USING GIN(title gin_trgm_ops);
@@ -236,8 +256,8 @@ CREATE INDEX IF NOT EXISTS idx_item_relevance_item_id ON item_relevance(item_id)
 CREATE INDEX IF NOT EXISTS idx_item_relevance_rating ON item_relevance(relevance_rating);
 
 -- Podcast audio indexes
-CREATE INDEX IF NOT EXISTS idx_podcast_audio_hash ON generated_podcast_audio(transcript_hash);
-CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
+CREATE INDEX IF NOT EXISTS idx_podcast_audio_hash ON "generated_podcast_audio"(transcript_hash);
+CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON "generated_podcast_audio"(created_at);
 
 -- Embeddings index for vector similarity search (IVFFlat for speed)
 -- Note: Run this after populating embeddings for better index quality
@@ -251,8 +271,16 @@ CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings
 -- Saved/digest items indexes
 CREATE INDEX IF NOT EXISTS idx_saved_items_user_id ON saved_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_saved_items_item_id ON saved_items(item_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_items_user_item ON digest_items(user_id, item_id);
 CREATE INDEX IF NOT EXISTS idx_digest_items_user_id ON digest_items(user_id);
 CREATE INDEX IF NOT EXISTS idx_digest_items_item_id ON digest_items(item_id);
+
+-- Per-user generated content indexes
+CREATE INDEX IF NOT EXISTS idx_generated_newsletters_user_id ON "generated_newsletters"(user_id);
+CREATE INDEX IF NOT EXISTS idx_generated_newsletters_created_at ON "generated_newsletters"(created_at);
+CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_user_id ON user_podcast_audio(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_created_at ON user_podcast_audio(created_at);
+CREATE INDEX IF NOT EXISTS idx_user_paper_favorites_user_id ON user_paper_favorites(user_id);
 `;
 
 /**
@@ -265,3 +293,25 @@ ${TABLES_SQL}
 ${INDEXES_SQL}
   `.trim();
 }
+
+/** Run items search_vector trigger (must run after tables; not included in exec() because function body contains ";"). */
+export const ITEMS_SEARCH_TRIGGER_FUNCTION_SQL = `
+CREATE OR REPLACE FUNCTION items_search_vector_trigger() RETURNS trigger AS $$
+BEGIN
+  NEW.search_vector :=
+    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(NEW.summary, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(NEW.content_snippet, '')), 'C') ||
+    setweight(to_tsvector('english', coalesce(NEW.full_text, '')), 'D');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql
+`.trim();
+
+export const ITEMS_SEARCH_TRIGGER_DROP_SQL = `DROP TRIGGER IF EXISTS items_search_vector_trigger ON items`;
+export const ITEMS_SEARCH_TRIGGER_CREATE_SQL = `
+CREATE TRIGGER items_search_vector_trigger
+  BEFORE INSERT OR UPDATE ON items
+  FOR EACH ROW
+  EXECUTE PROCEDURE items_search_vector_trigger()
+`.trim();

@@ -1,14 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 
 export default function LoginPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [csrfToken, setCsrfToken] = useState<string | null>(null);
 
@@ -34,42 +30,16 @@ export default function LoginPage() {
       .catch(() => setCsrfToken(null));
   }, [googleEnabled]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // Successfully authenticated, redirect to original page or home
-        router.push(redirect);
-        router.refresh();
-      } else {
-        setError(data.error || 'Invalid password');
-      }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-white flex items-center justify-center px-4">
       <div className="max-w-md w-full space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold text-center">Code Intelligence Digest</h1>
-          <h2 className="mt-2 text-center text-xl text-gray-600">Sign in to access</h2>
+        <div className="flex items-center justify-center gap-3">
+          <img
+            src="/icons/cid_book_prompt.svg"
+            alt=""
+            className="h-10 w-10 shrink-0"
+          />
+          <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
         </div>
 
         {authError === 'Configuration' && (
@@ -77,9 +47,10 @@ export default function LoginPage() {
             <p className="font-medium">Sign-in configuration error</p>
             <p className="mt-2">Check the following and restart the dev server:</p>
             <ul className="mt-2 list-disc list-inside space-y-1">
-              <li><code className="bg-amber-100 px-1 rounded">AUTH_SECRET</code> is set in <code className="bg-amber-100 px-1 rounded">.env.local</code> (e.g. <code className="bg-amber-100 px-1 rounded">openssl rand -base64 32</code>)</li>
+              <li><code className="bg-amber-100 px-1 rounded">AUTH_SECRET</code> is set (e.g. <code className="bg-amber-100 px-1 rounded">openssl rand -base64 32</code>)</li>
               <li><code className="bg-amber-100 px-1 rounded">AUTH_GOOGLE_ID</code> and <code className="bg-amber-100 px-1 rounded">AUTH_GOOGLE_SECRET</code> are set for Google sign-in</li>
-              <li>In Google Cloud Console, the redirect URI is exactly: <code className="bg-amber-100 px-1 rounded break-all">http://localhost:3002/api/auth/callback/google</code></li>
+              <li>In Google Cloud Console, add the correct redirect URI: local dev <code className="bg-amber-100 px-1 rounded break-all">http://localhost:3002/api/auth/callback/google</code>; production <code className="bg-amber-100 px-1 rounded break-all">https://code-intelligence-digest.onrender.com/api/auth/callback/google</code></li>
+              <li>On Render (production): set <code className="bg-amber-100 px-1 rounded">NEXTAUTH_URL</code>=<code className="bg-amber-100 px-1 rounded">https://code-intelligence-digest.onrender.com</code> (no trailing slash) so sign-in and sign-out use the public URL, not localhost</li>
             </ul>
           </div>
         )}
@@ -95,8 +66,7 @@ export default function LoginPage() {
               <input type="hidden" name="callbackUrl" value={callbackUrl} />
               <button
                 type="submit"
-                disabled={loading}
-                className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black disabled:opacity-50"
+                className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -110,44 +80,17 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div>
-            <label htmlFor="password" className="sr-only">
-              Password
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              required
-              className="appearance-none rounded-md relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-black focus:border-black focus:z-10 sm:text-sm"
-              placeholder="Enter password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-              autoFocus
-            />
-          </div>
+        {googleEnabled && !csrfToken && (
+          <p className="mt-4 text-center text-sm text-gray-500">
+            Loading sign-in…
+          </p>
+        )}
 
-          {error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <div className="text-sm text-red-800">{error}</div>
-            </div>
-          )}
-
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-black hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Signing in...' : 'Sign in with password'}
-            </button>
-          </div>
-        </form>
-        <p className="mt-4 text-center text-sm text-gray-500">
-          Or use the password if this instance uses legacy auth.
-        </p>
+        {!googleEnabled && !authError && (
+          <p className="mt-4 text-center text-sm text-gray-500">
+            Sign-in is not configured. Set AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET to enable Google sign-in.
+          </p>
+        )}
       </div>
     </div>
   );

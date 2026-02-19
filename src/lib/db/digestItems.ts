@@ -21,17 +21,18 @@ export async function addToDigestItems(itemId: string, userId: string = LEGACY_U
     await ensureItemExists(itemId);
     const driver = detectDriver();
     const now = Math.floor(Date.now() / 1000);
-    const id = `digest-${itemId}`;
+    // Id must be unique per (user, item) so different users can add the same item
+    const id = `digest-${userId}-${itemId}`.replace(/[^a-zA-Z0-9\-_.]/g, '_');
 
     if (driver === 'postgres') {
       const client = await getDbClient();
       await client.run(`
         INSERT INTO digest_items (id, user_id, item_id, added_at, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $5)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (user_id, item_id) DO UPDATE SET
           added_at = EXCLUDED.added_at,
           updated_at = EXCLUDED.updated_at
-      `, [id, userId, itemId, now, now]);
+      `, [id, userId, itemId, now, now, now]);
     } else {
       const sqlite = getSqlite();
       sqlite.prepare(`
@@ -148,6 +149,32 @@ export async function removeAllFromDigestItems(userId: string = LEGACY_USER_ID):
   } catch (error) {
     logger.error(`Failed to remove all items from digest items library`, error);
     throw error;
+  }
+}
+
+/**
+ * Get count of digest items for a user (lightweight, no item load).
+ */
+export async function getDigestItemsCount(userId: string = LEGACY_USER_ID): Promise<number> {
+  try {
+    const driver = detectDriver();
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT COUNT(*) AS n FROM digest_items WHERE user_id = ?`,
+        [userId]
+      );
+      const row = result.rows[0] as { n: string } | undefined;
+      return row ? parseInt(String(row.n), 10) : 0;
+    }
+    const sqlite = getSqlite();
+    const row = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM digest_items WHERE user_id = ?`)
+      .get(userId) as { n: number } | undefined;
+    return row?.n ?? 0;
+  } catch (error) {
+    logger.error("Failed to get digest items count", error);
+    return 0;
   }
 }
 

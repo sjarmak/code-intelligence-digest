@@ -167,8 +167,8 @@ export async function POST(request: NextRequest) {
         for (const libId of effectiveLibraryIds) {
           // Handle 'bookmarked' library specially - uses is_favorite flag, not junction table
           if (libId === 'bookmarked') {
-            const favoritePapers = await getFavoritePapers(limit);
-            logger.info('Fetched bookmarked papers', { count: favoritePapers.length });
+            const favoritePapers = await getFavoritePapers(userId, limit);
+            logger.info('Fetched bookmarked papers', { count: favoritePapers.length, userId });
             allPapers.push(...favoritePapers);
             continue;
           }

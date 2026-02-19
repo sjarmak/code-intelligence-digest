@@ -426,7 +426,9 @@ export default function ItemCard({
       );
 
       if (!response.ok) {
-        throw new Error("Failed to toggle saved items");
+        const errBody = await response.json().catch(() => ({}));
+        const msg = (errBody as { error?: string })?.error ?? response.statusText;
+        throw new Error(msg || "Failed to toggle saved items");
       }
 
       // Dispatch custom event to notify other components
@@ -467,7 +469,9 @@ export default function ItemCard({
       );
 
       if (!response.ok) {
-        throw new Error("Failed to toggle digest items");
+        const errBody = await response.json().catch(() => ({}));
+        const msg = (errBody as { error?: string })?.error ?? response.statusText;
+        throw new Error(msg || "Failed to toggle digest items");
       }
 
       // Dispatch custom event to notify other components

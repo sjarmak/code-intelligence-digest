@@ -833,48 +833,18 @@ export function getPapersMissingFullText(limit = 50): ADSPaperRecord[] {
 }
 
 /**
- * Get favorited/bookmarked papers
+ * Get favorited/bookmarked papers for a user (per-user bookmarks)
  */
-export async function getFavoritePapers(limit = 100): Promise<ADSPaperRecord[]> {
-  const driver = detectDriver();
-
+export async function getFavoritePapers(userId: string, limit = 100): Promise<ADSPaperRecord[]> {
   try {
-    if (driver === 'postgres') {
-      const client = await getDbClient();
-      const result = await client.query(
-        `SELECT * FROM ads_papers
-         WHERE is_favorite = 1
-         ORDER BY favorited_at DESC NULLS LAST
-         LIMIT $1`,
-        [limit]
-      );
-
-      return result.rows.map((row: Record<string, unknown>) => ({
-        bibcode: row.bibcode as string,
-        title: (row.title as string | null) || undefined,
-        authors: (row.authors as string | null) || undefined,
-        pubdate: (row.pubdate as string | null) || undefined,
-        abstract: (row.abstract as string | null) || undefined,
-        body: (row.body as string | null) || undefined,
-        year: (row.year as number | null) || undefined,
-        journal: (row.journal as string | null) || undefined,
-        adsUrl: (row.ads_url as string | null) || undefined,
-        arxivUrl: (row.arxiv_url as string | null) || undefined,
-        fulltextSource: (row.fulltext_source as string | null) || undefined,
-      }));
-    } else {
-      const db = getSqlite();
-      const stmt = db.prepare(`
-        SELECT * FROM ads_papers
-        WHERE is_favorite = 1
-        ORDER BY favorited_at DESC
-        LIMIT ?
-      `);
-
-      return stmt.all(limit) as ADSPaperRecord[];
-    }
+    const { getFavoritePapers: getFavoriteBibcodes } = await import('./paper-annotations');
+    const bibcodes = await getFavoriteBibcodes(userId);
+    const limited = bibcodes.slice(0, limit);
+    const papers = await Promise.all(limited.map((bibcode) => getPaper(bibcode)));
+    return papers.filter((p): p is ADSPaperRecord => p !== null);
   } catch (error) {
     logger.error('Failed to get favorite papers', {
+      userId,
       error: error instanceof Error ? error.message : String(error),
     });
     return [];

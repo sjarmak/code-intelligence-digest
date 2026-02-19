@@ -521,7 +521,7 @@ function decodeTrackingUrl(url: string): string {
  */
 function extractArticleUrl(url: string): string {
   // First decode any tracking wrapper
-  let decodedUrl = decodeTrackingUrl(url);
+  const decodedUrl = decodeTrackingUrl(url);
 
   // Check if it's a subscribe page with a next/redirect param
   try {

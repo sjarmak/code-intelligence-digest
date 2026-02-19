@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/src/auth";
 import { v4 as uuid } from "uuid";
 import { LEGACY_USER_ID } from "@/src/lib/db/constants";
+import { saveGeneratedNewsletter } from "@/src/lib/db/generated-newsletters";
 import {
   loadItemsByCategory,
   loadItemsByCategoryWithDateRange,
@@ -722,6 +723,13 @@ export async function POST(
       }
       return `Code Intelligence Digest – All Time · ${formatDateLong(new Date())}`;
     })();
+
+    // Save to per-user history for "my past newsletters"
+    try {
+      await saveGeneratedNewsletter(id, userId, newsletterTitle, markdown, html);
+    } catch (saveErr) {
+      logger.warn("Failed to save newsletter to user history", { id, error: saveErr });
+    }
 
     const response: NewsletterResponse = {
       id,

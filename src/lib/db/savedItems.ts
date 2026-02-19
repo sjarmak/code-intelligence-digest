@@ -175,6 +175,32 @@ export async function isInSavedItems(itemId: string, userId: string = LEGACY_USE
 }
 
 /**
+ * Get count of saved items for a user (lightweight, no item load).
+ */
+export async function getSavedItemsCount(userId: string = LEGACY_USER_ID): Promise<number> {
+  try {
+    const driver = detectDriver();
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT COUNT(*) AS n FROM saved_items WHERE user_id = ?`,
+        [userId]
+      );
+      const row = result.rows[0] as { n: string } | undefined;
+      return row ? parseInt(String(row.n), 10) : 0;
+    }
+    const sqlite = getSqlite();
+    const row = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM saved_items WHERE user_id = ?`)
+      .get(userId) as { n: number } | undefined;
+    return row?.n ?? 0;
+  } catch (error) {
+    logger.error("Failed to get saved items count", error);
+    return 0;
+  }
+}
+
+/**
  * Get all saved items
  */
 export async function getSavedItems(limit?: number, offset?: number, userId: string = LEGACY_USER_ID): Promise<FeedItem[]> {

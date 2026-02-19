@@ -7,6 +7,8 @@ import {
 } from '@/src/lib/db/paper-annotations';
 import { initializeADSTables } from '@/src/lib/db/ads-papers';
 import { logger } from '@/src/lib/logger';
+import { auth } from '@/src/auth';
+import { LEGACY_USER_ID } from '@/src/lib/db/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +30,7 @@ async function ensureTablesInitialized() {
 
 /**
  * GET /api/papers/[bibcode]/favorite
- * Check if a paper is favorited
+ * Check if a paper is favorited (per-user)
  */
 export async function GET(
   request: NextRequest,
@@ -36,6 +38,8 @@ export async function GET(
 ) {
   try {
     await ensureTablesInitialized();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
 
     const { bibcode: encodedBibcode } = await params;
     let bibcode: string;
@@ -46,7 +50,7 @@ export async function GET(
       logger.warn('Bibcode decoding failed in favorite GET', { encodedBibcode });
     }
 
-    const isFavorite = await isPaperFavorite(bibcode);
+    const isFavorite = await isPaperFavorite(bibcode, userId);
 
     return NextResponse.json({
       bibcode,
@@ -65,7 +69,7 @@ export async function GET(
 
 /**
  * POST /api/papers/[bibcode]/favorite
- * Mark a paper as favorite
+ * Mark a paper as favorite (per-user)
  */
 export async function POST(
   request: NextRequest,
@@ -73,6 +77,8 @@ export async function POST(
 ) {
   try {
     await ensureTablesInitialized();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
 
     const { bibcode: encodedBibcode } = await params;
     let bibcode: string;
@@ -83,7 +89,7 @@ export async function POST(
       logger.warn('Bibcode decoding failed in favorite POST', { encodedBibcode });
     }
 
-    const success = await markPaperAsFavorite(bibcode);
+    const success = await markPaperAsFavorite(bibcode, userId);
 
     if (!success) {
       return NextResponse.json(
@@ -161,7 +167,7 @@ export async function POST(
 
 /**
  * DELETE /api/papers/[bibcode]/favorite
- * Unmark a paper as favorite
+ * Unmark a paper as favorite (per-user)
  */
 export async function DELETE(
   request: NextRequest,
@@ -169,6 +175,8 @@ export async function DELETE(
 ) {
   try {
     await ensureTablesInitialized();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
 
     const { bibcode: encodedBibcode } = await params;
     let bibcode: string;
@@ -179,7 +187,7 @@ export async function DELETE(
       logger.warn('Bibcode decoding failed in favorite DELETE', { encodedBibcode });
     }
 
-    const success = await unmarkPaperAsFavorite(bibcode);
+    const success = await unmarkPaperAsFavorite(bibcode, userId);
 
     if (!success) {
       return NextResponse.json(

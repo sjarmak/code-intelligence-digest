@@ -6,6 +6,7 @@
 import { getSqlite } from './index';
 import { logger } from '../logger';
 import { randomUUID } from 'crypto';
+import { LEGACY_USER_ID } from './constants';
 
 // Types
 export interface PaperAnnotation {
@@ -118,6 +119,23 @@ export async function initializeAnnotationTables() {
         CREATE INDEX IF NOT EXISTS idx_tag_links_bibcode ON paper_tag_links(bibcode);
         CREATE INDEX IF NOT EXISTS idx_tag_links_tag ON paper_tag_links(tag_id);
       `);
+
+      // Per-user paper favorites (bookmarks)
+      await client.exec(`
+        CREATE TABLE IF NOT EXISTS user_paper_favorites (
+          user_id TEXT NOT NULL DEFAULT 'legacy',
+          bibcode TEXT NOT NULL,
+          favorited_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, bibcode)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_paper_favorites_user_id ON user_paper_favorites(user_id);
+      `);
+      // One-time migration: copy legacy favorites from ads_papers into user_paper_favorites
+      await client.run(`
+        INSERT INTO user_paper_favorites (user_id, bibcode, favorited_at)
+        SELECT ?, bibcode, COALESCE(favorited_at, 0) FROM ads_papers WHERE is_favorite = 1
+        ON CONFLICT (user_id, bibcode) DO NOTHING
+      `, [LEGACY_USER_ID]);
     } else {
       // SQLite initialization
       const db = getSqlite();
@@ -195,6 +213,27 @@ export async function initializeAnnotationTables() {
         CREATE INDEX IF NOT EXISTS idx_tag_links_bibcode ON paper_tag_links(bibcode);
         CREATE INDEX IF NOT EXISTS idx_tag_links_tag ON paper_tag_links(tag_id);
       `);
+
+      // Per-user paper favorites (bookmarks)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_paper_favorites (
+          user_id TEXT NOT NULL DEFAULT 'legacy',
+          bibcode TEXT NOT NULL,
+          favorited_at INTEGER NOT NULL,
+          PRIMARY KEY (user_id, bibcode)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_paper_favorites_user_id ON user_paper_favorites(user_id);
+      `);
+      // One-time migration: copy legacy favorites from ads_papers into user_paper_favorites
+      const legacyFavs = db.prepare(`
+        SELECT bibcode, favorited_at FROM ads_papers WHERE is_favorite = 1
+      `).all() as Array<{ bibcode: string; favorited_at: number | null }>;
+      const insertLegacy = db.prepare(`
+        INSERT OR IGNORE INTO user_paper_favorites (user_id, bibcode, favorited_at) VALUES (?, ?, ?)
+      `);
+      for (const row of legacyFavs) {
+        insertLegacy.run(LEGACY_USER_ID, row.bibcode, row.favorited_at ?? Math.floor(Date.now() / 1000));
+      }
     }
 
     logger.info('Annotation tables initialized');
@@ -788,13 +827,12 @@ export async function getPapersWithTag(tagId: string): Promise<string[]> {
   }
 }
 
-// ========== Paper Favorites Operations ==========
+// ========== Paper Favorites Operations (per-user) ==========
 
 /**
- * Mark a paper as favorite
- * Creates the paper record if it doesn't exist
+ * Mark a paper as favorite for a user
  */
-export async function markPaperAsFavorite(bibcode: string): Promise<boolean> {
+export async function markPaperAsFavorite(bibcode: string, userId: string = LEGACY_USER_ID): Promise<boolean> {
   const { detectDriver, getDbClient } = await import('./driver');
   const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
@@ -802,33 +840,25 @@ export async function markPaperAsFavorite(bibcode: string): Promise<boolean> {
   try {
     if (driver === 'postgres') {
       const client = await getDbClient();
-      // Use INSERT ... ON CONFLICT to ensure paper exists, then update favorite status
       await client.run(`
-        INSERT INTO ads_papers (bibcode, is_favorite, favorited_at, created_at, updated_at)
-        VALUES ($1, 1, $2, $2, $2)
-        ON CONFLICT(bibcode) DO UPDATE SET
-          is_favorite = 1,
-          favorited_at = $2,
-          updated_at = $2
-      `, [bibcode, now]);
+        INSERT INTO user_paper_favorites (user_id, bibcode, favorited_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (user_id, bibcode) DO UPDATE SET favorited_at = EXCLUDED.favorited_at
+      `, [userId, bibcode, now]);
     } else {
       const db = getSqlite();
-      // Use INSERT OR REPLACE to create if doesn't exist, or update if exists
-      // This ensures the paper exists and is marked as favorite
       db.prepare(`
-        INSERT INTO ads_papers (bibcode, is_favorite, favorited_at, created_at, updated_at)
-        VALUES (?, 1, ?, ?, ?)
-        ON CONFLICT(bibcode) DO UPDATE SET
-          is_favorite = 1,
-          favorited_at = ?,
-          updated_at = ?
-      `).run(bibcode, now, now, now, now, now);
+        INSERT INTO user_paper_favorites (user_id, bibcode, favorited_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (user_id, bibcode) DO UPDATE SET favorited_at = excluded.favorited_at
+      `).run(userId, bibcode, now);
     }
-    logger.info('Paper marked as favorite', { bibcode });
+    logger.info('Paper marked as favorite', { bibcode, userId });
     return true;
   } catch (error) {
     logger.error('Failed to mark paper as favorite', {
       bibcode,
+      userId,
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
@@ -836,35 +866,28 @@ export async function markPaperAsFavorite(bibcode: string): Promise<boolean> {
 }
 
 /**
- * Unmark a paper as favorite
+ * Unmark a paper as favorite for a user
  */
-export async function unmarkPaperAsFavorite(bibcode: string): Promise<boolean> {
+export async function unmarkPaperAsFavorite(bibcode: string, userId: string = LEGACY_USER_ID): Promise<boolean> {
   const { detectDriver, getDbClient } = await import('./driver');
   const driver = detectDriver();
-  const now = Math.floor(Date.now() / 1000);
 
   try {
     if (driver === 'postgres') {
       const client = await getDbClient();
       await client.run(`
-        UPDATE ads_papers
-        SET is_favorite = 0, favorited_at = NULL, updated_at = $1
-        WHERE bibcode = $2
-      `, [now, bibcode]);
+        DELETE FROM user_paper_favorites WHERE user_id = ? AND bibcode = ?
+      `, [userId, bibcode]);
     } else {
       const db = getSqlite();
-      const stmt = db.prepare(`
-        UPDATE ads_papers
-        SET is_favorite = 0, favorited_at = NULL, updated_at = ?
-        WHERE bibcode = ?
-      `);
-      stmt.run(now, bibcode);
+      db.prepare(`DELETE FROM user_paper_favorites WHERE user_id = ? AND bibcode = ?`).run(userId, bibcode);
     }
-    logger.info('Paper unmarked as favorite', { bibcode });
+    logger.info('Paper unmarked as favorite', { bibcode, userId });
     return true;
   } catch (error) {
     logger.error('Failed to unmark paper as favorite', {
       bibcode,
+      userId,
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
@@ -872,49 +895,45 @@ export async function unmarkPaperAsFavorite(bibcode: string): Promise<boolean> {
 }
 
 /**
- * Check if a paper is favorited
+ * Check if a paper is favorited by a user
  */
-export async function isPaperFavorite(bibcode: string): Promise<boolean> {
+export async function isPaperFavorite(bibcode: string, userId: string = LEGACY_USER_ID): Promise<boolean> {
   const { detectDriver, getDbClient } = await import('./driver');
   const driver = detectDriver();
 
   if (driver === 'postgres') {
     const client = await getDbClient();
     const result = await client.query(`
-      SELECT is_favorite FROM ads_papers WHERE bibcode = $1
-    `, [bibcode]);
-    return (result.rows[0]?.is_favorite ?? 0) === 1;
-  } else {
-    const db = getSqlite();
-    const stmt = db.prepare(`
-      SELECT is_favorite FROM ads_papers WHERE bibcode = ?
-    `);
-    const result = stmt.get(bibcode) as { is_favorite: number } | undefined;
-    return (result?.is_favorite ?? 0) === 1;
+      SELECT 1 FROM user_paper_favorites WHERE user_id = ? AND bibcode = ? LIMIT 1
+    `, [userId, bibcode]);
+    return result.rows.length > 0;
   }
+  const db = getSqlite();
+  const row = db.prepare(`
+    SELECT 1 FROM user_paper_favorites WHERE user_id = ? AND bibcode = ? LIMIT 1
+  `).get(userId, bibcode);
+  return !!row;
 }
 
 /**
- * Get all favorite papers
+ * Get all favorite paper bibcodes for a user
  */
-export async function getFavoritePapers(): Promise<string[]> {
+export async function getFavoritePapers(userId: string = LEGACY_USER_ID): Promise<string[]> {
   const { detectDriver, getDbClient } = await import('./driver');
   const driver = detectDriver();
 
   if (driver === 'postgres') {
     const client = await getDbClient();
     const result = await client.query(`
-      SELECT bibcode FROM ads_papers WHERE is_favorite = 1 ORDER BY favorited_at DESC
-    `);
+      SELECT bibcode FROM user_paper_favorites WHERE user_id = ? ORDER BY favorited_at DESC
+    `, [userId]);
     return result.rows.map((r) => (r as { bibcode: string }).bibcode);
-  } else {
-    const db = getSqlite();
-    const stmt = db.prepare(`
-      SELECT bibcode FROM ads_papers WHERE is_favorite = 1 ORDER BY favorited_at DESC
-    `);
-    const results = stmt.all() as Array<{ bibcode: string }>;
-    return results.map((r) => r.bibcode);
   }
+  const db = getSqlite();
+  const rows = db.prepare(`
+    SELECT bibcode FROM user_paper_favorites WHERE user_id = ? ORDER BY favorited_at DESC
+  `).all(userId) as Array<{ bibcode: string }>;
+  return rows.map((r) => r.bibcode);
 }
 
 // ========== Paper Notes Operations ==========

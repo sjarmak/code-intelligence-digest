@@ -861,7 +861,7 @@ export async function GET(request: NextRequest) {
     const perSourceCaps = isNewsletters
       ? { day: 3, week: 4, month: 8, all: 15 } // Higher caps for pagination
       : { day: 6, week: 8, month: 12, all: 20 };
-    let maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 4;
+    const maxPerSource = perSourceCaps[period as keyof typeof perSourceCaps] ?? 4;
 
     // Get all items that pass diversity selection (no excludeIds - we'll paginate after)
     // Use a high limit to get all valid items for pagination
