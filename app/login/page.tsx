@@ -34,12 +34,12 @@ export default function LoginPage() {
     <div className="min-h-screen bg-white flex items-center justify-center px-4">
       <div className="max-w-md w-full space-y-8">
         <div className="flex items-center justify-center gap-3">
+          <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
           <img
             src="/icons/cid_book_prompt.svg"
             alt=""
             className="h-10 w-10 shrink-0"
           />
-          <h1 className="text-3xl font-bold">Code Intelligence Digest</h1>
         </div>
 
         {authError === 'Configuration' && (

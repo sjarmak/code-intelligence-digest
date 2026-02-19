@@ -108,21 +108,21 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
           <div className="flex justify-between items-center">
             {/* Title */}
-            <div className="min-w-0 flex-1 flex items-center gap-2 sm:gap-3">
-              <img
-                src="/icons/cid_book_prompt.svg"
-                alt=""
-                className="h-8 w-8 sm:h-10 sm:w-10 shrink-0"
-              />
-              <div className="min-w-0">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 sm:gap-3">
                 <h1 className="text-xl sm:text-3xl font-bold truncate">
                   Code Intelligence Digest
                 </h1>
-                <p className="text-muted mt-1 sm:mt-2 text-sm sm:text-base hidden sm:block">
-                  Daily, weekly, and monthly digests of code intelligence, tools,
-                  and AI agents
-                </p>
+                <img
+                  src="/icons/cid_book_prompt.svg"
+                  alt=""
+                  className="h-8 w-8 sm:h-10 sm:w-10 shrink-0"
+                />
               </div>
+              <p className="text-muted mt-1 sm:mt-2 text-sm sm:text-base hidden sm:block">
+                Daily, weekly, and monthly digests of code intelligence, tools,
+                and AI agents
+              </p>
             </div>
 
             {/* Mobile menu button */}
