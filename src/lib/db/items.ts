@@ -7,17 +7,55 @@ import { getDbClient, detectDriver } from "./driver";
 import { FeedItem } from "../model";
 import type { Category } from "../model";
 import { logger } from "../logger";
+import { tryResolveToArticleUrl } from "../url-curation";
 
 /**
- * Save items to database
+ * Curate items so only those with a valid article URL are saved.
+ * Resolves subscription/plan URLs to article URLs when possible; drops items that cannot be resolved.
+ */
+function itemsWithArticleUrlsOnly(items: FeedItem[]): FeedItem[] {
+  const out: FeedItem[] = [];
+  for (const item of items) {
+    const articleUrl = tryResolveToArticleUrl(item.url);
+    if (!articleUrl) {
+      logger.debug(
+        `Skipping item (subscription/plan URL, no article): "${item.title}" url=${item.url?.substring(0, 60)}...`,
+      );
+      continue;
+    }
+    out.push(articleUrl !== item.url ? { ...item, url: articleUrl } : item);
+  }
+  if (out.length < items.length) {
+    logger.info(
+      `URL curation: ${items.length} → ${out.length} items (dropped ${items.length - out.length} with subscription/plan URLs only)`,
+    );
+  }
+  return out;
+}
+
+/** Resolve URL to article URL for display; returns null if this is a subscription/plan-only URL (item should not be shown). */
+function articleUrlForDisplay(url: string | undefined): string | null {
+  if (!url) return null;
+  return tryResolveToArticleUrl(url);
+}
+
+/**
+ * Save items to database.
+ * Only items with a valid article URL are stored; subscription/plan-only URLs are skipped.
  */
 export async function saveItems(items: FeedItem[]): Promise<void> {
   try {
+    const toSave = itemsWithArticleUrlsOnly(items);
+    if (toSave.length === 0) {
+      logger.debug("saveItems: no items with valid article URLs to save");
+      return;
+    }
+
     const driver = detectDriver();
 
     if (driver === "postgres") {
       const client = await getDbClient();
-      for (const item of items) {
+      for (const item of toSave) {
         await client.run(
           `
           INSERT INTO items
@@ -95,9 +133,9 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
         }
       });
 
-      insertMany(items);
+      insertMany(toSave);
     }
-    logger.info(`Saved ${items.length} items to database`);
+    logger.info(`Saved ${toSave.length} items to database`);
   } catch (error) {
     logger.error("Failed to save items to database", error);
     throw error;
@@ -155,28 +193,32 @@ export async function loadItemsByCategory(
         .all(category, cutoffTime) as typeof rows;
     }
 
-    const items: FeedItem[] = rows.map((row) => {
-      const cat = row.category as Category;
-      const finalUrl =
-        row.url && !row.url.includes("inoreader.com")
-          ? row.url
-          : row.extracted_url || row.url;
-      return {
-        id: row.id,
-        streamId: row.stream_id,
-        sourceTitle: row.source_title,
-        title: row.title,
-        url: finalUrl,
-        author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000),
-        summary: row.summary || undefined,
-        contentSnippet: row.content_snippet || undefined,
-        categories: JSON.parse(row.categories),
-        category: cat,
-        raw: {},
-        fullText: row.full_text || undefined,
-      };
-    });
+    const items = rows
+      .map((row) => {
+        const cat = row.category as Category;
+        const finalUrl =
+          row.url && !row.url.includes("inoreader.com")
+            ? row.url
+            : row.extracted_url || row.url;
+        const articleUrl = articleUrlForDisplay(finalUrl);
+        if (!articleUrl) return null;
+        return {
+          id: row.id,
+          streamId: row.stream_id,
+          sourceTitle: row.source_title,
+          title: row.title,
+          url: articleUrl,
+          author: row.author ?? undefined,
+          publishedAt: new Date(row.published_at * 1000),
+          summary: row.summary ?? undefined,
+          contentSnippet: row.content_snippet ?? undefined,
+          categories: JSON.parse(row.categories),
+          category: cat,
+          raw: {},
+          fullText: row.full_text ?? undefined,
+        } as FeedItem;
+      })
+      .filter((item): item is FeedItem => item != null);
 
     return items;
   } catch (error) {
@@ -239,28 +281,32 @@ export async function loadItemsByCategoryWithDateRange(
         .all(category, startTime, endTime) as typeof rows;
     }
 
-    const items: FeedItem[] = rows.map((row) => {
-      const cat = row.category as Category;
-      const finalUrl =
-        row.url && !row.url.includes("inoreader.com")
-          ? row.url
-          : row.extracted_url || row.url;
-      return {
-        id: row.id,
-        streamId: row.stream_id,
-        sourceTitle: row.source_title,
-        title: row.title,
-        url: finalUrl,
-        author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000),
-        summary: row.summary || undefined,
-        contentSnippet: row.content_snippet || undefined,
-        categories: JSON.parse(row.categories),
-        category: cat,
-        raw: {},
-        fullText: row.full_text || undefined,
-      };
-    });
+    const items = rows
+      .map((row) => {
+        const cat = row.category as Category;
+        const finalUrl =
+          row.url && !row.url.includes("inoreader.com")
+            ? row.url
+            : row.extracted_url || row.url;
+        const articleUrl = articleUrlForDisplay(finalUrl);
+        if (!articleUrl) return null;
+        return {
+          id: row.id,
+          streamId: row.stream_id,
+          sourceTitle: row.source_title,
+          title: row.title,
+          url: articleUrl,
+          author: row.author ?? undefined,
+          publishedAt: new Date(row.published_at * 1000),
+          summary: row.summary ?? undefined,
+          contentSnippet: row.content_snippet ?? undefined,
+          categories: JSON.parse(row.categories),
+          category: cat,
+          raw: {},
+          fullText: row.full_text ?? undefined,
+        } as FeedItem;
+      })
+      .filter((item): item is FeedItem => item != null);
 
     return items;
   } catch (error) {
@@ -321,12 +367,14 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       row.url && !row.url.includes("inoreader.com")
         ? row.url
         : row.extracted_url || row.url;
+    const articleUrl = articleUrlForDisplay(finalUrl);
+    if (!articleUrl) return null;
     return {
       id: row.id,
       streamId: row.stream_id,
       sourceTitle: row.source_title,
       title: row.title,
-      url: finalUrl,
+      url: articleUrl,
       author: row.author || undefined,
       publishedAt: new Date(row.published_at * 1000),
       summary: row.summary || undefined,
@@ -382,28 +430,32 @@ export async function loadAllItems(): Promise<FeedItem[]> {
         .all() as ItemRow[];
     }
 
-    const items: FeedItem[] = rows.map((row) => {
-      const cat = row.category as Category;
-      const finalUrl =
-        row.url && !row.url.includes("inoreader.com")
-          ? row.url
-          : row.extracted_url || row.url;
-      return {
-        id: row.id,
-        streamId: row.stream_id,
-        sourceTitle: row.source_title,
-        title: row.title,
-        url: finalUrl,
-        author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000),
-        summary: row.summary || undefined,
-        contentSnippet: row.content_snippet || undefined,
-        categories: JSON.parse(row.categories),
-        category: cat,
-        raw: {},
-        fullText: row.full_text || undefined,
-      };
-    });
+    const items = rows
+      .map((row) => {
+        const cat = row.category as Category;
+        const finalUrl =
+          row.url && !row.url.includes("inoreader.com")
+            ? row.url
+            : row.extracted_url || row.url;
+        const articleUrl = articleUrlForDisplay(finalUrl);
+        if (!articleUrl) return null;
+        return {
+          id: row.id,
+          streamId: row.stream_id,
+          sourceTitle: row.source_title,
+          title: row.title,
+          url: articleUrl,
+          author: row.author ?? undefined,
+          publishedAt: new Date(row.published_at * 1000),
+          summary: row.summary ?? undefined,
+          contentSnippet: row.content_snippet ?? undefined,
+          categories: JSON.parse(row.categories),
+          category: cat,
+          raw: {},
+          fullText: row.full_text ?? undefined,
+        } as FeedItem;
+      })
+      .filter((item): item is FeedItem => item != null);
 
     logger.info(`Loaded ${items.length} items from database`);
     return items;
