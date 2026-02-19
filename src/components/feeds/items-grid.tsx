@@ -132,13 +132,19 @@ export default function ItemsGrid({
           }
         }
 
-        const response = await fetch(`/api/items?${params.toString()}`);
+        const response = await fetch(`/api/items?${params.toString()}`, {
+          credentials: "include",
+        });
+
+        const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          throw new Error("Failed to fetch items");
+          const msg =
+            (data?.message as string) ||
+            (data?.error as string) ||
+            "Failed to fetch items";
+          throw new Error(msg);
         }
-
-        const data = await response.json();
         const fetchedItems = data.items || [];
 
         setItems(fetchedItems);

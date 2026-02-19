@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from "@/src/auth";
 import { getPaper, getLibraryPapers, getFavoritePapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
-import { getSavedItems } from '@/src/lib/db/savedItems';
+import { getSavedItems, LEGACY_USER_ID } from '@/src/lib/db/savedItems';
 import { getDigestItems } from '@/src/lib/db/digestItems';
 import { loadItem } from '@/src/lib/db/items';
 import { logger } from '@/src/lib/logger';
 import { getADSUrl, getLibraryItems } from '@/src/lib/ads/client';
 import OpenAI from 'openai';
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
 
 export const dynamic = 'force-dynamic';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -27,6 +25,8 @@ interface ResourcesAskRequest {
   selectedBibcodes?: string[]; // Papers selected by user
   selectedItemIds?: string[]; // Items selected by user
   limit?: number;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   conversationHistory?: ConversationMessage[]; // For follow-up questions
   papersContext?: string; // Pre-computed papers context from initial query (for follow-ups)
   itemsContext?: string; // Pre-computed items context from initial query (for follow-ups)
@@ -76,6 +76,7 @@ export async function POST(request: NextRequest) {
       return rateLimitResponse;
     }
 
+    const body = (await request.json()) as ResourcesAskRequest;
     const {
       question,
       limit = 20,
@@ -84,11 +85,12 @@ export async function POST(request: NextRequest) {
       resourceLibraryIds,
       selectedBibcodes,
       selectedItemIds,
+      openaiApiKey: bodyOpenaiApiKey,
+      openaiBaseUrl: bodyOpenaiBaseUrl,
       conversationHistory,
       papersContext,
       itemsContext
-    } = (await request.json()) as ResourcesAskRequest;
-    const openaiKey = process.env.OPENAI_API_KEY;
+    } = body;
 
     if (!question || question.trim().length === 0) {
       return NextResponse.json(
@@ -97,17 +99,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!openaiKey) {
-      return NextResponse.json(
-        { error: 'OPENAI_API_KEY not configured in .env.local' },
-        { status: 500 }
-      );
-    }
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
 
-    if (!openaiKey.startsWith('sk-')) {
+    const llmOptions = resolveLLMOptions(
+      { openaiApiKey: bodyOpenaiApiKey, openaiBaseUrl: bodyOpenaiBaseUrl },
+      undefined,
+      sessionUser,
+    );
+    const llmClient = getOpenAICompatibleClient(llmOptions);
+    if (!llmClient) {
       return NextResponse.json(
-        { error: 'OPENAI_API_KEY format is invalid. Must start with "sk-".' },
-        { status: 500 }
+        {
+          error:
+            'LLM is required. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.',
+        },
+        { status: 400 }
       );
     }
 
@@ -252,7 +265,7 @@ export async function POST(request: NextRequest) {
 
         for (const libId of resourceLibraryIds) {
           if (libId === 'saved-items') {
-            const savedItems = await getSavedItems(limit);
+            const savedItems = await getSavedItems(limit, undefined, userId);
             for (const item of savedItems) {
               allItems.push({
                 id: item.id,
@@ -267,7 +280,7 @@ export async function POST(request: NextRequest) {
               });
             }
           } else if (libId === 'digest-items') {
-            const digestItems = await getDigestItems(limit);
+            const digestItems = await getDigestItems(limit, undefined, userId);
             for (const item of digestItems) {
               allItems.push({
                 id: item.id,
@@ -398,8 +411,8 @@ ${combinedContext}`;
 
     messages.push({ role: 'user', content: userContent });
 
-    // Generate answer using GPT-4o-mini
-    const message = await openai.chat.completions.create({
+    // Generate answer using GPT-4o-mini (client from BYOK or server env)
+    const message = await llmClient.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 1500,
       messages,

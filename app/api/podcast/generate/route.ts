@@ -8,9 +8,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { auth } from "@/src/auth";
 import { v4 as uuid } from "uuid";
-import { LEGACY_USER_ID } from "@/src/lib/db/digestItems";
+import { LEGACY_USER_ID } from "@/src/lib/db/constants";
 import {
   loadItemsByCategory,
   loadItemsByCategoryWithDateRange,

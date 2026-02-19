@@ -7,6 +7,7 @@
 import OpenAI from "openai";
 import { PodcastItemDigest } from "./podcastDigest";
 import { logger } from "../logger";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 export interface VerificationIssue {
   type: "unsupported_claim" | "missing_attribution" | "overconfident_language" | "factual_error";
@@ -21,17 +22,6 @@ export interface VerificationResult {
   issues: VerificationIssue[];
   passedVerification: boolean;
   notes: string;
-}
-
-/**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
 }
 
 /**
@@ -62,11 +52,12 @@ Known Uncertainties: ${d.uncertainty_or_conflicts.join("; ") || "None"}
  */
 export async function verifyPodcastScript(
   script: string,
-  digests: PodcastItemDigest[]
+  digests: PodcastItemDigest[],
+  llmOptions?: LLMClientOptions
 ): Promise<VerificationResult> {
   logger.info("Verifying podcast script against digests");
 
-  const client = getClient();
+  const client = getOpenAICompatibleClient(llmOptions);
   if (!client) {
     logger.warn("OPENAI_API_KEY not set, skipping verification");
     return {

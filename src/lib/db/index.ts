@@ -11,6 +11,7 @@ import * as fs from "fs";
 import { logger } from "../logger";
 import { detectDriver, getDbClient, DatabaseDriver } from "./driver";
 import { getPostgresSchema } from "./schema-postgres";
+import { ensurePostgresUserIdColumns } from "./ensure-user-id";
 
 let sqlite: Database.Database | null = null;
 let initialized = false;
@@ -57,11 +58,17 @@ export function getSqlite() {
  * Automatically detects and uses the appropriate driver (SQLite or PostgreSQL)
  */
 export async function initializeDatabase() {
+  const driver = detectDriver();
+
   if (initialized) {
+    // Already initialized: still ensure user_id columns (handles DBs created before migration)
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      await ensurePostgresUserIdColumns(client);
+    }
     return;
   }
 
-  const driver = detectDriver();
   logger.info(`Initializing database with ${driver} driver`);
 
   if (driver === "postgres") {
@@ -93,6 +100,7 @@ async function initializePostgresSchema() {
       // Column may already exist
     }
 
+    await ensurePostgresUserIdColumns(client);
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
     logger.error("Failed to initialize PostgreSQL schema", error);
@@ -226,10 +234,16 @@ async function initializeSqliteSchema() {
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS user_cache (
         key TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
+        user_id TEXT NOT NULL DEFAULT 'legacy',
         cached_at INTEGER DEFAULT (strftime('%s', 'now'))
       );
     `);
+    try {
+      sqlite.exec(`ALTER TABLE user_cache ADD COLUMN user_id TEXT DEFAULT 'legacy';`);
+      sqlite.exec(`UPDATE user_cache SET user_id = 'legacy' WHERE user_id IS NULL;`);
+    } catch {
+      // Column may already exist
+    }
 
     // Create starred_items table for relevance tuning
     sqlite.exec(`
@@ -285,6 +299,42 @@ async function initializeSqliteSchema() {
       `);
     } catch {
       // Column may already exist, ignore error
+    }
+
+    // Create saved_items and digest_items (per-user libraries)
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS saved_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL DEFAULT 'legacy',
+        item_id TEXT NOT NULL,
+        saved_at INTEGER NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        UNIQUE(user_id, item_id)
+      );
+      CREATE TABLE IF NOT EXISTS digest_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL DEFAULT 'legacy',
+        item_id TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+        UNIQUE(user_id, item_id)
+      );
+    `);
+    try {
+      sqlite.exec(`ALTER TABLE saved_items ADD COLUMN user_id TEXT DEFAULT 'legacy';`);
+      sqlite.exec(`UPDATE saved_items SET user_id = 'legacy' WHERE user_id IS NULL;`);
+      sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_items_user_item ON saved_items(user_id, item_id);`);
+    } catch {
+      // Column or index may already exist
+    }
+    try {
+      sqlite.exec(`ALTER TABLE digest_items ADD COLUMN user_id TEXT DEFAULT 'legacy';`);
+      sqlite.exec(`UPDATE digest_items SET user_id = 'legacy' WHERE user_id IS NULL;`);
+      sqlite.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_items_user_item ON digest_items(user_id, item_id);`);
+    } catch {
+      // Column or index may already exist
     }
 
     // Create generated_podcast_audio table for audio rendering

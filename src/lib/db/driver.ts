@@ -13,6 +13,7 @@
  */
 
 import { logger } from '../logger';
+import { ensurePostgresUserIdColumns } from './ensure-user-id';
 
 export type DatabaseDriver = 'sqlite' | 'postgres';
 
@@ -89,6 +90,7 @@ export async function getDbClient(): Promise<DatabaseClient> {
 
   if (driver === 'postgres') {
     clientInstance = await createPostgresClient();
+    await ensurePostgresUserIdColumns(clientInstance);
   } else {
     clientInstance = await createSqliteClient();
   }

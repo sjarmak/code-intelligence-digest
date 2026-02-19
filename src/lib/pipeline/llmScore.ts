@@ -7,19 +7,13 @@ import { FeedItem, LLMScoreResult, Category } from "../model";
 import { logger } from "../logger";
 import OpenAI from "openai";
 import { getCompetitorProducts } from "../../config/products";
+import { getOpenAICompatibleClient } from "../llm/client";
 
 /**
- * Lazy-initialized OpenAI client
+ * Get OpenAI client for scoring (uses server env; used in sync/cron)
  */
-let client: OpenAI | null = null;
-
-function getOpenAIClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-  }
-  return client;
+function getOpenAIClient(): OpenAI | null {
+  return getOpenAICompatibleClient();
 }
 
 /**
@@ -389,7 +383,17 @@ async function scoreItemsBatch(
       },
     );
 
-    const response = await getOpenAIClient().chat.completions.create({
+    const client = getOpenAIClient();
+    if (!client) {
+      return items.reduce(
+        (acc, item) => {
+          acc[item.id] = { id: item.id, relevance: 5, usefulness: 5, tags: [] };
+          return acc;
+        },
+        {} as Record<string, LLMScoreResult>,
+      );
+    }
+    const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
       max_completion_tokens: 4000,
       messages: [

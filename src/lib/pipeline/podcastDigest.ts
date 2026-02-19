@@ -7,6 +7,7 @@
 import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 /**
  * Check if URL is from Reddit (discussion threads, not primary sources)
@@ -118,12 +119,12 @@ ${chunk}`,
  */
 export async function extractPodcastItemDigest(
   item: RankedItem,
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<PodcastItemDigest> {
-  const client = new OpenAI();
-  const apiKey = process.env.OPENAI_API_KEY;
+  const client = getOpenAICompatibleClient(llmOptions);
 
-  if (!apiKey) {
+  if (!client) {
     logger.warn("OPENAI_API_KEY not set, using fallback podcast digest");
     return generateFallbackPodcastDigest(item, userPrompt);
   }
@@ -239,7 +240,8 @@ const MIN_RELEVANCE_SCORE = 3;
  */
 export async function extractPodcastBatchDigests(
   items: RankedItem[],
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<PodcastItemDigest[]> {
   logger.info(`Extracting podcast digests for ${items.length} items`);
 
@@ -256,7 +258,7 @@ export async function extractPodcastBatchDigests(
   }
 
   const digests = await Promise.all(
-    itemsWithValidUrls.map((item) => extractPodcastItemDigest(item, userPrompt))
+    itemsWithValidUrls.map((item) => extractPodcastItemDigest(item, userPrompt, llmOptions))
   );
 
   // Filter by relevance score after extraction

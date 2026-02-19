@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from "@/src/auth";
 import { getPaper, storePaper } from '@/src/lib/db/ads-papers';
 import { getBibcodeMetadata, getADSUrl, getArxivUrl } from '@/src/lib/ads/client';
 import { logger } from '@/src/lib/logger';
 import OpenAI from 'openai';
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
 
 export const dynamic = 'force-dynamic';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 export async function POST(
   request: NextRequest,
@@ -24,7 +22,6 @@ export async function POST(
       logger.warn('Bibcode decoding failed in summarize POST', { encodedBibcode });
     }
     const adsToken = process.env.ADS_API_TOKEN;
-    const openaiKey = process.env.OPENAI_API_KEY;
 
     if (!adsToken) {
       return NextResponse.json(
@@ -33,17 +30,32 @@ export async function POST(
       );
     }
 
-    if (!openaiKey) {
-      return NextResponse.json(
-        { error: 'OPENAI_API_KEY not configured in .env.local' },
-        { status: 500 }
-      );
+    let body: { openaiApiKey?: string; openaiBaseUrl?: string } = {};
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      // Optional body
     }
-
-    if (!openaiKey.startsWith('sk-')) {
+    const session = await auth();
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
+    const llmOptions = resolveLLMOptions(
+      { openaiApiKey: body.openaiApiKey, openaiBaseUrl: body.openaiBaseUrl },
+      undefined,
+      sessionUser,
+    );
+    const openai = getOpenAICompatibleClient(llmOptions);
+    if (!openai) {
       return NextResponse.json(
-        { error: 'OPENAI_API_KEY format is invalid. Must start with "sk-".' },
-        { status: 500 }
+        {
+          error:
+            'LLM is required for summarization. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.',
+        },
+        { status: 400 }
       );
     }
 

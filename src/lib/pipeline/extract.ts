@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
 import { decomposeNewsletterItems } from "./decompose";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 import { findArticleUrl, extractUrlFromContent } from "../search/url-finder";
 import { saveExtractedUrl } from "../db/items";
 
@@ -195,16 +196,15 @@ function stripHtml(html: string): string {
  */
 export async function extractItemDigest(
   item: RankedItem,
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<ItemDigest> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const client = getOpenAICompatibleClient(llmOptions);
 
-  if (!apiKey) {
+  if (!client) {
     logger.warn(`OPENAI_API_KEY not set for item "${item.title}", using fallback digest (URL: ${item.url})`);
     return await generateFallbackDigest(item, userPrompt);
   }
-
-  const client = new OpenAI({ apiKey });
 
   try {
     // For email newsletters/Inoreader URLs, use summary directly (it's the actual content)
@@ -376,7 +376,8 @@ function shouldExcludeItem(item: RankedItem): boolean {
  */
 export async function extractBatchDigests(
   items: RankedItem[],
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<ItemDigest[]> {
   logger.info(`[EXTRACT_START] Extracting digests for ${items.length} items, userPrompt="${userPrompt}"`);
 
@@ -428,7 +429,7 @@ export async function extractBatchDigests(
     logger.info(`Extracting digests batch ${batchNum}/${totalBatches} (${batch.length} items)`);
 
     const batchDigests = await Promise.all(
-      batch.map((item) => extractItemDigest(item, userPrompt))
+      batch.map((item) => extractItemDigest(item, userPrompt, llmOptions))
     );
 
     digests.push(...batchDigests);

@@ -179,6 +179,28 @@ CREATE TABLE IF NOT EXISTS generated_podcast_audio (
   generated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
+
+-- Saved items (per-user bookmark library)
+CREATE TABLE IF NOT EXISTS saved_items (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  item_id TEXT NOT NULL,
+  saved_at INTEGER NOT NULL,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  UNIQUE(user_id, item_id)
+);
+
+-- Digest items (per-user digest library)
+CREATE TABLE IF NOT EXISTS digest_items (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL DEFAULT 'legacy',
+  item_id TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  UNIQUE(user_id, item_id)
+);
 `;
 
 /**
@@ -225,6 +247,12 @@ CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_aud
 -- HNSW index alternative (faster queries, slower builds)
 CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings 
   USING hnsw (embedding vector_cosine_ops);
+
+-- Saved/digest items indexes
+CREATE INDEX IF NOT EXISTS idx_saved_items_user_id ON saved_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_saved_items_item_id ON saved_items(item_id);
+CREATE INDEX IF NOT EXISTS idx_digest_items_user_id ON digest_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_digest_items_item_id ON digest_items(item_id);
 `;
 
 /**

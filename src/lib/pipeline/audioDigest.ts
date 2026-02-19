@@ -9,6 +9,7 @@ import { RankedItem } from "../model";
 import { logger } from "../logger";
 import { getPaper } from "../db/ads-papers";
 import { extractBibcodeFromUrl } from "../ads/client";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 // Reuse chunking functions from extract.ts
 const CHUNK_SIZE = 2000; // Characters per chunk
@@ -105,19 +106,18 @@ export interface AudioDigestHighlight {
  */
 export async function extractArticleHighlights(
   item: RankedItem,
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<AudioDigestHighlight[]> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const client = getOpenAICompatibleClient(llmOptions);
 
-  if (!apiKey) {
+  if (!client) {
     logger.warn(`OPENAI_API_KEY not set for item "${item.title}", using fallback highlights`);
     return [{
       text: item.summary || item.contentSnippet || "No summary available",
       sourceName: item.title,
     }];
   }
-
-  const client = new OpenAI({ apiKey });
 
   try {
     // For email newsletters/Inoreader URLs, use summary directly (it's the actual content)
@@ -296,19 +296,18 @@ export async function extractConclusionsFromPaper(
  */
 export async function extractPaperHighlights(
   item: RankedItem,
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<AudioDigestHighlight[]> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const client = getOpenAICompatibleClient(llmOptions);
 
-  if (!apiKey) {
+  if (!client) {
     logger.warn(`OPENAI_API_KEY not set for paper "${item.title}", using fallback highlights`);
     return [{
       text: item.summary || item.contentSnippet || "No summary available",
       sourceName: item.title,
     }];
   }
-
-  const client = new OpenAI({ apiKey });
 
   try {
     // Get bibcode from item.raw (for ADS-synced research items) or extract from URL
@@ -327,7 +326,7 @@ export async function extractPaperHighlights(
     if (!bibcode) {
       logger.warn(`Could not find bibcode for research item: ${item.title} (URL: ${item.url})`);
       // Fallback to regular article extraction
-      return extractArticleHighlights(item, userPrompt);
+      return extractArticleHighlights(item, userPrompt, llmOptions);
     }
 
     // Get paper from database
@@ -335,7 +334,7 @@ export async function extractPaperHighlights(
     if (!paper) {
       logger.warn(`Paper not found in database: ${bibcode}`);
       // Fallback to regular article extraction
-      return extractArticleHighlights(item, userPrompt);
+      return extractArticleHighlights(item, userPrompt, llmOptions);
     }
 
     // Get abstract
@@ -514,17 +513,6 @@ export interface AudioDigestContent {
 }
 
 /**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
-}
-
-/**
  * Format seconds to MM:SS
  */
 function formatTime(seconds: number): string {
@@ -549,7 +537,8 @@ export async function generateAudioDigestTranscript(
   period: "week" | "month" | "all" | "custom",
   categories: string[],
   userPrompt: string = "",
-  targetDurationMinutes?: number
+  targetDurationMinutes?: number,
+  llmOptions?: LLMClientOptions
 ): Promise<AudioDigestContent> {
   if (itemsWithHighlights.length === 0) {
     return {
@@ -564,7 +553,7 @@ export async function generateAudioDigestTranscript(
     `Generating audio digest transcript for ${itemsWithHighlights.length} items, period=${period}`
   );
 
-  const client = getClient();
+  const client = getOpenAICompatibleClient(llmOptions);
   if (!client) {
     logger.warn("OPENAI_API_KEY not set, using fallback transcript");
     return generateFallbackTranscript(itemsWithHighlights, period);

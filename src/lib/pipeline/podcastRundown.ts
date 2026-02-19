@@ -9,6 +9,7 @@ import { Category } from "../model";
 import { PodcastItemDigest, filterPodcastDigestsByQuality } from "./podcastDigest";
 import { PromptProfile } from "./promptProfile";
 import { logger } from "../logger";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 /**
  * Check if URL is valid for podcast (not Inoreader, not empty, http/https)
@@ -49,17 +50,6 @@ export interface PodcastRundown {
 }
 
 /**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
-}
-
-/**
  * Format digests as JSON context for rundown generation
  */
 function formatDigestsForRundown(digests: PodcastItemDigest[]): string {
@@ -89,7 +79,8 @@ export async function generatePodcastRundown(
   digests: PodcastItemDigest[],
   period: "week" | "month" | "all" | "custom",
   _categories: Category[],
-  profile: PromptProfile | null
+  profile: PromptProfile | null,
+  llmOptions?: LLMClientOptions
 ): Promise<PodcastRundown> {
   // Filter digests with invalid URLs before processing
   const validDigests = digests.filter(d => isValidPodcastUrl(d.url));
@@ -112,7 +103,7 @@ export async function generatePodcastRundown(
   const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
   const categoryLabels = _categories.join(", ");
 
-  const client = getClient();
+  const client = getOpenAICompatibleClient(llmOptions);
   if (!client) {
     logger.warn("OPENAI_API_KEY not set, using fallback rundown");
     return generateFallbackRundown(qualityDigests, period, _categories);

@@ -7,6 +7,7 @@ import OpenAI from "openai";
 import { RankedItem, Category } from "../model";
 import { PromptProfile } from "./promptProfile";
 import { logger } from "../logger";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 export interface PodcastSegment {
   title: string;
@@ -27,17 +28,6 @@ export interface PodcastContent {
   segments: PodcastSegment[];
   showNotes: string;
   estimatedDuration: string; // "MM:SS" format
-}
-
-/**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
 }
 
 /**
@@ -196,7 +186,8 @@ export async function generatePodcastContent(
   period: "week" | "month",
   categories: Category[],
   profile: PromptProfile | null,
-  voiceStyle: string = "conversational"
+  voiceStyle: string = "conversational",
+  llmOptions?: LLMClientOptions
 ): Promise<PodcastContent> {
   if (items.length === 0) {
     return {
@@ -217,7 +208,7 @@ export async function generatePodcastContent(
 
   let transcript: string;
 
-  const client = getClient();
+  const client = getOpenAICompatibleClient(llmOptions);
   if (client) {
     try {
       const response = await client.chat.completions.create({

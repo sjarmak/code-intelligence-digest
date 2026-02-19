@@ -9,23 +9,13 @@ import { PromptProfile } from "./promptProfile";
 import { ItemDigest } from "./extract";
 import { logger } from "../logger";
 import { reviewNewsletter } from "./reviewNewsletter";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 export interface NewsletterContent {
   summary: string;
   themes: string[];
   markdown: string;
   html: string;
-}
-
-/**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
 }
 
 /**
@@ -79,7 +69,8 @@ export async function generateNewsletterContent(
   items: RankedItem[],
   period: "week" | "month",
   categories: Category[],
-  profile: PromptProfile | null
+  profile: PromptProfile | null,
+  llmOptions?: LLMClientOptions
 ): Promise<NewsletterContent> {
   if (items.length === 0) {
     return {
@@ -103,7 +94,7 @@ export async function generateNewsletterContent(
   let markdown: string;
   let html: string;
 
-  const client = getClient();
+  const client = getOpenAICompatibleClient(llmOptions);
   if (client) {
     try {
       const response = await client.chat.completions.create({
@@ -206,10 +197,11 @@ export async function generateNewsletterFromDigests(
   period: "week" | "month" | "all" | "custom",
   categories: Category[],
   profile: PromptProfile | null,
-  userPrompt?: string
+  userPrompt?: string,
+  llmOptions?: LLMClientOptions
 ): Promise<NewsletterContent> {
   const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
-  return await generateNewsletterFromDigestData(digests, periodLabel, userPrompt || "");
+  return await generateNewsletterFromDigestData(digests, periodLabel, userPrompt || "", llmOptions);
 }
 
 /**
@@ -276,10 +268,10 @@ function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[
 async function generateNewsletterFromDigestData(
   digests: ItemDigest[],
   periodLabel: string,
-  userPrompt: string
+  userPrompt: string,
+  llmOptions?: LLMClientOptions
 ): Promise<NewsletterContent> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  // Note: OpenAI client created later if apiKey exists
+  const clientForSynthesis = getOpenAICompatibleClient(llmOptions);
 
   // Log items with missing/invalid URLs for transparency
   const itemsWithoutUrl = digests.filter(d => !isValidUrl(d.url));
@@ -344,7 +336,7 @@ async function generateNewsletterFromDigestData(
      .slice(0, 5)
      .map(([t]) => t);
 
-  if (!apiKey) {
+  if (!clientForSynthesis) {
     // Fallback: return basic structure
     logger.warn("No OPENAI_API_KEY for synthesis, using basic template");
     return generateNewsletterFallback(
@@ -377,7 +369,7 @@ async function generateNewsletterFromDigestData(
   }
 
   // Review remaining digests for quality issues BEFORE summary generation
-  const review = await reviewNewsletter("", relevantDigests);
+  const review = await reviewNewsletter("", relevantDigests, llmOptions);
   const filteredDigests = relevantDigests.filter((d) => !review.digestsWithIssues.has(d.id));
 
   if (review.issues.length > 0) {
@@ -393,7 +385,7 @@ async function generateNewsletterFromDigestData(
   const byCategory2 = groupByResourceCategory(usedDigests);
 
   // Build summary from digests (async LLM-based)
-  const summaryText = await buildExecutiveSummary(usedDigests, themes);
+  const summaryText = await buildExecutiveSummary(usedDigests, themes, llmOptions);
 
   // Build markdown directly from categorized digests
   const markdown = buildNewsletterMarkdown(byCategory2, periodLabel, summaryText);
@@ -554,13 +546,11 @@ function generateNewsletterFallback(
   /**
    * Build executive summary from digests using LLM
    */
-  async function buildExecutiveSummary(digests: ItemDigest[], themes: string[]): Promise<string> {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
+  async function buildExecutiveSummary(digests: ItemDigest[], themes: string[], opts?: LLMClientOptions): Promise<string> {
+    const client = getOpenAICompatibleClient(opts);
+    if (!client) {
       return buildExecutiveSummaryFallback(digests, themes);
     }
-
-    const client = new OpenAI({ apiKey });
 
     // Use more items for richer context
     const itemCount = Math.min(15, digests.length);
@@ -665,8 +655,9 @@ Write substantive paragraphs. Ground every claim in the actual items provided.`,
       if (errorMsg.includes("model") || errorMsg.includes("not found") || errorMsg.includes("invalid")) {
         try {
           logger.info("Model error detected, attempting fallback to gpt-4o-mini");
-          const client = new OpenAI({ apiKey });
-          const fallbackResponse = await client.chat.completions.create({
+          const fallbackClient = getOpenAICompatibleClient(opts);
+          if (!fallbackClient) throw new Error("No client");
+          const fallbackResponse = await fallbackClient.chat.completions.create({
             model: "gpt-4o-mini",
             max_completion_tokens: 600,
             messages: [

@@ -6,7 +6,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/src/auth";
 import { v4 as uuid } from "uuid";
+import { LEGACY_USER_ID } from "@/src/lib/db/constants";
 import {
   loadItemsByCategory,
   loadItemsByCategoryWithDateRange,
@@ -29,6 +31,7 @@ import {
 } from "@/src/lib/pipeline/audioDigest";
 import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
+import { resolveLLMOptions, getOpenAICompatibleClient, type LLMClientOptions } from "@/src/lib/llm/client";
 
 const ALLOWED_CATEGORIES: Category[] = [
   "newsletters",
@@ -49,6 +52,8 @@ interface AudioDigestRequest {
   limit?: number;
   selectedItemIds?: string[];
   prompt?: string;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   duration?: number; // Duration in minutes (15-120)
   customDateRange?: {
     startDate: string;
@@ -119,12 +124,16 @@ function validateRequest(body: unknown): {
     };
   }
 
-  // Normalize prompt
+  // Normalize prompt and optional BYOK
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
+  const openaiApiKey = typeof req.openaiApiKey === "string" ? req.openaiApiKey.trim() : undefined;
+  const openaiBaseUrl = typeof req.openaiBaseUrl === "string" ? req.openaiBaseUrl.trim() : undefined;
 
   const data: AudioDigestRequest = {
     sourceMode: sourceMode as "auto" | "manual" | "categories",
     prompt: prompt || undefined,
+    openaiApiKey: openaiApiKey || undefined,
+    openaiBaseUrl: openaiBaseUrl || undefined,
     duration,
   };
 
@@ -372,6 +381,8 @@ function sendSSEEvent(
 async function streamAudioDigestGeneration(
   req: AudioDigestRequest,
   startTime: number,
+  llmOptions: LLMClientOptions,
+  userId: string,
 ): Promise<NextResponse<AudioDigestResponse | { error: string }>> {
   const stream = new ReadableStream({
     async start(controller) {
@@ -392,7 +403,7 @@ async function streamAudioDigestGeneration(
 
         if (req.sourceMode === "auto") {
           const { getDigestItems } = await import("@/src/lib/db/digestItems");
-          allItems = await getDigestItems();
+          allItems = await getDigestItems(undefined, undefined, userId);
           sendSSEEvent(controller, "progress", {
             message: `Loaded ${allItems.length} items from digest library`,
             step: "loading",
@@ -623,11 +634,13 @@ async function streamAudioDigestGeneration(
                   highlights = await extractPaperHighlights(
                     item,
                     req.prompt || "",
+                    llmOptions,
                   );
                 } else {
                   highlights = await extractArticleHighlights(
                     item,
                     req.prompt || "",
+                    llmOptions,
                   );
                 }
 
@@ -682,6 +695,7 @@ async function streamAudioDigestGeneration(
           (req.categories as Category[]) || [],
           req.prompt || "",
           req.duration || 30,
+          llmOptions,
         );
 
         sendSSEEvent(controller, "progress", {
@@ -792,9 +806,34 @@ export async function POST(
 
     const req = validation.data!;
 
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
+
+    const llmOptions = resolveLLMOptions(
+      { openaiApiKey: req.openaiApiKey, openaiBaseUrl: req.openaiBaseUrl },
+      undefined,
+      sessionUser,
+    );
+    const llmClient = getOpenAICompatibleClient(llmOptions);
+    if (!llmClient) {
+      return NextResponse.json(
+        {
+          error:
+            "LLM is required for audio digest. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.",
+        },
+        { status: 400 },
+      );
+    }
+
     // If streaming requested, return SSE stream
     if (useStreaming) {
-      return streamAudioDigestGeneration(req, startTime);
+      return streamAudioDigestGeneration(req, startTime, llmOptions, userId);
     }
 
     logger.info(
@@ -809,7 +848,7 @@ export async function POST(
       // Auto mode: load from digest_items
       // In source mode, do NOT filter by category/period - use all items from digest library
       const { getDigestItems } = await import("@/src/lib/db/digestItems");
-      allItems = await getDigestItems();
+      allItems = await getDigestItems(undefined, undefined, userId);
       logger.info(
         `Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`,
       );
@@ -1042,11 +1081,12 @@ export async function POST(
           try {
             let highlights;
             if (item.category === "research") {
-              highlights = await extractPaperHighlights(item, req.prompt || "");
+              highlights = await extractPaperHighlights(item, req.prompt || "", llmOptions);
             } else {
               highlights = await extractArticleHighlights(
                 item,
                 req.prompt || "",
+                llmOptions,
               );
             }
 
@@ -1097,6 +1137,7 @@ export async function POST(
       (req.categories as Category[]) || [],
       req.prompt || "",
       req.duration || 30,
+      llmOptions,
     );
 
     logger.info(

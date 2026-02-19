@@ -153,6 +153,14 @@ export default function Home() {
               )}
             </button>
 
+            {/* Sign out */}
+            <a
+              href="/api/auth/logout"
+              className="hidden md:block p-2 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 ml-2"
+              title="Sign out"
+            >
+              Sign out
+            </a>
             {/* Settings icon - only in dev (desktop) */}
             {config.adminUIEnabled && (
               <a
@@ -259,6 +267,12 @@ export default function Home() {
                   Settings
                 </a>
               )}
+              <a
+                href="/api/auth/logout"
+                className="block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                Sign out
+              </a>
             </nav>
           </div>
         )}

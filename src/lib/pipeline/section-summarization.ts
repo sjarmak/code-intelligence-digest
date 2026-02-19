@@ -13,18 +13,14 @@ import {
 } from '../db/paper-sections';
 import { logger } from '../logger';
 import OpenAI from 'openai';
+import { getOpenAICompatibleClient } from '../llm/client';
 
-// Lazy initialization to avoid issues when env vars aren't loaded yet
-let openaiInstance: OpenAI | null = null;
 function getOpenAI(): OpenAI {
-  if (!openaiInstance) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY environment variable is not set');
-    }
-    openaiInstance = new OpenAI({ apiKey });
+  const client = getOpenAICompatibleClient();
+  if (!client) {
+    throw new Error('OPENAI_API_KEY environment variable is not set');
   }
-  return openaiInstance;
+  return client;
 }
 
 /**

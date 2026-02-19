@@ -7,9 +7,9 @@
  * - Generic boilerplate language
  */
 
-import OpenAI from "openai";
 import { ItemDigest } from "./extract";
 import { logger } from "../logger";
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 const BAD_URL_DOMAINS = [
   "csharpdigest.com",
@@ -226,15 +226,14 @@ export function reviewDigests(digests: ItemDigest[]): ReviewResult {
  */
 export async function reviewNewsletterWithLLM(
   markdown: string,
-  digests: ItemDigest[]
+  digests: ItemDigest[],
+  llmOptions?: LLMClientOptions
 ): Promise<{ passed: boolean; feedback: string }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  const client = getOpenAICompatibleClient(llmOptions);
+  if (!client) {
     logger.info("OPENAI_API_KEY not set, skipping LLM review");
     return { passed: true, feedback: "" };
   }
-
-  const client = new OpenAI({ apiKey });
 
   try {
     const response = await client.chat.completions.create({
@@ -300,7 +299,8 @@ Be specific. Point to exact problems, not vague concerns.`,
  */
 export async function reviewNewsletter(
   markdown: string,
-  digests: ItemDigest[]
+  digests: ItemDigest[],
+  llmOptions?: LLMClientOptions
 ): Promise<{ passed: boolean; issues: string[]; llmFeedback: string; digestsWithIssues: Set<string> }> {
   logger.info(`Starting newsletter review for ${digests.length} digests`);
 
@@ -310,7 +310,7 @@ export async function reviewNewsletter(
   // 2. LLM review (only if markdown provided)
   let llmReview = { passed: true, feedback: "" };
   if (markdown) {
-    llmReview = await reviewNewsletterWithLLM(markdown, digests);
+    llmReview = await reviewNewsletterWithLLM(markdown, digests, llmOptions);
   }
 
   const allIssues: string[] = [];

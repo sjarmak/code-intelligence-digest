@@ -6,17 +6,7 @@
 import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
-
-/**
- * Lazy-load OpenAI client (only when API key is available)
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
-}
+import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
 
 export interface GeneratedAnswer {
   question: string;
@@ -37,7 +27,8 @@ export interface GeneratedAnswer {
  */
 export async function generateAnswer(
   question: string,
-  retrievedItems: RankedItem[]
+  retrievedItems: RankedItem[],
+  llmOptions?: LLMClientOptions
 ): Promise<GeneratedAnswer> {
   try {
     logger.info(`Generating answer for question: "${question}" using ${retrievedItems.length} items`);
@@ -72,7 +63,7 @@ export async function generateAnswer(
     let answer: string;
 
     // Call Claude to generate answer if API key is available
-    const client = getClient();
+    const client = getOpenAICompatibleClient(llmOptions);
     if (client) {
       try {
         const response = await client.chat.completions.create({

@@ -219,7 +219,7 @@ export async function GET(req: NextRequest) {
     // Generate answer using retrieved items
     let answerResult;
     try {
-      answerResult = await generateAnswer(question, rankedItems);
+      answerResult = await generateAnswer(question, rankedItems, undefined);
       logger.info(
         `[ASK] Generated answer with ${rankedItems.length} source citations`,
       );

@@ -6,6 +6,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/src/auth";
+import { LEGACY_USER_ID } from "@/src/lib/db/constants";
 import { getDigestItems, addToDigestItems, addMultipleToDigestItems, removeFromDigestItems, removeMultipleFromDigestItems, removeAllFromDigestItems } from "@/src/lib/db/digestItems";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { logger } from "@/src/lib/logger";
@@ -13,11 +15,13 @@ import { logger } from "@/src/lib/logger";
 export async function GET(request: NextRequest) {
   try {
     await initializeDatabase();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
     const searchParams = request.nextUrl.searchParams;
     const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!, 10) : undefined;
     const offset = searchParams.get("offset") ? parseInt(searchParams.get("offset")!, 10) : undefined;
 
-    const items = await getDigestItems(limit, offset);
+    const items = await getDigestItems(limit, offset, userId);
 
     return NextResponse.json({
       items,
@@ -36,10 +40,12 @@ export async function POST(request: NextRequest) {
   try {
     await initializeDatabase();
     const body = await request.json();
-    
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+
     // Handle bulk add
     if (Array.isArray(body.itemIds) && body.itemIds.length > 0) {
-      const result = await addMultipleToDigestItems(body.itemIds);
+      const result = await addMultipleToDigestItems(body.itemIds, userId);
       return NextResponse.json({ 
         success: true, 
         message: `${result.success} items added${result.failed > 0 ? `, ${result.failed} failed` : ''}`,
@@ -58,7 +64,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await addToDigestItems(itemId);
+    await addToDigestItems(itemId, userId);
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -73,12 +79,14 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     await initializeDatabase();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
     const searchParams = request.nextUrl.searchParams;
     const removeAll = searchParams.get("all") === "true";
 
     // Handle "remove all" case
     if (removeAll) {
-      await removeAllFromDigestItems();
+      await removeAllFromDigestItems(userId);
       return NextResponse.json({ success: true, message: "All items removed" });
     }
 
@@ -86,7 +94,7 @@ export async function DELETE(request: NextRequest) {
     try {
       const body = await request.json().catch(() => null);
       if (body && Array.isArray(body.itemIds) && body.itemIds.length > 0) {
-        await removeMultipleFromDigestItems(body.itemIds);
+        await removeMultipleFromDigestItems(body.itemIds, userId);
         return NextResponse.json({ success: true, message: `${body.itemIds.length} items removed` });
       }
     } catch {
@@ -96,7 +104,7 @@ export async function DELETE(request: NextRequest) {
     // Handle single item delete (backward compatibility)
     const itemId = searchParams.get("itemId");
     if (itemId) {
-      await removeFromDigestItems(itemId);
+      await removeFromDigestItems(itemId, userId);
       return NextResponse.json({ success: true });
     }
 

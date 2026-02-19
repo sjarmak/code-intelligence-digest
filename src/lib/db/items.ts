@@ -21,8 +21,8 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
         await client.run(
           `
           INSERT INTO items
-          (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, EXTRACT(EPOCH FROM NOW())::INTEGER)
+          (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, full_text, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, EXTRACT(EPOCH FROM NOW())::INTEGER)
           ON CONFLICT (id) DO UPDATE SET
             stream_id = EXCLUDED.stream_id,
             source_title = EXCLUDED.source_title,
@@ -34,6 +34,7 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             content_snippet = EXCLUDED.content_snippet,
             categories = EXCLUDED.categories,
             category = EXCLUDED.category,
+            full_text = COALESCE(EXCLUDED.full_text, items.full_text),
             updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
         `,
           [
@@ -48,20 +49,35 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             item.contentSnippet || null,
             JSON.stringify(item.categories),
             item.category,
+            item.fullText || null,
           ],
         );
       }
     } else {
       const sqlite = getSqlite();
 
+      // Use ON CONFLICT DO UPDATE so we don't overwrite existing full_text with null when saving items without fullText (e.g. raw sync)
       const stmt = sqlite.prepare(`
-        INSERT OR REPLACE INTO items
-        (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        INSERT INTO items
+        (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, full_text, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        ON CONFLICT (id) DO UPDATE SET
+          stream_id = excluded.stream_id,
+          source_title = excluded.source_title,
+          title = excluded.title,
+          url = excluded.url,
+          author = excluded.author,
+          published_at = excluded.published_at,
+          summary = excluded.summary,
+          content_snippet = excluded.content_snippet,
+          categories = excluded.categories,
+          category = excluded.category,
+          full_text = COALESCE(excluded.full_text, full_text),
+          updated_at = strftime('%s', 'now')
       `);
 
-      const insertMany = sqlite.transaction((items: FeedItem[]) => {
-        for (const item of items) {
+      const insertMany = sqlite.transaction((itemsToInsert: FeedItem[]) => {
+        for (const item of itemsToInsert) {
           stmt.run(
             item.id,
             item.streamId,
@@ -74,6 +90,7 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             item.contentSnippet || null,
             JSON.stringify(item.categories),
             item.category,
+            item.fullText || null,
           );
         }
       });

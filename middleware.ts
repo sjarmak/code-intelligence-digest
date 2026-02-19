@@ -1,54 +1,48 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { auth } from "@/src/auth";
 
-export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+// Paths that do not require authentication
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/health",
+  "/api/config",
+  "/api/auth-config",
+];
+const PUBLIC_PREFIXES = [
+  "/api/auth/",
+  "/api/admin/populate-embeddings",
+  "/api/admin/refresh-feeds",
+];
 
-  // Allow access to login page and auth API routes
-  if (pathname === '/login' || pathname.startsWith('/api/auth/')) {
-    return NextResponse.next();
-  }
+function isPublic(pathname: string): boolean {
+  if (PUBLIC_PATHS.some((p) => pathname === p)) return true;
+  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return true;
+  return false;
+}
 
-  // Allow access to health check endpoint
-  if (pathname === '/api/health') {
-    return NextResponse.next();
-  }
+export default auth((req: NextRequest & { auth: unknown }) => {
+  const { pathname } = req.nextUrl;
+  if (isPublic(pathname)) return NextResponse.next();
 
-  // Allow public config (used by UI before/without auth)
-  if (pathname === '/api/config') {
-    return NextResponse.next();
-  }
+  const session = req.auth as { user?: { email?: string } } | null;
+  const legacyCookie = req.cookies.get("ui-auth")?.value === "authenticated";
+  const isAuthenticated = !!session?.user || legacyCookie;
 
-  // Allow access to populate-embeddings endpoint (one-time operation)
-  // This endpoint generates embeddings for the database
-  if (pathname.startsWith('/api/admin/populate-embeddings')) {
-    return NextResponse.next();
-  }
-
-  // Allow access to refresh-feeds endpoint (for cron/deploy automation)
-  if (pathname.startsWith('/api/admin/refresh-feeds')) {
-    return NextResponse.next();
-  }
-
-  // Check for authentication cookie
-  const authCookie = request.cookies.get('ui-auth');
-  const isAuthenticated = authCookie?.value === 'authenticated';
-
-  // If not authenticated: API routes get 401 JSON, pages redirect to login
   if (!isAuthenticated) {
-    if (pathname.startsWith('/api/')) {
+    if (pathname.startsWith("/api/")) {
       return NextResponse.json(
-        { error: 'Unauthorized', message: 'Authentication required' },
+        { error: "Unauthorized", message: "Authentication required" },
         { status: 401 }
       );
     }
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
+    const loginUrl = new URL("/login", req.url);
+    loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();
-}
+});
 
 export const config = {
   matcher: [
