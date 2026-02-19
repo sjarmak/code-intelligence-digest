@@ -62,6 +62,8 @@ interface ValidatedRequest {
   multiVoice: boolean;
   hostVoice?: string;
   cohostVoice?: string;
+  /** Optional episode title for saved podcast list (content-based, max 200 chars) */
+  title?: string;
 }
 
 function validateRequest(body: unknown): { valid: boolean; error?: string; data?: ValidatedRequest } {
@@ -127,6 +129,11 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   const hostVoice = req.hostVoice as string | undefined;
   const cohostVoice = req.cohostVoice as string | undefined;
 
+  const title =
+    typeof req.title === "string" && req.title.trim().length > 0
+      ? req.title.trim().slice(0, 200)
+      : undefined;
+
   return {
     valid: true,
     data: {
@@ -138,6 +145,7 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
       multiVoice,
       hostVoice,
       cohostVoice,
+      title,
     },
   };
 }
@@ -411,6 +419,7 @@ export async function POST(
         durationSeconds,
         audioUrl,
         bytes: fileBytes,
+        title: req.title,
       });
       try {
         await addUserPodcastAudio(userId, audioId);

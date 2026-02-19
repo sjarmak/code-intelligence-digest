@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS admin_settings (
 CREATE TABLE IF NOT EXISTS "generated_podcast_audio" (
   id TEXT PRIMARY KEY,
   podcast_id TEXT,
+  title TEXT,
   transcript_hash TEXT NOT NULL UNIQUE,
   provider TEXT NOT NULL,
   voice TEXT,

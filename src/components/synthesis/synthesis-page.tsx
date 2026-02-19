@@ -99,15 +99,55 @@ interface AudioDigestResult {
   };
 }
 
-type SynthesisResult = NewsletterResult | PodcastResult | AudioDigestResult;
+/** Saved podcast from user's list (audio only, no transcript) */
+interface SavedPodcastResult {
+  saved: true;
+  id: string;
+  title: string;
+  audioUrl: string;
+  createdAt: number;
+  duration?: string;
+}
 
-const isNewsletterResult = (result: SynthesisResult): result is NewsletterResult => 'markdown' in result;
+type SynthesisResult = NewsletterResult | PodcastResult | AudioDigestResult | SavedPodcastResult;
+
+const isNewsletterResult = (result: SynthesisResult): result is NewsletterResult =>
+  'markdown' in result && !('saved' in result && result.saved);
 
 const isPodcastResult = (result: SynthesisResult): result is PodcastResult =>
-  'voiceStyle' in result.generationMetadata;
+  'voiceStyle' in (result as PodcastResult).generationMetadata;
+
+const isSavedPodcastResult = (result: SynthesisResult): result is SavedPodcastResult =>
+  'saved' in result && result.saved && 'audioUrl' in result;
 
 interface SynthesisPageProps {
   type: "newsletter" | "podcast" | "audio-digest";
+}
+
+interface PastNewsletterItem {
+  id: string;
+  title: string;
+  createdAt: number;
+}
+
+interface PastPodcastItem {
+  id: string;
+  podcastId?: string;
+  title?: string;
+  provider: string;
+  format: string;
+  duration?: string;
+  durationSeconds?: number;
+  audioUrl: string;
+  bytes: number;
+  createdAt: number;
+}
+
+function formatSavedDate(createdAt: number): string {
+  return new Date(createdAt * 1000).toLocaleString(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 export function SynthesisPage({ type }: SynthesisPageProps) {
@@ -118,6 +158,11 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const resultRef = React.useRef<SynthesisResult | null>(null); // Ref to track result in stream handler
+
+  const [pastNewsletters, setPastNewsletters] = useState<PastNewsletterItem[]>([]);
+  const [pastPodcasts, setPastPodcasts] = useState<PastPodcastItem[]>([]);
+  const [loadingPastNewsletters, setLoadingPastNewsletters] = useState(false);
+  const [loadingPastPodcasts, setLoadingPastPodcasts] = useState(false);
 
   // Load from localStorage on mount (client-side only)
   // Only load on initial mount, not when type changes (to avoid overwriting new results)
@@ -130,14 +175,16 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       const saved = localStorage.getItem(`synthesis-result-${type}`);
       if (saved) {
         const parsed = JSON.parse(saved);
-        console.log('Loaded result from localStorage on mount:', {
-          id: parsed.id,
-          title: parsed.title,
-          duration: 'duration' in parsed ? parsed.duration : 'N/A',
-          generatedAt: parsed.generatedAt,
-          type: type
-        });
-        setResult(parsed);
+        if (parsed && !parsed.saved) {
+          console.log('Loaded result from localStorage on mount:', {
+            id: parsed.id,
+            title: parsed.title,
+            duration: 'duration' in parsed ? parsed.duration : 'N/A',
+            generatedAt: parsed.generatedAt,
+            type: type
+          });
+          setResult(parsed);
+        }
       }
     } catch (e) {
       console.warn("Failed to load from localStorage:", e);
@@ -145,9 +192,126 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
     setIsHydrated(true);
   }, [type]);
 
-  // Persist result to localStorage on change (client-side only)
+  const fetchPastNewsletters = React.useCallback(async () => {
+    if (type !== "newsletter") return;
+    setLoadingPastNewsletters(true);
+    try {
+      const res = await fetch("/api/generated-newsletters");
+      if (!res.ok) throw new Error("Failed to load past newsletters");
+      const data = await res.json();
+      setPastNewsletters(
+        (data.newsletters ?? []).map((n: { id: string; title: string; createdAt: number }) => ({
+          id: n.id,
+          title: n.title,
+          createdAt: n.createdAt,
+        }))
+      );
+    } catch (e) {
+      console.warn("Failed to fetch past newsletters:", e);
+      setPastNewsletters([]);
+    } finally {
+      setLoadingPastNewsletters(false);
+    }
+  }, [type]);
+
+  const fetchPastPodcasts = React.useCallback(async () => {
+    if (type !== "podcast") return;
+    setLoadingPastPodcasts(true);
+    try {
+      const res = await fetch("/api/user-podcast-audio");
+      if (!res.ok) throw new Error("Failed to load past podcasts");
+      const data = await res.json();
+      setPastPodcasts((data.podcasts ?? []).map((p: PastPodcastItem) => ({ ...p })));
+    } catch (e) {
+      console.warn("Failed to fetch past podcasts:", e);
+      setPastPodcasts([]);
+    } finally {
+      setLoadingPastPodcasts(false);
+    }
+  }, [type]);
+
   React.useEffect(() => {
-    if (isHydrated && result) {
+    if (type === "newsletter") fetchPastNewsletters();
+  }, [type, fetchPastNewsletters]);
+
+  React.useEffect(() => {
+    if (type === "podcast") fetchPastPodcasts();
+  }, [type, fetchPastPodcasts]);
+
+  const handleSelectPastNewsletter = React.useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/generated-newsletters/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error("Failed to load newsletter");
+      const n = await res.json();
+      const createdAtSec = typeof n.createdAt === "number" ? n.createdAt : 0;
+      setResult({
+        id: n.id,
+        title: n.title,
+        generatedAt: new Date(createdAtSec * 1000).toISOString(),
+        categories: [],
+        period: "",
+        itemsRetrieved: 0,
+        itemsIncluded: 0,
+        summary: "",
+        markdown: n.markdown ?? "",
+        html: n.html ?? "",
+        themes: [],
+        generationMetadata: {
+          promptUsed: "",
+          modelUsed: "",
+          tokensUsed: 0,
+          duration: "",
+          rerankApplied: false,
+        },
+      });
+    } catch (e) {
+      console.error("Failed to load past newsletter:", e);
+      setError(e instanceof Error ? e.message : "Failed to load newsletter");
+    }
+  }, []);
+
+  const handleDeletePastNewsletter = React.useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/generated-newsletters/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete");
+      setPastNewsletters((prev) => prev.filter((n) => n.id !== id));
+      setResult((r) => (r && "id" in r && r.id === id ? null : r));
+    } catch (e) {
+      console.error("Failed to delete newsletter:", e);
+      setError(e instanceof Error ? e.message : "Failed to delete");
+    }
+  }, []);
+
+  const handleSelectPastPodcast = React.useCallback((p: PastPodcastItem) => {
+    setResult({
+      saved: true,
+      id: p.id,
+      title: p.title?.trim() || `Podcast — ${formatSavedDate(p.createdAt)}`,
+      audioUrl: p.audioUrl,
+      createdAt: p.createdAt,
+      duration: p.duration,
+    });
+  }, []);
+
+  const handleDeletePastPodcast = React.useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/user-podcast-audio/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete");
+      setPastPodcasts((prev) => prev.filter((p) => p.id !== id));
+      setResult((r) => (r && isSavedPodcastResult(r) && r.id === id ? null : r));
+    } catch (e) {
+      console.error("Failed to delete podcast:", e);
+      setError(e instanceof Error ? e.message : "Failed to delete");
+    }
+  }, []);
+
+  // Persist result to localStorage on change (client-side only). Skip saved podcasts (reload from list).
+  React.useEffect(() => {
+    if (isHydrated && result && !isSavedPodcastResult(result)) {
       try {
         console.log('Saving result to localStorage:', {
           id: result.id,
@@ -284,14 +448,14 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
                       setLoadingProgress(100);
                       setProgressMessage('Generation complete!');
                       // Set result - this will trigger localStorage save via useEffect
-                      // Cast to the result type - the complete event contains the full AudioDigestResponse
-                      const newResult = parsed as SynthesisResult;
+                      // Complete event is always AudioDigestResult when streaming audio-digest
+                      const newResult = parsed as AudioDigestResult;
                       console.log('Setting result from complete event:', {
                         id: newResult.id,
                         title: newResult.title,
-                        duration: 'duration' in newResult ? newResult.duration : 'N/A',
+                        duration: newResult.duration,
                         generatedAt: newResult.generatedAt,
-                        transcriptLength: 'transcript' in newResult ? newResult.transcript.length : 0
+                        transcriptLength: newResult.transcript?.length ?? 0
                       });
 
                       // Verify the result has all required fields
@@ -483,6 +647,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
       setLoadingProgress(100);
       setProgressMessage('Complete!');
       setResult(data);
+      if (type === "newsletter") fetchPastNewsletters();
     } catch (err) {
       console.error('=== Generation error caught ===', err);
       clearInterval(progressInterval);
@@ -519,7 +684,7 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 space-y-6">
       {/* Back Button */}
       <div className="mb-4">
         <Link
@@ -589,9 +754,85 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
 
       {/* Two Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Form Column - Sticky */}
-        <div className="lg:col-span-1">
-          <div className="sticky top-4">
+        {/* Form Column - scrollable when tall (e.g. categories + limit) so all controls are reachable */}
+        <div className="lg:col-span-1 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto lg:pr-1">
+          <div className="space-y-6">
+            {type === "newsletter" && (
+              <div className="bg-surface rounded-lg border border-surface-border p-4">
+                <h3 className="text-sm font-semibold text-foreground mb-1">Your saved newsletters</h3>
+                <p className="text-xs text-muted mb-3">Each generated newsletter is saved automatically. Click one to open it, or delete it.</p>
+                {loadingPastNewsletters ? (
+                  <p className="text-xs text-muted">Loading…</p>
+                ) : pastNewsletters.length === 0 ? (
+                  <p className="text-xs text-muted">No saved newsletters yet. Generate one below.</p>
+                ) : (
+                  <ul className="space-y-2 max-h-60 overflow-y-auto">
+                    {pastNewsletters.map((n) => (
+                      <li
+                        key={n.id}
+                        className="flex items-center justify-between gap-2 text-sm border-b border-surface-border pb-2 last:border-0 last:pb-0"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectPastNewsletter(n.id)}
+                            className="text-left font-medium text-foreground hover:underline truncate block w-full"
+                          >
+                            {n.title || "Untitled"}
+                          </button>
+                          <p className="text-xs text-muted">{formatSavedDate(n.createdAt)}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePastNewsletter(n.id)}
+                          className="shrink-0 px-2 py-1 text-xs rounded border border-surface-border bg-surface text-muted hover:text-red-600 hover:border-red-300"
+                        >
+                          Delete
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            {type === "podcast" && (
+              <div className="bg-surface rounded-lg border border-surface-border p-4">
+                <h3 className="text-sm font-semibold text-foreground mb-1">Your saved podcasts</h3>
+                <p className="text-xs text-muted mb-3">Rendered audio is saved automatically. Click one to play, or delete it.</p>
+                {loadingPastPodcasts ? (
+                  <p className="text-xs text-muted">Loading…</p>
+                ) : pastPodcasts.length === 0 ? (
+                  <p className="text-xs text-muted">No saved podcasts yet. Generate and render audio below.</p>
+                ) : (
+                  <ul className="space-y-2 max-h-60 overflow-y-auto">
+                    {pastPodcasts.map((p) => (
+                      <li
+                        key={p.id}
+                        className="flex items-center justify-between gap-2 text-sm border-b border-surface-border pb-2 last:border-0 last:pb-0"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectPastPodcast(p)}
+                            className="text-left font-medium text-foreground hover:underline block w-full"
+                          >
+                            {p.title?.trim() || `Podcast — ${formatSavedDate(p.createdAt)}`}
+                            {p.duration ? ` · ${p.duration}` : ""}
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePastPodcast(p.id)}
+                          className="shrink-0 px-2 py-1 text-xs rounded border border-surface-border bg-surface text-muted hover:text-red-600 hover:border-red-300"
+                        >
+                          Delete
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             <SynthesisForm
               type={type}
               onGenerate={handleGenerate}
@@ -604,21 +845,43 @@ export function SynthesisPage({ type }: SynthesisPageProps) {
         <div className="lg:col-span-2">
           {result ? (
             <>
-              {isNewsletterResult(result) ? (
+              {isSavedPodcastResult(result) ? (
+                <div className="bg-surface rounded-lg border border-surface-border p-6">
+                  <div className="flex items-center justify-between gap-4 mb-4">
+                    <h2 className="text-xl font-semibold text-foreground">{result.title}</h2>
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePastPodcast(result.id)}
+                      className="px-3 py-1.5 text-sm rounded border border-surface-border bg-surface text-muted hover:text-red-600 hover:border-red-300"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                  <p className="text-sm text-muted mb-4">{formatSavedDate(result.createdAt)}</p>
+                  <audio
+                    controls
+                    className="w-full"
+                    src={result.audioUrl}
+                    preload="metadata"
+                  >
+                    Your browser does not support the audio element.
+                  </audio>
+                </div>
+              ) : isNewsletterResult(result) ? (
                 <NewsletterViewer {...result} />
               ) : isPodcastResult(result) ? (
                 <PodcastViewer {...result} />
               ) : (
                 <>
                   {/* Debug info - remove in production */}
-                  {process.env.NODE_ENV === 'development' && (
+                  {process.env.NODE_ENV === 'development' && 'generatedAt' in result && (
                     <div className="mb-4 p-2 bg-gray-100 text-xs">
                       Result ID: {result.id},
-                      Duration: {result.duration},
+                      Duration: {'duration' in result ? result.duration : 'N/A'},
                       Generated: {result.generatedAt}
                     </div>
                   )}
-                  <AudioDigestViewer {...result} />
+                  <AudioDigestViewer {...(result as AudioDigestResult)} />
                 </>
               )}
             </>

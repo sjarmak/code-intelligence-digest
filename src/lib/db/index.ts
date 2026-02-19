@@ -144,6 +144,15 @@ async function initializePostgresSchema() {
       // Column may already exist
     }
 
+    // Add title to generated_podcast_audio for content-based display (migration)
+    try {
+      await client.run(`
+        ALTER TABLE "generated_podcast_audio" ADD COLUMN IF NOT EXISTS title TEXT;
+      `);
+    } catch {
+      // Column may already exist
+    }
+
     await ensurePostgresUserIdColumns(client);
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
@@ -386,6 +395,7 @@ async function initializeSqliteSchema() {
       CREATE TABLE IF NOT EXISTS generated_podcast_audio (
         id TEXT PRIMARY KEY,
         podcast_id TEXT,
+        title TEXT,
         transcript_hash TEXT NOT NULL UNIQUE,
         provider TEXT NOT NULL,
         voice TEXT,
@@ -399,6 +409,11 @@ async function initializeSqliteSchema() {
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
       );
     `);
+    try {
+      sqlite.exec(`ALTER TABLE generated_podcast_audio ADD COLUMN title TEXT`);
+    } catch {
+      // Column may already exist (e.g. new CREATE TABLE already has it)
+    }
 
     // Generated newsletters (per-user)
     sqlite.exec(`

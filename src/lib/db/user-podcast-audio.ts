@@ -49,11 +49,11 @@ export async function listUserPodcastAudio(
   if (driver === "postgres") {
     const client = await getDbClient();
     const result = await client.query(
-      `SELECT a.id, a.podcast_id, a.transcript_hash, a.provider, a.voice, a.format,
+      `SELECT a.id, a.podcast_id, a.title, a.transcript_hash, a.provider, a.voice, a.format,
               a.duration, a.duration_seconds, a.audio_url, a.segment_audio, a.bytes, a.generated_at, a.created_at,
               u.created_at AS user_created_at
        FROM user_podcast_audio u
-       JOIN generated_podcast_audio a ON a.id = u.audio_id
+       JOIN "generated_podcast_audio" a ON a.id = u.audio_id
        WHERE u.user_id = $1
        ORDER BY u.created_at DESC
        LIMIT $2`,
@@ -62,6 +62,7 @@ export async function listUserPodcastAudio(
     return (result.rows as unknown as Array<Record<string, unknown>>).map((r) => ({
       id: r.id as string,
       podcastId: (r.podcast_id as string) || undefined,
+      title: (r.title as string) || undefined,
       transcriptHash: r.transcript_hash as string,
       provider: r.provider as string,
       voice: (r.voice as string) || undefined,
@@ -78,7 +79,7 @@ export async function listUserPodcastAudio(
   const sqlite = getSqlite();
   const rows = sqlite
     .prepare(
-      `SELECT a.id, a.podcast_id, a.transcript_hash, a.provider, a.voice, a.format,
+      `SELECT a.id, a.podcast_id, a.title, a.transcript_hash, a.provider, a.voice, a.format,
               a.duration, a.duration_seconds, a.audio_url, a.segment_audio, a.bytes, a.generated_at, a.created_at,
               u.created_at AS user_created_at
        FROM user_podcast_audio u
@@ -91,6 +92,7 @@ export async function listUserPodcastAudio(
   return rows.map((r) => ({
     id: r.id as string,
     podcastId: (r.podcast_id as string) || undefined,
+    title: (r.title as string) || undefined,
     transcriptHash: r.transcript_hash as string,
     provider: r.provider as string,
     voice: (r.voice as string) || undefined,

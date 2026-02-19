@@ -9,6 +9,7 @@ import { SegmentAudioMetadata } from "../audio/types";
 export interface PodcastAudioRecord {
   id: string;
   podcastId?: string;
+  title?: string;
   transcriptHash: string;
   provider: string;
   voice?: string;
@@ -24,6 +25,7 @@ export interface PodcastAudioRecord {
 interface PodcastAudioRow {
   id: string;
   podcast_id: string | null;
+  title: string | null;
   transcript_hash: string;
   provider: string;
   voice: string | null;
@@ -51,19 +53,21 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
     // This handles cases where the same transcript is rendered multiple times concurrently
     try {
       await client.run(`
-        INSERT INTO generated_podcast_audio (
-          id, podcast_id, transcript_hash, provider, voice, format,
+        INSERT INTO "generated_podcast_audio" (
+          id, podcast_id, title, transcript_hash, provider, voice, format,
           duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (transcript_hash) DO UPDATE SET
           audio_url = EXCLUDED.audio_url,
           bytes = EXCLUDED.bytes,
           duration = EXCLUDED.duration,
           duration_seconds = EXCLUDED.duration_seconds,
-          generated_at = EXCLUDED.generated_at
+          generated_at = EXCLUDED.generated_at,
+          title = COALESCE(EXCLUDED.title, "generated_podcast_audio".title)
       `, [
       audio.id,
       audio.podcastId || null,
+      audio.title ?? null,
       audio.transcriptHash,
       audio.provider,
       audio.voice || null,
@@ -91,15 +95,16 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
     // The caller should catch this and fetch the existing record
     const stmt = sqlite.prepare(`
       INSERT INTO generated_podcast_audio (
-        id, podcast_id, transcript_hash, provider, voice, format,
+        id, podcast_id, title, transcript_hash, provider, voice, format,
         duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     try {
       stmt.run(
         audio.id,
         audio.podcastId || null,
+        audio.title ?? null,
         audio.transcriptHash,
         audio.provider,
         audio.voice || null,
@@ -156,6 +161,7 @@ export async function getPodcastAudioByHash(
   return {
     id: row.id,
     podcastId: row.podcast_id || undefined,
+    title: row.title || undefined,
     transcriptHash: row.transcript_hash,
     provider: row.provider,
     voice: row.voice || undefined,
@@ -200,6 +206,7 @@ export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecor
   return {
     id: row.id,
     podcastId: row.podcast_id || undefined,
+    title: row.title || undefined,
     transcriptHash: row.transcript_hash,
     provider: row.provider,
     voice: row.voice || undefined,
@@ -268,6 +275,7 @@ export async function listRecentPodcastAudio(limit: number = 20): Promise<Podcas
   return rows.map((record) => ({
     id: record.id,
     podcastId: record.podcast_id || undefined,
+    title: record.title || undefined,
     transcriptHash: record.transcript_hash,
     provider: record.provider,
     voice: record.voice || undefined,

@@ -10,6 +10,35 @@ import { Readability } from "@mozilla/readability";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { extractBibcodeFromUrl } from "../ads/client";
 
+/**
+ * Detect if text looks like HTML (tags present) so we can strip before display/ranking
+ */
+export function looksLikeHtml(text: string): boolean {
+  if (!text || text.length < 10) return false;
+  return /<[a-zA-Z][^>]*>|<\s*\/\s*[a-zA-Z]+>/.test(text);
+}
+
+/**
+ * Strip HTML tags and decode entities. Safe to call on any string.
+ * Use after extraction or when loading stored full_text that may contain HTML.
+ */
+export function stripHtmlFromText(text: string): string {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#\d+;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export interface FullTextResult {
   text: string;
   source: "web_scrape" | "arxiv" | "ads_api" | "web_archive" | "error";
@@ -145,7 +174,7 @@ async function extractTextFromHTML(html: string, url?: string): Promise<string> 
 
       if (article && article.textContent && article.textContent.length > 200) {
         logger.debug(`Using Readability extraction (${article.textContent.length} chars)`);
-        return article.textContent.trim();
+        return stripHtmlFromText(article.textContent.trim());
       }
     } catch (error) {
       // Suppress CSS parsing errors - they're not critical for text extraction
@@ -177,7 +206,7 @@ async function extractTextFromHTML(html: string, url?: string): Promise<string> 
     .replace(/\s+/g, " ")
     .trim();
 
-  return text;
+  return stripHtmlFromText(text);
 }
 
 /**
@@ -607,10 +636,11 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   // Try ADS database first (if available, it's already fetched and stored)
   const adsBody = await getFullTextFromADS(url);
   if (adsBody) {
+    const text = looksLikeHtml(adsBody) ? stripHtmlFromText(adsBody) : adsBody;
     return {
-      text: adsBody,
+      text,
       source: "ads_api", // Full text from ADS API body field
-      length: adsBody.length,
+      length: text.length,
       fetchedAt: new Date(),
     };
   }
@@ -649,7 +679,10 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
 
   // Fall back to web scraping
   try {
-    const text = await fetchWebPage(url);
+    let text = await fetchWebPage(url);
+    if (looksLikeHtml(text)) {
+      text = stripHtmlFromText(text);
+    }
     return {
       text,
       source: "web_scrape",
@@ -664,10 +697,14 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
       logger.info(`Trying Wayback Machine for paywalled article: ${url.substring(0, 80)}`);
       const archived = await fetchFromWebArchive(url);
       if (archived) {
+        let text = archived.text;
+        if (looksLikeHtml(text)) {
+          text = stripHtmlFromText(text);
+        }
         return {
-          text: archived.text,
+          text,
           source: "web_archive",
-          length: archived.text.length,
+          length: text.length,
           fetchedAt: new Date(),
           archivedUrl: archived.archiveUrl,
         };

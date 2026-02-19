@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getDbClient, detectDriver } from "@/src/lib/db/driver";
+import { looksLikeHtml, stripHtmlFromText } from "@/src/lib/pipeline/fulltext";
 
 /**
  * Check if the "full text" is actually subscription/paywall boilerplate
@@ -134,9 +135,11 @@ export async function GET(
     const includeContent = request.nextUrl.searchParams.get("include_content") === "true";
 
     if (includeContent && fullText) {
+      const text =
+        looksLikeHtml(fullText.text) ? stripHtmlFromText(fullText.text) : fullText.text;
       return NextResponse.json({
         hasFullText: !fullText.isFallback,
-        text: fullText.text,
+        text,
         source: fullText.source,
         isFallback: fullText.isFallback ?? false,
         driver,

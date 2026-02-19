@@ -5,6 +5,9 @@ import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
 import { getSavedItems, LEGACY_USER_ID } from '@/src/lib/db/savedItems';
 import { getDigestItems } from '@/src/lib/db/digestItems';
 import { loadItem } from '@/src/lib/db/items';
+import { initializeDatabase } from '@/src/lib/db/index';
+import { getGeneratedNewsletter, listGeneratedNewsletters } from '@/src/lib/db/generated-newsletters';
+import { listUserPodcastAudio } from '@/src/lib/db/user-podcast-audio';
 import { logger } from '@/src/lib/logger';
 import { getADSUrl, getLibraryItems } from '@/src/lib/ads/client';
 import OpenAI from 'openai';
@@ -21,9 +24,11 @@ interface ResourcesAskRequest {
   question: string;
   libraryId?: string; // Deprecated: use libraryIds instead
   libraryIds?: string[]; // Array of research library IDs
-  resourceLibraryIds?: string[]; // Array of resource library IDs ('saved-items' | 'digest-items')
+  resourceLibraryIds?: string[]; // 'saved-items' | 'digest-items' | 'newsletter-library' | 'podcast-library'
   selectedBibcodes?: string[]; // Papers selected by user
   selectedItemIds?: string[]; // Items selected by user
+  selectedNewsletterIds?: string[]; // Newsletters selected by user
+  selectedPodcastIds?: string[]; // Podcasts selected by user
   limit?: number;
   openaiApiKey?: string;
   openaiBaseUrl?: string;
@@ -85,6 +90,8 @@ export async function POST(request: NextRequest) {
       resourceLibraryIds,
       selectedBibcodes,
       selectedItemIds,
+      selectedNewsletterIds,
+      selectedPodcastIds,
       openaiApiKey: bodyOpenaiApiKey,
       openaiBaseUrl: bodyOpenaiBaseUrl,
       conversationHistory,
@@ -99,6 +106,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await initializeDatabase();
     const session = await auth();
     const userId = session?.user?.id ?? LEGACY_USER_ID;
     const sessionUser = session?.user
@@ -141,6 +149,8 @@ export async function POST(request: NextRequest) {
     let items: Array<{ id: string; title: string; url: string; sourceTitle: string; summary?: string; contentSnippet?: string; fullText?: string; category?: string; publishedAt: Date }> = [];
     let papersContextString: string = '';
     let itemsContextString: string = '';
+    let newsletterContextString: string = '';
+    let podcastContextString: string = '';
 
     // For follow-up questions, reuse context
     if (isFollowUp && papersContext) {
@@ -301,6 +311,36 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Fetch newsletters (selected ids or full newsletter library)
+    const newsletterIdsToLoad: string[] =
+      Array.isArray(selectedNewsletterIds) && selectedNewsletterIds.length > 0
+        ? selectedNewsletterIds
+        : resourceLibraryIds?.includes('newsletter-library')
+          ? (await listGeneratedNewsletters(userId, limit)).map((n) => n.id)
+          : [];
+    const newsletters: Array<{ id: string; title: string; markdown: string | null }> = [];
+    for (const id of newsletterIdsToLoad.slice(0, 10)) {
+      const n = await getGeneratedNewsletter(id, userId);
+      if (n) newsletters.push({ id: n.id, title: n.title, markdown: n.markdown });
+    }
+
+    // Fetch podcasts (selected ids or full podcast library)
+    const podcastIdsToLoad: string[] =
+      Array.isArray(selectedPodcastIds) && selectedPodcastIds.length > 0
+        ? selectedPodcastIds
+        : resourceLibraryIds?.includes('podcast-library')
+          ? (await listUserPodcastAudio(userId, limit)).map((p) => p.id)
+          : [];
+    const podcasts: Array<{ id: string; title?: string; duration?: string }> = [];
+    if (podcastIdsToLoad.length > 0) {
+      const allPodcasts = await listUserPodcastAudio(userId, 50);
+      const byId = new Map(allPodcasts.map((p) => [p.id, p]));
+      for (const id of podcastIdsToLoad.slice(0, 10)) {
+        const p = byId.get(id);
+        if (p) podcasts.push({ id: p.id, title: p.title, duration: p.duration });
+      }
+    }
+
     // Build context from papers
     if (papers.length > 0 && !papersContextString) {
       // Initialize ADS tables if needed
@@ -360,17 +400,37 @@ export async function POST(request: NextRequest) {
       itemsContextString = itemContextParts.join('\n\n---\n\n');
     }
 
+    // Build context from newsletters
+    if (newsletters.length > 0) {
+      const parts = newsletters.map((n, idx) => {
+        const content = (n.markdown || '').slice(0, 8000);
+        return `[Newsletter ${idx + 1}] Title: ${n.title}\n\n${content}${content.length >= 8000 ? '\n[... truncated ...]' : ''}`;
+      });
+      newsletterContextString = parts.join('\n\n---\n\n');
+    }
+
+    // Build context from podcasts (title/duration only; no transcript stored)
+    if (podcasts.length > 0) {
+      const parts = podcasts.map(
+        (p, idx) =>
+          `[Podcast ${idx + 1}] Title: ${p.title?.trim() || 'Untitled'}\nDuration: ${p.duration || 'N/A'}\n(Content is audio; use title and duration for reference.)`
+      );
+      podcastContextString = parts.join('\n\n---\n\n');
+    }
+
     // Combine contexts
     const combinedContext = [
       papersContextString ? `RESEARCH PAPERS:\n${papersContextString}` : '',
       itemsContextString ? `RESOURCES:\n${itemsContextString}` : '',
+      newsletterContextString ? `NEWSLETTERS:\n${newsletterContextString}` : '',
+      podcastContextString ? `PODCASTS (metadata):\n${podcastContextString}` : '',
     ]
       .filter(Boolean)
       .join('\n\n==========\n\n');
 
     if (!combinedContext) {
       return NextResponse.json(
-        { error: 'No papers or items available to answer the question' },
+        { error: 'No papers, items, newsletters, or podcasts available to answer the question' },
         { status: 400 }
       );
     }
@@ -378,15 +438,17 @@ export async function POST(request: NextRequest) {
     logger.info('Generating answer from resources', {
       papersCount: papers.length,
       itemsCount: items.length,
+      newslettersCount: newsletters.length,
+      podcastsCount: podcasts.length,
       contextLength: combinedContext.length,
       isFollowUp,
     });
 
     // Build messages array
-    const systemPrompt = `You are an expert research analyst specializing in synthesizing information from academic papers and resources. When answering questions:
+    const systemPrompt = `You are an expert research analyst specializing in synthesizing information from academic papers, newsletters, podcasts, and resources. When answering questions:
 1. Provide concise, evidence-based answers (2-4 paragraphs for initial questions, shorter for follow-ups)
 2. Quote specific relevant excerpts from the sources
-3. For each quote or key finding, cite the source using [Paper N] or [Item N] format where N is the source index
+3. For each quote or key finding, cite the source using [Paper N], [Item N], [Newsletter N], or [Podcast N] format where N is the source index
 4. Highlight the most relevant sources for this specific question
 5. If sources conflict or differ in findings, note those differences
 6. Always ground your answer in the actual content provided
@@ -407,7 +469,7 @@ ${combinedContext}`;
     // Add current question
     const userContent = isFollowUp
       ? question
-      : `Based on the following research papers and resources, answer this question: "${question}"\n\nProvide an evidence-based answer with specific citations [Paper N] or [Item N] for each key claim. Include direct quotes where relevant to support your synthesis.`;
+      : `Based on the following research papers, resources, newsletters, and podcasts, answer this question: "${question}"\n\nProvide an evidence-based answer with specific citations [Paper N], [Item N], [Newsletter N], or [Podcast N] for each key claim. Include direct quotes where relevant to support your synthesis.`;
 
     messages.push({ role: 'user', content: userContent });
 

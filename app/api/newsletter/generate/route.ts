@@ -24,14 +24,58 @@ import {
 } from "@/src/lib/pipeline/promptRerank";
 import { generateNewsletterFromDigests } from "@/src/lib/pipeline/newsletter";
 import { extractBatchDigests } from "@/src/lib/pipeline/extract";
+import { tryResolveToArticleUrl } from "@/src/lib/url-curation";
 import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import type { LLMClientOptions } from "@/src/lib/llm/client";
+import type OpenAI from "openai";
 import {
   getDateRangeForPeriodDays,
   formatDateRangeLabel,
   formatDateLong,
 } from "@/src/lib/dateRange";
+
+const NEWSLETTER_TITLE_MAX_LENGTH = 80;
+
+/**
+ * Generate a short, content-based title from the newsletter summary and themes.
+ * Falls back to null on failure so caller can use formulaic title.
+ */
+async function generateContentBasedTitle(
+  summary: string,
+  themes: string[],
+  client: OpenAI,
+  _opts?: LLMClientOptions
+): Promise<string | null> {
+  const summarySnippet = summary.slice(0, 600).trim();
+  const themesList = themes.slice(0, 8).join(", ") || "code intelligence, developer tools";
+  try {
+    const response = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_completion_tokens: 120,
+      messages: [
+        {
+          role: "user",
+          content: `Given this newsletter executive summary and themes, suggest a single line title (max ${NEWSLETTER_TITLE_MAX_LENGTH} characters) that would help someone recognize the content at a glance. Be specific and descriptive. Reply with only the title, no quotes or explanation.
+
+Themes: ${themesList}
+
+Summary:
+${summarySnippet}`,
+        },
+      ],
+    });
+    const raw =
+      response.choices?.[0]?.message?.content?.trim().replace(/^["']|["']$/g, "").split("\n")[0]?.trim() ?? "";
+    if (!raw) return null;
+    const title = raw.slice(0, NEWSLETTER_TITLE_MAX_LENGTH).trim();
+    return title.length > 0 ? title : null;
+  } catch (e) {
+    logger.warn("Content-based title generation failed, using formulaic title", { error: e });
+    return null;
+  }
+}
 
 // Helper function to deduplicate by URL (same logic as in select.ts)
 function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
@@ -591,30 +635,36 @@ export async function POST(
     }
 
     // Step 5: Select items based on relevance
-    // When no prompt is provided, use highest relevance items (sorted by finalScore)
-    // When prompt is provided, apply diversity constraints
+    // For auto (digest library) and manual modes: use ALL items—no URL dedup, no diversity cap.
+    // For categories mode: apply limit and diversity so we don't over-fetch.
     let selectedItems: RankedItem[];
-    // For auto (digest library) and manual modes, use ALL items. For categories mode, use the requested limit.
     const limit =
       req.sourceMode === "manual" || req.sourceMode === "auto"
         ? mergedItems.length
         : req.limit || 20;
-    const decompositionFactor = 1.3; // Typical expansion from newsletter decomposition
-    const adjustedLimit = Math.ceil(limit / decompositionFactor);
+    const decompositionFactor = 1.3;
+    const adjustedLimit =
+      req.sourceMode === "manual" || req.sourceMode === "auto"
+        ? limit
+        : Math.ceil(limit / decompositionFactor);
 
-    if (!req.prompt || req.prompt.length === 0) {
-      // No prompt: Sort by finalScore (highest first) and take top N
-      // Still deduplicate by URL to avoid duplicates
-      // Note: After extraction & decomposition, item count may increase.
-      // Reduce pre-selection to account for newsletter decomposition (~1.3x expansion typical).
+    if (req.sourceMode === "auto" || req.sourceMode === "manual") {
+      // Digest library / manual: use every item the user selected. Sort by score for consistent order.
+      const sorted = [...mergedItems].sort((a, b) => b.finalScore - a.finalScore);
+      selectedItems = sorted.slice(0, limit);
+      logger.info(
+        `Selected all ${selectedItems.length} items (${req.sourceMode} mode, no diversity cap)`,
+      );
+    } else if (!req.prompt || req.prompt.length === 0) {
+      // Categories, no prompt: sort by score, dedupe by URL, take top N
       const deduplicatedItems = deduplicateByUrl(mergedItems);
       deduplicatedItems.sort((a, b) => b.finalScore - a.finalScore);
       selectedItems = deduplicatedItems.slice(0, adjustedLimit);
       logger.info(
-        `Selected ${selectedItems.length} highest relevance items (no prompt, sorted by finalScore, adjusted limit: ${adjustedLimit})`,
+        `Selected ${selectedItems.length} items (categories, no prompt, limit: ${adjustedLimit})`,
       );
     } else {
-      // With prompt: Apply diversity constraints
+      // Categories with prompt: apply diversity
       const maxPerSource = req.period === "week" ? 2 : 3;
       const category = req.categories?.[0] || "tech_articles";
       const selection = selectWithDiversity(
@@ -625,12 +675,12 @@ export async function POST(
       );
       selectedItems = selection.items;
       logger.info(
-        `Selected ${selectedItems.length} items (with prompt, diversity constraints applied, adjusted limit: ${adjustedLimit})`,
+        `Selected ${selectedItems.length} items (categories, with prompt, limit: ${adjustedLimit})`,
       );
     }
 
     logger.info(
-      `Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${limit})`,
+      `Selected ${selectedItems.length} items (requested limit: ${limit})`,
     );
 
     // Log newsletter items being selected
@@ -656,22 +706,31 @@ export async function POST(
       `Extracted ${digests.length} item digests from ${selectedItems.length} selected items`,
     );
 
-    // Filter out digests without valid URLs before synthesis
-    const validDigests = digests.filter((digest) => {
-      const hasValidUrl =
+    // Filter out digests without valid URLs and resolve subscription/plan URLs to article URLs.
+    // Exclude digests that point to subscription/plan pages we cannot resolve to an article.
+    const excludeInoreader = req.sourceMode === "categories";
+    const validDigests: typeof digests = [];
+    for (const digest of digests) {
+      const hasHttpUrl =
         digest.url &&
-        (digest.url.startsWith("http://") ||
-          digest.url.startsWith("https://")) &&
-        !digest.url.includes("inoreader.com");
-      if (!hasValidUrl) {
+        (digest.url.startsWith("http://") || digest.url.startsWith("https://"));
+      if (!hasHttpUrl || (excludeInoreader && digest.url.includes("inoreader.com"))) {
         logger.warn(
           `Excluding digest without valid URL: "${digest.title}" (url: "${digest.url}" source: "${digest.sourceTitle}")`,
         );
+        continue;
       }
-      return hasValidUrl;
-    });
+      const articleUrl = tryResolveToArticleUrl(digest.url);
+      if (!articleUrl) {
+        logger.warn(
+          `Excluding digest pointing to subscription/plan page (no article URL): "${digest.title}" (url: "${digest.url}" source: "${digest.sourceTitle}")`,
+        );
+        continue;
+      }
+      validDigests.push(articleUrl !== digest.url ? { ...digest, url: articleUrl } : digest);
+    }
     logger.info(
-      `URL filter: ${digests.length} → ${validDigests.length} digests (removed ${digests.length - validDigests.length} without valid URLs)`,
+      `URL filter: ${digests.length} → ${validDigests.length} digests (removed ${digests.length - validDigests.length} without valid URLs or unresolved subscription pages)`,
     );
 
     // Critical: Track count discrepancy
@@ -699,7 +758,7 @@ export async function POST(
     // Record successful usage
     await recordUsage(request, "/api/newsletter/generate");
 
-    const newsletterTitle = ((): string => {
+    const fallbackTitle = ((): string => {
       if (req.sourceMode === "manual") {
         return "Code Intelligence Digest – Curated Selection";
       }
@@ -723,6 +782,9 @@ export async function POST(
       }
       return `Code Intelligence Digest – All Time · ${formatDateLong(new Date())}`;
     })();
+
+    const contentTitle = await generateContentBasedTitle(summary, themes, llmClient, llmOptions);
+    const newsletterTitle = contentTitle && contentTitle.length > 0 ? contentTitle : fallbackTitle;
 
     // Save to per-user history for "my past newsletters"
     try {

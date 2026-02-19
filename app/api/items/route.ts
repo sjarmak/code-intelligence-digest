@@ -21,6 +21,7 @@ import {
   getOwnProducts,
   getAllProductIds,
 } from "@/src/config/products";
+import { looksLikeHtml, stripHtmlFromText } from "@/src/lib/pipeline/fulltext";
 
 /**
  * Decode tracking URLs to get the real destination URL
@@ -653,7 +654,11 @@ export async function GET(request: NextRequest) {
             categories: JSON.parse(row.categories),
             category: cat,
             raw: {},
-            fullText: row.full_text || undefined, // May be null if excluded from SELECT to reduce memory
+            fullText: (() => {
+              const raw = row.full_text ?? undefined;
+              if (!raw) return undefined;
+              return looksLikeHtml(raw) ? stripHtmlFromText(raw) : raw;
+            })(),
           };
         } catch (error) {
           logger.warn(`[API] Error mapping row ${row.id}: ${error}`);

@@ -24,6 +24,7 @@ export async function GET(): Promise<NextResponse> {
       podcasts: items.map((p) => ({
         id: p.id,
         podcastId: p.podcastId,
+        title: p.title,
         provider: p.provider,
         format: p.format,
         duration: p.duration,

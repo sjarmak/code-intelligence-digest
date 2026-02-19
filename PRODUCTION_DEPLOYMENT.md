@@ -20,13 +20,13 @@ Both "Saved Items" and "Digest Items" are stored in the shared database:
 - **`saved_items` table**: General bookmark library for any item type
 - **`digest_items` table**: Items specifically marked for digest generation
 
-### Important: No User Authentication
+### User Authentication (Google OAuth)
 
-⚠️ **Critical**: The app currently has **no user authentication**. This means:
+The app uses **NextAuth v5** with **Google OAuth** (`src/auth.ts`). When enabled:
 
-1. **All users share the same database** - Any item added to "Saved Items" or "Digest Items" by one user will be visible to all users
-2. **This is a single-user application** - Designed for personal use, not multi-user
-3. **Data is persistent** - Items persist across browser sessions and devices (as long as they access the same Render deployment)
+1. **Per-user data** - Saved items, digest items, generated newsletters, and podcast audio are scoped by `user_id` from the session.
+2. **Session** - `session?.user?.id` is used for all user-scoped APIs; unauthenticated or legacy access uses a default `legacy` user id.
+3. **Config** - Set `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` (or `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) and `AUTH_SECRET`; optionally `AUTH_GOOGLE_HD` or `AUTH_TEST_EMAILS` for testing.
 
 ### How It Works in Production (Render)
 
@@ -57,13 +57,7 @@ Both "Saved Items" and "Digest Items" are stored in the shared database:
 - Single shared database for all users
 - Data persists across deployments
 
-### If You Need User-Specific Data
+### Generated Content (Per User)
 
-If you want to add user authentication in the future, you would need to:
-
-1. Add a `user_id` column to `saved_items` and `digest_items` tables
-2. Modify API endpoints to filter by `user_id`
-3. Implement authentication (e.g., NextAuth.js, Clerk, etc.)
-4. Update UI to show only the current user's items
-
-For now, the app is designed as a **single-user personal tool**.
+- **Generated newsletters**: Stored in `generated_newsletters` (per `user_id`). List via `GET /api/generated-newsletters`, get one via `GET /api/generated-newsletters/[id]`, delete via `DELETE /api/generated-newsletters/[id]`.
+- **Podcast audio**: Stored in `user_podcast_audio` + `generated_podcast_audio`. List via `GET /api/user-podcast-audio`, delete via `DELETE /api/user-podcast-audio/[id]`.
