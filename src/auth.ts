@@ -53,9 +53,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn({ user }) {
       const email = (user?.email ?? "").trim().toLowerCase();
       if (!email) return false;
-      if (email.endsWith("@sourcegraph.com")) return true;
-      if (authTestEmails.length > 0 && authTestEmails.includes(email)) return true;
-      return false;
+      // Allow anyone who authenticated via Google; restrict who can use the app via OAuth config (e.g. Google Cloud Console) if needed.
+      return true;
     },
     authorized({ auth: session, request }) {
       // Allow if NextAuth session exists
