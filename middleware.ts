@@ -23,11 +23,6 @@ function isPublic(pathname: string): boolean {
 
 export default auth((req: NextRequest & { auth: unknown }) => {
   const { pathname } = req.nextUrl;
-  // Log auth-related requests to see if callback from Google reaches the app (e.g. mobile)
-  if (pathname.startsWith("/api/auth/")) {
-    const safePath = pathname + (pathname.includes("callback") ? "?code=..." : "");
-    console.log("[INFO] [Auth] middleware", JSON.stringify({ pathname: safePath, method: req.method }));
-  }
   if (isPublic(pathname)) return NextResponse.next();
 
   const session = req.auth as { user?: { email?: string } } | null;
@@ -52,13 +47,11 @@ export default auth((req: NextRequest & { auth: unknown }) => {
 export const config = {
   matcher: [
     /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder files
+     * Match all request paths except:
+     * - api/auth/* (OAuth callback etc. - skip middleware to avoid session resolution hanging on mobile)
+     * - _next/static, _next/image, favicon.ico, static assets
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };
 

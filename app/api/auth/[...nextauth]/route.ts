@@ -4,6 +4,8 @@ import { logger } from "@/src/lib/logger";
 
 // Run in Node so AUTH_* env vars are available (middleware runs in Edge and may not have them)
 export const runtime = "nodejs";
+// Allow callback more time (token exchange with Google can be slow; mobile/proxy timeouts)
+export const maxDuration = 60;
 
 const { GET: rawGet, POST: rawPost } = handlers;
 
