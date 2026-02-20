@@ -23,6 +23,11 @@ function isPublic(pathname: string): boolean {
 
 export default auth((req: NextRequest & { auth: unknown }) => {
   const { pathname } = req.nextUrl;
+  // Log auth-related requests to see if callback from Google reaches the app (e.g. mobile)
+  if (pathname.startsWith("/api/auth/")) {
+    const safePath = pathname + (pathname.includes("callback") ? "?code=..." : "");
+    console.log("[INFO] [Auth] middleware", JSON.stringify({ pathname: safePath, method: req.method }));
+  }
   if (isPublic(pathname)) return NextResponse.next();
 
   const session = req.auth as { user?: { email?: string } } | null;
