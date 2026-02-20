@@ -4,6 +4,7 @@
  */
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
+import { logger } from "@/src/lib/logger";
 
 const rawSecret = (process.env.AUTH_SECRET ?? "").trim();
 const authSecret =
@@ -52,6 +53,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     signIn({ user }) {
       const email = (user?.email ?? "").trim().toLowerCase();
+      logger.info("[Auth] signIn callback", { email: email || "(empty)", hasUser: !!user });
       if (!email) return false;
       // Allow anyone who authenticated via Google; restrict who can use the app via OAuth config (e.g. Google Cloud Console) if needed.
       return true;
@@ -67,14 +69,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // When behind a proxy (e.g. Render), baseUrl can be internal (localhost). Force public URL for redirects.
       const publicBase = (process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? process.env.RENDER_EXTERNAL_URL ?? "").trim().replace(/\/$/, "");
       const base = publicBase || baseUrl;
-      if (url.startsWith("/")) return `${base}${url}`;
-      try {
-        const u = new URL(url);
-        if (u.origin === baseUrl || !publicBase) return url;
-        return `${publicBase}${u.pathname}${u.search}`;
-      } catch {
-        return url;
+      let result: string;
+      if (url.startsWith("/")) {
+        result = `${base}${url}`;
+      } else {
+        try {
+          const u = new URL(url);
+          result = u.origin === baseUrl || !publicBase ? url : `${publicBase}${u.pathname}${u.search}`;
+        } catch {
+          result = url;
+        }
       }
+      logger.info("[Auth] redirect callback", { urlPath: url.slice(0, 80), resultPath: result.slice(0, 80) });
+      return result;
     },
     session({ session, token }) {
       if (session.user) {
@@ -98,6 +105,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return session;
     },
     jwt({ token, profile, account }) {
+      logger.info("[Auth] jwt callback", {
+        hasProfile: !!profile,
+        hasAccount: !!account,
+        trigger: account ? "oauth_callback" : "session_refresh",
+      });
       if (profile && "email" in profile && profile.email != null)
         (token as Record<string, unknown>).email = String(profile.email).trim().toLowerCase();
       const p = profile as { email_verified?: boolean } | undefined;
