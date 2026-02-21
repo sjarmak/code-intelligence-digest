@@ -9,6 +9,7 @@
  * 3. Populates embeddings for newly synced items (last 7 days)
  *
  * Usage:
+ *   npm run cron:daily   (recommended: raises Node heap to 512MB for Render cron)
  *   npx tsx scripts/cron-daily-sync.ts
  *
  * Environment variables required:
@@ -38,6 +39,7 @@ import { logger } from '../src/lib/logger';
 import type { Category, FeedItem } from '../src/lib/model';
 
 const RECENT_DAYS_FOR_EMBEDDINGS = 7; // Only generate embeddings for items from last 7 days
+const MAX_EMBEDDINGS_PER_RUN = 200; // Cap per run to avoid OOM on constrained cron (e.g. Render)
 
 const ACTIVE_HOURS_START = 7; // 7 AM ET
 const ACTIVE_HOURS_END = 22; // 10 PM ET
@@ -120,7 +122,6 @@ async function populateEmbeddingsForRecentItems(): Promise<Stats['embeddings']> 
 
   logger.info(`\n📊 Populating embeddings for items from last ${RECENT_DAYS_FOR_EMBEDDINGS} days...`);
 
-  // Load recent items from all categories
   const categories: Category[] = [
     'newsletters',
     'podcasts',
@@ -131,91 +132,85 @@ async function populateEmbeddingsForRecentItems(): Promise<Stats['embeddings']> 
     'research',
   ];
 
-  const allRecentItems: FeedItem[] = [];
+  // Process one category at a time to avoid loading all items (with full_text) into memory (OOM on Render cron)
+  let totalNeedingEmbeddings = 0;
+  let remainingCap = MAX_EMBEDDINGS_PER_RUN;
+
   for (const category of categories) {
+    if (remainingCap <= 0) {
+      logger.info(`  Cap reached (${MAX_EMBEDDINGS_PER_RUN}), skipping remaining categories for this run`);
+      break;
+    }
+
+    let items: FeedItem[];
     try {
-      const items = await loadItemsByCategory(category, RECENT_DAYS_FOR_EMBEDDINGS);
-      allRecentItems.push(...items);
-      logger.info(`  Loaded ${items.length} items from ${category}`);
+      items = await loadItemsByCategory(category, RECENT_DAYS_FOR_EMBEDDINGS);
     } catch (error) {
       logger.error(`Failed to load items for category ${category}`, error);
+      continue;
     }
-  }
 
-  stats.totalChecked = allRecentItems.length;
+    stats.totalChecked += items.length;
+    if (items.length === 0) continue;
 
-  if (allRecentItems.length === 0) {
-    logger.info('No recent items found, skipping embedding generation');
-    stats.duration = Date.now() - startTime;
-    return stats;
-  }
+    const itemIds = items.map((item) => item.id);
+    const existingEmbeddings = await getEmbeddingsBatch(itemIds);
+    const itemsNeedingEmbeddings = items.filter((item) => !existingEmbeddings.has(item.id));
+    stats.skipped += items.length - itemsNeedingEmbeddings.length;
 
-  // Check which items already have embeddings
-  const itemIds = allRecentItems.map(item => item.id);
-  const existingEmbeddings = await getEmbeddingsBatch(itemIds);
-  const itemsNeedingEmbeddings = allRecentItems.filter(item => !existingEmbeddings.has(item.id));
+    if (itemsNeedingEmbeddings.length === 0) {
+      logger.info(`  ${category}: all ${items.length} already have embeddings`);
+      continue;
+    }
 
-  stats.skipped = allRecentItems.length - itemsNeedingEmbeddings.length;
-  logger.info(`  ${stats.skipped} items already have embeddings, ${itemsNeedingEmbeddings.length} need embeddings`);
+    totalNeedingEmbeddings += itemsNeedingEmbeddings.length;
+    const toProcess = itemsNeedingEmbeddings.slice(0, remainingCap);
+    remainingCap -= toProcess.length;
 
-  if (itemsNeedingEmbeddings.length === 0) {
-    logger.info('✅ All recent items already have embeddings');
-    stats.duration = Date.now() - startTime;
-    return stats;
-  }
+    const itemsForEmbedding = toProcess.map((item) => {
+      const fullText = item.fullText ? item.fullText.substring(0, 2000) : '';
+      const text = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''} ${fullText}`.trim();
+      return { id: item.id, text: text || item.title };
+    });
 
-  // Prepare items for batch embedding generation
-  const itemsForEmbedding = itemsNeedingEmbeddings.map(item => {
-    const fullText = item.fullText ? item.fullText.substring(0, 2000) : '';
-    const text = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''} ${fullText}`.trim();
-    return {
-      id: item.id,
-      text: text || item.title,
-    };
-  });
+    logger.info(`  ${category}: generating embeddings for ${itemsForEmbedding.length} items (${itemsNeedingEmbeddings.length - itemsForEmbedding.length} deferred)`);
 
-  logger.info(`Generating embeddings for ${itemsForEmbedding.length} items...`);
-
-  try {
-    // Generate embeddings in batch
-    const embeddings = await generateEmbeddingsBatch(itemsForEmbedding);
-
-    // Convert to format for saving
-    const embeddingsToSave = Array.from(embeddings.entries())
-      .map(([itemId, embedding]) => {
-        // Ensure 1536 dimensions
-        if (embedding.length === 1536) {
-          return { itemId, embedding };
-        } else if (embedding.length === 768) {
-          // Pad 768-dim to 1536
-          const padded = new Array(1536);
-          for (let i = 0; i < 1536; i++) {
-            padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
+    try {
+      const embeddings = await generateEmbeddingsBatch(itemsForEmbedding);
+      const embeddingsToSave = Array.from(embeddings.entries())
+        .map(([itemId, embedding]) => {
+          if (embedding.length === 1536) {
+            return { itemId, embedding };
           }
-          return { itemId, embedding: padded };
-        } else {
+          if (embedding.length === 768) {
+            const padded = new Array(1536);
+            for (let i = 0; i < 1536; i++) {
+              padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
+            }
+            return { itemId, embedding: padded };
+          }
           logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}`);
           return null;
-        }
-      })
-      .filter((item): item is { itemId: string; embedding: number[] } => item !== null);
+        })
+        .filter((item): item is { itemId: string; embedding: number[] } => item !== null);
 
-    stats.generated = embeddingsToSave.length;
-    stats.failed = itemsNeedingEmbeddings.length - embeddingsToSave.length;
+      stats.generated += embeddingsToSave.length;
+      stats.failed += itemsForEmbedding.length - embeddingsToSave.length;
 
-    // Save embeddings to database
-    if (embeddingsToSave.length > 0) {
-      logger.info(`Saving ${embeddingsToSave.length} embeddings to database...`);
-      await saveEmbeddingsBatch(embeddingsToSave);
-      logger.info(`✅ Saved ${embeddingsToSave.length} embeddings`);
+      if (embeddingsToSave.length > 0) {
+        await saveEmbeddingsBatch(embeddingsToSave);
+        logger.info(`  ✅ Saved ${embeddingsToSave.length} embeddings for ${category}`);
+      }
+    } catch (error) {
+      logger.error(`Failed to generate embeddings for category ${category}`, error);
+      stats.failed += itemsForEmbedding.length;
     }
+  }
 
-    if (stats.failed > 0) {
-      logger.warn(`⚠️  Failed to generate ${stats.failed} embeddings`);
-    }
-  } catch (error) {
-    logger.error('Failed to generate embeddings', error);
-    stats.failed = itemsNeedingEmbeddings.length;
+  if (totalNeedingEmbeddings > 0) {
+    logger.info(`  ${stats.skipped} already had embeddings, ${stats.generated} generated, ${stats.failed} failed`);
+  } else if (stats.totalChecked > 0) {
+    logger.info('✅ All recent items already have embeddings');
   }
 
   stats.duration = Date.now() - startTime;
