@@ -9,7 +9,7 @@
  * 3. Populates embeddings for newly synced items (last 7 days)
  *
  * Usage:
- *   npm run cron:daily   (recommended: raises Node heap to 512MB for Render cron)
+ *   npm run cron:daily   (recommended: caps Node heap at 460MB to stay under Render 512MB container)
  *   npx tsx scripts/cron-daily-sync.ts
  *
  * Environment variables required:
@@ -39,7 +39,7 @@ import { logger } from '../src/lib/logger';
 import type { Category, FeedItem } from '../src/lib/model';
 
 const RECENT_DAYS_FOR_EMBEDDINGS = 7; // Only generate embeddings for items from last 7 days
-const MAX_EMBEDDINGS_PER_RUN = 200; // Cap per run to avoid OOM on constrained cron (e.g. Render)
+const MAX_EMBEDDINGS_PER_RUN = 100; // Cap per run to stay under 512MB container on Render cron
 
 const ACTIVE_HOURS_START = 7; // 7 AM ET
 const ACTIVE_HOURS_END = 22; // 10 PM ET
@@ -85,7 +85,7 @@ function shouldRunCronNow(date: Date): { shouldRun: boolean; reason: string } {
 }
 
 const RECENT_DAYS_FOR_FULLTEXT = 7;
-const FULLTEXT_ITEMS_PER_RUN = 25; // Limit per cron run to avoid timeout
+const FULLTEXT_ITEMS_PER_RUN = 8; // Keep low to stay under 512MB container (JSDOM/Readability are heavy)
 
 interface Stats {
   sync: {
@@ -250,7 +250,8 @@ async function populateFullTextForRecentItems(): Promise<Stats['fulltext']> {
     }
 
     logger.info(`\n📄 Populating full text for ${batch.length} items...`);
-    const results = await fetchFullTextBatch(batch, 3);
+    // maxConcurrent=1 to minimize memory (JSDOM/Readability per page is heavy; stay under 512MB)
+    const results = await fetchFullTextBatch(batch, 1);
     stats.fetched = results.size;
 
     for (const [itemId, result] of results.entries()) {
@@ -363,6 +364,7 @@ async function main() {
         const client = await getDbClient();
         const categories: Category[] = ['newsletters', 'podcasts', 'tech_articles', 'ai_news', 'product_news', 'community', 'research'];
         const cutoffTime = Math.floor((Date.now() - 7 * 24 * 60 * 60 * 1000) / 1000); // Last 7 days
+        const SCORE_MISSING_LIMIT = 40; // Per category per run to avoid OOM (full_text is heavy)
 
         let totalScored = 0;
         for (const category of categories) {
@@ -375,7 +377,7 @@ async function main() {
              LEFT JOIN item_scores s ON i.id = s.item_id
              WHERE ${whereClause}
              AND s.item_id IS NULL
-             ORDER BY i.created_at DESC LIMIT 100`,
+             ORDER BY i.created_at DESC LIMIT ${SCORE_MISSING_LIMIT}`,
             [category, cutoffTime]
           );
 
