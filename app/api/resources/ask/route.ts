@@ -4,7 +4,7 @@ import { getPaper, getLibraryPapers, getFavoritePapers, storePapersBatch, linkPa
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
 import { getSavedItems, LEGACY_USER_ID } from '@/src/lib/db/savedItems';
 import { getDigestItems } from '@/src/lib/db/digestItems';
-import { loadItem } from '@/src/lib/db/items';
+import { loadItem, saveFullText } from '@/src/lib/db/items';
 import { initializeDatabase } from '@/src/lib/db/index';
 import { getGeneratedNewsletter, listGeneratedNewsletters } from '@/src/lib/db/generated-newsletters';
 import { listUserPodcastAudio } from '@/src/lib/db/user-podcast-audio';
@@ -12,6 +12,7 @@ import { logger } from '@/src/lib/logger';
 import { getADSUrl, getLibraryItems } from '@/src/lib/ads/client';
 import OpenAI from 'openai';
 import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import { fetchFullText } from '@/src/lib/pipeline/fulltext';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,6 +43,8 @@ interface ResourcesAskResponse {
   sourcesUsed: number;
   papersUsed?: number;
   itemsUsed?: number;
+  newslettersUsed?: number;
+  podcastsUsed?: number;
   papersContext?: string;
   itemsContext?: string;
   citedPapers?: Array<{
@@ -341,6 +344,48 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Populate full text for items that only have summary (so answers use article content, not RSS snippet)
+    const MIN_FULLTEXT_LENGTH = 200;
+    const MAX_ON_DEMAND_FETCH = 3;
+    if (items.length > 0 && !itemsContextString) {
+      const needFullText = items.filter(
+        (item) => !item.fullText || item.fullText.length < MIN_FULLTEXT_LENGTH
+      );
+      const toFetch = needFullText.slice(0, MAX_ON_DEMAND_FETCH);
+      if (toFetch.length > 0) {
+        const results = await Promise.allSettled(
+          toFetch.map((item) =>
+            fetchFullText({
+              id: item.id,
+              streamId: '',
+              title: item.title,
+              url: item.url,
+              sourceTitle: item.sourceTitle,
+              summary: item.summary,
+              contentSnippet: item.contentSnippet,
+              category: (item.category || 'tech_articles') as import('@/src/lib/model').Category,
+              categories: [],
+              raw: {},
+              publishedAt: item.publishedAt,
+            })
+          )
+        );
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          const item = toFetch[i];
+          if (r.status === 'fulfilled' && r.value?.text && r.value.source !== 'error' && r.value.text.length >= MIN_FULLTEXT_LENGTH) {
+            try {
+              await saveFullText(item.id, r.value.text, r.value.source);
+              item.fullText = r.value.text;
+              logger.info('Fetched and saved full text for ask context', { itemId: item.id, title: item.title?.slice(0, 50), length: r.value.text.length });
+            } catch (err) {
+              logger.warn('Failed to save full text for item', { itemId: item.id, error: err });
+            }
+          }
+        }
+      }
+    }
+
     // Build context from papers
     if (papers.length > 0 && !papersContextString) {
       // Initialize ADS tables if needed
@@ -584,11 +629,17 @@ ${combinedContext}`;
     // Record successful usage
     await recordUsage(request, '/api/resources/ask');
 
+    const newslettersCount = newsletters.length;
+    const podcastsCount = podcasts.length;
+    const totalSources = papers.length + items.length + newslettersCount + podcastsCount;
+
     return NextResponse.json({
       answer,
-      sourcesUsed: papers.length + items.length,
+      sourcesUsed: totalSources,
       papersUsed: papers.length,
       itemsUsed: items.length,
+      newslettersUsed: newslettersCount,
+      podcastsUsed: podcastsCount,
       papersContext: papersContextString, // Return context for follow-up conversations
       itemsContext: itemsContextString, // Return context for follow-up conversations
       citedPapers,

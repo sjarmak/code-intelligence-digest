@@ -337,6 +337,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       content_snippet: string | null;
       categories: string;
       category: string;
+      full_text: string | null;
       extracted_url: string | null;
     };
 
@@ -346,7 +347,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       const client = await getDbClient();
       const result = await client.query(
         `SELECT id, stream_id, source_title, title, url, author, published_at,
-                summary, content_snippet, categories, category, extracted_url
+                summary, content_snippet, categories, category, full_text, extracted_url
          FROM items WHERE id = $1`,
         [itemId],
       );
@@ -382,6 +383,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       categories: JSON.parse(row.categories),
       category,
       raw: {},
+      fullText: row.full_text ?? undefined,
     };
   } catch (error) {
     logger.error(`Failed to load item ${itemId} from database`, error);
