@@ -29,7 +29,7 @@ import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
 import type { LLMClientOptions } from "@/src/lib/llm/client";
-import type OpenAI from "openai";
+import { createChatCompletion } from "@/src/lib/llm/completion";
 import {
   getDateRangeForPeriodDays,
   formatDateRangeLabel,
@@ -45,15 +45,12 @@ const NEWSLETTER_TITLE_MAX_LENGTH = 80;
 async function generateContentBasedTitle(
   summary: string,
   themes: string[],
-  client: OpenAI,
-  _opts?: LLMClientOptions
+  opts?: LLMClientOptions
 ): Promise<string | null> {
   const summarySnippet = summary.slice(0, 600).trim();
   const themesList = themes.slice(0, 8).join(", ") || "code intelligence, developer tools";
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 120,
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -65,9 +62,11 @@ Summary:
 ${summarySnippet}`,
         },
       ],
+      max_tokens: 120,
+      openaiOptions: opts,
     });
     const raw =
-      response.choices?.[0]?.message?.content?.trim().replace(/^["']|["']$/g, "").split("\n")[0]?.trim() ?? "";
+      result.content?.trim().replace(/^["']|["']$/g, "").split("\n")[0]?.trim() ?? "";
     if (!raw) return null;
     const title = raw.slice(0, NEWSLETTER_TITLE_MAX_LENGTH).trim();
     return title.length > 0 ? title : null;
@@ -783,7 +782,7 @@ export async function POST(
       return `Code Intelligence Digest – All Time · ${formatDateLong(new Date())}`;
     })();
 
-    const contentTitle = await generateContentBasedTitle(summary, themes, llmClient, llmOptions);
+    const contentTitle = await generateContentBasedTitle(summary, themes, llmOptions);
     const newsletterTitle = contentTitle && contentTitle.length > 0 ? contentTitle : fallbackTitle;
 
     // Save to per-user history for "my past newsletters"
@@ -807,7 +806,7 @@ export async function POST(
       themes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-4o-mini (extraction + synthesis)",
+        modelUsed: "quality model (extraction + synthesis)",
         tokensUsed: Math.ceil(selectedItems.length * 300 + 3000), // Extraction + synthesis estimate
         duration: `${duration}s`,
         promptProfile: profile,

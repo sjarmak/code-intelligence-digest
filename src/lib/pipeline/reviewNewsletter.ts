@@ -9,7 +9,9 @@
 
 import { ItemDigest } from "./extract";
 import { logger } from "../logger";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 const BAD_URL_DOMAINS = [
   "csharpdigest.com",
@@ -229,16 +231,13 @@ export async function reviewNewsletterWithLLM(
   digests: ItemDigest[],
   llmOptions?: LLMClientOptions
 ): Promise<{ passed: boolean; feedback: string }> {
-  const client = getOpenAICompatibleClient(llmOptions);
-  if (!client) {
-    logger.info("OPENAI_API_KEY not set, skipping LLM review");
+  if (!hasLLMConfigured()) {
+    logger.info("No LLM configured, skipping LLM review");
     return { passed: true, feedback: "" };
   }
 
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 500,
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -269,9 +268,12 @@ Return JSON with:
 Be specific. Point to exact problems, not vague concerns.`,
         },
       ],
+      max_tokens: 500,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = result.content;
     if (!content) {
       return { passed: true, feedback: "No LLM feedback" };
     }

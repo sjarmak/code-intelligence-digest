@@ -1,15 +1,16 @@
 /**
  * Newsletter generation (Pass 2 - Synthesis)
- * Converts item digests into a polished newsletter using gpt-4o-mini
+ * Uses quality model (Claude Sonnet 4.6 or OpenAI) for synthesis.
  */
 
-import OpenAI from "openai";
 import { RankedItem, Category } from "../model";
 import { PromptProfile } from "./promptProfile";
 import { ItemDigest } from "./extract";
 import { logger } from "../logger";
 import { reviewNewsletter } from "./reviewNewsletter";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 export interface NewsletterContent {
   summary: string;
@@ -94,18 +95,12 @@ export async function generateNewsletterContent(
   let markdown: string;
   let html: string;
 
-  const client = getOpenAICompatibleClient(llmOptions);
-  if (client) {
-    try {
-      const response = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        max_completion_tokens: 4000,
-        reasoning_effort: "high",
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "user",
-            content: `Generate a ${periodLabel} Code Intelligence Digest newsletter from these curated items.
+  try {
+    const result = await createChatCompletion({
+      messages: [
+        {
+          role: "user",
+          content: `Generate a ${periodLabel} Code Intelligence Digest newsletter from these curated items.
 
 Categories: ${categoryLabels}
 User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
@@ -139,45 +134,32 @@ Generate JSON with:
 - html: Clean semantic HTML version of markdown (use <article>, <section>, <h1>-<h2>, <p>, <blockquote>, <ul>, <li>)
 
 Return only valid JSON.`,
-          },
-        ],
-      });
+        },
+      ],
+      max_tokens: 4000,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
+    });
 
-      const content = response.choices[0].message.content;
-      if (!content) {
-        throw new Error("No content returned from LLM");
-      }
-
-      try {
-        const parsed = JSON.parse(content);
-        summary = parsed.summary || "No summary generated.";
-        themes = Array.isArray(parsed.themes) ? parsed.themes : [];
-        markdown = parsed.markdown || "# Code Intelligence Digest\n\nNo content generated.";
-        html = parsed.html || "<article><h1>Code Intelligence Digest</h1><p>No content generated.</p></article>";
-
-        if (!markdown || markdown === "# Code Intelligence Digest\n\nNo content generated.") {
-          throw new Error("LLM returned empty markdown");
-        }
-      } catch (parseError) {
-        logger.error("Failed to parse LLM response", {
-          error: parseError instanceof Error ? parseError.message : String(parseError),
-          responsePreview: content?.substring(0, 500),
-        });
-        throw parseError;
-      }
-    } catch (error) {
-      logger.warn("LLM newsletter generation failed, using fallback template", {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      const fallback = generateNewsletterFallback(items, periodLabel);
-      summary = fallback.summary;
-      themes = fallback.themes;
-      markdown = fallback.markdown;
-      html = fallback.html;
+    const content = result.content;
+    if (!content) {
+      throw new Error("No content returned from LLM");
     }
-  } else {
-    logger.info("OPENAI_API_KEY not set, using fallback newsletter");
+
+    const parsed = JSON.parse(content);
+    summary = parsed.summary || "No summary generated.";
+    themes = Array.isArray(parsed.themes) ? parsed.themes : [];
+    markdown = parsed.markdown || "# Code Intelligence Digest\n\nNo content generated.";
+    html = parsed.html || "<article><h1>Code Intelligence Digest</h1><p>No content generated.</p></article>";
+
+    if (!markdown || markdown === "# Code Intelligence Digest\n\nNo content generated.") {
+      throw new Error("LLM returned empty markdown");
+    }
+  } catch (error) {
+    logger.warn("LLM newsletter generation failed, using fallback template", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     const fallback = generateNewsletterFallback(items, periodLabel);
     summary = fallback.summary;
     themes = fallback.themes;
@@ -271,8 +253,6 @@ async function generateNewsletterFromDigestData(
   userPrompt: string,
   llmOptions?: LLMClientOptions
 ): Promise<NewsletterContent> {
-  const clientForSynthesis = getOpenAICompatibleClient(llmOptions);
-
   // Log items with missing/invalid URLs for transparency
   const itemsWithoutUrl = digests.filter(d => !isValidUrl(d.url));
   if (itemsWithoutUrl.length > 0) {
@@ -336,9 +316,9 @@ async function generateNewsletterFromDigestData(
      .slice(0, 5)
      .map(([t]) => t);
 
-  if (!clientForSynthesis) {
+  if (!hasLLMConfigured()) {
     // Fallback: return basic structure
-    logger.warn("No OPENAI_API_KEY for synthesis, using basic template");
+    logger.warn("No LLM configured (OPENAI_API_KEY or ANTHROPIC_API_KEY) for synthesis, using basic template");
     return generateNewsletterFallback(
       digests.map(d => ({
         title: d.title,
@@ -547,139 +527,80 @@ function generateNewsletterFallback(
    * Build executive summary from digests using LLM
    */
   async function buildExecutiveSummary(digests: ItemDigest[], themes: string[], opts?: LLMClientOptions): Promise<string> {
-    const client = getOpenAICompatibleClient(opts);
-    if (!client) {
+    if (!hasLLMConfigured()) {
       return buildExecutiveSummaryFallback(digests, themes);
     }
 
-    // Use more items for richer context
     const itemCount = Math.min(15, digests.length);
     const itemSummaries = digests
       .slice(0, itemCount)
       .map(d => `- **${d.title}** (${d.sourceTitle}): ${d.whyItMatters}${d.keyBullets.length > 0 ? ` Key point: ${d.keyBullets[0]}` : ""}`)
       .join("\n");
 
-    try {
-       logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
+    const mainPrompt = `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
 
-       const response = await client.chat.completions.create({
-         model: "gpt-4o-mini",
-         max_completion_tokens: 600,
-         messages: [
-           {
-             role: "user",
-             content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
-
-    **Featured Topics:** ${themes.join(", ") || "benchmarking coding agents, code search, codebase understanding tools, developer workflows"}
-
-    **Key Items Featured:**
-    ${itemSummaries}
-
-    **Target Audience:** Sourcegraph engineering and leadership evaluating the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases.
-
-    **What NOT to do:**
-    - Avoid: "highlights," "underscores," "shapes," "fosters," "landscape," "emerging," "approaches," "methodologies"
-    - Avoid treating trends as active agents. Say "Google's approach" not "this trend showcases"
-    - Avoid vague corporate language. Say what actually happened/was built/was proven
-    - No bullet-point lists
-    - No AI-style verbose preamble
-
-    **What to do:**
-    1. Open with the single most important finding or shift. Be specific (e.g., "LLM-based code search is scaling to 100M+ LOC" not "code search is advancing")
-    2. Organize around 3-4 concrete developments:
-      - Specific company/project approach (what they built, how it works)
-      - What problem it solves or challenge it addresses
-      - Performance numbers or real-world results if available
-      - Competitive/strategic implication for code search/agents/IR
-    3. Cite specific items and sources. Use authors' names and actual findings
-    4. For competitive insights: mention specific companies and concrete product capabilities
-    5. Close with the practical implication: what does this mean teams should evaluate or explore
-
-    **Tone:** Like an engineering memo or analyst report. Direct, evidence-based, no speculation.
-
-    Write substantive paragraphs. Ground every claim in the actual items provided.`,
-           },
-         ],
-       });
-
-      const content = response.choices[0].message.content;
-      if (!content || content.trim().length === 0) {
-        logger.warn("LLM returned empty response, using fallback", {
-          model: "gpt-4o-mini",
-          responseId: response.id,
-          finishReason: response.choices[0]?.finish_reason,
-          usage: response.usage,
-        });
-        // Try fallback to gpt-4o-mini if primary model fails
-        try {
-          logger.info("Attempting fallback to gpt-4o-mini");
-          const fallbackResponse = await client.chat.completions.create({
-            model: "gpt-4o-mini",
-            max_completion_tokens: 600,
-            messages: [
-              {
-                role: "user",
-                content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
-
-**Featured Topics:** ${themes.join(", ") || "code search, context management, agents, information retrieval, developer productivity"}
+**Featured Topics:** ${themes.join(", ") || "benchmarking coding agents, code search, codebase understanding tools, developer workflows"}
 
 **Key Items Featured:**
 ${itemSummaries}
 
-Write substantive paragraphs. Ground every claim in the actual items provided.`,
-              },
-            ],
-          });
-          const fallbackContent = fallbackResponse.choices[0].message.content;
-          if (fallbackContent && fallbackContent.trim().length > 0) {
-            logger.info(`Fallback model (gpt-4o-mini) generated summary: ${fallbackContent.length} chars`);
-            return fallbackContent;
-          }
-        } catch (fallbackError) {
-          logger.warn("Fallback model also failed", {
-            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-          });
-        }
-        return buildExecutiveSummaryFallback(digests, themes);
-      }
-      logger.info(`LLM summary generated: ${content.length} chars`);
-      return content;
-      } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      logger.warn("Failed to generate LLM summary, using fallback", {
-        error: errorMsg,
-        stack: e instanceof Error ? e.stack : undefined,
-        model: "gpt-4o-mini",
+**Target Audience:** Sourcegraph engineering and leadership evaluating the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases.
+
+**What NOT to do:**
+- Avoid: "highlights," "underscores," "shapes," "fosters," "landscape," "emerging," "approaches," "methodologies"
+- Avoid treating trends as active agents. Say "Google's approach" not "this trend showcases"
+- Avoid vague corporate language. Say what actually happened/was built/was proven
+- No bullet-point lists
+- No AI-style verbose preamble
+
+**What to do:**
+1. Open with the single most important finding or shift. Be specific (e.g., "LLM-based code search is scaling to 100M+ LOC" not "code search is advancing")
+2. Organize around 3-4 concrete developments
+3. Cite specific items and sources. Use authors' names and actual findings
+4. Close with the practical implication: what does this mean teams should evaluate or explore
+
+**Tone:** Like an engineering memo or analyst report. Direct, evidence-based, no speculation.
+
+Write substantive paragraphs. Ground every claim in the actual items provided.`;
+
+    try {
+      logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
+      const result = await createChatCompletion({
+        messages: [{ role: "user", content: mainPrompt }],
+        max_tokens: 600,
+        openaiOptions: opts,
       });
-      // If it's a model error, try fallback model
-      if (errorMsg.includes("model") || errorMsg.includes("not found") || errorMsg.includes("invalid")) {
-        try {
-          logger.info("Model error detected, attempting fallback to gpt-4o-mini");
-          const fallbackClient = getOpenAICompatibleClient(opts);
-          if (!fallbackClient) throw new Error("No client");
-          const fallbackResponse = await fallbackClient.chat.completions.create({
-            model: "gpt-4o-mini",
-            max_completion_tokens: 600,
-            messages: [
-              {
-                role: "user",
-                content: `Write a 300-400 word executive summary for a code intelligence digest focusing on: ${themes.join(", ")}`,
-              },
-            ],
-          });
-          const fallbackContent = fallbackResponse.choices[0].message.content;
-          if (fallbackContent && fallbackContent.trim().length > 0) {
-            logger.info(`Fallback model (gpt-4o-mini) generated summary: ${fallbackContent.length} chars`);
-            return fallbackContent;
-          }
-        } catch (fallbackError) {
-          logger.warn("Fallback model also failed", {
-            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-          });
-        }
+      const content = result.content?.trim();
+      if (content && content.length > 0) {
+        logger.info(`LLM summary generated: ${content.length} chars`);
+        return content;
       }
-      return buildExecutiveSummaryFallback(digests, themes);
+      logger.warn("LLM returned empty response, trying shorter fallback prompt");
+    } catch (e) {
+      logger.warn("Failed to generate LLM summary, trying fallback", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+
+    try {
+      const fallbackResult = await createChatCompletion({
+        messages: [
+          {
+            role: "user",
+            content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. Be direct.\n\n**Featured Topics:** ${themes.join(", ") || "code search, context management, agents"}\n\n**Key Items:**\n${itemSummaries}\n\nWrite substantive paragraphs. Ground every claim in the items provided.`,
+          },
+        ],
+        max_tokens: 600,
+        openaiOptions: opts,
+      });
+      const fallbackContent = fallbackResult.content?.trim();
+      if (fallbackContent && fallbackContent.length > 0) {
+        return fallbackContent;
       }
+    } catch {
+      // ignore
+    }
+    return buildExecutiveSummaryFallback(digests, themes);
   }
 
   /**

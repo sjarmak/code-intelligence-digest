@@ -36,8 +36,11 @@ export default function AnswerDisplay({
 }: AnswerDisplayProps) {
   if (isLoading) {
     return (
-      <div className="text-center py-12">
+      <div className="text-center py-12 space-y-2">
         <p className="text-muted">Analyzing digest and finding answer...</p>
+        <p className="text-xs text-muted">
+          Typically 30–90 seconds. The app searches digest content, then generates an answer.
+        </p>
       </div>
     );
   }

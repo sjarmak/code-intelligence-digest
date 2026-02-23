@@ -3,10 +3,11 @@
  * Extracts themes, generates summaries, and highlights for digest pages
  */
 
-import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 /**
  * Extract common themes from items, respecting user prompt focus topics
@@ -101,10 +102,8 @@ export async function generateDigestSummary(
   try {
     logger.info(`Generating digest summary for ${periodLabel} period with ${itemCount} items`);
 
-    // Use template if no API key
-    const client = getOpenAICompatibleClient(llmOptions);
-    if (!client) {
-      logger.info("OPENAI_API_KEY not set, using template summary");
+    if (!hasLLMConfigured()) {
+      logger.info("No LLM configured, using template summary");
       return generateTemplateSummary(themes, itemCount, periodLabel, dateRangeLabel);
     }
 
@@ -115,9 +114,7 @@ export async function generateDigestSummary(
       ? `Write a 150-200 word executive summary of the code intelligence digest for ${dateRangeLabel}. Use this exact period in your summary; do not substitute another date.`
       : `Write a 150-200 word executive summary of this ${periodLabel.toLowerCase()} code intelligence digest.`;
 
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 500,
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -135,9 +132,11 @@ Guidelines:
 - No need to cite sources (this is a summary)`,
         },
       ],
+      max_tokens: 500,
+      openaiOptions: llmOptions,
     });
 
-    return response.choices[0].message.content || "Failed to generate summary";
+    return result.content || "Failed to generate summary";
   } catch (error) {
     logger.warn("Failed to generate digest summary with LLM, falling back to template", { error });
     return generateTemplateSummary(themes, itemCount, periodLabel, dateRangeLabel);

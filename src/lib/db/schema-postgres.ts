@@ -207,6 +207,17 @@ CREATE TABLE IF NOT EXISTS "generated_newsletters" (
   created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 
+-- Agent run outputs (GTM/marketing workflow jobs)
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  output_markdown TEXT,
+  output_metadata TEXT,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
 -- User's podcast audio list (per-user, links user to generated_podcast_audio for list/delete)
 CREATE TABLE IF NOT EXISTS user_podcast_audio (
   user_id TEXT NOT NULL DEFAULT 'legacy',
@@ -279,6 +290,9 @@ CREATE INDEX IF NOT EXISTS idx_digest_items_item_id ON digest_items(item_id);
 -- Per-user generated content indexes
 CREATE INDEX IF NOT EXISTS idx_generated_newsletters_user_id ON "generated_newsletters"(user_id);
 CREATE INDEX IF NOT EXISTS idx_generated_newsletters_created_at ON "generated_newsletters"(created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_agent_id ON agent_runs(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_job_id ON agent_runs(job_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_user_id ON user_podcast_audio(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_created_at ON user_podcast_audio(created_at);
 CREATE INDEX IF NOT EXISTS idx_user_paper_favorites_user_id ON user_paper_favorites(user_id);

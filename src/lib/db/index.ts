@@ -426,6 +426,18 @@ async function initializeSqliteSchema() {
         created_at INTEGER DEFAULT (strftime('%s', 'now'))
       );
     `);
+    // Agent run outputs (GTM/marketing workflow jobs)
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        output_markdown TEXT,
+        output_metadata TEXT,
+        created_at INTEGER DEFAULT (strftime('%s', 'now'))
+      );
+    `);
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS user_podcast_audio (
         user_id TEXT NOT NULL DEFAULT 'legacy',
@@ -453,6 +465,9 @@ async function initializeSqliteSchema() {
       CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON generated_podcast_audio(created_at);
       CREATE INDEX IF NOT EXISTS idx_generated_newsletters_user_id ON generated_newsletters(user_id);
       CREATE INDEX IF NOT EXISTS idx_generated_newsletters_created_at ON generated_newsletters(created_at);
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_agent_id ON agent_runs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_job_id ON agent_runs(job_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
       CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_user_id ON user_podcast_audio(user_id);
       CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_created_at ON user_podcast_audio(created_at);
     `);

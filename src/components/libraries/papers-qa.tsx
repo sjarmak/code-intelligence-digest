@@ -54,6 +54,8 @@ interface AskResponse {
   sourcesUsed: number;
   papersUsed?: number;
   itemsUsed?: number;
+  newslettersUsed?: number;
+  podcastsUsed?: number;
   papersContext?: string;
   itemsContext?: string;
   citedPapers?: Array<{
@@ -484,16 +486,20 @@ export const PapersQA = forwardRef<
               {renderMarkdown(response.answer)}
             </div>
             <p className="text-xs text-muted mt-2">
-              Based on {response.sourcesUsed || 0} {response.sourcesUsed === 1 ? 'source' : 'sources'}
-              {response.papersUsed !== undefined && response.itemsUsed !== undefined && (
-                <> ({response.papersUsed} {response.papersUsed === 1 ? 'paper' : 'papers'}, {response.itemsUsed} {response.itemsUsed === 1 ? 'item' : 'items'})</>
-              )}
-              {response.papersUsed !== undefined && response.itemsUsed === undefined && (
-                <> ({response.papersUsed} {response.papersUsed === 1 ? 'paper' : 'papers'})</>
-              )}
-              {response.itemsUsed !== undefined && response.papersUsed === undefined && (
-                <> ({response.itemsUsed} {response.itemsUsed === 1 ? 'item' : 'items'})</>
-              )}
+              Based on {response.sourcesUsed ?? 0} {(response.sourcesUsed ?? 0) === 1 ? 'source' : 'sources'}
+              {(response.papersUsed !== undefined && response.papersUsed > 0) ||
+               (response.itemsUsed !== undefined && response.itemsUsed > 0) ||
+               (response.newslettersUsed !== undefined && response.newslettersUsed > 0) ||
+               (response.podcastsUsed !== undefined && response.podcastsUsed > 0) ? (
+                <> (
+                  {[
+                    response.papersUsed ? `${response.papersUsed} ${response.papersUsed === 1 ? 'paper' : 'papers'}` : null,
+                    response.itemsUsed ? `${response.itemsUsed} ${response.itemsUsed === 1 ? 'item' : 'items'}` : null,
+                    response.newslettersUsed ? `${response.newslettersUsed} ${response.newslettersUsed === 1 ? 'newsletter' : 'newsletters'}` : null,
+                    response.podcastsUsed ? `${response.podcastsUsed} ${response.podcastsUsed === 1 ? 'podcast' : 'podcasts'}` : null,
+                  ].filter(Boolean).join(', ')})
+                </>
+              ) : null}
             </p>
           </div>
 

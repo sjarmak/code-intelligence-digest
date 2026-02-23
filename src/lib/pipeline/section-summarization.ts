@@ -12,16 +12,8 @@ import {
   getSectionSummaries,
 } from '../db/paper-sections';
 import { logger } from '../logger';
-import OpenAI from 'openai';
-import { getOpenAICompatibleClient } from '../llm/client';
-
-function getOpenAI(): OpenAI {
-  const client = getOpenAICompatibleClient();
-  if (!client) {
-    throw new Error('OPENAI_API_KEY environment variable is not set');
-  }
-  return client;
-}
+import { createChatCompletion } from '../llm/completion';
+import { hasLLMConfigured } from '../llm/config';
 
 /**
  * Extract sections from paper body text
@@ -348,8 +340,11 @@ Provide a concise summary (2-4 sentences) that captures:
 
 Summary:`;
 
-    const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o-mini',
+    if (!hasLLMConfigured()) {
+      return `${sectionTitle}: ${sectionText.substring(0, 200)}...`;
+    }
+
+    const result = await createChatCompletion({
       messages: [
         {
           role: 'system',
@@ -358,11 +353,10 @@ Summary:`;
         },
         { role: 'user', content: prompt },
       ],
-      temperature: 0.3,
       max_tokens: 200,
     });
 
-    const summary = response.choices[0]?.message?.content?.trim() || '';
+    const summary = result.content?.trim() || '';
     return summary || `${sectionTitle}: [Content available]`;
   } catch (error) {
     logger.error('Failed to summarize section', {

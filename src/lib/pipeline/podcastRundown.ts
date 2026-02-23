@@ -4,12 +4,13 @@
  * Produces segments with time budgets, transitions, and attribution plan
  */
 
-import OpenAI from "openai";
 import { Category } from "../model";
 import { PodcastItemDigest, filterPodcastDigestsByQuality } from "./podcastDigest";
 import { PromptProfile } from "./promptProfile";
 import { logger } from "../logger";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 /**
  * Check if URL is valid for podcast (not Inoreader, not empty, http/https)
@@ -103,17 +104,13 @@ export async function generatePodcastRundown(
   const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
   const categoryLabels = _categories.join(", ");
 
-  const client = getOpenAICompatibleClient(llmOptions);
-  if (!client) {
-    logger.warn("OPENAI_API_KEY not set, using fallback rundown");
+  if (!hasLLMConfigured()) {
+    logger.warn("No LLM configured, using fallback rundown");
     return generateFallbackRundown(qualityDigests, period, _categories);
   }
 
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 8000,
-      response_format: { type: "json_object" },
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -183,9 +180,12 @@ CONSTRAINTS:
 Return ONLY valid JSON.`,
         },
       ],
+      max_tokens: 8000,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = result.content;
     if (!content) {
       throw new Error("No rundown from LLM");
     }

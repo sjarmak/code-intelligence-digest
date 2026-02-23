@@ -5,16 +5,9 @@
 
 import { FeedItem, LLMScoreResult, Category } from "../model";
 import { logger } from "../logger";
-import OpenAI from "openai";
 import { getCompetitorProducts } from "../../config/products";
-import { getOpenAICompatibleClient } from "../llm/client";
-
-/**
- * Get OpenAI client for scoring (uses server env; used in sync/cron)
- */
-function getOpenAIClient(): OpenAI | null {
-  return getOpenAICompatibleClient();
-}
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
 
 /**
  * Get category-specific system prompt for GPT-4o to evaluate item relevance
@@ -383,8 +376,7 @@ async function scoreItemsBatch(
       },
     );
 
-    const client = getOpenAIClient();
-    if (!client) {
+    if (!hasLLMConfigured()) {
       return items.reduce(
         (acc, item) => {
           acc[item.id] = { id: item.id, relevance: 5, usefulness: 5, tags: [] };
@@ -393,26 +385,18 @@ async function scoreItemsBatch(
         {} as Record<string, LLMScoreResult>,
       );
     }
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 4000,
+
+    const result = await createChatCompletion({
       messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: prompt },
       ],
+      max_tokens: 4000,
     });
 
-    const responseText = response.choices[0].message.content || "";
+    const responseText = result.content || "";
 
-    logger.info(`GPT-4o responded for batch of ${items.length}`, {
-      usage: response.usage,
-    });
+    logger.info(`LLM responded for batch of ${items.length}`, { itemCount: items.length });
 
     return parseGPTResponse(responseText, items);
   } catch (error) {

@@ -803,7 +803,7 @@ export async function POST(
       showNotes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-4o-mini (all stages)",
+        modelUsed: "quality model (all stages)",
         tokensUsed: Math.ceil(
           transcript.split(/\s+/).length * 1.3 + digests.length * 300 + 2000,
         ), // Estimate all stages

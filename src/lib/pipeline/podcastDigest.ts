@@ -4,10 +4,11 @@
  * Reuses extract.ts patterns with podcast-specific schema
  */
 
-import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 /**
  * Check if URL is from Reddit (discussion threads, not primary sources)
@@ -93,14 +94,12 @@ function chunkText(text: string, chunkSize: number = CHUNK_SIZE): string[] {
  * Summarize a single chunk
  */
 async function summarizeChunk(
-  client: OpenAI,
   chunk: string,
   index: number,
-  total: number
+  total: number,
+  llmOptions?: LLMClientOptions
 ): Promise<string> {
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_completion_tokens: 250,
+  const result = await createChatCompletion({
     messages: [
       {
         role: "user",
@@ -109,9 +108,10 @@ async function summarizeChunk(
 ${chunk}`,
       },
     ],
+    max_tokens: 250,
+    openaiOptions: llmOptions,
   });
-
-  return response.choices[0].message.content || "";
+  return result.content || "";
 }
 
 /**
@@ -122,10 +122,8 @@ export async function extractPodcastItemDigest(
   userPrompt: string = "",
   llmOptions?: LLMClientOptions
 ): Promise<PodcastItemDigest> {
-  const client = getOpenAICompatibleClient(llmOptions);
-
-  if (!client) {
-    logger.warn("OPENAI_API_KEY not set, using fallback podcast digest");
+  if (!hasLLMConfigured()) {
+    logger.warn("No LLM configured, using fallback podcast digest");
     return generateFallbackPodcastDigest(item, userPrompt);
   }
 
@@ -145,7 +143,7 @@ export async function extractPodcastItemDigest(
 
         // Summarize each chunk
         const chunkSummaries = await Promise.all(
-          chunks.map((chunk, idx) => summarizeChunk(client, chunk, idx + 1, chunks.length))
+          chunks.map((chunk, idx) => summarizeChunk(chunk, idx + 1, chunks.length, llmOptions))
         );
 
         // Merge summaries
@@ -154,10 +152,7 @@ export async function extractPodcastItemDigest(
     }
 
     // Extract podcast digest from processed text
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 1000,
-      response_format: { type: "json_object" },
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -192,9 +187,12 @@ Rules:
 Return ONLY valid JSON.`,
         },
       ],
+      max_tokens: 1000,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = result.content;
     if (!content) {
       throw new Error("No response from podcast digest extraction");
     }

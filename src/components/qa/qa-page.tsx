@@ -54,7 +54,12 @@ export default function QAPage() {
         params.append('endDate', customDateRange.endDate);
       }
 
-      const response = await fetch(`/api/ask?${params.toString()}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 min max
+
+      const response = await fetch(`/api/ask?${params.toString()}`, {
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeoutId));
 
       if (!response.ok) {
         // Try to get error message from response
@@ -84,10 +89,14 @@ export default function QAPage() {
       setResponse(data);
       setItemsSearched(0); // itemsSearched not in response, would need API update
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message =
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Request took too long (over 2 minutes). Try a shorter time period or a more specific question.'
+          : err instanceof Error
+            ? err.message
+            : 'Unknown error';
       setError(message);
       setResponse(null);
-      // Log to console for debugging
       console.error('Ask question failed:', message);
     } finally {
       setIsLoading(false);

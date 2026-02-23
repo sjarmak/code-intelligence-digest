@@ -4,10 +4,11 @@
  * check attributions, and soften overconfident language
  */
 
-import OpenAI from "openai";
 import { PodcastItemDigest } from "./podcastDigest";
 import { logger } from "../logger";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 export interface VerificationIssue {
   type: "unsupported_claim" | "missing_attribution" | "overconfident_language" | "factual_error";
@@ -57,9 +58,8 @@ export async function verifyPodcastScript(
 ): Promise<VerificationResult> {
   logger.info("Verifying podcast script against digests");
 
-  const client = getOpenAICompatibleClient(llmOptions);
-  if (!client) {
-    logger.warn("OPENAI_API_KEY not set, skipping verification");
+  if (!hasLLMConfigured()) {
+    logger.warn("No LLM configured, skipping verification");
     return {
       script,
       issues: [],
@@ -71,10 +71,7 @@ export async function verifyPodcastScript(
   try {
     const digestContext = formatDigestsForVerification(digests);
 
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 6000,
-      response_format: { type: "json_object" },
+    const completionResult = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -124,20 +121,27 @@ SEVERITY GUIDE:
 Be thorough. Don't pass unsupported claims. Return ONLY valid JSON.`,
         },
       ],
+      max_tokens: 6000,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = completionResult.content;
     if (!content) {
       throw new Error("No verification result from LLM");
     }
 
-    const result = JSON.parse(content);
+    const parsed = JSON.parse(content) as {
+      issues?: Array<{ type: string; line: string; issue: string; suggested_fix: string; severity: string }>;
+      corrected_script?: string;
+      summary?: string;
+    };
 
-    const issues: VerificationIssue[] = (result.issues || []).map((i: Record<string, unknown>) => ({
+    const issues: VerificationIssue[] = (parsed.issues || []).map((i) => ({
       type: i.type as VerificationIssue["type"],
-      line: (i.line as string) || "",
-      issue: (i.issue as string) || "",
-      suggested_fix: (i.suggested_fix as string) || "",
+      line: i.line || "",
+      issue: i.issue || "",
+      suggested_fix: i.suggested_fix || "",
       severity: (i.severity as "error" | "warning") || "warning",
     }));
 
@@ -145,10 +149,10 @@ Be thorough. Don't pass unsupported claims. Return ONLY valid JSON.`,
     const passedVerification = errorCount === 0;
 
     return {
-      script: result.corrected_script || script,
+      script: parsed.corrected_script || script,
       issues,
       passedVerification,
-      notes: result.summary || `${issues.length} issues found`,
+      notes: parsed.summary || `${issues.length} issues found`,
     };
   } catch (error) {
     logger.warn("Script verification failed", { error });

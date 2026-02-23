@@ -3,10 +3,11 @@
  * Uses Claude to synthesize answers from retrieved items
  */
 
-import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 export interface GeneratedAnswer {
   question: string;
@@ -62,13 +63,9 @@ export async function generateAnswer(
 
     let answer: string;
 
-    // Call Claude to generate answer if API key is available
-    const client = getOpenAICompatibleClient(llmOptions);
-    if (client) {
+    if (hasLLMConfigured()) {
       try {
-        const response = await client.chat.completions.create({
-          model: "gpt-4o-mini",
-          max_completion_tokens: 800,
+        const result = await createChatCompletion({
           messages: [
             {
               role: "user",
@@ -87,25 +84,24 @@ Guidelines:
 - Highlight any disagreements or varying perspectives between sources`,
             },
           ],
+          max_tokens: 800,
+          openaiOptions: llmOptions,
         });
 
-        const content = response.choices[0]?.message?.content;
-        if (!content || content.trim().length === 0) {
-          logger.warn("OpenAI API returned empty response, falling back to template synthesis");
+        const content = result.content?.trim();
+        if (!content || content.length === 0) {
+          logger.warn("LLM returned empty response, falling back to template synthesis");
           answer = generateTemplateSynthesis(topItems);
         } else {
-          answer = content.trim();
+          answer = content;
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.warn("OpenAI API call failed, falling back to template synthesis", {
-          error: errorMsg,
-          model: "gpt-4o-mini"
-        });
+        logger.warn("LLM call failed, falling back to template synthesis", { error: errorMsg });
         answer = generateTemplateSynthesis(topItems);
       }
     } else {
-      logger.warn("OPENAI_API_KEY not set, using template synthesis");
+      logger.warn("No LLM configured, using template synthesis");
       answer = generateTemplateSynthesis(topItems);
     }
 

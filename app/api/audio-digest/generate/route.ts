@@ -735,7 +735,7 @@ async function streamAudioDigestGeneration(
           showNotes: content.showNotes,
           generationMetadata: {
             promptUsed: req.prompt || "",
-            modelUsed: "gpt-4o-mini",
+            modelUsed: "quality model",
             duration: `${generationTime}s`,
             promptProfile: profile,
           },
@@ -1174,7 +1174,7 @@ export async function POST(
       showNotes: content.showNotes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-4o-mini",
+        modelUsed: "quality model",
         duration: `${generationTime}s`,
         promptProfile: profile,
       },

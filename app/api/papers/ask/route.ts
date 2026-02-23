@@ -4,8 +4,8 @@ import { searchPapers, getPaper, getLibraryPapers, storePapersBatch, linkPapersT
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
 import { logger } from '@/src/lib/logger';
 import { getADSUrl, getArxivUrl, getLibraryItems, getBibcodeMetadata } from '@/src/lib/ads/client';
-import OpenAI from 'openai';
 import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import { createChatCompletion } from "@/src/lib/llm/completion";
 
 export const dynamic = 'force-dynamic';
 
@@ -325,14 +325,14 @@ ${context}`;
 
     messages.push({ role: 'user', content: userContent });
 
-    // Generate answer using GPT-4o
-    const message = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 1500,
+    // Generate answer using quality model
+    const result = await createChatCompletion({
       messages,
+      max_tokens: 1500,
+      openaiOptions: llmOptions,
     });
 
-    const answer = message.choices[0]?.message?.content || 'Failed to generate answer';
+    const answer = result.content || 'Failed to generate answer';
 
     logger.info('Question answered', { answerLength: answer.length });
 

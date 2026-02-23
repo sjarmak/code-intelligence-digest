@@ -4,11 +4,12 @@
  * Uses gpt-4o-mini with strict JSON schema
  */
 
-import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
 import { decomposeNewsletterItems } from "./decompose";
-import { getOpenAICompatibleClient, type LLMClientOptions } from "../llm/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 import { findArticleUrl, extractUrlFromContent } from "../search/url-finder";
 import { saveExtractedUrl } from "../db/items";
 
@@ -142,14 +143,12 @@ function chunkText(text: string, chunkSize: number = CHUNK_SIZE): string[] {
  * Summarize a single chunk
  */
 async function summarizeChunk(
-  client: OpenAI,
   chunk: string,
   index: number,
-  total: number
+  total: number,
+  llmOptions?: LLMClientOptions
 ): Promise<string> {
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_completion_tokens: 300,
+  const result = await createChatCompletion({
     messages: [
       {
         role: "user",
@@ -158,9 +157,10 @@ async function summarizeChunk(
 ${chunk}`,
       },
     ],
+    max_tokens: 300,
+    openaiOptions: llmOptions,
   });
-
-  return response.choices[0].message.content || "";
+  return result.content || "";
 }
 
 /**
@@ -199,10 +199,8 @@ export async function extractItemDigest(
   userPrompt: string = "",
   llmOptions?: LLMClientOptions
 ): Promise<ItemDigest> {
-  const client = getOpenAICompatibleClient(llmOptions);
-
-  if (!client) {
-    logger.warn(`OPENAI_API_KEY not set for item "${item.title}", using fallback digest (URL: ${item.url})`);
+  if (!hasLLMConfigured()) {
+    logger.warn(`No LLM configured for item "${item.title}", using fallback digest (URL: ${item.url})`);
     return await generateFallbackDigest(item, userPrompt);
   }
 
@@ -234,7 +232,7 @@ export async function extractItemDigest(
           const chunkBatch = chunks.slice(i, i + CHUNK_BATCH_SIZE);
           const summaries = await Promise.all(
             chunkBatch.map((chunk, idx) =>
-              summarizeChunk(client, chunk, i + idx + 1, chunks.length)
+              summarizeChunk(chunk, i + idx + 1, chunks.length, llmOptions)
             )
           );
           chunkSummaries.push(...summaries);
@@ -251,10 +249,7 @@ export async function extractItemDigest(
     }
 
     // Extract digest from processed text
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 800,
-      response_format: { type: "json_object" },
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -282,9 +277,12 @@ export async function extractItemDigest(
     Return ONLY valid JSON, no markdown. Gist and keyBullets must be drawn from actual content, not templates.`,
         },
       ],
+      max_tokens: 800,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = result.content;
     if (!content) {
       throw new Error("No response from extraction model");
     }

@@ -90,6 +90,55 @@ async function parallelWebSearch(objective: string, searchQueries?: string[]): P
   }
 }
 
+export interface AgentWebSearchResult {
+  title: string;
+  snippet: string;
+  url: string;
+}
+
+/**
+ * Run web search for GTM agent context. Returns title, snippet, url per result.
+ * No-op if PARALLEL_API_KEY is not set.
+ */
+export async function webSearchForAgentContext(
+  queries: string[]
+): Promise<AgentWebSearchResult[]> {
+  const apiKey = process.env.PARALLEL_API_KEY;
+  if (!apiKey || queries.length === 0) {
+    return [];
+  }
+  try {
+    const request = {
+      objective: queries[0] ?? "GTM and competitive intelligence research",
+      search_queries: queries.length > 1 ? queries : undefined,
+      processor: "base",
+      max_results: 10,
+    };
+    const response = await fetch("https://api.parallel.ai/v1beta/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) return [];
+    const data = await response.json() as {
+      results?: Array<{ url: string; title?: string; excerpts?: string[] }>;
+    };
+    return (data.results ?? []).map((item) => ({
+      title: item.title || "Untitled",
+      snippet: (item.excerpts && item.excerpts[0]) ? item.excerpts[0] : "",
+      url: item.url,
+    }));
+  } catch (e) {
+    logger.debug("Agent web search failed", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return [];
+  }
+}
+
 /**
  * Search for an article URL given title and context
  * Uses Sourcegraph deep search or fallback web search

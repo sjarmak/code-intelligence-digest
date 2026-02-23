@@ -10,8 +10,8 @@ import { getGeneratedNewsletter, listGeneratedNewsletters } from '@/src/lib/db/g
 import { listUserPodcastAudio } from '@/src/lib/db/user-podcast-audio';
 import { logger } from '@/src/lib/logger';
 import { getADSUrl, getLibraryItems } from '@/src/lib/ads/client';
-import OpenAI from 'openai';
 import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import { createChatCompletion } from "@/src/lib/llm/completion";
 import { fetchFullText } from '@/src/lib/pipeline/fulltext';
 
 export const dynamic = 'force-dynamic';
@@ -518,14 +518,14 @@ ${combinedContext}`;
 
     messages.push({ role: 'user', content: userContent });
 
-    // Generate answer using GPT-4o-mini (client from BYOK or server env)
-    const message = await llmClient.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 1500,
+    // Generate answer using quality model (BYOK or server env)
+    const result = await createChatCompletion({
       messages,
+      max_tokens: 1500,
+      openaiOptions: llmOptions,
     });
 
-    const answer = message.choices[0]?.message?.content || 'Failed to generate answer';
+    const answer = result.content || 'Failed to generate answer';
 
     logger.info('Question answered', { answerLength: answer.length });
 

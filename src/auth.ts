@@ -120,4 +120,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   session: { strategy: "jwt", maxAge: 30 * 24 * 60 * 60 },
   trustHost: true,
+  // Chrome on mobile can block session cookie on OAuth redirect; SameSite=None + Secure fixes it (HTTPS only)
+  ...(process.env.NODE_ENV === "production"
+    ? {
+        cookies: {
+          sessionToken: {
+            options: {
+              sameSite: "none" as const,
+              secure: true,
+            },
+          },
+        },
+      }
+    : {}),
 });
