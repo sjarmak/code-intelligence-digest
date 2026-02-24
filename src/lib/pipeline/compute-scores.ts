@@ -11,6 +11,7 @@ import { saveItemScores } from "../db/scores";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
 import { computeProductBoost, findProductMentions } from "../../config/products";
+import { computeWatchlistBoost } from "../../config/watchlist";
 
 /**
  * Compute recency score with exponential decay
@@ -131,44 +132,10 @@ export async function computeAndSaveScoresForCategory(
       boostMultiplier *= productBoost.multiplier;
       boostTags.push(...productBoost.tags);
 
-      // SOURCEGRAPH: Highest priority
-      const hasSourcegraph = lowerContent.includes('sourcegraph');
-
-      // Core domain terms
-      const coreTerms = [
-        'deep search',
-        'code search',
-        'code intelligence',
-        'coding agent',
-        'codebase understanding',
-        'information retrieval',
-        'context management',
-        'context window',
-        'software engineering',
-        'benchmark',
-        'evaluation',
-        'developer productivity',
-        'ai tooling',
-      ];
-
-      if (hasSourcegraph) {
-        boostMultiplier = 5.0;
-        boostTags.push('sourcegraph');
-      } else {
-        const matchingCoreTerms = coreTerms.filter(term => lowerContent.includes(term)).length;
-        const hasAgent = lowerContent.includes('agent') || lowerContent.includes('agentic') || lowerContent.includes('coding agent');
-        const hasCodeContext = coreTerms.slice(1, 8).some(term => lowerContent.includes(term));
-
-        if (matchingCoreTerms >= 3) {
-          boostMultiplier = 3.0;
-        } else if (matchingCoreTerms === 2) {
-          boostMultiplier = 2.0;
-        } else if (hasAgent && hasCodeContext) {
-          boostMultiplier = 2.5;
-        } else if (matchingCoreTerms === 1) {
-          boostMultiplier = 1.5;
-        }
-      }
+      // Watchlist boost: matches high-signal keywords across themes
+      const watchlistBoost = computeWatchlistBoost(contentToSearch);
+      boostMultiplier *= watchlistBoost.multiplier;
+      boostTags.push(...watchlistBoost.matchedTerms);
 
       // Compute final score
       let finalScore =
