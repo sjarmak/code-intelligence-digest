@@ -1,6 +1,7 @@
 /**
  * GET /api/agents/reports
- * List latest agent report runs (reads .data/agent-reports/*.md by mtime).
+ * List all agent report runs (one entry per file in .data/agent-reports/{goal}/*.md).
+ * Also supports legacy single .md per goal for backward compatibility.
  */
 
 import { NextResponse } from "next/server";
@@ -16,19 +17,28 @@ export async function GET() {
       return NextResponse.json({ reports: [] });
     }
 
-    const reports: { goal: string; generatedAt: string | null }[] = [];
+    const reports: { goal: string; id: string; generatedAt: string }[] = [];
 
     for (const goal of GOALS) {
-      const filePath = path.join(REPORT_DIR, `${goal}.md`);
-      if (!fs.existsSync(filePath)) {
-        reports.push({ goal, generatedAt: null });
-        continue;
+      const goalDir = path.join(REPORT_DIR, goal);
+      if (fs.existsSync(goalDir) && fs.statSync(goalDir).isDirectory()) {
+        const files = fs.readdirSync(goalDir).filter((f) => f.endsWith(".md"));
+        for (const file of files) {
+          const id = file.replace(/\.md$/, "");
+          const filePath = path.join(goalDir, file);
+          const stat = fs.statSync(filePath);
+          reports.push({ goal, id, generatedAt: stat.mtime.toISOString() });
+        }
       }
-      const stat = fs.statSync(filePath);
-      const generatedAt = stat.mtime.toISOString();
-      reports.push({ goal, generatedAt });
+      // Legacy: single file per goal at REPORT_DIR/{goal}.md
+      const legacyPath = path.join(REPORT_DIR, `${goal}.md`);
+      if (fs.existsSync(legacyPath)) {
+        const stat = fs.statSync(legacyPath);
+        reports.push({ goal, id: "latest", generatedAt: stat.mtime.toISOString() });
+      }
     }
 
+    reports.sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime());
     return NextResponse.json({ reports });
   } catch (error) {
     console.error("Agent reports list error", error);

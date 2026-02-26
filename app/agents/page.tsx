@@ -15,11 +15,13 @@ const GOAL_LABELS: Record<string, string> = {
 
 interface ReportMeta {
   goal: string;
-  generatedAt: string | null;
+  id: string;
+  generatedAt: string;
 }
 
 interface ReportDetail {
   goal: string;
+  id: string;
   generatedAt: string;
   content: string;
 }
@@ -82,10 +84,12 @@ export default function AgentReportsPage() {
     }
   };
 
-  const handleView = async (goal: string) => {
-    setLoadingReport(goal);
+  const handleView = async (goal: string, id?: string) => {
+    const key = id ? `${goal}-${id}` : goal;
+    setLoadingReport(key);
     try {
-      const res = await fetch(`/api/agents/reports/${goal}`);
+      const url = id ? `/api/agents/reports/${goal}?id=${encodeURIComponent(id)}` : `/api/agents/reports/${goal}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error("Not found");
       const data: ReportDetail = await res.json();
       setViewing(data);
@@ -93,6 +97,18 @@ export default function AgentReportsPage() {
       setViewing(null);
     } finally {
       setLoadingReport(null);
+    }
+  };
+
+  const handleDelete = async (goal: string, id: string) => {
+    if (!confirm("Delete this report?")) return;
+    try {
+      const res = await fetch(`/api/agents/reports/${goal}/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+      setReports((prev) => prev.filter((r) => r.goal !== goal || r.id !== id));
+      if (viewing?.goal === goal && viewing?.id === id) setViewing(null);
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -123,7 +139,7 @@ export default function AgentReportsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `agent-report-${viewing.goal}.md`;
+    a.download = `agent-report-${viewing.goal}-${viewing.id}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -137,7 +153,7 @@ export default function AgentReportsPage() {
       await worker
         .set({
           margin: 12,
-          filename: `agent-report-${viewing.goal}.pdf`,
+          filename: `agent-report-${viewing.goal}-${viewing.id}.pdf`,
           image: { type: "jpeg", quality: 0.98 },
           html2canvas: { scale: 2 },
           jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
@@ -366,39 +382,45 @@ export default function AgentReportsPage() {
         {loading ? (
           <p className="text-gray-500">Loading…</p>
         ) : (
-          <ul className="space-y-4">
-            {reports.map((r) => (
-              <li
-                key={r.goal}
-                className="border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-              >
-                <div>
-                  <h2 className="font-semibold">
-                    {GOAL_LABELS[r.goal] ?? r.goal}
-                  </h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Last run: {formatDate(r.generatedAt)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleView(r.goal)}
-                  disabled={loadingReport !== null || !r.generatedAt}
-                  className="px-4 py-2 rounded-md bg-black text-white text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loadingReport === r.goal
-                    ? "Loading…"
-                    : r.generatedAt
-                      ? "View report"
-                      : "No report yet"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {reports.length === 0 && !loading && (
-          <p className="text-gray-500">
-            No reports yet. Select agents above and click Generate reports.
-          </p>
+          <div className="space-y-6">
+            {AGENT_GOALS.map((goal) => {
+              const runs = reports.filter((r) => r.goal === goal).sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime());
+              return (
+                <section key={goal} className="border border-gray-200 rounded-lg p-4">
+                  <h2 className="font-semibold text-lg mb-3">{GOAL_LABELS[goal] ?? goal}</h2>
+                  {runs.length === 0 ? (
+                    <p className="text-sm text-gray-500">No reports yet. Generate above.</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {runs.map((r) => (
+                        <li
+                          key={`${r.goal}-${r.id}`}
+                          className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 py-2 border-b border-gray-100 last:border-0"
+                        >
+                          <span className="text-sm text-gray-600">{formatDate(r.generatedAt)}</span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleView(r.goal, r.id)}
+                              disabled={loadingReport !== null}
+                              className="px-3 py-1.5 rounded-md bg-black text-white text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {loadingReport === `${r.goal}-${r.id}` ? "Loading…" : "View"}
+                            </button>
+                            <button
+                              onClick={() => handleDelete(r.goal, r.id)}
+                              className="px-3 py-1.5 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
+          </div>
         )}
       </main>
     </div>

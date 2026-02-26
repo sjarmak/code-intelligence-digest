@@ -5,7 +5,6 @@
 
 import path from "path";
 import fs from "fs";
-import { initializeDatabase } from "../db/index";
 import { retrieveForAgent } from "../pipeline/agentRetrieval";
 import { rankForAgent } from "../pipeline/agentRank";
 import { buildAgentShortlist } from "../pipeline/agentShortlist";
@@ -59,11 +58,20 @@ function formatReport(
   return lines.join("\n");
 }
 
-/** Generate a single agent report; writes to .data/agent-reports/{goal}.md */
-export async function runAgentReport(goal: AgentGoal): Promise<{ ok: boolean; error?: string }> {
+/** Filesystem-safe id for a report run (no overwrite). */
+export function reportRunId(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+/** Generate a single agent report; writes to .data/agent-reports/{goal}/{id}.md (never overwrites). */
+export async function runAgentReport(
+  goal: AgentGoal
+): Promise<{ ok: boolean; id?: string; error?: string }> {
   if (!VALID_GOALS.includes(goal)) {
     return { ok: false, error: `Invalid goal: ${goal}` };
   }
+  const id = reportRunId();
+  const goalDir = path.join(REPORT_DIR, goal);
   try {
     const config = getAgentGoalConfig(goal);
     const periodDays = config.timeHorizonDays;
@@ -71,26 +79,20 @@ export async function runAgentReport(goal: AgentGoal): Promise<{ ok: boolean; er
 
     const docs = await retrieveForAgent(goal, { periodDays, maxEnrich: 0 });
 
+    let report: string;
     if (docs.length === 0) {
-      if (!fs.existsSync(REPORT_DIR)) fs.mkdirSync(REPORT_DIR, { recursive: true });
-      const outPath = path.join(REPORT_DIR, `${goal}.md`);
-      fs.writeFileSync(
-        outPath,
-        `# ${config.name}\n\nNo documents retrieved for period ${periodDays} days.\n`,
-        "utf-8"
-      );
-      return { ok: true };
+      report = `# ${config.name}\n\nNo documents retrieved for period ${periodDays} days.\n`;
+    } else {
+      const ranked = await rankForAgent(goal, docs);
+      const shortlist = await buildAgentShortlist(goal, ranked, limit);
+      report = formatReport(goal, shortlist);
     }
 
-    const ranked = await rankForAgent(goal, docs);
-    const shortlist = await buildAgentShortlist(goal, ranked, limit);
-    const report = formatReport(goal, shortlist);
-
-    if (!fs.existsSync(REPORT_DIR)) fs.mkdirSync(REPORT_DIR, { recursive: true });
-    const outPath = path.join(REPORT_DIR, `${goal}.md`);
+    if (!fs.existsSync(goalDir)) fs.mkdirSync(goalDir, { recursive: true });
+    const outPath = path.join(goalDir, `${id}.md`);
     fs.writeFileSync(outPath, report, "utf-8");
-    logger.info("Agent report generated", { goal, path: outPath });
-    return { ok: true };
+    logger.info("Agent report generated", { goal, id, path: outPath });
+    return { ok: true, id };
   } catch (err) {
     logger.error(`Agent report failed: ${goal}`, { error: err });
     return {
@@ -100,11 +102,11 @@ export async function runAgentReport(goal: AgentGoal): Promise<{ ok: boolean; er
   }
 }
 
-/** Generate reports for the given goals. Call initializeDatabase() before this if needed. */
+/** Generate reports for the given goals. Call initializeDatabase() before this if needed. Never overwrites. */
 export async function runAgentReports(
   goals: AgentGoal[]
-): Promise<{ [key in AgentGoal]?: { ok: boolean; error?: string } }> {
-  const results: { [key in AgentGoal]?: { ok: boolean; error?: string } } = {};
+): Promise<{ [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } }> {
+  const results: { [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } } = {};
   for (const goal of goals) {
     if (!VALID_GOALS.includes(goal)) continue;
     results[goal] = await runAgentReport(goal);
