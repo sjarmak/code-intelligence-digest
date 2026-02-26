@@ -1,0 +1,47 @@
+/**
+ * POST /api/agents/reports/generate
+ * Generate agent reports for selected goals.
+ * Body: { goals: ("content_ideas" | "market_brief" | "competitor_intel")[] }
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { initializeDatabase } from "@/src/lib/db/index";
+import { runAgentReports } from "@/src/lib/agents/generate-reports";
+import type { AgentGoal } from "@/src/config/agents";
+
+const VALID_GOALS: AgentGoal[] = ["content_ideas", "market_brief", "competitor_intel"];
+
+export async function POST(request: NextRequest) {
+  try {
+    let body: { goals?: unknown };
+    try {
+      body = (await request.json()) as { goals?: unknown };
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body. Use { goals: [\"content_ideas\", ...] }." },
+        { status: 400 }
+      );
+    }
+
+    const raw = Array.isArray(body.goals) ? body.goals : [];
+    const goals = raw.filter((g): g is AgentGoal => typeof g === "string" && VALID_GOALS.includes(g as AgentGoal));
+
+    if (goals.length === 0) {
+      return NextResponse.json(
+        { error: `At least one goal required. Valid: ${VALID_GOALS.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
+    await initializeDatabase();
+    const results = await runAgentReports(goals);
+
+    return NextResponse.json({ success: true, results });
+  } catch (error) {
+    console.error("Agent reports generate failed", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Generate failed" },
+      { status: 500 }
+    );
+  }
+}

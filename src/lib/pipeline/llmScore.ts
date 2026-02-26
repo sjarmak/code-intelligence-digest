@@ -70,6 +70,7 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
+      break;
     case "ai_dev":
       basePrompt = `You are an expert evaluator of AI-in-developer-workflow content for a "Code Intelligence Digest" service.
 

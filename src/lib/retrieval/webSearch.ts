@@ -3,7 +3,7 @@
  * Uses Tavily when TAVILY_API_KEY is set; otherwise returns empty results.
  */
 
-import { logger } from "../logger.js";
+import { logger } from "../logger";
 
 export interface WebResult {
   title: string;

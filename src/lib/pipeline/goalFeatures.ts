@@ -3,12 +3,12 @@
  * Computes competitorMatch, formatType, icpMatch, and recency from doc content.
  */
 
-import type { AgentGoal } from "../../config/agents.js";
+import type { AgentGoal } from "../../config/agents";
 import {
   getCompetitorKeywords,
   getDirectCompetitorKeywords,
-} from "../../config/competitors.js";
-import type { RetrievedDoc } from "./agentRetrieval.js";
+} from "../../config/competitors";
+import type { RetrievedDoc } from "./agentRetrieval";
 
 export interface GoalFeatures {
   competitorMatch: number;
