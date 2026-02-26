@@ -233,12 +233,12 @@ export default function AgentReportsPage() {
                   </h2>
                 ),
                 h3: ({ children, ...p }) => (
-                  <h3 className="text-lg font-semibold mt-4 mb-2" {...p}>
+                  <h3 className="text-lg font-semibold mt-4 mb-2 break-words" {...p}>
                     {children}
                   </h3>
                 ),
                 p: ({ children, ...p }) => (
-                  <p className="mb-3 leading-relaxed" {...p}>
+                  <p className="mb-3 leading-relaxed break-words" {...p}>
                     {children}
                   </p>
                 ),
@@ -253,7 +253,7 @@ export default function AgentReportsPage() {
                   </ol>
                 ),
                 li: ({ children, ...p }) => (
-                  <li className="leading-relaxed" {...p}>
+                  <li className="leading-relaxed break-words" {...p}>
                     {children}
                   </li>
                 ),

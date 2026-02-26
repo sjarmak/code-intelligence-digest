@@ -45,25 +45,20 @@ function formatReport(
     if (entry.doc.url) lines.push(`URL: ${entry.doc.url}`);
     const reason = stripHtml(entry.reason);
     if (reason) {
-      lines.push("<details><summary><strong>Why</strong></summary>");
-      lines.push("");
-      lines.push(escapeForHtml(reason));
-      lines.push("");
-      lines.push("</details>");
+      // Single HTML block (no blank line) so markdown doesn't close the block and render </details> as text
+      lines.push(`<details><summary><strong>Why</strong></summary><div>${escapeForHtml(reason)}</div></details>`);
       lines.push("");
     }
     if (goal === "content_ideas" && entry.contentIdeas?.length) {
-      lines.push(`**Content ideas:**`);
-      entry.contentIdeas.forEach((idea) => lines.push(`- ${stripHtml(idea)}`));
+      const ideasHtml = entry.contentIdeas
+        .map((idea) => `<li>${escapeForHtml(stripHtml(idea))}</li>`)
+        .join("");
+      lines.push(`<details><summary><strong>Content ideas</strong></summary><ul>${ideasHtml}</ul></details>`);
       lines.push("");
     }
     const fullSnippet = stripHtml(entry.doc.snippet ?? "");
     if (fullSnippet) {
-      lines.push("<details><summary><strong>Snippet</strong></summary>");
-      lines.push("");
-      lines.push(escapeForHtml(fullSnippet));
-      lines.push("");
-      lines.push("</details>");
+      lines.push(`<details><summary><strong>Snippet</strong></summary><div>${escapeForHtml(fullSnippet)}</div></details>`);
       lines.push("");
     }
     lines.push("");
