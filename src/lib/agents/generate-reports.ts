@@ -39,21 +39,33 @@ function formatReport(
     `## Selected sources (${shortlist.length})`,
     "",
   ];
+  const escapeForHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   shortlist.forEach((entry, i) => {
     lines.push(`### ${i + 1}. ${entry.doc.title}`);
     if (entry.doc.url) lines.push(`URL: ${entry.doc.url}`);
     const reason = stripHtml(entry.reason);
-    if (reason) lines.push(`**Why:** ${reason}`);
+    if (reason) {
+      lines.push("<details><summary><strong>Why</strong></summary>");
+      lines.push("");
+      lines.push(escapeForHtml(reason));
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+    }
     if (goal === "content_ideas" && entry.contentIdeas?.length) {
       lines.push(`**Content ideas:**`);
       entry.contentIdeas.forEach((idea) => lines.push(`- ${stripHtml(idea)}`));
+      lines.push("");
     }
-    const snippetLimit = 600;
-    const snippet = stripHtml(entry.doc.snippet?.slice(0, snippetLimit));
-    if (snippet)
-      lines.push(
-        `Snippet: ${snippet}${(entry.doc.snippet?.length ?? 0) > snippetLimit ? "..." : ""}`
-      );
+    const fullSnippet = stripHtml(entry.doc.snippet ?? "");
+    if (fullSnippet) {
+      lines.push("<details><summary><strong>Snippet</strong></summary>");
+      lines.push("");
+      lines.push(escapeForHtml(fullSnippet));
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+    }
     lines.push("");
   });
   return lines.join("\n");

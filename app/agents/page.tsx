@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Copy, Download, FileDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 
 const AGENT_GOALS = ["content_ideas", "market_brief", "competitor_intel"] as const;
 const GOAL_LABELS: Record<string, string> = {
@@ -219,6 +220,7 @@ export default function AgentReportsPage() {
           >
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw]}
               components={{
                 h1: ({ children, ...p }) => (
                   <h1 className="text-2xl font-bold mt-6 mb-2 first:mt-0" {...p}>
@@ -310,6 +312,22 @@ export default function AgentReportsPage() {
                   <td className="border border-gray-200 px-3 py-2" {...p}>
                     {children}
                   </td>
+                ),
+                details: ({ children, ...p }) => (
+                  <details
+                    className="my-2 border border-gray-200 rounded-md overflow-hidden"
+                    {...p}
+                  >
+                    {children}
+                  </details>
+                ),
+                summary: ({ children, ...p }) => (
+                  <summary
+                    className="px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100 font-medium text-sm list-none [&::-webkit-details-marker]:hidden"
+                    {...p}
+                  >
+                    {children}
+                  </summary>
                 ),
               }}
             >

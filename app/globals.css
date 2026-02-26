@@ -285,3 +285,13 @@ select.custom-select-arrow {
   background-repeat: no-repeat;
   padding-right: 2.5rem;
 }
+
+/* Agent report: expandable Why / Snippet */
+.report-markdown details {
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+.report-markdown details > *:not(summary) {
+  padding: 0.75rem 1rem;
+  background: #fafafa;
+}
