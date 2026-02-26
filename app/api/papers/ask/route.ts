@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from "@/src/auth";
 import { searchPapers, getPaper, getLibraryPapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
 import { logger } from '@/src/lib/logger';
 import { getADSUrl, getArxivUrl, getLibraryItems, getBibcodeMetadata } from '@/src/lib/ads/client';
-import OpenAI from 'openai';
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import { createChatCompletion } from "@/src/lib/llm/completion";
 
 export const dynamic = 'force-dynamic';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -22,6 +20,8 @@ interface AskRequest {
   libraryIds?: string[]; // Array of library IDs
   selectedBibcodes?: string[]; // Papers selected by user
   limit?: number;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   conversationHistory?: ConversationMessage[]; // For follow-up questions
   papersContext?: string; // Pre-computed papers context from initial query (for follow-ups)
 }
@@ -35,16 +35,18 @@ export async function POST(request: NextRequest) {
       return rateLimitResponse;
     }
 
+    const body = (await request.json()) as AskRequest;
     const {
       question,
       limit = 20,
-      libraryId, // Deprecated, kept for backward compatibility
+      libraryId,
       libraryIds,
       selectedBibcodes,
+      openaiApiKey: bodyOpenaiApiKey,
+      openaiBaseUrl: bodyOpenaiBaseUrl,
       conversationHistory,
       papersContext
-    } = (await request.json()) as AskRequest;
-    const openaiKey = process.env.OPENAI_API_KEY;
+    } = body;
 
     if (!question || question.trim().length === 0) {
       return NextResponse.json(
@@ -53,17 +55,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!openaiKey) {
-      return NextResponse.json(
-        { error: 'OPENAI_API_KEY not configured in .env.local' },
-        { status: 500 }
-      );
-    }
+    const session = await auth();
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
 
-    if (!openaiKey.startsWith('sk-')) {
+    const llmOptions = resolveLLMOptions(
+      { openaiApiKey: bodyOpenaiApiKey, openaiBaseUrl: bodyOpenaiBaseUrl },
+      undefined,
+      sessionUser,
+    );
+    const openai = getOpenAICompatibleClient(llmOptions);
+    if (!openai) {
       return NextResponse.json(
-        { error: 'OPENAI_API_KEY format is invalid. Must start with "sk-".' },
-        { status: 500 }
+        {
+          error:
+            'LLM is required. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.',
+        },
+        { status: 400 }
       );
     }
 
@@ -313,14 +325,14 @@ ${context}`;
 
     messages.push({ role: 'user', content: userContent });
 
-    // Generate answer using GPT-4o
-    const message = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 1500,
+    // Generate answer using quality model
+    const result = await createChatCompletion({
       messages,
+      max_tokens: 1500,
+      openaiOptions: llmOptions,
     });
 
-    const answer = message.choices[0]?.message?.content || 'Failed to generate answer';
+    const answer = result.content || 'Failed to generate answer';
 
     logger.info('Question answered', { answerLength: answer.length });
 

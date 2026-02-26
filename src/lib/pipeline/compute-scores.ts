@@ -10,6 +10,8 @@ import { scoreWithLLM } from "./llmScore";
 import { saveItemScores } from "../db/scores";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
+import { computeProductBoost, findProductMentions } from "../../config/products";
+import { computeWatchlistBoost } from "../../config/watchlist";
 
 /**
  * Compute recency score with exponential decay
@@ -121,75 +123,19 @@ export async function computeAndSaveScoresForCategory(
 
       // Apply boosts for domain-specific terms
       let boostMultiplier = 1.0;
-      const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
+      const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`;
+      const lowerContent = contentToSearch.toLowerCase();
       const boostTags: string[] = [];
 
-      // For product_news category, heavily boost mentions of specific products
-      if (category === "product_news") {
-        const productNames = [
-          'augment code',
-          'claude code',
-          'cursor',
-          'windsurf',
-          'warp',
-          'greptile',
-          'coderabbit',
-          'codex',
-          'gemini cli',
-          'github copilot',
-          'kilo',
-        ];
+      // Product-specific boost (stronger for key competitors/own products in product_news)
+      const productBoost = computeProductBoost(category, contentToSearch);
+      boostMultiplier *= productBoost.multiplier;
+      boostTags.push(...productBoost.tags);
 
-        const matchingProducts = productNames.filter(product =>
-          contentToSearch.includes(product)
-        );
-
-        if (matchingProducts.length > 0) {
-          // Heavy boost for product mentions: 4x for 2+ products, 3x for 1 product
-          boostMultiplier = matchingProducts.length >= 2 ? 4.0 : 3.0;
-          boostTags.push(...matchingProducts);
-          logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${matchingProducts.join(", ")}: "${item.title}"`);
-        }
-      }
-
-      // SOURCEGRAPH: Highest priority
-      const hasSourcegraph = contentToSearch.includes('sourcegraph');
-
-      // Core domain terms
-      const coreTerms = [
-        'deep search',
-        'code search',
-        'code intelligence',
-        'coding agent',
-        'codebase understanding',
-        'information retrieval',
-        'context management',
-        'context window',
-        'software engineering',
-        'benchmark',
-        'evaluation',
-        'developer productivity',
-        'ai tooling',
-      ];
-
-      if (hasSourcegraph) {
-        boostMultiplier = 5.0;
-        boostTags.push('sourcegraph');
-      } else {
-        const matchingCoreTerms = coreTerms.filter(term => contentToSearch.includes(term)).length;
-        const hasAgent = contentToSearch.includes('agent') || contentToSearch.includes('agentic') || contentToSearch.includes('coding agent');
-        const hasCodeContext = coreTerms.slice(1, 8).some(term => contentToSearch.includes(term));
-
-        if (matchingCoreTerms >= 3) {
-          boostMultiplier = 3.0;
-        } else if (matchingCoreTerms === 2) {
-          boostMultiplier = 2.0;
-        } else if (hasAgent && hasCodeContext) {
-          boostMultiplier = 2.5;
-        } else if (matchingCoreTerms === 1) {
-          boostMultiplier = 1.5;
-        }
-      }
+      // Watchlist boost: matches high-signal keywords across themes
+      const watchlistBoost = computeWatchlistBoost(contentToSearch);
+      boostMultiplier *= watchlistBoost.multiplier;
+      boostTags.push(...watchlistBoost.matchedTerms);
 
       // Compute final score
       let finalScore =
@@ -218,6 +164,8 @@ export async function computeAndSaveScoresForCategory(
         recencyScore,
         finalScore,
         reasoning,
+        // Preserve productMentions for existing consumers using the older helper
+        productMentions: findProductMentions(lowerContent) || undefined,
       };
     });
 

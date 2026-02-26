@@ -7,9 +7,11 @@
  * - Generic boilerplate language
  */
 
-import OpenAI from "openai";
 import { ItemDigest } from "./extract";
 import { logger } from "../logger";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 const BAD_URL_DOMAINS = [
   "csharpdigest.com",
@@ -226,20 +228,16 @@ export function reviewDigests(digests: ItemDigest[]): ReviewResult {
  */
 export async function reviewNewsletterWithLLM(
   markdown: string,
-  digests: ItemDigest[]
+  digests: ItemDigest[],
+  llmOptions?: LLMClientOptions
 ): Promise<{ passed: boolean; feedback: string }> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    logger.info("OPENAI_API_KEY not set, skipping LLM review");
+  if (!hasLLMConfigured()) {
+    logger.info("No LLM configured, skipping LLM review");
     return { passed: true, feedback: "" };
   }
 
-  const client = new OpenAI({ apiKey });
-
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 500,
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -270,9 +268,12 @@ Return JSON with:
 Be specific. Point to exact problems, not vague concerns.`,
         },
       ],
+      max_tokens: 500,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = result.content;
     if (!content) {
       return { passed: true, feedback: "No LLM feedback" };
     }
@@ -300,7 +301,8 @@ Be specific. Point to exact problems, not vague concerns.`,
  */
 export async function reviewNewsletter(
   markdown: string,
-  digests: ItemDigest[]
+  digests: ItemDigest[],
+  llmOptions?: LLMClientOptions
 ): Promise<{ passed: boolean; issues: string[]; llmFeedback: string; digestsWithIssues: Set<string> }> {
   logger.info(`Starting newsletter review for ${digests.length} digests`);
 
@@ -310,7 +312,7 @@ export async function reviewNewsletter(
   // 2. LLM review (only if markdown provided)
   let llmReview = { passed: true, feedback: "" };
   if (markdown) {
-    llmReview = await reviewNewsletterWithLLM(markdown, digests);
+    llmReview = await reviewNewsletterWithLLM(markdown, digests, llmOptions);
   }
 
   const allIssues: string[] = [];

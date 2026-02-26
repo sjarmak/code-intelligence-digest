@@ -75,7 +75,7 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   discussion: "community",
   "tech leaders": "community", // Tech leader social posts and updates
 
-  // AI News / Articles
+  // AI News (model releases, breakthroughs, infrastructure)
   "ai news": "ai_news",
   "ai-news": "ai_news",
   "ai articles": "ai_news",
@@ -84,6 +84,14 @@ const FOLDER_TO_CATEGORY: Record<string, Category> = {
   "ai-research": "ai_news",
   llm: "ai_news",
   "machine-learning": "ai_news",
+
+  // AI Dev (AI in developer workflow - tips, coding assistants, productivity)
+  "ai dev": "ai_dev",
+  "ai-dev": "ai_dev",
+  "tldr": "ai_dev",
+  "tldr dev": "ai_dev",
+  "tldr ai": "ai_dev",
+  "tldr devops": "ai_dev",
 
   // Newsletters (fallback)
   newsletter: "newsletters",
@@ -330,10 +338,10 @@ export async function findUnknownFeeds(streamIds: string[]): Promise<string[]> {
 export async function forceRefreshFeedsCache(): Promise<{ total: number; newFeeds: string[] }> {
   const oldFeeds = cachedFeeds ? [...cachedFeeds] : [];
   const oldStreamIds = new Set(oldFeeds.map((f) => f.streamId));
-  
+
   // Clear caches to force a fresh fetch
   clearFeedsCache();
-  
+
   // Also invalidate the database cache
   try {
     const { deleteFeedsCache } = await import('../lib/db/feeds');
@@ -341,15 +349,15 @@ export async function forceRefreshFeedsCache(): Promise<{ total: number; newFeed
   } catch (error) {
     logger.warn('[FEEDS] Could not clear database feeds cache', { error });
   }
-  
+
   // Fetch fresh from Inoreader
   const newFeeds = await getFeeds();
-  
+
   // Find newly discovered feeds
   const newStreamIds = newFeeds
     .filter((f) => !oldStreamIds.has(f.streamId))
     .map((f) => f.streamId);
-  
+
   if (newStreamIds.length > 0) {
     logger.info(`[FEEDS] Discovered ${newStreamIds.length} new feeds after cache refresh`, {
       newFeeds: newStreamIds.map((id) => {
@@ -358,7 +366,7 @@ export async function forceRefreshFeedsCache(): Promise<{ total: number; newFeed
       }),
     });
   }
-  
+
   return { total: newFeeds.length, newFeeds: newStreamIds };
 }
 

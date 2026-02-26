@@ -1,13 +1,13 @@
 /**
  * API endpoint: POST /api/admin/sync-48h
- * 
+ *
  * 48-hour sync that fetches items from the last 48 hours only.
- * 
+ *
  * Features:
  * - Time-filtered to last 48 hours (reduces API calls to ~2-5)
  * - Resumable if interrupted by rate limits
  * - Safe within 100-call daily budget
- * 
+ *
  * Response:
  * {
  *   "success": true,
@@ -17,32 +17,34 @@
  * }
  */
 
-import { NextResponse } from 'next/server';
-import { logger } from '@/src/lib/logger';
-import { initializeDatabase } from '@/src/lib/db/index';
-import { createInoreaderClient } from '@/src/lib/inoreader/client';
-import { normalizeItems } from '@/src/lib/pipeline/normalize';
-import { categorizeItems } from '@/src/lib/pipeline/categorize';
-import { saveItems } from '@/src/lib/db/items';
-import { getSqlite } from '@/src/lib/db/index';
-import { Category } from '@/src/lib/model';
-import { blockInProduction } from '@/src/lib/auth/guards';
+import { NextResponse } from "next/server";
+import { logger } from "@/src/lib/logger";
+import { initializeDatabase } from "@/src/lib/db/index";
+import { createInoreaderClient } from "@/src/lib/inoreader/client";
+import { normalizeItems } from "@/src/lib/pipeline/normalize";
+import { categorizeItems } from "@/src/lib/pipeline/categorize";
+import { saveItems } from "@/src/lib/db/items";
+import { getSqlite } from "@/src/lib/db/index";
+import { Category } from "@/src/lib/model";
+import { blockInProduction } from "@/src/lib/auth/guards";
 
 const VALID_CATEGORIES: Category[] = [
-  'newsletters',
-  'podcasts',
-  'tech_articles',
-  'ai_news',
-  'product_news',
-  'community',
-  'research',
+  "newsletters",
+  "podcasts",
+  "tech_articles",
+  "ai_news",
+  "ai_dev",
+  "product_news",
+  "community",
+  "research",
+  "marketing",
 ];
 
 export async function POST() {
   const blocked = blockInProduction();
   if (blocked) return blocked;
   try {
-    logger.info('[SYNC-48H-API] Received 48-hour sync request');
+    logger.info("[SYNC-48H-API] Received 48-hour sync request");
 
     // Initialize database
     await initializeDatabase();
@@ -53,22 +55,26 @@ export async function POST() {
     const categoriesProcessed = new Set<Category>();
 
     // Get user ID
-    logger.debug('[SYNC-48H] Fetching user ID...');
-    const userInfo = (await client.getUserInfo()) as Record<string, unknown> | undefined;
+    logger.debug("[SYNC-48H] Fetching user ID...");
+    const userInfo = (await client.getUserInfo()) as
+      | Record<string, unknown>
+      | undefined;
     const userId = (userInfo?.userId || userInfo?.id) as string | undefined;
 
     if (!userId) {
-      throw new Error('Could not determine user ID from Inoreader');
+      throw new Error("Could not determine user ID from Inoreader");
     }
 
     callsUsed++;
 
     // Set sync window to last 48 hours
-    const syncSinceTimestamp = Math.floor((Date.now() - 48 * 60 * 60 * 1000) / 1000);
+    const syncSinceTimestamp = Math.floor(
+      (Date.now() - 48 * 60 * 60 * 1000) / 1000,
+    );
     const allItemsStreamId = `user/${userId}/state/com.google/all`;
 
     logger.info(
-      `[SYNC-48H] Fetching items from last 48 hours (${new Date(syncSinceTimestamp * 1000).toISOString()})`
+      `[SYNC-48H] Fetching items from last 48 hours (${new Date(syncSinceTimestamp * 1000).toISOString()})`,
     );
 
     let batchNumber = 0;
@@ -80,7 +86,7 @@ export async function POST() {
       batchNumber++;
 
       logger.debug(
-        `[SYNC-48H] Fetching batch ${batchNumber}${continuation ? ' (continuation)' : ''} (${callsUsed} calls used)`
+        `[SYNC-48H] Fetching batch ${batchNumber}${continuation ? " (continuation)" : ""} (${callsUsed} calls used)`,
       );
 
       // Fetch batch
@@ -93,13 +99,13 @@ export async function POST() {
       callsUsed++;
 
       if (!response.items || response.items.length === 0) {
-        logger.info('[SYNC-48H] No more items to fetch');
+        logger.info("[SYNC-48H] No more items to fetch");
         hasMoreItems = false;
         break;
       }
 
       logger.info(
-        `[SYNC-48H] Batch ${batchNumber}: fetched ${response.items.length} items (${callsUsed} calls used)`
+        `[SYNC-48H] Batch ${batchNumber}: fetched ${response.items.length} items (${callsUsed} calls used)`,
       );
 
       // Normalize and categorize
@@ -113,7 +119,9 @@ export async function POST() {
         return published >= cutoffTime;
       });
 
-      logger.info(`[SYNC-48H] Categorized ${items.length} items for this batch`);
+      logger.info(
+        `[SYNC-48H] Categorized ${items.length} items for this batch`,
+      );
 
       // Save items
       await saveItems(items);
@@ -127,13 +135,13 @@ export async function POST() {
       // Continue if there are more items
       continuation = response.continuation;
       if (!continuation) {
-        logger.info('[SYNC-48H] No continuation token, sync complete');
+        logger.info("[SYNC-48H] No continuation token, sync complete");
         hasMoreItems = false;
       }
     }
 
     logger.info(
-      `[SYNC-48H] Completed: ${totalItemsAdded} items, ${callsUsed} API calls, categories: ${Array.from(categoriesProcessed).join(', ')}`
+      `[SYNC-48H] Completed: ${totalItemsAdded} items, ${callsUsed} API calls, categories: ${Array.from(categoriesProcessed).join(", ")}`,
     );
 
     return NextResponse.json({
@@ -145,13 +153,13 @@ export async function POST() {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error('[SYNC-48H-API] Request failed', error);
+    logger.error("[SYNC-48H-API] Request failed", error);
 
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : 'Sync failed',
+        error: error instanceof Error ? error.message : "Sync failed",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -161,7 +169,7 @@ export async function POST() {
  */
 export async function GET() {
   return NextResponse.json({
-    status: 'ready',
-    message: 'POST to sync last 48 hours of content',
+    status: "ready",
+    message: "POST to sync last 48 hours of content",
   });
 }

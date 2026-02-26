@@ -10,11 +10,42 @@ import { Readability } from "@mozilla/readability";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { extractBibcodeFromUrl } from "../ads/client";
 
+/**
+ * Detect if text looks like HTML (tags present) so we can strip before display/ranking
+ */
+export function looksLikeHtml(text: string): boolean {
+  if (!text || text.length < 10) return false;
+  return /<[a-zA-Z][^>]*>|<\s*\/\s*[a-zA-Z]+>/.test(text);
+}
+
+/**
+ * Strip HTML tags and decode entities. Safe to call on any string.
+ * Use after extraction or when loading stored full_text that may contain HTML.
+ */
+export function stripHtmlFromText(text: string): string {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#\d+;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export interface FullTextResult {
   text: string;
-  source: "web_scrape" | "arxiv" | "ads_api" | "error";
+  source: "web_scrape" | "arxiv" | "ads_api" | "web_archive" | "error";
   length: number;
   fetchedAt: Date;
+  /** When the original URL redirected to a paywall, this holds the Wayback Machine URL */
+  archivedUrl?: string;
 }
 
 /**
@@ -50,6 +81,16 @@ async function fetchWebPage(url: string): Promise<string> {
         throw new Error(`HTTP ${response.status}`);
       }
 
+      // Detect paywall/membership redirects: the server returned 200 but
+      // the final URL (after following 3xx redirects) is a sign-up gate.
+      const finalUrl = response.url;
+      if (finalUrl !== url && isPaywallUrl(finalUrl)) {
+        logger.info(
+          `Paywall redirect detected: ${url.substring(0, 80)} -> ${finalUrl}`
+        );
+        throw new Error(`Redirected to paywall page: ${finalUrl}`);
+      }
+
       const html = await response.text();
 
       // Extract text from HTML (enhanced with Readability, fallback to basic)
@@ -81,8 +122,8 @@ async function fetchWebPage(url: string): Promise<string> {
         );
       }
 
-      // Don't retry known problematic URLs
-      if (isKnownProblematic) {
+      // Don't retry known problematic URLs or paywall redirects
+      if (isKnownProblematic || errorMsg.includes("Redirected to paywall")) {
         break;
       }
 
@@ -133,7 +174,7 @@ async function extractTextFromHTML(html: string, url?: string): Promise<string> 
 
       if (article && article.textContent && article.textContent.length > 200) {
         logger.debug(`Using Readability extraction (${article.textContent.length} chars)`);
-        return article.textContent.trim();
+        return stripHtmlFromText(article.textContent.trim());
       }
     } catch (error) {
       // Suppress CSS parsing errors - they're not critical for text extraction
@@ -165,7 +206,7 @@ async function extractTextFromHTML(html: string, url?: string): Promise<string> 
     .replace(/\s+/g, " ")
     .trim();
 
-  return text;
+  return stripHtmlFromText(text);
 }
 
 /**
@@ -220,6 +261,74 @@ async function fetchFromGitHub(url: string): Promise<string | null> {
     return null; // No README found
   } catch (error) {
     logger.debug("GitHub README fetch failed", { error });
+    return null;
+  }
+}
+
+/**
+ * Fetch article content from the Wayback Machine (Internet Archive)
+ * Used as a fallback when the original URL redirects to a paywall/membership page.
+ * Returns { text, archiveUrl } or null if no snapshot exists.
+ */
+async function fetchFromWebArchive(
+  url: string
+): Promise<{ text: string; archiveUrl: string } | null> {
+  try {
+    // 1. Check availability via the Wayback API
+    const availabilityUrl = `https://archive.org/wayback/available?url=${encodeURIComponent(url)}`;
+    const availResp = await fetch(availabilityUrl, {
+      signal: AbortSignal.timeout(8000),
+      headers: { "User-Agent": "Mozilla/5.0 (Code Intelligence Digest)" },
+    });
+
+    if (!availResp.ok) {
+      logger.debug(`Wayback availability check failed: HTTP ${availResp.status}`);
+      return null;
+    }
+
+    const availData = (await availResp.json()) as {
+      archived_snapshots?: {
+        closest?: { available?: boolean; url?: string; status?: string };
+      };
+    };
+
+    const snapshot = availData.archived_snapshots?.closest;
+    if (!snapshot?.available || !snapshot.url || snapshot.status !== "200") {
+      logger.debug(`No Wayback snapshot for ${url.substring(0, 80)}`);
+      return null;
+    }
+
+    const archiveUrl = snapshot.url;
+
+    // 2. Fetch the archived page
+    const pageResp = await fetch(archiveUrl, {
+      signal: AbortSignal.timeout(12000),
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Code Intelligence Digest)",
+        Accept: "text/html,application/xhtml+xml,*/*",
+      },
+    });
+
+    if (!pageResp.ok) {
+      logger.debug(`Wayback page fetch failed: HTTP ${pageResp.status}`);
+      return null;
+    }
+
+    const html = await pageResp.text();
+    const text = await extractTextFromHTML(html, archiveUrl);
+
+    if (text.length < 200) {
+      logger.debug(`Wayback content too short (${text.length} chars) for ${url.substring(0, 80)}`);
+      return null;
+    }
+
+    logger.info(
+      `Fetched article from Wayback Machine: ${url.substring(0, 80)} -> ${archiveUrl} (${text.length} chars)`
+    );
+    return { text, archiveUrl };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.debug(`Wayback Machine fetch failed for ${url.substring(0, 80)}: ${msg}`);
     return null;
   }
 }
@@ -357,6 +466,32 @@ function isGoogleNewsRedirect(url: string): boolean {
 }
 
 /**
+ * Paywall / gate path segments that indicate a URL is a sign-up wall, not an article.
+ * Shared across static pre-checks and post-redirect detection.
+ */
+const PAYWALL_PATH_PATTERNS = [
+  '/subscribe',
+  '/signup',
+  '/sign-up',
+  '/membership',
+  '/join',
+  '/pricing',
+  '/login',
+  '/sign-in',
+  '/register',
+  '/paywall',
+  '/premium',
+];
+
+/**
+ * Check if a URL points to a paywall / membership gate
+ */
+function isPaywallUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return PAYWALL_PATH_PATTERNS.some(path => lower.includes(path));
+}
+
+/**
  * Check if URL is likely to have extractable content
  */
 function isLikelyExtractable(url: string): boolean {
@@ -415,7 +550,7 @@ function decodeTrackingUrl(url: string): string {
  */
 function extractArticleUrl(url: string): string {
   // First decode any tracking wrapper
-  let decodedUrl = decodeTrackingUrl(url);
+  const decodedUrl = decodeTrackingUrl(url);
 
   // Check if it's a subscribe page with a next/redirect param
   try {
@@ -423,9 +558,7 @@ function extractArticleUrl(url: string): string {
     const urlLower = decodedUrl.toLowerCase();
 
     // Check for subscription paths
-    const isSubscribePage = ['/subscribe', '/signup', '/membership', '/join'].some(
-      path => urlLower.includes(path)
-    );
+    const isSubscribePage = isPaywallUrl(decodedUrl);
 
     if (isSubscribePage) {
       // Try to extract article URL from redirect params
@@ -488,8 +621,7 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   }
 
   // Skip subscription/membership pages that we couldn't extract an article URL from
-  const urlLower = url.toLowerCase();
-  if (['/subscribe', '/signup', '/membership', '/join', '/pricing'].some(path => urlLower.includes(path))) {
+  if (isPaywallUrl(url)) {
     logger.debug(`Skipping full text extraction for subscription page: ${url}`);
     return {
       text: "",
@@ -504,10 +636,11 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
   // Try ADS database first (if available, it's already fetched and stored)
   const adsBody = await getFullTextFromADS(url);
   if (adsBody) {
+    const text = looksLikeHtml(adsBody) ? stripHtmlFromText(adsBody) : adsBody;
     return {
-      text: adsBody,
+      text,
       source: "ads_api", // Full text from ADS API body field
-      length: adsBody.length,
+      length: text.length,
       fetchedAt: new Date(),
     };
   }
@@ -546,7 +679,10 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
 
   // Fall back to web scraping
   try {
-    const text = await fetchWebPage(url);
+    let text = await fetchWebPage(url);
+    if (looksLikeHtml(text)) {
+      text = stripHtmlFromText(text);
+    }
     return {
       text,
       source: "web_scrape",
@@ -555,6 +691,27 @@ export async function fetchFullText(item: FeedItem): Promise<FullTextResult> {
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
+
+    // If the page redirected to a paywall, try the Wayback Machine
+    if (errorMsg.includes("Redirected to paywall")) {
+      logger.info(`Trying Wayback Machine for paywalled article: ${url.substring(0, 80)}`);
+      const archived = await fetchFromWebArchive(url);
+      if (archived) {
+        let text = archived.text;
+        if (looksLikeHtml(text)) {
+          text = stripHtmlFromText(text);
+        }
+        return {
+          text,
+          source: "web_archive",
+          length: text.length,
+          fetchedAt: new Date(),
+          archivedUrl: archived.archiveUrl,
+        };
+      }
+      logger.warn(`No Wayback snapshot available for paywalled article: ${url.substring(0, 80)}`);
+    }
+
     logger.error(`Failed to fetch full text for ${url}`, { error: errorMsg });
 
     return {

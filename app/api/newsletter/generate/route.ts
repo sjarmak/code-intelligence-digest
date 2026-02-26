@@ -4,16 +4,77 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/src/auth";
 import { v4 as uuid } from "uuid";
-import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
+import { LEGACY_USER_ID } from "@/src/lib/db/constants";
+import { saveGeneratedNewsletter } from "@/src/lib/db/generated-newsletters";
+import {
+  loadItemsByCategory,
+  loadItemsByCategoryWithDateRange,
+} from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
-import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
-import { rerankWithPrompt, filterByExclusions } from "@/src/lib/pipeline/promptRerank";
+import {
+  buildPromptProfile,
+  PromptProfile,
+} from "@/src/lib/pipeline/promptProfile";
+import {
+  rerankWithPrompt,
+  filterByExclusions,
+} from "@/src/lib/pipeline/promptRerank";
 import { generateNewsletterFromDigests } from "@/src/lib/pipeline/newsletter";
 import { extractBatchDigests } from "@/src/lib/pipeline/extract";
+import { tryResolveToArticleUrl } from "@/src/lib/url-curation";
 import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import type { LLMClientOptions } from "@/src/lib/llm/client";
+import { createChatCompletion } from "@/src/lib/llm/completion";
+import {
+  getDateRangeForPeriodDays,
+  formatDateRangeLabel,
+  formatDateLong,
+} from "@/src/lib/dateRange";
+
+const NEWSLETTER_TITLE_MAX_LENGTH = 80;
+
+/**
+ * Generate a short, content-based title from the newsletter summary and themes.
+ * Falls back to null on failure so caller can use formulaic title.
+ */
+async function generateContentBasedTitle(
+  summary: string,
+  themes: string[],
+  opts?: LLMClientOptions
+): Promise<string | null> {
+  const summarySnippet = summary.slice(0, 600).trim();
+  const themesList = themes.slice(0, 8).join(", ") || "code intelligence, developer tools";
+  try {
+    const result = await createChatCompletion({
+      messages: [
+        {
+          role: "user",
+          content: `Given this newsletter executive summary and themes, suggest a single line title (max ${NEWSLETTER_TITLE_MAX_LENGTH} characters) that would help someone recognize the content at a glance. Be specific and descriptive. Reply with only the title, no quotes or explanation.
+
+Themes: ${themesList}
+
+Summary:
+${summarySnippet}`,
+        },
+      ],
+      max_tokens: 120,
+      openaiOptions: opts,
+    });
+    const raw =
+      result.content?.trim().replace(/^["']|["']$/g, "").split("\n")[0]?.trim() ?? "";
+    if (!raw) return null;
+    const title = raw.slice(0, NEWSLETTER_TITLE_MAX_LENGTH).trim();
+    return title.length > 0 ? title : null;
+  } catch (e) {
+    logger.warn("Content-based title generation failed, using formulaic title", { error: e });
+    return null;
+  }
+}
 
 // Helper function to deduplicate by URL (same logic as in select.ts)
 function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
@@ -45,6 +106,8 @@ interface NewsletterRequest {
   limit?: number;
   selectedItemIds?: string[];
   prompt?: string;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   customDateRange?: {
     startDate: string;
     endDate: string;
@@ -78,12 +141,18 @@ const ALLOWED_CATEGORIES: Category[] = [
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
-function validateRequest(body: unknown): { valid: boolean; error?: string; data?: NewsletterRequest } {
+function validateRequest(body: unknown): {
+  valid: boolean;
+  error?: string;
+  data?: NewsletterRequest;
+} {
   if (typeof body !== "object" || body === null) {
     return { valid: false, error: "Request body must be JSON object" };
   }
@@ -93,21 +162,31 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   // Validate sourceMode
   const sourceMode = req.sourceMode as string;
   if (!sourceMode || !["auto", "manual", "categories"].includes(sourceMode)) {
-    return { valid: false, error: 'sourceMode must be "auto", "manual", or "categories"' };
+    return {
+      valid: false,
+      error: 'sourceMode must be "auto", "manual", or "categories"',
+    };
   }
 
-  // Normalize prompt
+  // Normalize prompt and optional BYOK
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
+  const openaiApiKey = typeof req.openaiApiKey === "string" ? req.openaiApiKey.trim() : undefined;
+  const openaiBaseUrl = typeof req.openaiBaseUrl === "string" ? req.openaiBaseUrl.trim() : undefined;
 
   const data: NewsletterRequest = {
     sourceMode: sourceMode as "auto" | "manual" | "categories",
     prompt: prompt || undefined,
+    openaiApiKey: openaiApiKey || undefined,
+    openaiBaseUrl: openaiBaseUrl || undefined,
   };
 
   if (sourceMode === "categories") {
     // Categories mode: validate categories, period, limit (required)
     if (!Array.isArray(req.categories) || req.categories.length === 0) {
-      return { valid: false, error: "categories must be non-empty array in categories mode" };
+      return {
+        valid: false,
+        error: "categories must be non-empty array in categories mode",
+      };
     }
 
     const categories = req.categories as string[];
@@ -119,19 +198,32 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
     const period = req.period as string;
     if (!["week", "month", "all", "custom"].includes(period)) {
-      return { valid: false, error: 'period must be "week", "month", "all", or "custom" in categories mode' };
+      return {
+        valid: false,
+        error:
+          'period must be "week", "month", "all", or "custom" in categories mode',
+      };
     }
 
     // Validate custom date range if period is custom
     if (period === "custom") {
-      const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+      const customRange = req.customDateRange as
+        | { startDate?: string; endDate?: string }
+        | undefined;
       if (!customRange || !customRange.startDate || !customRange.endDate) {
-        return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
+        return {
+          valid: false,
+          error:
+            'customDateRange with startDate and endDate is required when period is "custom"',
+        };
       }
       const startDate = new Date(customRange.startDate);
       const endDate = new Date(customRange.endDate);
       if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-        return { valid: false, error: "Invalid date format in customDateRange" };
+        return {
+          valid: false,
+          error: "Invalid date format in customDateRange",
+        };
       }
       if (startDate > endDate) {
         return { valid: false, error: "startDate must be before endDate" };
@@ -152,8 +244,11 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
     if (period === "custom" && req.customDateRange) {
       data.customDateRange = {
-        startDate: (req.customDateRange as { startDate: string; endDate: string }).startDate,
-        endDate: (req.customDateRange as { startDate: string; endDate: string }).endDate,
+        startDate: (
+          req.customDateRange as { startDate: string; endDate: string }
+        ).startDate,
+        endDate: (req.customDateRange as { startDate: string; endDate: string })
+          .endDate,
       };
     }
   } else if (sourceMode === "auto") {
@@ -161,7 +256,10 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     // Only validate if provided
     if (req.categories !== undefined) {
       if (!Array.isArray(req.categories) || req.categories.length === 0) {
-        return { valid: false, error: "categories must be non-empty array if provided" };
+        return {
+          valid: false,
+          error: "categories must be non-empty array if provided",
+        };
       }
       const categories = req.categories as string[];
       for (const cat of categories) {
@@ -175,20 +273,33 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     if (req.period !== undefined) {
       const period = req.period as string;
       if (!["week", "month", "all", "custom"].includes(period)) {
-        return { valid: false, error: 'period must be "week", "month", "all", or "custom" if provided' };
+        return {
+          valid: false,
+          error:
+            'period must be "week", "month", "all", or "custom" if provided',
+        };
       }
       data.period = period as "week" | "month" | "all" | "custom";
 
       // Validate custom date range if period is custom
       if (period === "custom") {
-        const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+        const customRange = req.customDateRange as
+          | { startDate?: string; endDate?: string }
+          | undefined;
         if (!customRange || !customRange.startDate || !customRange.endDate) {
-          return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
+          return {
+            valid: false,
+            error:
+              'customDateRange with startDate and endDate is required when period is "custom"',
+          };
         }
         const startDate = new Date(customRange.startDate);
         const endDate = new Date(customRange.endDate);
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-          return { valid: false, error: "Invalid date format in customDateRange" };
+          return {
+            valid: false,
+            error: "Invalid date format in customDateRange",
+          };
         }
         if (startDate > endDate) {
           return { valid: false, error: "startDate must be before endDate" };
@@ -212,8 +323,14 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     }
   } else {
     // Manual mode: validate selectedItemIds
-    if (!Array.isArray(req.selectedItemIds) || req.selectedItemIds.length === 0) {
-      return { valid: false, error: "selectedItemIds must be non-empty array in manual mode" };
+    if (
+      !Array.isArray(req.selectedItemIds) ||
+      req.selectedItemIds.length === 0
+    ) {
+      return {
+        valid: false,
+        error: "selectedItemIds must be non-empty array in manual mode",
+      };
     }
 
     const selectedItemIds = req.selectedItemIds as string[];
@@ -232,15 +349,23 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   };
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse<NewsletterResponse | { error: string }>> {
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<NewsletterResponse | { error: string }>> {
   const startTime = Date.now();
 
   try {
     // Check rate limits
-    const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
-    const rateLimitResponse = await enforceRateLimit(request, '/api/newsletter/generate');
+    const { enforceRateLimit, recordUsage, checkRequestSize } =
+      await import("@/src/lib/rate-limit");
+    const rateLimitResponse = await enforceRateLimit(
+      request,
+      "/api/newsletter/generate",
+    );
     if (rateLimitResponse) {
-      return rateLimitResponse as NextResponse<NewsletterResponse | { error: string }>;
+      return rateLimitResponse as NextResponse<
+        NewsletterResponse | { error: string }
+      >;
     }
 
     const body = await request.json();
@@ -253,15 +378,47 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     const req = validation.data!;
 
     // Check request size limits
-    const itemCount = req.sourceMode === "auto"
-      ? (req.categories?.length || 0) * 50
-      : (req.selectedItemIds?.length || 0);
-    const sizeCheck = checkRequestSize('/api/newsletter/generate', itemCount);
+    const itemCount =
+      req.sourceMode === "auto"
+        ? (req.categories?.length || 0) * 50
+        : req.selectedItemIds?.length || 0;
+    const sizeCheck = checkRequestSize("/api/newsletter/generate", itemCount);
     if (!sizeCheck.allowed) {
-      return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
+      return NextResponse.json(
+        { error: sizeCheck.error || "Request size too large" },
+        { status: 400 },
+      );
     }
 
-    logger.info(`Newsletter request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library` : `selectedItemIds=${req.selectedItemIds?.length} items`}, prompt="${(req.prompt || "").substring(0, 50)}..."`);
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
+
+    // Resolve LLM options (BYOK from body; session for Sourcegraph.com exception)
+    const llmOptions = resolveLLMOptions(
+      { openaiApiKey: req.openaiApiKey, openaiBaseUrl: req.openaiBaseUrl },
+      undefined,
+      sessionUser,
+    );
+    const llmClient = getOpenAICompatibleClient(llmOptions);
+    if (!llmClient) {
+      return NextResponse.json(
+        {
+          error:
+            "LLM is required for newsletter generation. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.",
+        },
+        { status: 400 },
+      );
+    }
+
+    logger.info(
+      `Newsletter request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library` : `selectedItemIds=${req.selectedItemIds?.length} items`}, prompt="${(req.prompt || "").substring(0, 50)}..."`,
+    );
 
     // Step 1: Retrieve candidates
     let allItems: FeedItem[] = [];
@@ -270,8 +427,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       // Auto mode: load from digest_items
       // In source mode, do NOT filter by category/period - use all items from digest library
       const { getDigestItems } = await import("@/src/lib/db/digestItems");
-      allItems = await getDigestItems();
-      logger.info(`Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`);
+      allItems = await getDigestItems(undefined, undefined, userId);
+      logger.info(
+        `Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`,
+      );
     } else {
       // Manual mode: load selected items from saved_items
       const { loadItem } = await import("@/src/lib/db/items");
@@ -290,15 +449,24 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     if (req.sourceMode === "auto") {
       // Auto mode: rank all items without category/period filtering
       // Use all categories found in the digest library
-      const categories = [...new Set(allItems.map(item => item.category))];
-      const rankedPerCategory: Array<{ category: string; items: RankedItem[] }> = [];
+      const categories = [...new Set(allItems.map((item) => item.category))];
+      const rankedPerCategory: Array<{
+        category: string;
+        items: RankedItem[];
+      }> = [];
       // Use a default periodDays for ranking purposes (doesn't affect filtering)
       const periodDays = 60; // Default to all-time for ranking
 
       for (const category of categories) {
         logger.info(`Processing category: ${category}`);
-        const categoryItems = allItems.filter((item) => item.category === category);
-        const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+        const categoryItems = allItems.filter(
+          (item) => item.category === category,
+        );
+        const ranked = await rankCategory(
+          categoryItems,
+          category as Category,
+          periodDays,
+        );
         rankedPerCategory.push({ category, items: ranked });
 
         // Allow GC between categories
@@ -307,7 +475,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
         }
       }
 
-      logger.info(`Completed processing ${rankedPerCategory.length} categories`);
+      logger.info(
+        `Completed processing ${rankedPerCategory.length} categories`,
+      );
 
       // Merge ALL ranked items from all categories
       for (const { items } of rankedPerCategory) {
@@ -325,7 +495,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     } else if (req.sourceMode === "categories") {
       // Categories mode: load items by category and period from database
       if (!req.categories || !req.period) {
-        return NextResponse.json({ error: "categories and period are required in categories mode" }, { status: 400 });
+        return NextResponse.json(
+          { error: "categories and period are required in categories mode" },
+          { status: 400 },
+        );
       }
 
       let periodDays: number;
@@ -335,9 +508,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       if (req.period === "custom" && req.customDateRange) {
         startDate = new Date(req.customDateRange.startDate);
         endDate = new Date(req.customDateRange.endDate);
-        periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+        periodDays = Math.ceil(
+          (endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000),
+        );
       } else {
-        periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 60;
+        periodDays =
+          req.period === "week" ? 7 : req.period === "month" ? 30 : 60;
       }
 
       // Load items by category and period
@@ -347,22 +523,36 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
           categoryItems = await loadItemsByCategoryWithDateRange(
             category as Category,
             startDate,
-            endDate
+            endDate,
           );
         } else {
-          categoryItems = await loadItemsByCategory(category as Category, periodDays);
+          categoryItems = await loadItemsByCategory(
+            category as Category,
+            periodDays,
+          );
         }
         allItems.push(...categoryItems);
       }
 
-      logger.info(`Loaded ${allItems.length} items from categories mode (${req.categories.join(",")}, ${req.period})`);
+      logger.info(
+        `Loaded ${allItems.length} items from categories mode (${req.categories.join(",")}, ${req.period})`,
+      );
 
       // Rank by category
-      const rankedPerCategory: Array<{ category: string; items: RankedItem[] }> = [];
+      const rankedPerCategory: Array<{
+        category: string;
+        items: RankedItem[];
+      }> = [];
       for (const category of req.categories) {
         logger.info(`Processing category: ${category}`);
-        const categoryItems = allItems.filter((item) => item.category === category);
-        const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+        const categoryItems = allItems.filter(
+          (item) => item.category === category,
+        );
+        const ranked = await rankCategory(
+          categoryItems,
+          category as Category,
+          periodDays,
+        );
         rankedPerCategory.push({ category, items: ranked });
 
         // Allow GC between categories
@@ -371,7 +561,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
         }
       }
 
-      logger.info(`Completed processing ${rankedPerCategory.length} categories`);
+      logger.info(
+        `Completed processing ${rankedPerCategory.length} categories`,
+      );
 
       // Merge ALL ranked items from all categories
       for (const { items } of rankedPerCategory) {
@@ -405,14 +597,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
     const maxContentLength = 50000; // 50KB threshold
     const beforeSizeFilter = mergedItems.length;
     mergedItems = mergedItems.filter((item) => {
-      const contentLength = (item.fullText || item.summary || item.contentSnippet || "").length;
+      const contentLength = (
+        item.fullText ||
+        item.summary ||
+        item.contentSnippet ||
+        ""
+      ).length;
       if (contentLength > maxContentLength) {
-        logger.info(`Filtering out oversized article: "${item.title}" (${contentLength} chars)`);
+        logger.info(
+          `Filtering out oversized article: "${item.title}" (${contentLength} chars)`,
+        );
         return false;
       }
       return true;
     });
-    logger.info(`Size filter: ${beforeSizeFilter} → ${mergedItems.length} items (removed ${beforeSizeFilter - mergedItems.length} oversized)`);
+    logger.info(
+      `Size filter: ${beforeSizeFilter} → ${mergedItems.length} items (removed ${beforeSizeFilter - mergedItems.length} oversized)`,
+    );
 
     // Step 4: Parse prompt and re-rank if needed
     let profile: PromptProfile | null = null;
@@ -426,87 +627,174 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
         // Apply exclusions
         mergedItems = filterByExclusions(mergedItems, profile);
         rerankApplied = true;
-        logger.info(`Re-ranked with prompt profile: ${JSON.stringify(profile)}`);
+        logger.info(
+          `Re-ranked with prompt profile: ${JSON.stringify(profile)}`,
+        );
       }
     }
 
     // Step 5: Select items based on relevance
-    // When no prompt is provided, use highest relevance items (sorted by finalScore)
-    // When prompt is provided, apply diversity constraints
+    // For auto (digest library) and manual modes: use ALL items—no URL dedup, no diversity cap.
+    // For categories mode: apply limit and diversity so we don't over-fetch.
     let selectedItems: RankedItem[];
-    // For auto (digest library) and manual modes, use ALL items. For categories mode, use the requested limit.
-    const limit = req.sourceMode === "manual" || req.sourceMode === "auto" ? mergedItems.length : (req.limit || 20);
-    const decompositionFactor = 1.3; // Typical expansion from newsletter decomposition
-    const adjustedLimit = Math.ceil(limit / decompositionFactor);
+    const limit =
+      req.sourceMode === "manual" || req.sourceMode === "auto"
+        ? mergedItems.length
+        : req.limit || 20;
+    const decompositionFactor = 1.3;
+    const adjustedLimit =
+      req.sourceMode === "manual" || req.sourceMode === "auto"
+        ? limit
+        : Math.ceil(limit / decompositionFactor);
 
-    if (!req.prompt || req.prompt.length === 0) {
-      // No prompt: Sort by finalScore (highest first) and take top N
-      // Still deduplicate by URL to avoid duplicates
-      // Note: After extraction & decomposition, item count may increase.
-      // Reduce pre-selection to account for newsletter decomposition (~1.3x expansion typical).
+    if (req.sourceMode === "auto" || req.sourceMode === "manual") {
+      // Digest library / manual: use every item the user selected. Sort by score for consistent order.
+      const sorted = [...mergedItems].sort((a, b) => b.finalScore - a.finalScore);
+      selectedItems = sorted.slice(0, limit);
+      logger.info(
+        `Selected all ${selectedItems.length} items (${req.sourceMode} mode, no diversity cap)`,
+      );
+    } else if (!req.prompt || req.prompt.length === 0) {
+      // Categories, no prompt: sort by score, dedupe by URL, take top N
       const deduplicatedItems = deduplicateByUrl(mergedItems);
       deduplicatedItems.sort((a, b) => b.finalScore - a.finalScore);
       selectedItems = deduplicatedItems.slice(0, adjustedLimit);
-      logger.info(`Selected ${selectedItems.length} highest relevance items (no prompt, sorted by finalScore, adjusted limit: ${adjustedLimit})`);
+      logger.info(
+        `Selected ${selectedItems.length} items (categories, no prompt, limit: ${adjustedLimit})`,
+      );
     } else {
-      // With prompt: Apply diversity constraints
+      // Categories with prompt: apply diversity
       const maxPerSource = req.period === "week" ? 2 : 3;
       const category = req.categories?.[0] || "tech_articles";
-      const selection = selectWithDiversity(mergedItems, category as Category, maxPerSource, adjustedLimit);
+      const selection = selectWithDiversity(
+        mergedItems,
+        category as Category,
+        maxPerSource,
+        adjustedLimit,
+      );
       selectedItems = selection.items;
-      logger.info(`Selected ${selectedItems.length} items (with prompt, diversity constraints applied, adjusted limit: ${adjustedLimit})`);
+      logger.info(
+        `Selected ${selectedItems.length} items (categories, with prompt, limit: ${adjustedLimit})`,
+      );
     }
 
-    logger.info(`Selected ${selectedItems.length} items (adjusted limit: ${adjustedLimit}, requested: ${limit})`);
+    logger.info(
+      `Selected ${selectedItems.length} items (requested limit: ${limit})`,
+    );
 
     // Log newsletter items being selected
-    const selectedNewsletters = selectedItems.filter(item => item.sourceTitle.includes("TLDR") || item.sourceTitle.includes("Byte Byte Go") || item.sourceTitle.includes("Elevate") || item.sourceTitle.includes("Pointer"));
+    const selectedNewsletters = selectedItems.filter(
+      (item) =>
+        item.sourceTitle.includes("TLDR") ||
+        item.sourceTitle.includes("Byte Byte Go") ||
+        item.sourceTitle.includes("Elevate") ||
+        item.sourceTitle.includes("Pointer"),
+    );
     if (selectedNewsletters.length > 0) {
-      logger.info(`Selected ${selectedNewsletters.length} newsletter items: ${selectedNewsletters.slice(0, 3).map(i => i.title).join(", ")}`);
+      logger.info(
+        `Selected ${selectedNewsletters.length} newsletter items: ${selectedNewsletters
+          .slice(0, 3)
+          .map((i) => i.title)
+          .join(", ")}`,
+      );
     }
 
     // Step 6: Extract item digests (Pass 1)
-    const digests = await extractBatchDigests(selectedItems, req.prompt || "");
-    logger.info(`Extracted ${digests.length} item digests from ${selectedItems.length} selected items`);
+    const digests = await extractBatchDigests(selectedItems, req.prompt || "", llmOptions);
+    logger.info(
+      `Extracted ${digests.length} item digests from ${selectedItems.length} selected items`,
+    );
 
-    // Filter out digests without valid URLs before synthesis
-    const validDigests = digests.filter(digest => {
-      const hasValidUrl = digest.url &&
-                         (digest.url.startsWith("http://") || digest.url.startsWith("https://")) &&
-                         !digest.url.includes("inoreader.com");
-      if (!hasValidUrl) {
-        logger.warn(`Excluding digest without valid URL: "${digest.title}" (url: "${digest.url}" source: "${digest.sourceTitle}")`);
+    // Filter out digests without valid URLs and resolve subscription/plan URLs to article URLs.
+    // Exclude digests that point to subscription/plan pages we cannot resolve to an article.
+    const excludeInoreader = req.sourceMode === "categories";
+    const validDigests: typeof digests = [];
+    for (const digest of digests) {
+      const hasHttpUrl =
+        digest.url &&
+        (digest.url.startsWith("http://") || digest.url.startsWith("https://"));
+      if (!hasHttpUrl || (excludeInoreader && digest.url.includes("inoreader.com"))) {
+        logger.warn(
+          `Excluding digest without valid URL: "${digest.title}" (url: "${digest.url}" source: "${digest.sourceTitle}")`,
+        );
+        continue;
       }
-      return hasValidUrl;
-    });
-    logger.info(`URL filter: ${digests.length} → ${validDigests.length} digests (removed ${digests.length - validDigests.length} without valid URLs)`);
+      const articleUrl = tryResolveToArticleUrl(digest.url);
+      if (!articleUrl) {
+        logger.warn(
+          `Excluding digest pointing to subscription/plan page (no article URL): "${digest.title}" (url: "${digest.url}" source: "${digest.sourceTitle}")`,
+        );
+        continue;
+      }
+      validDigests.push(articleUrl !== digest.url ? { ...digest, url: articleUrl } : digest);
+    }
+    logger.info(
+      `URL filter: ${digests.length} → ${validDigests.length} digests (removed ${digests.length - validDigests.length} without valid URLs or unresolved subscription pages)`,
+    );
 
     // Critical: Track count discrepancy
     if (validDigests.length !== selectedItems.length) {
-      logger.warn(`Item count mismatch: selected ${selectedItems.length}, extracted ${digests.length}, valid ${validDigests.length}`);
+      logger.warn(
+        `Item count mismatch: selected ${selectedItems.length}, extracted ${digests.length}, valid ${validDigests.length}`,
+      );
     }
 
     // Step 7: Synthesize newsletter from digests (Pass 2)
-    const { summary, themes, markdown, html } = await generateNewsletterFromDigests(
-      validDigests,
-      req.period || "all",
-      req.categories as Category[] || [],
-      profile,
-      req.prompt
-    );
+    const { summary, themes, markdown, html } =
+      await generateNewsletterFromDigests(
+        validDigests,
+        req.period || "all",
+        (req.categories as Category[]) || [],
+        profile,
+        req.prompt,
+        llmOptions,
+      );
 
     // Build response
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     const id = `nl-${uuid()}`;
 
     // Record successful usage
-    await recordUsage(request, '/api/newsletter/generate');
+    await recordUsage(request, "/api/newsletter/generate");
+
+    const fallbackTitle = ((): string => {
+      if (req.sourceMode === "manual") {
+        return "Code Intelligence Digest – Curated Selection";
+      }
+      if (req.sourceMode === "auto") {
+        return `Code Intelligence Digest – Digest Library · ${formatDateLong(new Date())}`;
+      }
+      const period = req.period || "all";
+      if (period === "custom" && req.customDateRange) {
+        const range = {
+          start: req.customDateRange.startDate,
+          end: req.customDateRange.endDate,
+        };
+        return `Code Intelligence Digest – ${formatDateRangeLabel(range, "custom")}`;
+      }
+      if (period === "week" || period === "month") {
+        const days = period === "week" ? 7 : 30;
+        const range = getDateRangeForPeriodDays(days);
+        const label = formatDateRangeLabel(range, period);
+        const periodWord = period === "week" ? "Week" : "Month";
+        return `Code Intelligence Digest – ${periodWord} of ${label}`;
+      }
+      return `Code Intelligence Digest – All Time · ${formatDateLong(new Date())}`;
+    })();
+
+    const contentTitle = await generateContentBasedTitle(summary, themes, llmOptions);
+    const newsletterTitle = contentTitle && contentTitle.length > 0 ? contentTitle : fallbackTitle;
+
+    // Save to per-user history for "my past newsletters"
+    try {
+      await saveGeneratedNewsletter(id, userId, newsletterTitle, markdown, html);
+    } catch (saveErr) {
+      logger.warn("Failed to save newsletter to user history", { id, error: saveErr });
+    }
 
     const response: NewsletterResponse = {
       id,
-      title: req.sourceMode === "manual"
-        ? `Code Intelligence Digest – Curated Selection`
-        : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : "All Time"} of ${new Date().toLocaleDateString()}`,
+      title: newsletterTitle,
       generatedAt: new Date().toISOString(),
       categories: req.categories || [],
       period: req.period || "all",
@@ -518,7 +806,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<Newslette
       themes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-4o-mini (extraction + synthesis)",
+        modelUsed: "quality model (extraction + synthesis)",
         tokensUsed: Math.ceil(selectedItems.length * 300 + 3000), // Extraction + synthesis estimate
         duration: `${duration}s`,
         promptProfile: profile,

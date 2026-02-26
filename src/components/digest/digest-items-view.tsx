@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSession } from 'next-auth/react';
 import ItemCard from '@/src/components/feeds/item-card';
 import { FileHeart, RefreshCw, CheckSquare, Square, Trash2, X } from 'lucide-react';
 
@@ -41,6 +42,8 @@ interface DigestItem extends DigestApiItem {
 }
 
 export function DigestItemsView() {
+  const { status, data: session } = useSession();
+  const lastUserId = useRef<string | null>(null);
   const [items, setItems] = useState<DigestItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,10 +101,15 @@ export function DigestItemsView() {
     }
   }, []);
 
-  // Initial load
+  // Fetch on load and refetch when session/user changes (e.g. after login or account switch) so we show the correct user's items
   useEffect(() => {
+    if (status === 'loading') return;
+    const userId = session?.user?.id ?? null;
+    if (userId !== lastUserId.current) {
+      lastUserId.current = userId;
+    }
     fetchItems();
-  }, [fetchItems]);
+  }, [status, session?.user?.id, fetchItems]);
 
   // Listen for custom events when items are added/removed
   useEffect(() => {

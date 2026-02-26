@@ -8,6 +8,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
+import { auth } from "@/src/auth";
+import { LEGACY_USER_ID } from "@/src/lib/db/constants";
+import { addUserPodcastAudio } from "@/src/lib/db/user-podcast-audio";
 import {
   RenderAudioEndpointResponse,
   AudioProvider,
@@ -59,6 +62,8 @@ interface ValidatedRequest {
   multiVoice: boolean;
   hostVoice?: string;
   cohostVoice?: string;
+  /** Optional episode title for saved podcast list (content-based, max 200 chars) */
+  title?: string;
 }
 
 function validateRequest(body: unknown): { valid: boolean; error?: string; data?: ValidatedRequest } {
@@ -124,6 +129,11 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   const hostVoice = req.hostVoice as string | undefined;
   const cohostVoice = req.cohostVoice as string | undefined;
 
+  const title =
+    typeof req.title === "string" && req.title.trim().length > 0
+      ? req.title.trim().slice(0, 200)
+      : undefined;
+
   return {
     valid: true,
     data: {
@@ -135,6 +145,7 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
       multiVoice,
       hostVoice,
       cohostVoice,
+      title,
     },
   };
 }
@@ -147,6 +158,9 @@ export async function POST(
   try {
     // Initialize database to ensure tables exist
     await initializeDatabase();
+
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
 
     // Check rate limits
     const { enforceRateLimit, recordUsage, checkRequestSize } = await import('@/src/lib/rate-limit');
@@ -226,6 +240,12 @@ export async function POST(
         id: cached.id,
         audioUrl: cached.audioUrl,
       });
+
+      try {
+        await addUserPodcastAudio(userId, cached.id);
+      } catch {
+        // Non-fatal: user list add failed
+      }
 
       const response: RenderAudioEndpointResponse = {
         id: cached.id,
@@ -399,7 +419,13 @@ export async function POST(
         durationSeconds,
         audioUrl,
         bytes: fileBytes,
+        title: req.title,
       });
+      try {
+        await addUserPodcastAudio(userId, audioId);
+      } catch {
+        // Non-fatal
+      }
     } catch (error) {
       // Handle duplicate key error (race condition - another request already saved this)
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -415,6 +441,11 @@ export async function POST(
             id: existing.id,
             audioUrl: existing.audioUrl,
           });
+          try {
+            await addUserPodcastAudio(userId, existing.id);
+          } catch {
+            // Non-fatal
+          }
 
           // Return the existing record instead
           const response: RenderAudioEndpointResponse = {

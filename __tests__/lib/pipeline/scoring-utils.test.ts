@@ -394,6 +394,7 @@ describe("computeBoostMultiplier", () => {
         "newsletters",
         "podcasts",
         "ai_news",
+        "ai_dev",
         "product_news",
         "community",
         "research",

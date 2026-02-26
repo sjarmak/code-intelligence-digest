@@ -54,6 +54,8 @@ interface AskResponse {
   sourcesUsed: number;
   papersUsed?: number;
   itemsUsed?: number;
+  newslettersUsed?: number;
+  podcastsUsed?: number;
   papersContext?: string;
   itemsContext?: string;
   citedPapers?: Array<{
@@ -94,6 +96,16 @@ interface SelectedItem {
   title?: string;
 }
 
+interface SelectedNewsletter {
+  id: string;
+  title: string;
+}
+
+interface SelectedPodcast {
+  id: string;
+  title: string;
+}
+
 interface PapersQAProps {
   onPaperSelect?: (paper: SelectedPaper) => void;
   onLibrarySelect?: (library: Library) => void;
@@ -110,6 +122,8 @@ export const PapersQA = forwardRef<
   {
     addPaper: (paper: SelectedPaper) => void;
     addItem: (item: SelectedItem) => void;
+    addNewsletter: (newsletter: SelectedNewsletter) => void;
+    addPodcast: (podcast: SelectedPodcast) => void;
     setSelectedLibrary: (library: Library) => void;
   },
   PapersQAProps
@@ -121,6 +135,8 @@ export const PapersQA = forwardRef<
     const [error, setError] = useState<string | null>(null);
     const [selectedPapers, setSelectedPapers] = useState<SelectedPaper[]>([]);
     const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
+    const [selectedNewsletters, setSelectedNewsletters] = useState<SelectedNewsletter[]>([]);
+    const [selectedPodcasts, setSelectedPodcasts] = useState<SelectedPodcast[]>([]);
     const [selectedLibraries, setSelectedLibraries] = useState<Library[]>([]);
 
     // Exposed method for adding papers from external components
@@ -151,6 +167,26 @@ export const PapersQA = forwardRef<
       []
     );
 
+    const addNewsletter = useCallback(
+      (newsletter: SelectedNewsletter) => {
+        setSelectedNewsletters((prev) => {
+          if (!prev.some(n => n.id === newsletter.id)) return [...prev, newsletter];
+          return prev;
+        });
+      },
+      []
+    );
+
+    const addPodcast = useCallback(
+      (podcast: SelectedPodcast) => {
+        setSelectedPodcasts((prev) => {
+          if (!prev.some(p => p.id === podcast.id)) return [...prev, podcast];
+          return prev;
+        });
+      },
+      []
+    );
+
     const addLibrary = useCallback(
       (library: Library) => {
         setSelectedLibraries((prev) => {
@@ -164,7 +200,11 @@ export const PapersQA = forwardRef<
       []
     );
 
-    useImperativeHandle(ref, () => ({ addPaper, addItem, setSelectedLibrary: addLibrary }), [addPaper, addItem, addLibrary]);
+    useImperativeHandle(
+      ref,
+      () => ({ addPaper, addItem, addNewsletter, addPodcast, setSelectedLibrary: addLibrary }),
+      [addPaper, addItem, addNewsletter, addPodcast, addLibrary]
+    );
 
   const handleAsk = async () => {
     if (!question.trim()) return;
@@ -186,13 +226,26 @@ export const PapersQA = forwardRef<
         payload.selectedItemIds = selectedItems.map(i => i.id);
       }
 
+      if (selectedNewsletters.length > 0) {
+        payload.selectedNewsletterIds = selectedNewsletters.map(n => n.id);
+      }
+
+      if (selectedPodcasts.length > 0) {
+        payload.selectedPodcastIds = selectedPodcasts.map(p => p.id);
+      }
+
       // Add libraries if selected (can be research or resource libraries)
       if (selectedLibraries.length > 0) {
         const researchLibraryIds: string[] = [];
         const resourceLibraryIds: string[] = [];
 
         selectedLibraries.forEach(lib => {
-          if (lib.id === 'saved-items' || lib.id === 'digest-items') {
+          if (
+            lib.id === 'saved-items' ||
+            lib.id === 'digest-items' ||
+            lib.id === 'newsletter-library' ||
+            lib.id === 'podcast-library'
+          ) {
             resourceLibraryIds.push(lib.id);
           } else {
             researchLibraryIds.push(lib.id);
@@ -250,9 +303,11 @@ export const PapersQA = forwardRef<
                 <div>
                   <p className="text-sm font-medium text-gray-600">{library.name}</p>
                   <p className="text-xs text-gray-700">
-                    {library.numPapers !== undefined && `${library.numPapers} papers`}
-                    {library.numItems !== undefined && `${library.numItems} items`}
-                    {library.numPapers === undefined && library.numItems === undefined && '0 items'}
+                    {library.id === 'newsletter-library' && `${library.numItems ?? 0} newsletters`}
+                    {library.id === 'podcast-library' && `${library.numItems ?? 0} podcasts`}
+                    {library.id !== 'newsletter-library' && library.id !== 'podcast-library' && library.numPapers !== undefined && `${library.numPapers} papers`}
+                    {library.id !== 'newsletter-library' && library.id !== 'podcast-library' && library.numItems !== undefined && library.numPapers === undefined && `${library.numItems} items`}
+                    {library.id !== 'newsletter-library' && library.id !== 'podcast-library' && library.numPapers === undefined && library.numItems === undefined && '0 items'}
                   </p>
                 </div>
                 <button
@@ -334,6 +389,66 @@ export const PapersQA = forwardRef<
         </div>
       )}
 
+      {/* Selected Newsletters */}
+      {selectedNewsletters.length > 0 && selectedLibraries.length === 0 && (
+        <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-700">Selected Newsletters ({selectedNewsletters.length})</p>
+          <div className="flex flex-wrap gap-2">
+            {selectedNewsletters.map((n) => (
+              <div
+                key={n.id}
+                className="flex items-center gap-2 bg-gray-50 border border-gray-400/50 rounded px-2 py-1 text-xs text-gray-600"
+              >
+                <span className="truncate max-w-[200px]">{n.title}</span>
+                <button
+                  onClick={() => setSelectedNewsletters(selectedNewsletters.filter(x => x.id !== n.id))}
+                  className="hover:text-gray-500"
+                  title="Remove newsletter"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => setSelectedNewsletters([])}
+            className="text-xs text-gray-700 hover:text-gray-600 underline"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
+      {/* Selected Podcasts */}
+      {selectedPodcasts.length > 0 && selectedLibraries.length === 0 && (
+        <div className="bg-gray-50 border border-gray-400/30 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-700">Selected Podcasts ({selectedPodcasts.length})</p>
+          <div className="flex flex-wrap gap-2">
+            {selectedPodcasts.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center gap-2 bg-gray-50 border border-gray-400/50 rounded px-2 py-1 text-xs text-gray-600"
+              >
+                <span className="truncate max-w-[200px]">{p.title}</span>
+                <button
+                  onClick={() => setSelectedPodcasts(selectedPodcasts.filter(x => x.id !== p.id))}
+                  className="hover:text-gray-500"
+                  title="Remove podcast"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => setSelectedPodcasts([])}
+            className="text-xs text-gray-700 hover:text-gray-600 underline"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
+
       {/* Input */}
       <div className="flex gap-2">
         <input
@@ -371,16 +486,20 @@ export const PapersQA = forwardRef<
               {renderMarkdown(response.answer)}
             </div>
             <p className="text-xs text-muted mt-2">
-              Based on {response.sourcesUsed || 0} {response.sourcesUsed === 1 ? 'source' : 'sources'}
-              {response.papersUsed !== undefined && response.itemsUsed !== undefined && (
-                <> ({response.papersUsed} {response.papersUsed === 1 ? 'paper' : 'papers'}, {response.itemsUsed} {response.itemsUsed === 1 ? 'item' : 'items'})</>
-              )}
-              {response.papersUsed !== undefined && response.itemsUsed === undefined && (
-                <> ({response.papersUsed} {response.papersUsed === 1 ? 'paper' : 'papers'})</>
-              )}
-              {response.itemsUsed !== undefined && response.papersUsed === undefined && (
-                <> ({response.itemsUsed} {response.itemsUsed === 1 ? 'item' : 'items'})</>
-              )}
+              Based on {response.sourcesUsed ?? 0} {(response.sourcesUsed ?? 0) === 1 ? 'source' : 'sources'}
+              {(response.papersUsed !== undefined && response.papersUsed > 0) ||
+               (response.itemsUsed !== undefined && response.itemsUsed > 0) ||
+               (response.newslettersUsed !== undefined && response.newslettersUsed > 0) ||
+               (response.podcastsUsed !== undefined && response.podcastsUsed > 0) ? (
+                <> (
+                  {[
+                    response.papersUsed ? `${response.papersUsed} ${response.papersUsed === 1 ? 'paper' : 'papers'}` : null,
+                    response.itemsUsed ? `${response.itemsUsed} ${response.itemsUsed === 1 ? 'item' : 'items'}` : null,
+                    response.newslettersUsed ? `${response.newslettersUsed} ${response.newslettersUsed === 1 ? 'newsletter' : 'newsletters'}` : null,
+                    response.podcastsUsed ? `${response.podcastsUsed} ${response.podcastsUsed === 1 ? 'podcast' : 'podcasts'}` : null,
+                  ].filter(Boolean).join(', ')})
+                </>
+              ) : null}
             </p>
           </div>
 

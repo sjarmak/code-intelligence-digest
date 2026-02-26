@@ -3,25 +3,13 @@
  * Evaluates relevance and usefulness of items
  */
 
-import { FeedItem, LLMScoreResult, Category } from "../model.js";
-import { logger } from "../logger.js";
-import OpenAI from "openai";
-import type { AgentGoal } from "../../config/agents.js";
-import { getAgentGoalConfig } from "../../config/agents.js";
-
-/**
- * Lazy-initialized OpenAI client
- */
-let client: OpenAI | null = null;
-
-function getOpenAIClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
-  }
-  return client;
-}
+import { FeedItem, LLMScoreResult, Category } from "../model";
+import { logger } from "../logger";
+import { getCompetitorProducts } from "../../config/products";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { AgentGoal } from "../../config/agents";
+import { getAgentGoalConfig } from "../../config/agents";
 
 /**
  * Get category-specific system prompt for GPT-4o to evaluate item relevance.
@@ -29,8 +17,16 @@ function getOpenAIClient(): OpenAI {
  */
 function getSystemPrompt(category: Category, goal?: AgentGoal): string {
   const baseTags = [
-    "code-search", "semantic-search", "agent", "context", "devex", "devops",
-    "enterprise", "research", "infra", "off-topic"
+    "code-search",
+    "semantic-search",
+    "agent",
+    "context",
+    "devex",
+    "devops",
+    "enterprise",
+    "research",
+    "infra",
+    "off-topic",
   ];
 
   let basePrompt: string;
@@ -74,13 +70,12 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
-      break;
-    case "product_news":
-      basePrompt = `You are an expert evaluator of product news for a "Code Intelligence Digest" service.
+    case "ai_dev":
+      basePrompt = `You are an expert evaluator of AI-in-developer-workflow content for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
-1. **Relevance** (0-10): Focus on updates from competitors or potential partners: Augment Code, Windsurf, Cursor, Claude Code, Codex CLI, Gemini CLI/Antigravity, and any other products that add codebase context to coding agents.
-2. **Usefulness** (0-10): How useful/valuable is this for a senior developer or tech lead tracking coding agent tools?
+1. **Relevance** (0-10): Focus on incorporating AI into developer workflows: tips, best practices, coding assistant usage (Cursor, Copilot, etc.), AI pair programming, prompt engineering for code, RAG for codebases, AI in devops/automation, developer productivity with AI. Include content from TLDR, newsletters, tech blogs, and community that helps developers use AI effectively.
+2. **Usefulness** (0-10): How useful/valuable is this for a senior developer or tech lead wanting to integrate AI into their daily workflow?
 3. **Tags**: Assign relevant domain tags from: ${baseTags.join(", ")}
 
 Return JSON with exactly this structure:
@@ -93,6 +88,30 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
+      break;
+    case "product_news": {
+      const competitorNames = getCompetitorProducts()
+        .map((p) => p.name)
+        .slice(0, 25)
+        .join(", ");
+      basePrompt = `You are an expert evaluator of product news for a "Code Intelligence Digest" service.
+
+Evaluate each item for:
+1. **Relevance** (0-10): Focus on updates from coding agent products and competitors including: ${competitorNames}. Also relevant: any products that add codebase context to coding agents, code search tools, or AI coding assistants.
+2. **Usefulness** (0-10): How useful/valuable is this for a senior developer or tech lead tracking coding agent tools and the competitive landscape?
+3. **Tags**: Assign relevant domain tags from: ${baseTags.join(", ")}
+
+Return JSON with exactly this structure:
+{
+  "relevance": <number 0-10>,
+  "usefulness": <number 0-10>,
+  "tags": ["tag1", "tag2", ...]
+}
+
+Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
+
+CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
+      }
       break;
     case "community":
       basePrompt = `You are an expert evaluator of community discussions for a "Code Intelligence Digest" service.
@@ -132,6 +151,31 @@ Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
       break;
+    case "marketing":
+      basePrompt = `You are an expert evaluator of marketing content for a technology company targeting developers and technical leaders as its ideal customer profile (ICP).
+
+Evaluate each item for:
+1. **Relevance** (0-10): How relevant is this to marketing strategies for reaching developers, engineering leaders, and technical decision-makers?
+   - 8-10: B2B developer marketing strategies, developer-as-buyer targeting, developer relations/advocacy, AI-powered marketing tools and approaches, pipeline/demand generation tactics, technical content marketing, developer experience as growth lever
+   - 5-7: General B2B marketing strategy applicable to tech, brand positioning for technical audiences, SEO/SEM for developer products, pricing strategy, product-led growth
+   - 1-4: Consumer marketing with no tech applicability, irrelevant verticals, generic social media tactics not applicable to developer audiences
+2. **Usefulness** (0-10): How actionable are the insights for a marketing team at a developer tools company?
+   - 8-10: Specific tactics, frameworks, or data-backed strategies directly applicable to developer marketing and pipeline generation
+   - 5-7: General strategic insights that could be adapted for developer/technical audiences
+   - 1-4: Too generic, too high-level, or not actionable for a dev tools marketing team
+3. **Tags**: Assign relevant domain tags from: developer-marketing, devrel, content-marketing, demand-gen, pipeline, AI-marketing, product-led-growth, brand, SEO, pricing, go-to-market, developer-experience, thought-leadership, B2B-SaaS, off-topic
+
+Return JSON with exactly this structure:
+{
+  "relevance": <number 0-10>,
+  "usefulness": <number 0-10>,
+  "tags": ["tag1", "tag2", ...]
+}
+
+Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
+
+CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains marketing keywords. Without actual content to evaluate, you cannot determine true relevance.`;
+      break;
     default:
       basePrompt = `You are an expert evaluator of technical content for a "Code Intelligence Digest" service.
 
@@ -168,44 +212,54 @@ CRITICAL: Items with minimal content (only a title, no summary or content) shoul
  */
 function createBatchPrompt(items: FeedItem[], category: Category): string {
   const itemTexts = items
-    .map(
-      (item, idx) => {
-        const parts = [
-          `[${idx}] Title: ${item.title}`,
-          `Source: ${item.sourceTitle}`,
-          `Summary: ${item.summary || "N/A"}`,
-        ];
+    .map((item, idx) => {
+      // Truncate summary/content to avoid token overflow (newsletter HTML can be 100k+ chars)
+      const summaryText = item.summary || "N/A";
+      const summaryTruncated = summaryText.length > 1500 ? summaryText.substring(0, 1500) + "..." : summaryText;
 
-        // Include content snippet if available
-        if (item.contentSnippet && item.contentSnippet.length > 50) {
-          parts.push(`Content: ${item.contentSnippet.substring(0, 500)}`);
-        }
+      const parts = [
+        `[${idx}] Title: ${item.title}`,
+        `Source: ${item.sourceTitle}`,
+        `Summary: ${summaryTruncated}`,
+      ];
 
-        // For research papers, include full text if available
-        if (category === "research" && item.fullText && item.fullText.length > 100) {
-          // Include abstract and first part of full text
-          const abstract = item.summary || "";
-          const fullTextPreview = item.fullText.substring(0, 2000);
-          parts.push(`Abstract: ${abstract}`);
-          parts.push(`Full Text (preview): ${fullTextPreview}`);
-        } else if (item.fullText && item.fullText.length > 100) {
-          // For other categories, include full text preview if available
-          parts.push(`Full Text (preview): ${item.fullText.substring(0, 1000)}`);
-        }
-
-        // Check if content is insufficient (only title, no real content)
-        const hasRealContent = (item.summary && item.summary.length > item.title.length + 20) ||
-                               (item.contentSnippet && item.contentSnippet.length > item.title.length + 20) ||
-                               (item.fullText && item.fullText.length > 100);
-
-        if (!hasRealContent) {
-          parts.push(`⚠️ WARNING: This item has minimal or no content beyond the title. Be very conservative with scores - if you cannot determine relevance from the title alone, score it low (3-5).`);
-        }
-
-        parts.push(`URL: ${item.url}`);
-        return parts.join("\n");
+      // Include content snippet if available (truncate to 500 chars)
+      if (item.contentSnippet && item.contentSnippet.length > 50) {
+        parts.push(`Content: ${item.contentSnippet.substring(0, 500)}`);
       }
-    )
+
+      // For research papers, include full text if available
+      if (
+        category === "research" &&
+        item.fullText &&
+        item.fullText.length > 100
+      ) {
+        // Include abstract and first part of full text
+        const abstract = item.summary || "";
+        const fullTextPreview = item.fullText.substring(0, 2000);
+        parts.push(`Abstract: ${abstract}`);
+        parts.push(`Full Text (preview): ${fullTextPreview}`);
+      } else if (item.fullText && item.fullText.length > 100) {
+        // For other categories, include full text preview if available
+        parts.push(`Full Text (preview): ${item.fullText.substring(0, 1000)}`);
+      }
+
+      // Check if content is insufficient (only title, no real content)
+      const hasRealContent =
+        (item.summary && item.summary.length > item.title.length + 20) ||
+        (item.contentSnippet &&
+          item.contentSnippet.length > item.title.length + 20) ||
+        (item.fullText && item.fullText.length > 100);
+
+      if (!hasRealContent) {
+        parts.push(
+          `⚠️ WARNING: This item has minimal or no content beyond the title. Be very conservative with scores - if you cannot determine relevance from the title alone, score it low (3-5).`,
+        );
+      }
+
+      parts.push(`URL: ${item.url}`);
+      return parts.join("\n");
+    })
     .join("\n\n---\n\n");
 
   return `Evaluate each item below. Return a JSON array with scores and tags for each item in order.
@@ -222,7 +276,7 @@ Return JSON array like: [{"relevance": 8, "usefulness": 7, "tags": ["code-search
  */
 function parseGPTResponse(
   response: string,
-  items: FeedItem[]
+  items: FeedItem[],
 ): Record<string, LLMScoreResult> {
   const results: Record<string, LLMScoreResult> = {};
 
@@ -250,7 +304,7 @@ function parseGPTResponse(
 
     if (actualCount !== expectedCount) {
       logger.warn(
-        `LLM returned ${actualCount} results for ${expectedCount} items. Using available results and assigning neutral scores to missing items.`
+        `LLM returned ${actualCount} results for ${expectedCount} items. Using available results and assigning neutral scores to missing items.`,
       );
     }
 
@@ -269,7 +323,9 @@ function parseGPTResponse(
         };
       } else {
         // Missing result - assign neutral scores
-        logger.debug(`No LLM score for item ${i + 1}/${items.length}: "${item.title}". Using neutral scores.`);
+        logger.debug(
+          `No LLM score for item ${i + 1}/${items.length}: "${item.title}". Using neutral scores.`,
+        );
         results[item.id] = {
           id: item.id,
           relevance: 5,
@@ -281,12 +337,17 @@ function parseGPTResponse(
 
     // If LLM returned extra results, log but ignore them
     if (actualCount > expectedCount) {
-      logger.warn(`LLM returned ${actualCount - expectedCount} extra results (ignored)`);
+      logger.warn(
+        `LLM returned ${actualCount - expectedCount} extra results (ignored)`,
+      );
     }
 
     return results;
   } catch (error) {
-    logger.error("Failed to parse GPT response", { error, response: response.substring(0, 500) });
+    logger.error("Failed to parse GPT response", {
+      error,
+      response: response.substring(0, 500),
+    });
     // Fallback: return neutral scores for all items
     return items.reduce(
       (acc, item) => {
@@ -298,7 +359,7 @@ function parseGPTResponse(
         };
         return acc;
       },
-      {} as Record<string, LLMScoreResult>
+      {} as Record<string, LLMScoreResult>,
     );
   }
 }
@@ -319,31 +380,35 @@ async function scoreItemsBatch(
     const systemPrompt = getSystemPrompt(category, goal);
     const prompt = createBatchPrompt(items, category);
 
-    logger.info(`Scoring ${items.length} items with GPT-4o for category ${category}`, {
-      batchSize: items.length,
-      category,
-    });
+    logger.info(
+      `Scoring ${items.length} items with GPT-4o for category ${category}`,
+      {
+        batchSize: items.length,
+        category,
+      },
+    );
 
-    const response = await getOpenAIClient().chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 4000,
+    if (!hasLLMConfigured()) {
+      return items.reduce(
+        (acc, item) => {
+          acc[item.id] = { id: item.id, relevance: 5, usefulness: 5, tags: [] };
+          return acc;
+        },
+        {} as Record<string, LLMScoreResult>,
+      );
+    }
+
+    const result = await createChatCompletion({
       messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: prompt },
       ],
+      max_tokens: 4000,
     });
 
-    const responseText = response.choices[0].message.content || "";
+    const responseText = result.content || "";
 
-    logger.info(`GPT-4o responded for batch of ${items.length}`, {
-      usage: response.usage,
-    });
+    logger.info(`LLM responded for batch of ${items.length}`, { itemCount: items.length });
 
     return parseGPTResponse(responseText, items);
   } catch (error) {
@@ -360,7 +425,7 @@ async function scoreItemsBatch(
         };
         return acc;
       },
-      {} as Record<string, LLMScoreResult>
+      {} as Record<string, LLMScoreResult>,
     );
   }
 }
@@ -391,7 +456,7 @@ export async function scoreWithLLM(
   for (let i = 0; i < items.length; i += batchSize) {
     const batch = items.slice(i, i + batchSize);
     logger.info(
-      `Scoring batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(items.length / batchSize)} for category ${category}`
+      `Scoring batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(items.length / batchSize)} for category ${category}`,
     );
 
     const batchResults = await scoreItemsBatch(batch, category, goal);
@@ -411,7 +476,7 @@ export async function scoreWithLLM(
  * Based on domain keyword matching
  */
 export function scoreWithHeuristics(
-  items: FeedItem[]
+  items: FeedItem[],
 ): Record<string, LLMScoreResult> {
   const results: Record<string, LLMScoreResult> = {};
 
@@ -514,8 +579,9 @@ export function scoreWithHeuristics(
 
     // Check domain matches
     for (const [, config] of Object.entries(keywordsByDomain)) {
-      const matchCount = config.keywords.filter((kw) => text.includes(kw))
-        .length;
+      const matchCount = config.keywords.filter((kw) =>
+        text.includes(kw),
+      ).length;
       if (matchCount > 0) {
         const boost = Math.min(matchCount * 0.5, 2);
         relevanceScore = Math.min(10, relevanceScore + boost);
@@ -535,7 +601,7 @@ export function scoreWithHeuristics(
     ];
     const hasOffTopic = offTopicKeywords.some((kw) => text.includes(kw));
     const hasOnTopic = Object.values(keywordsByDomain).some((config) =>
-      config.keywords.some((kw) => text.includes(kw))
+      config.keywords.some((kw) => text.includes(kw)),
     );
 
     if (hasOffTopic && !hasOnTopic) {

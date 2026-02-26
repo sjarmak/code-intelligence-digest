@@ -1,26 +1,51 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { ChevronDown, ChevronRight, FolderHeart, FileHeart, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FolderHeart, FileHeart, FileText, Mic, Trash2 } from 'lucide-react';
 import { FeedItem } from '@/src/lib/model';
 
 interface ResourceLibrary {
-  id: 'saved-items' | 'digest-items';
+  id: 'saved-items' | 'digest-items' | 'newsletter-library' | 'podcast-library';
   name: string;
   numItems: number;
 }
 
+interface PastNewsletterItem {
+  id: string;
+  title: string;
+  createdAt: number;
+}
+
+interface PastPodcastItem {
+  id: string;
+  title?: string;
+  duration?: string;
+  createdAt: number;
+}
+
 interface ResourceLibrariesViewProps {
   onAddItemToQA?: (item: { id: string; title?: string }) => void;
+  onAddNewsletterToQA?: (newsletter: { id: string; title: string }) => void;
+  onAddPodcastToQA?: (podcast: { id: string; title: string }) => void;
   onSelectLibraryForQA?: (library: ResourceLibrary) => void;
 }
 
-export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: ResourceLibrariesViewProps) {
+const LIBRARY_IDS = ['saved-items', 'digest-items', 'newsletter-library', 'podcast-library'] as const;
+type ExpandedLibraryId = (typeof LIBRARY_IDS)[number];
+
+export function ResourceLibrariesView({
+  onAddItemToQA,
+  onAddNewsletterToQA,
+  onAddPodcastToQA,
+  onSelectLibraryForQA,
+}: ResourceLibrariesViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savedItems, setSavedItems] = useState<FeedItem[]>([]);
   const [digestItems, setDigestItems] = useState<FeedItem[]>([]);
-  const [expandedLibrary, setExpandedLibrary] = useState<'saved-items' | 'digest-items' | null>(null);
+  const [newsletters, setNewsletters] = useState<PastNewsletterItem[]>([]);
+  const [podcasts, setPodcasts] = useState<PastPodcastItem[]>([]);
+  const [expandedLibrary, setExpandedLibrary] = useState<ExpandedLibraryId | null>(null);
   const [clearing, setClearing] = useState(false);
 
   // Fetch saved items
@@ -49,11 +74,35 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
     }
   }, []);
 
+  const fetchNewsletters = useCallback(async () => {
+    try {
+      const response = await fetch('/api/generated-newsletters');
+      if (!response.ok) throw new Error('Failed to fetch newsletters');
+      const data = await response.json();
+      setNewsletters((data.newsletters || []).map((n: { id: string; title: string; createdAt: number }) => ({ id: n.id, title: n.title, createdAt: n.createdAt })));
+    } catch (err) {
+      console.error('Failed to fetch newsletters:', err);
+      setNewsletters([]);
+    }
+  }, []);
+
+  const fetchPodcasts = useCallback(async () => {
+    try {
+      const response = await fetch('/api/user-podcast-audio');
+      if (!response.ok) throw new Error('Failed to fetch podcasts');
+      const data = await response.json();
+      setPodcasts((data.podcasts || []).map((p: PastPodcastItem) => ({ id: p.id, title: p.title, duration: p.duration, createdAt: p.createdAt })));
+    } catch (err) {
+      console.error('Failed to fetch podcasts:', err);
+      setPodcasts([]);
+    }
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
-        await Promise.all([fetchSavedItems(), fetchDigestItems()]);
+        await Promise.all([fetchSavedItems(), fetchDigestItems(), fetchNewsletters(), fetchPodcasts()]);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
@@ -61,7 +110,7 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
       }
     };
     init();
-  }, [fetchSavedItems, fetchDigestItems]);
+  }, [fetchSavedItems, fetchDigestItems, fetchNewsletters, fetchPodcasts]);
 
   // Listen for changes to saved/digest items from other components
   useEffect(() => {
@@ -81,13 +130,16 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
     };
   }, [fetchSavedItems, fetchDigestItems]);
 
-  const handleLibraryClick = (libraryId: 'saved-items' | 'digest-items') => {
+  const handleLibraryClick = (libraryId: ExpandedLibraryId) => {
     if (expandedLibrary === libraryId) {
       setExpandedLibrary(null);
     } else {
       setExpandedLibrary(libraryId);
     }
   };
+
+  const formatSavedDate = (createdAt: number) =>
+    new Date(createdAt * 1000).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 
   const handleRemoveFromSavedItems = async (itemId: string) => {
     try {
@@ -420,6 +472,156 @@ export function ResourceLibrariesView({ onAddItemToQA, onSelectLibraryForQA }: R
                         </button>
                       )}
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Newsletter Library */}
+      <div className="border border-gray-300 rounded-lg overflow-hidden bg-white">
+        <div className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors group">
+          <button
+            onClick={() => handleLibraryClick('newsletter-library')}
+            className="flex items-center gap-3 flex-1 text-left"
+          >
+            {expandedLibrary === 'newsletter-library' ? (
+              <ChevronDown className="w-5 h-5 text-black shrink-0" />
+            ) : (
+              <ChevronRight className="w-5 h-5 text-black shrink-0" />
+            )}
+            <FileText className="w-5 h-5 text-black shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-black">Newsletter Library</h3>
+              <p className="text-sm text-muted mt-0.5">
+                {newsletters.length} {newsletters.length === 1 ? 'newsletter' : 'newsletters'}
+              </p>
+            </div>
+          </button>
+          {onSelectLibraryForQA && newsletters.length > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectLibraryForQA({
+                  id: 'newsletter-library',
+                  name: 'Newsletter Library',
+                  numItems: newsletters.length,
+                });
+              }}
+              title="Add all newsletters to chat context"
+              className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap flex items-center gap-1"
+            >
+              <FileText className="w-3 h-3" />
+              Add Library to Context
+            </button>
+          )}
+        </div>
+        {expandedLibrary === 'newsletter-library' && (
+          <div className="border-t border-gray-300 p-4 bg-white">
+            {newsletters.length === 0 ? (
+              <div className="text-center text-muted py-4">No saved newsletters. Generate some from the digest page.</div>
+            ) : (
+              <div className="space-y-2">
+                {newsletters.map((n) => (
+                  <div
+                    key={n.id}
+                    className="flex items-start justify-between p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-colors group"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-black line-clamp-2">{n.title || 'Untitled'}</h4>
+                      <p className="text-xs text-muted mt-1">{formatSavedDate(n.createdAt)}</p>
+                    </div>
+                    {onAddNewsletterToQA && (
+                      <button
+                        onClick={() => onAddNewsletterToQA({ id: n.id, title: n.title || 'Untitled' })}
+                        className="ml-4 px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors opacity-0 group-hover:opacity-100"
+                        title="Add to chat context"
+                      >
+                        Add
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Podcast Library */}
+      <div className="border border-gray-300 rounded-lg overflow-hidden bg-white">
+        <div className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors group">
+          <button
+            onClick={() => handleLibraryClick('podcast-library')}
+            className="flex items-center gap-3 flex-1 text-left"
+          >
+            {expandedLibrary === 'podcast-library' ? (
+              <ChevronDown className="w-5 h-5 text-black shrink-0" />
+            ) : (
+              <ChevronRight className="w-5 h-5 text-black shrink-0" />
+            )}
+            <Mic className="w-5 h-5 text-black shrink-0" />
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-black">Podcast Library</h3>
+              <p className="text-sm text-muted mt-0.5">
+                {podcasts.length} {podcasts.length === 1 ? 'podcast' : 'podcasts'}
+              </p>
+            </div>
+          </button>
+          {onSelectLibraryForQA && podcasts.length > 0 && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectLibraryForQA({
+                  id: 'podcast-library',
+                  name: 'Podcast Library',
+                  numItems: podcasts.length,
+                });
+              }}
+              title="Add all podcasts to chat context"
+              className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap flex items-center gap-1"
+            >
+              <Mic className="w-3 h-3" />
+              Add Library to Context
+            </button>
+          )}
+        </div>
+        {expandedLibrary === 'podcast-library' && (
+          <div className="border-t border-gray-300 p-4 bg-white">
+            {podcasts.length === 0 ? (
+              <div className="text-center text-muted py-4">No saved podcasts. Generate and render audio from the digest page.</div>
+            ) : (
+              <div className="space-y-2">
+                {podcasts.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-start justify-between p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-colors group"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-black line-clamp-2">
+                        {p.title?.trim() || `Podcast — ${formatSavedDate(p.createdAt)}`}
+                      </h4>
+                      <p className="text-xs text-muted mt-1">
+                        {formatSavedDate(p.createdAt)}
+                        {p.duration ? ` · ${p.duration}` : ''}
+                      </p>
+                    </div>
+                    {onAddPodcastToQA && (
+                      <button
+                        onClick={() =>
+                          onAddPodcastToQA({
+                            id: p.id,
+                            title: p.title?.trim() || `Podcast — ${formatSavedDate(p.createdAt)}`,
+                          })
+                        }
+                        className="ml-4 px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors opacity-0 group-hover:opacity-100"
+                        title="Add to chat context"
+                      >
+                        Add
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

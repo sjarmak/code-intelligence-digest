@@ -12,6 +12,8 @@ export default function LibrariesPage() {
    const resourcesQARef = useRef<{
      addPaper: (paper: { bibcode: string; title?: string }) => void;
      addItem: (item: { id: string; title?: string }) => void;
+     addNewsletter: (newsletter: { id: string; title: string }) => void;
+     addPodcast: (podcast: { id: string; title: string }) => void;
      setSelectedLibrary: (library: { id: string; name: string; numPapers?: number; numItems?: number }) => void;
    } | null>(null);
 
@@ -21,6 +23,14 @@ export default function LibrariesPage() {
 
    const handleAddItemToQA = (item: { id: string; title?: string }) => {
      resourcesQARef.current?.addItem(item);
+   };
+
+   const handleAddNewsletterToQA = (newsletter: { id: string; title: string }) => {
+     resourcesQARef.current?.addNewsletter(newsletter);
+   };
+
+   const handleAddPodcastToQA = (podcast: { id: string; title: string }) => {
+     resourcesQARef.current?.addPodcast(podcast);
    };
 
    const handleSelectLibrary = (library: { id: string; name: string; numPapers?: number; numItems?: number }) => {
@@ -76,6 +86,8 @@ export default function LibrariesPage() {
           <h2 className="text-2xl font-bold mb-4">Resource Libraries</h2>
           <ResourceLibrariesView
             onAddItemToQA={handleAddItemToQA}
+            onAddNewsletterToQA={handleAddNewsletterToQA}
+            onAddPodcastToQA={handleAddPodcastToQA}
             onSelectLibraryForQA={handleSelectResourceLibrary}
           />
         </div>

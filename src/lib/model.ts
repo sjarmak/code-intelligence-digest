@@ -7,9 +7,11 @@ export type Category =
   | "podcasts"
   | "tech_articles"
   | "ai_news"
+  | "ai_dev"
   | "product_news"
   | "community"
-  | "research";
+  | "research"
+  | "marketing";
 
 /**
  * All valid category values as a readonly array.
@@ -20,9 +22,11 @@ export const VALID_CATEGORIES: readonly Category[] = [
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",
+  "marketing",
 ] as const;
 
 export interface FeedItem {
@@ -60,4 +64,6 @@ export interface RankedItem extends FeedItem {
   engagementScore?: number;
   finalScore: number;
   reasoning: string;
+  /** Product IDs mentioned in the content (e.g., ["cursor", "claude-code"]) */
+  productMentions?: string[];
 }

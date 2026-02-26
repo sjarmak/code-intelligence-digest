@@ -3,10 +3,12 @@
  * Synthesizes ranked items into a transcript with segmentation and show notes
  */
 
-import OpenAI from "openai";
 import { RankedItem, Category } from "../model";
 import { PromptProfile } from "./promptProfile";
 import { logger } from "../logger";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 export interface PodcastSegment {
   title: string;
@@ -27,17 +29,6 @@ export interface PodcastContent {
   segments: PodcastSegment[];
   showNotes: string;
   estimatedDuration: string; // "MM:SS" format
-}
-
-/**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
 }
 
 /**
@@ -196,7 +187,8 @@ export async function generatePodcastContent(
   period: "week" | "month",
   categories: Category[],
   profile: PromptProfile | null,
-  voiceStyle: string = "conversational"
+  voiceStyle: string = "conversational",
+  llmOptions?: LLMClientOptions
 ): Promise<PodcastContent> {
   if (items.length === 0) {
     return {
@@ -217,24 +209,21 @@ export async function generatePodcastContent(
 
   let transcript: string;
 
-  const client = getClient();
-  if (client) {
+  if (hasLLMConfigured()) {
     try {
-      const response = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        max_completion_tokens: 3500,
-              messages: [
-                {
-                  role: "user",
-                  content: `Generate a ${periodLabel} podcast episode transcript for tech leads and senior engineers.
-        
-        Voice style: ${voiceStyle}
-        Duration target: ~20 minutes
-        Categories: ${categoryLabels}
-        User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
-        ${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
-        
-        Items (with references to use inline like (ref: item-0)):${synthesisContext}
+      const result = await createChatCompletion({
+        messages: [
+          {
+            role: "user",
+            content: `Generate a ${periodLabel} podcast episode transcript for tech leads and senior engineers.
+
+Voice style: ${voiceStyle}
+Duration target: ~20 minutes
+Categories: ${categoryLabels}
+User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
+${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
+
+Items (with references to use inline like (ref: item-0)):${synthesisContext}
 
 Requirements:
 - Start with [INTRO MUSIC]
@@ -251,15 +240,16 @@ Requirements:
 Generate only the transcript, no JSON.`,
           },
         ],
+        max_tokens: 3500,
+        openaiOptions: llmOptions,
       });
-
-      transcript = response.choices[0].message.content || generatePodcastFallback(items);
+      transcript = result.content || generatePodcastFallback(items);
     } catch (error) {
       logger.warn("LLM podcast generation failed, using fallback template", { error });
       transcript = generatePodcastFallback(items);
     }
   } else {
-    logger.info("OPENAI_API_KEY not set, using fallback podcast");
+    logger.info("No LLM configured, using fallback podcast");
     transcript = generatePodcastFallback(items);
   }
 

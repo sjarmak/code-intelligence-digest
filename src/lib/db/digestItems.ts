@@ -8,36 +8,40 @@ import { getDbClient, detectDriver } from "./driver";
 import { FeedItem } from "../model";
 import { logger } from "../logger";
 import { ensureItemExists } from "./items";
+import { LEGACY_USER_ID } from "./constants";
+
+export { LEGACY_USER_ID };
 
 /**
  * Add item to digest items library
  */
-export async function addToDigestItems(itemId: string): Promise<void> {
+export async function addToDigestItems(itemId: string, userId: string = LEGACY_USER_ID): Promise<void> {
   try {
     // Ensure item exists (creates synthetic item if needed)
     await ensureItemExists(itemId);
     const driver = detectDriver();
     const now = Math.floor(Date.now() / 1000);
-    const id = `digest-${itemId}`;
+    // Id must be unique per (user, item) so different users can add the same item
+    const id = `digest-${userId}-${itemId}`.replace(/[^a-zA-Z0-9\-_.]/g, '_');
 
     if (driver === 'postgres') {
       const client = await getDbClient();
       await client.run(`
-        INSERT INTO digest_items (id, item_id, added_at, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $4)
-        ON CONFLICT (item_id) DO UPDATE SET
+        INSERT INTO digest_items (id, user_id, item_id, added_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, item_id) DO UPDATE SET
           added_at = EXCLUDED.added_at,
           updated_at = EXCLUDED.updated_at
-      `, [id, itemId, now, now]);
+      `, [id, userId, itemId, now, now, now]);
     } else {
       const sqlite = getSqlite();
       sqlite.prepare(`
-        INSERT INTO digest_items (id, item_id, added_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (item_id) DO UPDATE SET
+        INSERT INTO digest_items (id, user_id, item_id, added_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, item_id) DO UPDATE SET
           added_at = excluded.added_at,
           updated_at = excluded.updated_at
-      `).run(id, itemId, now, now, now);
+      `).run(id, userId, itemId, now, now, now);
     }
 
     logger.debug(`Added item ${itemId} to digest items library`);
@@ -50,13 +54,13 @@ export async function addToDigestItems(itemId: string): Promise<void> {
 /**
  * Add multiple items to digest items library
  */
-export async function addMultipleToDigestItems(itemIds: string[]): Promise<{ success: number; failed: number }> {
+export async function addMultipleToDigestItems(itemIds: string[], userId: string = LEGACY_USER_ID): Promise<{ success: number; failed: number }> {
   let success = 0;
   let failed = 0;
 
   for (const itemId of itemIds) {
     try {
-      await addToDigestItems(itemId);
+      await addToDigestItems(itemId, userId);
       success++;
     } catch (error) {
       logger.error(`Failed to add item ${itemId} to digest items library`, error);
@@ -71,20 +75,20 @@ export async function addMultipleToDigestItems(itemIds: string[]): Promise<{ suc
 /**
  * Remove item from digest items library
  */
-export async function removeFromDigestItems(itemId: string): Promise<void> {
+export async function removeFromDigestItems(itemId: string, userId: string = LEGACY_USER_ID): Promise<void> {
   try {
     const driver = detectDriver();
 
     if (driver === 'postgres') {
       const client = await getDbClient();
       await client.run(`
-        DELETE FROM digest_items WHERE item_id = $1
-      `, [itemId]);
+        DELETE FROM digest_items WHERE user_id = $1 AND item_id = $2
+      `, [userId, itemId]);
     } else {
       const sqlite = getSqlite();
       sqlite.prepare(`
-        DELETE FROM digest_items WHERE item_id = ?
-      `).run(itemId);
+        DELETE FROM digest_items WHERE user_id = ? AND item_id = ?
+      `).run(userId, itemId);
     }
 
     logger.debug(`Removed item ${itemId} from digest items library`);
@@ -97,7 +101,7 @@ export async function removeFromDigestItems(itemId: string): Promise<void> {
 /**
  * Remove multiple items from digest items library
  */
-export async function removeMultipleFromDigestItems(itemIds: string[]): Promise<void> {
+export async function removeMultipleFromDigestItems(itemIds: string[], userId: string = LEGACY_USER_ID): Promise<void> {
   if (itemIds.length === 0) {
     return;
   }
@@ -107,16 +111,16 @@ export async function removeMultipleFromDigestItems(itemIds: string[]): Promise<
 
     if (driver === 'postgres') {
       const client = await getDbClient();
-      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+      const placeholders = itemIds.map((_, i) => `$${i + 2}`).join(',');
       await client.run(`
-        DELETE FROM digest_items WHERE item_id IN (${placeholders})
-      `, itemIds);
+        DELETE FROM digest_items WHERE user_id = $1 AND item_id IN (${placeholders})
+      `, [userId, ...itemIds]);
     } else {
       const sqlite = getSqlite();
       const placeholders = itemIds.map(() => '?').join(',');
       sqlite.prepare(`
-        DELETE FROM digest_items WHERE item_id IN (${placeholders})
-      `).run(...itemIds);
+        DELETE FROM digest_items WHERE user_id = ? AND item_id IN (${placeholders})
+      `).run(userId, ...itemIds);
     }
 
     logger.debug(`Removed ${itemIds.length} items from digest items library`);
@@ -129,16 +133,16 @@ export async function removeMultipleFromDigestItems(itemIds: string[]): Promise<
 /**
  * Remove all items from digest items library
  */
-export async function removeAllFromDigestItems(): Promise<void> {
+export async function removeAllFromDigestItems(userId: string = LEGACY_USER_ID): Promise<void> {
   try {
     const driver = detectDriver();
 
     if (driver === 'postgres') {
       const client = await getDbClient();
-      await client.run(`DELETE FROM digest_items`);
+      await client.run(`DELETE FROM digest_items WHERE user_id = $1`, [userId]);
     } else {
       const sqlite = getSqlite();
-      sqlite.prepare(`DELETE FROM digest_items`).run();
+      sqlite.prepare(`DELETE FROM digest_items WHERE user_id = ?`).run(userId);
     }
 
     logger.debug(`Removed all items from digest items library`);
@@ -149,23 +153,49 @@ export async function removeAllFromDigestItems(): Promise<void> {
 }
 
 /**
+ * Get count of digest items for a user (lightweight, no item load).
+ */
+export async function getDigestItemsCount(userId: string = LEGACY_USER_ID): Promise<number> {
+  try {
+    const driver = detectDriver();
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT COUNT(*) AS n FROM digest_items WHERE user_id = ?`,
+        [userId]
+      );
+      const row = result.rows[0] as { n: string } | undefined;
+      return row ? parseInt(String(row.n), 10) : 0;
+    }
+    const sqlite = getSqlite();
+    const row = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM digest_items WHERE user_id = ?`)
+      .get(userId) as { n: number } | undefined;
+    return row?.n ?? 0;
+  } catch (error) {
+    logger.error("Failed to get digest items count", error);
+    return 0;
+  }
+}
+
+/**
  * Check if item is in digest items library
  */
-export async function isInDigestItems(itemId: string): Promise<boolean> {
+export async function isInDigestItems(itemId: string, userId: string = LEGACY_USER_ID): Promise<boolean> {
   try {
     const driver = detectDriver();
 
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(`
-        SELECT 1 FROM digest_items WHERE item_id = $1 LIMIT 1
-      `, [itemId]);
+        SELECT 1 FROM digest_items WHERE user_id = $1 AND item_id = $2 LIMIT 1
+      `, [userId, itemId]);
       return result.rows.length > 0;
     } else {
       const sqlite = getSqlite();
       const result = sqlite.prepare(`
-        SELECT 1 FROM digest_items WHERE item_id = ? LIMIT 1
-      `).get(itemId) as { '1': number } | undefined;
+        SELECT 1 FROM digest_items WHERE user_id = ? AND item_id = ? LIMIT 1
+      `).get(userId, itemId) as { '1': number } | undefined;
       return !!result;
     }
   } catch (error) {
@@ -177,7 +207,7 @@ export async function isInDigestItems(itemId: string): Promise<boolean> {
 /**
  * Get all digest items
  */
-export async function getDigestItems(limit?: number, offset?: number): Promise<FeedItem[]> {
+export async function getDigestItems(limit?: number, offset?: number, userId: string = LEGACY_USER_ID): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
     const { loadItem } = await import("./items");
@@ -186,9 +216,10 @@ export async function getDigestItems(limit?: number, offset?: number): Promise<F
       const client = await getDbClient();
       let sql = `
         SELECT item_id FROM digest_items
+        WHERE user_id = $1
         ORDER BY added_at DESC
       `;
-      const params: unknown[] = [];
+      const params: unknown[] = [userId];
 
       if (limit) {
         sql += ` LIMIT $${params.length + 1}`;
@@ -215,9 +246,10 @@ export async function getDigestItems(limit?: number, offset?: number): Promise<F
       const sqlite = getSqlite();
       let sql = `
         SELECT item_id FROM digest_items
+        WHERE user_id = ?
         ORDER BY added_at DESC
       `;
-      const params: unknown[] = [];
+      const params: unknown[] = [userId];
 
       if (limit) {
         sql += ` LIMIT ?`;

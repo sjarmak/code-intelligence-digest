@@ -7,8 +7,8 @@
  * No Inoreader API calls needed - uses existing item URLs.
  *
  * Usage:
- *   # Use production database (default)
- *   npx tsx scripts/backfill-fulltext-production.ts
+ *   # Use production database (DATABASE_URL from .env.local or env)
+ *   npx tsx scripts/archive/backfill-fulltext-production.ts
  *
  *   # Or specify limit and batch size
  *   LIMIT=1000 BATCH_SIZE=20 npx tsx scripts/backfill-fulltext-production.ts
@@ -21,11 +21,18 @@
  *   - CATEGORY: Process only specific category (optional)
  */
 
-import { initializeDatabase } from "../src/lib/db/index";
-import { saveFullText, getFullTextCacheStats } from "../src/lib/db/items";
-import { fetchFullTextBatch } from "../src/lib/pipeline/fulltext";
-import { logger } from "../src/lib/logger";
-import { getDbClient, detectDriver } from "../src/lib/db/driver";
+import * as dotenv from "dotenv";
+import * as path from "path";
+
+// Load .env.local so DATABASE_URL is available
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config(); // Also load .env
+
+import { initializeDatabase } from "../../src/lib/db/index";
+import { saveFullText, getFullTextCacheStats } from "../../src/lib/db/items";
+import { fetchFullTextBatch } from "../../src/lib/pipeline/fulltext";
+import { logger } from "../../src/lib/logger";
+import { getDbClient, detectDriver } from "../../src/lib/db/driver";
 import type { FeedItem, Category } from "../src/lib/model";
 
 interface BackfillStats {
@@ -130,16 +137,13 @@ async function loadItemsNeedingFullText(
     }));
   } else {
     // SQLite fallback (shouldn't be used for production backfill)
-    const { getSqlite } = await import("../src/lib/db/index");
+    const { getSqlite } = await import("../../src/lib/db/index");
     const sqlite = getSqlite();
 
-    let sql = `
-      SELECT id, stream_id, source_title, title, url, author,
-             published_at, created_at, summary, content_snippet,
-             categories, category, full_text, extracted_url
-      FROM items
-      WHERE full_text IS NULL OR LENGTH(full_text) < 100
-      ORDER BY
+    const whereClause = category
+      ? `category = ? AND (full_text IS NULL OR LENGTH(full_text) < 100)`
+      : `full_text IS NULL OR LENGTH(full_text) < 100`;
+    const orderBy = `
         CASE category
           WHEN 'research' THEN 1
           WHEN 'tech_articles' THEN 2
@@ -148,16 +152,17 @@ async function loadItemsNeedingFullText(
         END,
         published_at DESC
     `;
+    const sql = `SELECT id, stream_id, source_title, title, url, author,
+       published_at, created_at, summary, content_snippet,
+       categories, category, full_text, extracted_url
+    FROM items
+    WHERE ${whereClause}
+    ORDER BY ${orderBy}
+    ${limit ? `LIMIT ${limit}` : ""}`;
 
-    if (category) {
-      sql = sql.replace('FROM items', `FROM items WHERE category = '${category}' AND`);
-    }
-
-    if (limit) {
-      sql += ` LIMIT ${limit}`;
-    }
-
-    const rows = sqlite.prepare(sql).all() as Array<{
+    const rows = (category
+      ? sqlite.prepare(sql).all(category)
+      : sqlite.prepare(sql).all()) as Array<{
       id: string;
       stream_id: string;
       source_title: string;

@@ -3,20 +3,11 @@
  * Extracts themes, generates summaries, and highlights for digest pages
  */
 
-import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
-
-/**
- * Lazy-load OpenAI client (only when API key is available)
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
-}
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 /**
  * Extract common themes from items, respecting user prompt focus topics
@@ -99,31 +90,37 @@ export function getTopThemes(
 
 /**
  * Generate digest summary using Claude
+ * @param dateRangeLabel - Optional human-readable period (e.g. "Feb 10–17, 2025") so the model uses the actual date instead of inventing one
  */
 export async function generateDigestSummary(
   themes: string[],
   itemCount: number,
-  periodLabel: string
+  periodLabel: string,
+  llmOptions?: LLMClientOptions,
+  dateRangeLabel?: string
 ): Promise<string> {
   try {
     logger.info(`Generating digest summary for ${periodLabel} period with ${itemCount} items`);
 
-    // Use template if no API key
-    const client = getClient();
-    if (!client) {
-      logger.info("OPENAI_API_KEY not set, using template summary");
-      return generateTemplateSummary(themes, itemCount, periodLabel);
+    if (!hasLLMConfigured()) {
+      logger.info("No LLM configured, using template summary");
+      return generateTemplateSummary(themes, itemCount, periodLabel, dateRangeLabel);
     }
 
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 500,
+    const periodLine = dateRangeLabel
+      ? `Period: ${periodLabel} (${dateRangeLabel})`
+      : `Period: ${periodLabel}`;
+    const instruction = dateRangeLabel
+      ? `Write a 150-200 word executive summary of the code intelligence digest for ${dateRangeLabel}. Use this exact period in your summary; do not substitute another date.`
+      : `Write a 150-200 word executive summary of this ${periodLabel.toLowerCase()} code intelligence digest.`;
+
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
-          content: `Write a 150-200 word executive summary of this week's code intelligence digest. 
+          content: `${instruction}
 
-Period: ${periodLabel}
+${periodLine}
 Total Items: ${itemCount}
 Key Themes: ${themes.slice(0, 8).join(", ")}
 
@@ -135,19 +132,28 @@ Guidelines:
 - No need to cite sources (this is a summary)`,
         },
       ],
+      max_tokens: 500,
+      openaiOptions: llmOptions,
     });
 
-    return response.choices[0].message.content || "Failed to generate summary";
+    return result.content || "Failed to generate summary";
   } catch (error) {
     logger.warn("Failed to generate digest summary with LLM, falling back to template", { error });
-    // Fallback to template if LLM fails
-    return generateTemplateSummary(themes, itemCount, periodLabel);
+    return generateTemplateSummary(themes, itemCount, periodLabel, dateRangeLabel);
   }
 }
 
 /**
  * Generate a template-based summary when LLM is unavailable
  */
-function generateTemplateSummary(themes: string[], itemCount: number, periodLabel: string): string {
-  return `This ${periodLabel}'s code intelligence digest covers ${itemCount} items focused on key themes including ${themes.slice(0, 3).join(", ")}. The community continues to prioritize developer productivity, advanced context management, and agentic workflow patterns. Review the highlights below for the most impactful insights.`;
+function generateTemplateSummary(
+  themes: string[],
+  itemCount: number,
+  periodLabel: string,
+  dateRangeLabel?: string
+): string {
+  const periodText = dateRangeLabel
+    ? `for ${dateRangeLabel}`
+    : `this ${periodLabel.toLowerCase()}`;
+  return `This code intelligence digest ${periodText} covers ${itemCount} items focused on key themes including ${themes.slice(0, 3).join(", ")}. The community continues to prioritize developer productivity, advanced context management, and agentic workflow patterns. Review the highlights below for the most impactful insights.`;
 }

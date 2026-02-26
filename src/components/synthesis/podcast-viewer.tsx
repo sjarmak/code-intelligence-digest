@@ -232,6 +232,7 @@ export function PodcastViewer({
           provider: audioState.provider,
           voice: audioState.voice,
           format: "mp3",
+          title: title || undefined,
         }),
       });
 
@@ -263,7 +264,7 @@ export function PodcastViewer({
         error: error instanceof Error ? error.message : "Failed to render audio",
       }));
     }
-  }, [transcript, audioState.provider, audioState.voice]);
+  }, [transcript, audioState.provider, audioState.voice, title]);
 
   const handleCopyTranscript = () => {
     navigator.clipboard.writeText(transcript);

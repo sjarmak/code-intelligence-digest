@@ -6,16 +6,13 @@
 
 import OpenAI from "openai";
 import { logger } from "../logger";
+import { getOpenAICompatibleClient } from "../llm/client";
 
 /**
- * Get or create OpenAI client for embeddings
+ * Get or create OpenAI client for embeddings (uses server env)
  */
 function getOpenAIClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
+  return getOpenAICompatibleClient();
 }
 
 /**

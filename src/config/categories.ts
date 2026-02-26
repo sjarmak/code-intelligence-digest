@@ -28,7 +28,8 @@ export interface CategoryConfig {
 export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
   newsletters: {
     name: "Newsletters",
-    description: "Curated newsletters and columns on code intelligence and developer tools",
+    description:
+      "Curated newsletters and columns on code intelligence and developer tools",
     query:
       "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
     halfLifeDays: 3,
@@ -56,7 +57,8 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
 
   tech_articles: {
     name: "Tech Articles",
-    description: "In-depth technical articles and essays on code and development",
+    description:
+      "In-depth technical articles and essays on code and development",
     query:
       "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
     halfLifeDays: 5,
@@ -70,7 +72,8 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
 
   ai_news: {
     name: "AI News",
-    description: "AI model releases, research, and infrastructure news relevant to developers",
+    description:
+      "AI model releases, research, and infrastructure news relevant to developers",
     query:
       "AI model release acquisition breakthrough LLM transformer foundation model reasoning inference",
     halfLifeDays: 2,
@@ -82,9 +85,25 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     },
   },
 
+  ai_dev: {
+    name: "AI Dev",
+    description:
+      "Incorporating AI into developer workflows: tips, best practices, coding assistants, and productivity from TLDR, newsletters, tech blogs, and community",
+    query:
+      "AI coding assistant developer workflow productivity Cursor Copilot pair programming prompt engineering RAG agent devops automation code generation",
+    halfLifeDays: 3,
+    maxItems: 10,
+    minRelevance: 5,
+    weights: {
+      llm: 0.6,
+      bm25: 0.4,
+    },
+  },
+
   product_news: {
     name: "Product News",
-    description: "Tool releases, feature announcements, and changelogs for dev tools",
+    description:
+      "Tool releases, feature announcements, and changelogs for dev tools",
     query:
       "Augment Code Windsurf Cursor Claude Code Codex CLI Gemini CLI Antigravity codebase context coding agent release feature announcement changelog",
     halfLifeDays: 4,
@@ -98,7 +117,8 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
 
   community: {
     name: "Community",
-    description: "Discussions and posts from Reddit, forums, and community channels",
+    description:
+      "Discussions and posts from Reddit, forums, and community channels",
     query:
       "coding agent AI developer workflow sentiment code search Sourcegraph discussion",
     halfLifeDays: 3,
@@ -113,7 +133,8 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
 
   research: {
     name: "Research",
-    description: "Academic papers on software engineering, IR, PL, and ML for code",
+    description:
+      "Academic papers on software engineering, IR, PL, and ML for code",
     query:
       "coding agent code search context agent information retrieval codebase developer workflow benchmark",
     halfLifeDays: 10,
@@ -124,6 +145,21 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
       bm25: 0.3,
       citations: 0.1,
       reads: 0.1,
+    },
+  },
+
+  marketing: {
+    name: "Marketing",
+    description:
+      "Marketing strategies for developer and technical leader audiences, AI-leveraged approaches, and pipeline generation insights",
+    query:
+      "developer marketing developer relations devrel technical audience ICP pipeline generation demand generation B2B SaaS go-to-market content marketing developer experience AI marketing thought leadership technical decision maker engineering leader product-led growth developer advocacy",
+    halfLifeDays: 7,
+    maxItems: 10,
+    minRelevance: 4,
+    weights: {
+      llm: 0.65,
+      bm25: 0.35,
     },
   },
 };
@@ -159,6 +195,5 @@ export function getCategoryQuery(category: Category, goal?: AgentGoal): string {
  *
  * Generated from the shared domain-terms.ts module
  */
-export const DOMAIN_TERM_WEIGHTS: Record<string, number> = Object.fromEntries(
-  buildTermWeightMap()
-);
+export const DOMAIN_TERM_WEIGHTS: Record<string, number> =
+  Object.fromEntries(buildTermWeightMap());

@@ -7,7 +7,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { Category } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
+import {
+  loadItemsByCategory,
+  loadItemsByCategoryWithDateRange,
+} from "@/src/lib/db/items";
 import { retrieveRelevantItems } from "@/src/lib/pipeline/retrieval";
 import { generateAnswer } from "@/src/lib/pipeline/answer";
 
@@ -16,9 +19,11 @@ const VALID_CATEGORIES: Category[] = [
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 interface LLMAnswerResponse {
@@ -50,14 +55,17 @@ export async function GET(req: NextRequest) {
     // Check rate limits (gracefully handle if table doesn't exist)
     let rateLimitResponse = null;
     try {
-      const { enforceRateLimit } = await import('@/src/lib/rate-limit');
-      rateLimitResponse = await enforceRateLimit(req, '/api/ask');
+      const { enforceRateLimit } = await import("@/src/lib/rate-limit");
+      rateLimitResponse = await enforceRateLimit(req, "/api/ask");
       if (rateLimitResponse) {
         return rateLimitResponse;
       }
     } catch (rateLimitError) {
       // If rate limiting fails (e.g., table doesn't exist), log but continue
-      logger.warn('[ASK] Rate limit check failed, continuing without rate limit', { error: rateLimitError });
+      logger.warn(
+        "[ASK] Rate limit check failed, continuing without rate limit",
+        { error: rateLimitError },
+      );
     }
 
     const { searchParams } = new URL(req.url);
@@ -73,7 +81,7 @@ export async function GET(req: NextRequest) {
     if (!question || question.trim().length === 0) {
       return NextResponse.json(
         { error: "Question (question parameter) is required" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -83,7 +91,7 @@ export async function GET(req: NextRequest) {
         {
           error: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(", ")}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -102,7 +110,7 @@ export async function GET(req: NextRequest) {
       if (!startDateParam || !endDateParam) {
         return NextResponse.json(
           { error: "Custom period requires startDate and endDate parameters" },
-          { status: 400 }
+          { status: 400 },
         );
       }
       const startDate = new Date(startDateParam);
@@ -110,25 +118,27 @@ export async function GET(req: NextRequest) {
       if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
         return NextResponse.json(
           { error: "Invalid date format. Use YYYY-MM-DD" },
-          { status: 400 }
+          { status: 400 },
         );
       }
       if (startDate > endDate) {
         return NextResponse.json(
           { error: "Start date must be before end date" },
-          { status: 400 }
+          { status: 400 },
         );
       }
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(23, 59, 59, 999);
       loadOptions = { startDate, endDate };
-      periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+      periodDays = Math.ceil(
+        (endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000),
+      );
     } else {
       periodDays = periodDaysMap[period] || 7;
     }
 
     logger.info(
-      `[ASK] Question: "${question}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}`
+      `[ASK] Question: "${question}", category: ${category || "all"}, period: ${periodDays}d, limit: ${limit}`,
     );
 
     // Initialize database
@@ -139,16 +149,26 @@ export async function GET(req: NextRequest) {
 
     if (category) {
       // Use specific category for context
-      const categoryItems = loadOptions?.startDate && loadOptions?.endDate
-        ? await loadItemsByCategoryWithDateRange(category, loadOptions.startDate, loadOptions.endDate)
-        : await loadItemsByCategory(category, periodDays);
+      const categoryItems =
+        loadOptions?.startDate && loadOptions?.endDate
+          ? await loadItemsByCategoryWithDateRange(
+              category,
+              loadOptions.startDate,
+              loadOptions.endDate,
+            )
+          : await loadItemsByCategory(category, periodDays);
       contextItems = categoryItems || [];
     } else {
       // Use all categories for context
       for (const cat of VALID_CATEGORIES) {
-        const items = loadOptions?.startDate && loadOptions?.endDate
-          ? await loadItemsByCategoryWithDateRange(cat, loadOptions.startDate, loadOptions.endDate)
-          : await loadItemsByCategory(cat, periodDays);
+        const items =
+          loadOptions?.startDate && loadOptions?.endDate
+            ? await loadItemsByCategoryWithDateRange(
+                cat,
+                loadOptions.startDate,
+                loadOptions.endDate,
+              )
+            : await loadItemsByCategory(cat, periodDays);
         if (items && items.length > 0) {
           contextItems.push(...items);
         }
@@ -177,7 +197,7 @@ export async function GET(req: NextRequest) {
       contextItems,
       targetCategory as Category,
       periodDays,
-      limit
+      limit,
     );
 
     if (rankedItems.length === 0) {
@@ -188,7 +208,10 @@ export async function GET(req: NextRequest) {
           "While the digest contains content, I could not find items specifically related to your question.",
         sources: [],
         category: category || "all",
-        period: Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week",
+        period:
+          Object.entries(periodDaysMap).find(
+            ([, v]) => v === periodDays,
+          )?.[0] || "week",
         generatedAt: new Date().toISOString(),
       } as LLMAnswerResponse);
     }
@@ -196,16 +219,21 @@ export async function GET(req: NextRequest) {
     // Generate answer using retrieved items
     let answerResult;
     try {
-      answerResult = await generateAnswer(question, rankedItems);
-      logger.info(`[ASK] Generated answer with ${rankedItems.length} source citations`);
+      answerResult = await generateAnswer(question, rankedItems, undefined);
+      logger.info(
+        `[ASK] Generated answer with ${rankedItems.length} source citations`,
+      );
     } catch (answerError) {
-      logger.error('[ASK] Failed to generate answer', { error: answerError });
-      throw new Error(`Failed to generate answer: ${answerError instanceof Error ? answerError.message : 'Unknown error'}`);
+      logger.error("[ASK] Failed to generate answer", { error: answerError });
+      throw new Error(
+        `Failed to generate answer: ${answerError instanceof Error ? answerError.message : "Unknown error"}`,
+      );
     }
 
     // Map period back to string
     const periodName =
-      Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] || "week";
+      Object.entries(periodDaysMap).find(([, v]) => v === periodDays)?.[0] ||
+      "week";
 
     const response: LLMAnswerResponse = {
       question,
@@ -214,7 +242,9 @@ export async function GET(req: NextRequest) {
         id: source.id,
         title: source.title,
         url: source.url,
-        sourceTitle: rankedItems.find((item) => item.id === source.id)?.sourceTitle || "Unknown",
+        sourceTitle:
+          rankedItems.find((item) => item.id === source.id)?.sourceTitle ||
+          "Unknown",
         relevance: source.relevance,
       })),
       category: category || "all",
@@ -224,16 +254,17 @@ export async function GET(req: NextRequest) {
 
     // Record successful usage (gracefully handle errors)
     try {
-      const { recordUsage } = await import('@/src/lib/rate-limit');
-      await recordUsage(req, '/api/ask');
+      const { recordUsage } = await import("@/src/lib/rate-limit");
+      await recordUsage(req, "/api/ask");
     } catch (usageError) {
-      logger.warn('[ASK] Failed to record usage', { error: usageError });
+      logger.warn("[ASK] Failed to record usage", { error: usageError });
       // Don't fail the request if usage tracking fails
     }
 
     return NextResponse.json(response);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Failed to generate answer";
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to generate answer";
     const errorStack = error instanceof Error ? error.stack : undefined;
 
     logger.error("[ASK] Error in /api/ask", {
@@ -245,9 +276,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error: errorMessage,
-        details: process.env.NODE_ENV === 'development' ? errorStack : undefined,
+        details:
+          process.env.NODE_ENV === "development" ? errorStack : undefined,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

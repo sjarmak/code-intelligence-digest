@@ -8,36 +8,38 @@ import { getDbClient, detectDriver } from "./driver";
 import { FeedItem } from "../model";
 import { logger } from "../logger";
 import { ensureItemExists } from "./items";
+import { LEGACY_USER_ID } from "./constants";
+
+export { LEGACY_USER_ID };
 
 /**
  * Add item to saved items library
  */
-export async function addToSavedItems(itemId: string): Promise<void> {
+export async function addToSavedItems(itemId: string, userId: string = LEGACY_USER_ID): Promise<void> {
   try {
-    // Ensure item exists (creates synthetic item if needed)
     await ensureItemExists(itemId);
     const driver = detectDriver();
     const now = Math.floor(Date.now() / 1000);
-    const id = `saved-${itemId}`;
+    const id = `saved-${userId}-${itemId}`;
 
     if (driver === 'postgres') {
       const client = await getDbClient();
       await client.run(`
-        INSERT INTO saved_items (id, item_id, saved_at, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $4)
-        ON CONFLICT (item_id) DO UPDATE SET
+        INSERT INTO saved_items (id, user_id, item_id, saved_at, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $5)
+        ON CONFLICT (user_id, item_id) DO UPDATE SET
           saved_at = EXCLUDED.saved_at,
           updated_at = EXCLUDED.updated_at
-      `, [id, itemId, now, now]);
+      `, [id, userId, itemId, now, now]);
     } else {
       const sqlite = getSqlite();
       sqlite.prepare(`
-        INSERT INTO saved_items (id, item_id, saved_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT (item_id) DO UPDATE SET
+        INSERT INTO saved_items (id, user_id, item_id, saved_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, item_id) DO UPDATE SET
           saved_at = excluded.saved_at,
           updated_at = excluded.updated_at
-      `).run(id, itemId, now, now, now);
+      `).run(id, userId, itemId, now, now, now);
     }
 
     logger.debug(`Added item ${itemId} to saved items library`);
@@ -50,13 +52,13 @@ export async function addToSavedItems(itemId: string): Promise<void> {
 /**
  * Add multiple items to saved items library
  */
-export async function addMultipleToSavedItems(itemIds: string[]): Promise<{ success: number; failed: number }> {
+export async function addMultipleToSavedItems(itemIds: string[], userId: string = LEGACY_USER_ID): Promise<{ success: number; failed: number }> {
   let success = 0;
   let failed = 0;
 
   for (const itemId of itemIds) {
     try {
-      await addToSavedItems(itemId);
+      await addToSavedItems(itemId, userId);
       success++;
     } catch (error) {
       logger.error(`Failed to add item ${itemId} to saved items library`, error);
@@ -71,20 +73,20 @@ export async function addMultipleToSavedItems(itemIds: string[]): Promise<{ succ
 /**
  * Remove item from saved items library
  */
-export async function removeFromSavedItems(itemId: string): Promise<void> {
+export async function removeFromSavedItems(itemId: string, userId: string = LEGACY_USER_ID): Promise<void> {
   try {
     const driver = detectDriver();
 
     if (driver === 'postgres') {
       const client = await getDbClient();
       await client.run(`
-        DELETE FROM saved_items WHERE item_id = $1
-      `, [itemId]);
+        DELETE FROM saved_items WHERE user_id = $1 AND item_id = $2
+      `, [userId, itemId]);
     } else {
       const sqlite = getSqlite();
       sqlite.prepare(`
-        DELETE FROM saved_items WHERE item_id = ?
-      `).run(itemId);
+        DELETE FROM saved_items WHERE user_id = ? AND item_id = ?
+      `).run(userId, itemId);
     }
 
     logger.debug(`Removed item ${itemId} from saved items library`);
@@ -97,26 +99,24 @@ export async function removeFromSavedItems(itemId: string): Promise<void> {
 /**
  * Remove multiple items from saved items library
  */
-export async function removeMultipleFromSavedItems(itemIds: string[]): Promise<void> {
-  if (itemIds.length === 0) {
-    return;
-  }
+export async function removeMultipleFromSavedItems(itemIds: string[], userId: string = LEGACY_USER_ID): Promise<void> {
+  if (itemIds.length === 0) return;
 
   try {
     const driver = detectDriver();
 
     if (driver === 'postgres') {
       const client = await getDbClient();
-      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+      const placeholders = itemIds.map((_, i) => `$${i + 2}`).join(',');
       await client.run(`
-        DELETE FROM saved_items WHERE item_id IN (${placeholders})
-      `, itemIds);
+        DELETE FROM saved_items WHERE user_id = $1 AND item_id IN (${placeholders})
+      `, [userId, ...itemIds]);
     } else {
       const sqlite = getSqlite();
       const placeholders = itemIds.map(() => '?').join(',');
       sqlite.prepare(`
-        DELETE FROM saved_items WHERE item_id IN (${placeholders})
-      `).run(...itemIds);
+        DELETE FROM saved_items WHERE user_id = ? AND item_id IN (${placeholders})
+      `).run(userId, ...itemIds);
     }
 
     logger.debug(`Removed ${itemIds.length} items from saved items library`);
@@ -129,16 +129,16 @@ export async function removeMultipleFromSavedItems(itemIds: string[]): Promise<v
 /**
  * Remove all items from saved items library
  */
-export async function removeAllFromSavedItems(): Promise<void> {
+export async function removeAllFromSavedItems(userId: string = LEGACY_USER_ID): Promise<void> {
   try {
     const driver = detectDriver();
 
     if (driver === 'postgres') {
       const client = await getDbClient();
-      await client.run(`DELETE FROM saved_items`);
+      await client.run(`DELETE FROM saved_items WHERE user_id = $1`, [userId]);
     } else {
       const sqlite = getSqlite();
-      sqlite.prepare(`DELETE FROM saved_items`).run();
+      sqlite.prepare(`DELETE FROM saved_items WHERE user_id = ?`).run(userId);
     }
 
     logger.debug(`Removed all items from saved items library`);
@@ -151,21 +151,21 @@ export async function removeAllFromSavedItems(): Promise<void> {
 /**
  * Check if item is in saved items library
  */
-export async function isInSavedItems(itemId: string): Promise<boolean> {
+export async function isInSavedItems(itemId: string, userId: string = LEGACY_USER_ID): Promise<boolean> {
   try {
     const driver = detectDriver();
 
     if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(`
-        SELECT 1 FROM saved_items WHERE item_id = $1 LIMIT 1
-      `, [itemId]);
+        SELECT 1 FROM saved_items WHERE user_id = $1 AND item_id = $2 LIMIT 1
+      `, [userId, itemId]);
       return result.rows.length > 0;
     } else {
       const sqlite = getSqlite();
       const result = sqlite.prepare(`
-        SELECT 1 FROM saved_items WHERE item_id = ? LIMIT 1
-      `).get(itemId) as { '1': number } | undefined;
+        SELECT 1 FROM saved_items WHERE user_id = ? AND item_id = ? LIMIT 1
+      `).get(userId, itemId) as { '1': number } | undefined;
       return !!result;
     }
   } catch (error) {
@@ -175,9 +175,35 @@ export async function isInSavedItems(itemId: string): Promise<boolean> {
 }
 
 /**
+ * Get count of saved items for a user (lightweight, no item load).
+ */
+export async function getSavedItemsCount(userId: string = LEGACY_USER_ID): Promise<number> {
+  try {
+    const driver = detectDriver();
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT COUNT(*) AS n FROM saved_items WHERE user_id = ?`,
+        [userId]
+      );
+      const row = result.rows[0] as { n: string } | undefined;
+      return row ? parseInt(String(row.n), 10) : 0;
+    }
+    const sqlite = getSqlite();
+    const row = sqlite
+      .prepare(`SELECT COUNT(*) AS n FROM saved_items WHERE user_id = ?`)
+      .get(userId) as { n: number } | undefined;
+    return row?.n ?? 0;
+  } catch (error) {
+    logger.error("Failed to get saved items count", error);
+    return 0;
+  }
+}
+
+/**
  * Get all saved items
  */
-export async function getSavedItems(limit?: number, offset?: number): Promise<FeedItem[]> {
+export async function getSavedItems(limit?: number, offset?: number, userId: string = LEGACY_USER_ID): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
     const { loadItem } = await import("./items");
@@ -185,10 +211,10 @@ export async function getSavedItems(limit?: number, offset?: number): Promise<Fe
     if (driver === 'postgres') {
       const client = await getDbClient();
       let sql = `
-        SELECT item_id FROM saved_items
+        SELECT item_id FROM saved_items WHERE user_id = $1
         ORDER BY saved_at DESC
       `;
-      const params: unknown[] = [];
+      const params: unknown[] = [userId];
 
       if (limit) {
         sql += ` LIMIT $${params.length + 1}`;
@@ -214,10 +240,10 @@ export async function getSavedItems(limit?: number, offset?: number): Promise<Fe
     } else {
       const sqlite = getSqlite();
       let sql = `
-        SELECT item_id FROM saved_items
+        SELECT item_id FROM saved_items WHERE user_id = ?
         ORDER BY saved_at DESC
       `;
-      const params: unknown[] = [];
+      const params: unknown[] = [userId];
 
       if (limit) {
         sql += ` LIMIT ?`;

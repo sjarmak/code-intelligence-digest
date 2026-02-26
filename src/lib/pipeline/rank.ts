@@ -8,6 +8,12 @@ import { getCategoryConfig } from "../../config/categories";
 import { BM25Index } from "./bm25";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
+import {
+  computeProductBoost,
+  findProductMentions,
+  getProductById,
+  getCompetitorProducts,
+} from "../../config/products";
 
 /**
  * Compute recency score with exponential decay
@@ -324,40 +330,23 @@ export async function rankCategory(
       : 1.0; // No recency boost for non-all-time periods (neutral score)
 
     // Apply boosts for domain-specific terms (code search, agents, evaluation, etc.)
-    let boostMultiplier = 1.0;
-    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
+    // Include fullText when available so newsletter articles that mention code search/Sourcegraph
+    // in the body get the boost even if the short snippet doesn't (e.g. roam from TLDR - Topics)
+    const FULLTEXT_TRUNCATE = 8000;
+    const fullTextSnippet = item.fullText
+      ? item.fullText.slice(0, FULLTEXT_TRUNCATE)
+      : "";
+    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''} ${fullTextSnippet}`.trim();
+    const lowerContent = contentToSearch.toLowerCase();
     const boostTags: string[] = [];
 
-    // For product_news category, heavily boost mentions of specific products
-    if (category === "product_news") {
-      const productNames = [
-        'augment code',
-        'claude code',
-        'cursor',
-        'windsurf',
-        'warp',
-        'greptile',
-        'coderabbit',
-        'codex',
-        'gemini cli',
-        'github copilot',
-        'kilo',
-      ];
-
-      const matchingProducts = productNames.filter(product =>
-        contentToSearch.includes(product)
-      );
-
-      if (matchingProducts.length > 0) {
-        // Heavy boost for product mentions: 4x for 2+ products, 3x for 1 product
-        boostMultiplier = matchingProducts.length >= 2 ? 4.0 : 3.0;
-        boostTags.push(...matchingProducts);
-        logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${matchingProducts.join(", ")}: "${item.title}"`);
-      }
-    }
+    // Product-specific boost (stronger for key competitors/own products in product_news)
+    const productBoost = computeProductBoost(category, contentToSearch);
+    let boostMultiplier = productBoost.multiplier;
+    boostTags.push(...productBoost.tags);
 
     // SOURCEGRAPH: Highest priority
-    const hasSourcegraph = contentToSearch.includes('sourcegraph');
+    const hasSourcegraph = lowerContent.includes('sourcegraph');
 
     // Core domain terms
     const coreTerms = [
@@ -383,11 +372,11 @@ export async function rankCategory(
       logger.debug(`Applied 5x SOURCEGRAPH BOOST: "${item.title}"`);
     } else {
       // Count matching core terms (excluding sourcegraph)
-      const matchingCoreTerms = coreTerms.filter(term => contentToSearch.includes(term)).length;
+      const matchingCoreTerms = coreTerms.filter(term => lowerContent.includes(term)).length;
 
       // Check for compound terms (agent + code search/intelligence/context)
-      const hasAgent = contentToSearch.includes('agent') || contentToSearch.includes('agentic') || contentToSearch.includes('coding agent');
-      const hasCodeContext = coreTerms.slice(1, 8).some(term => contentToSearch.includes(term)); // code search through context management
+      const hasAgent = lowerContent.includes('agent') || lowerContent.includes('agentic') || lowerContent.includes('coding agent');
+      const hasCodeContext = coreTerms.slice(1, 8).some(term => lowerContent.includes(term)); // code search through context management
 
       if (matchingCoreTerms >= 3) {
         // Multiple domain terms = strong signal
@@ -433,6 +422,8 @@ export async function rankCategory(
       `Tags: ${llmResult?.tags.join(", ") || "none"}`,
     ].filter(Boolean).join(" | ");
 
+    const detectedProductIds = findProductMentions(lowerContent);
+
     return {
       ...item,
       bm25Score,
@@ -444,6 +435,7 @@ export async function rankCategory(
       recencyScore,
       finalScore,
       reasoning,
+      productMentions: detectedProductIds.length > 0 ? detectedProductIds : undefined,
     };
   });
 
@@ -718,33 +710,17 @@ export async function rankCategoryWithoutRecency(
 
     // Apply boosts for domain-specific terms (same as rankCategory)
     let boostMultiplier = 1.0;
-    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''}`.toLowerCase();
+    const fullTextSnippet = item.fullText ? item.fullText.slice(0, 8000) : "";
+    const contentToSearch = `${item.title} ${item.summary || ''} ${item.contentSnippet || ''} ${fullTextSnippet}`.trim().toLowerCase();
     const boostTags: string[] = [];
 
-    if (category === "product_news") {
-      const productNames = [
-        'augment code',
-        'claude code',
-        'cursor',
-        'windsurf',
-        'warp',
-        'greptile',
-        'coderabbit',
-        'codex',
-        'gemini cli',
-        'github copilot',
-        'kilo',
-      ];
+    // Detect product mentions in content (used for filtering and boosting)
+    const detectedProductIds = findProductMentions(contentToSearch);
 
-      const matchingProducts = productNames.filter(product =>
-        contentToSearch.includes(product)
-      );
-
-      if (matchingProducts.length > 0) {
-        boostMultiplier = matchingProducts.length >= 2 ? 4.0 : 3.0;
-        boostTags.push(...matchingProducts);
-        logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${matchingProducts.join(", ")}: "${item.title}"`);
-      }
+    if (category === "product_news" && detectedProductIds.length > 0) {
+      boostMultiplier = detectedProductIds.length >= 2 ? 4.0 : 3.0;
+      boostTags.push(...detectedProductIds);
+      logger.debug(`Applied ${boostMultiplier}x PRODUCT BOOST for ${detectedProductIds.join(", ")}: "${item.title}"`);
     }
 
     const hasSourcegraph = contentToSearch.includes('sourcegraph');
@@ -812,6 +788,7 @@ export async function rankCategoryWithoutRecency(
       recencyScore: 0, // Set to 0 since it's not used
       finalScore,
       reasoning,
+      productMentions: detectedProductIds.length > 0 ? detectedProductIds : undefined,
     };
   });
 

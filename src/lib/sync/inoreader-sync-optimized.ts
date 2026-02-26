@@ -30,14 +30,14 @@
  * Currently used by: /api/admin/sync-optimized/[...slug]/route.ts
  */
 
-import { createInoreaderClient } from '../inoreader/client';
-import { normalizeItems } from '../pipeline/normalize';
-import { categorizeItems } from '../pipeline/categorize';
-import { saveItems } from '../db/items';
-import { incrementApiCalls } from '../db/api-budget';
-import { logger } from '../logger';
-import { Category } from '../model';
-import { getStreamsByCategory } from '@/src/config/feeds';
+import { createInoreaderClient } from "../inoreader/client";
+import { normalizeItems } from "../pipeline/normalize";
+import { categorizeItems } from "../pipeline/categorize";
+import { saveItems } from "../db/items";
+import { incrementApiCalls } from "../db/api-budget";
+import { logger } from "../logger";
+import { Category } from "../model";
+import { getStreamsByCategory } from "@/src/config/feeds";
 
 /**
  * Fetch all items from a specific category/label in one call
@@ -45,7 +45,7 @@ import { getStreamsByCategory } from '@/src/config/feeds';
  * @deprecated Use daily-sync.ts runDailySync() with category filter instead
  */
 export async function syncCategoryOptimized(
-  category: Category
+  category: Category,
 ): Promise<{ itemsAdded: number; itemsSkipped: number; apiCallsUsed: number }> {
   logger.info(`[SYNC-OPTIMIZED] Syncing category: ${category}`);
 
@@ -59,12 +59,14 @@ export async function syncCategoryOptimized(
     const streamIds = await getStreamsByCategory(category);
 
     if (streamIds.length === 0) {
-      logger.warn(`[SYNC-OPTIMIZED] No streams configured for category: ${category}`);
+      logger.warn(
+        `[SYNC-OPTIMIZED] No streams configured for category: ${category}`,
+      );
       return { itemsAdded: 0, itemsSkipped: 0, apiCallsUsed: 0 };
     }
 
     logger.info(
-      `[SYNC-OPTIMIZED] Found ${streamIds.length} streams for category: ${category}`
+      `[SYNC-OPTIMIZED] Found ${streamIds.length} streams for category: ${category}`,
     );
 
     // Try to find a label/tag stream ID that groups all these feeds
@@ -74,7 +76,7 @@ export async function syncCategoryOptimized(
     // Fetch with 30-day window (n parameter is number of items, not days)
     // Inoreader returns most recent items first
     logger.debug(
-      `[SYNC-OPTIMIZED] Fetching up to 500 items from primary stream: ${allItemsStreamId}`
+      `[SYNC-OPTIMIZED] Fetching up to 500 items from primary stream: ${allItemsStreamId}`,
     );
 
     const response = await client.getStreamContents(allItemsStreamId, {
@@ -86,13 +88,13 @@ export async function syncCategoryOptimized(
 
     if (!response.items || response.items.length === 0) {
       logger.warn(
-        `[SYNC-OPTIMIZED] No items fetched for category: ${category}`
+        `[SYNC-OPTIMIZED] No items fetched for category: ${category}`,
       );
       return { itemsAdded: 0, itemsSkipped: 0, apiCallsUsed: 1 };
     }
 
     logger.info(
-      `[SYNC-OPTIMIZED] Fetched ${response.items.length} items from primary stream`
+      `[SYNC-OPTIMIZED] Fetched ${response.items.length} items from primary stream`,
     );
 
     // Normalize items
@@ -107,20 +109,20 @@ export async function syncCategoryOptimized(
 
     if (categoryItems.length === 0) {
       logger.warn(
-        `[SYNC-OPTIMIZED] No items matched category filter for: ${category}. Normalized: ${items.length}, distributed to other categories`
+        `[SYNC-OPTIMIZED] No items matched category filter for: ${category}. Normalized: ${items.length}, distributed to other categories`,
       );
       itemsSkipped = response.items.length;
       return { itemsAdded: 0, itemsSkipped, apiCallsUsed: 1 };
     }
 
     logger.info(
-      `[SYNC-OPTIMIZED] ${categoryItems.length} items match category: ${category}`
+      `[SYNC-OPTIMIZED] ${categoryItems.length} items match category: ${category}`,
     );
 
     // Save to database
     await saveItems(categoryItems);
     logger.info(
-      `[SYNC-OPTIMIZED] Saved ${categoryItems.length} items for category: ${category}`
+      `[SYNC-OPTIMIZED] Saved ${categoryItems.length} items for category: ${category}`,
     );
 
     itemsAdded = categoryItems.length;
@@ -128,7 +130,10 @@ export async function syncCategoryOptimized(
 
     return { itemsAdded, itemsSkipped, apiCallsUsed: 1 };
   } catch (error) {
-    logger.error(`[SYNC-OPTIMIZED] Failed to sync category: ${category}`, error);
+    logger.error(
+      `[SYNC-OPTIMIZED] Failed to sync category: ${category}`,
+      error,
+    );
     throw error;
   }
 }
@@ -151,16 +156,20 @@ export async function syncAllCategoriesOptimized(): Promise<{
   errors: Array<{ category: Category; error: string }>;
   apiCallsUsed: number;
 }> {
-  logger.info('[SYNC-OPTIMIZED] Starting minimal-API-call sync for all categories');
+  logger.info(
+    "[SYNC-OPTIMIZED] Starting minimal-API-call sync for all categories",
+  );
 
   const VALID_CATEGORIES: Category[] = [
-    'newsletters',
-    'podcasts',
-    'tech_articles',
-    'ai_news',
-    'product_news',
-    'community',
-    'research',
+    "newsletters",
+    "podcasts",
+    "tech_articles",
+  "ai_news",
+  "ai_dev",
+  "product_news",
+    "community",
+    "research",
+    "marketing",
   ];
 
   const errors: Array<{ category: Category; error: string }> = [];
@@ -172,12 +181,12 @@ export async function syncAllCategoriesOptimized(): Promise<{
     const client = createInoreaderClient();
 
     // Get user info to construct the "all items" stream ID
-    logger.debug('[SYNC-OPTIMIZED] Fetching user info to get user ID...');
+    logger.debug("[SYNC-OPTIMIZED] Fetching user info to get user ID...");
     const userInfo = (await client.getUserInfo()) as Record<string, unknown>;
     const userId = (userInfo.userId || userInfo.id) as string | undefined;
 
     if (!userId) {
-      throw new Error('Could not determine user ID from Inoreader');
+      throw new Error("Could not determine user ID from Inoreader");
     }
 
     // Track getUserInfo API call
@@ -190,7 +199,7 @@ export async function syncAllCategoriesOptimized(): Promise<{
     const allItemsStreamId = `user/${userId}/state/com.google/all`;
 
     logger.info(
-      `[SYNC-OPTIMIZED] Fetching all items in bulk from: ${allItemsStreamId}`
+      `[SYNC-OPTIMIZED] Fetching all items in bulk from: ${allItemsStreamId}`,
     );
 
     // Fetch ALL items with pagination support
@@ -202,7 +211,7 @@ export async function syncAllCategoriesOptimized(): Promise<{
     do {
       callCount++;
       logger.debug(
-        `[SYNC-OPTIMIZED] Fetching batch ${callCount}${continuation ? ' (continuation)' : ''}`
+        `[SYNC-OPTIMIZED] Fetching batch ${callCount}${continuation ? " (continuation)" : ""}`,
       );
 
       const response = await client.getStreamContents(allItemsStreamId, {
@@ -219,7 +228,7 @@ export async function syncAllCategoriesOptimized(): Promise<{
       }
 
       logger.info(
-        `[SYNC-OPTIMIZED] Batch ${callCount}: fetched ${response.items.length} raw items`
+        `[SYNC-OPTIMIZED] Batch ${callCount}: fetched ${response.items.length} raw items`,
       );
 
       // Normalize items immediately
@@ -246,13 +255,14 @@ export async function syncAllCategoriesOptimized(): Promise<{
           }
 
           logger.debug(
-            `[SYNC-OPTIMIZED] Batch ${callCount}, saved ${categoryItems.length} items to ${category}`
+            `[SYNC-OPTIMIZED] Batch ${callCount}, saved ${categoryItems.length} items to ${category}`,
           );
         } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : String(error);
+          const errorMsg =
+            error instanceof Error ? error.message : String(error);
           logger.error(
             `[SYNC-OPTIMIZED] Failed to save ${category} items from batch ${callCount}`,
-            error
+            error,
           );
           if (!errors.find((e) => e.category === category)) {
             errors.push({ category, error: errorMsg });
@@ -262,19 +272,19 @@ export async function syncAllCategoriesOptimized(): Promise<{
 
       continuation = response.continuation;
       logger.info(
-        `[SYNC-OPTIMIZED] Batch ${callCount} complete: ${totalItemsAdded} total items saved so far`
+        `[SYNC-OPTIMIZED] Batch ${callCount} complete: ${totalItemsAdded} total items saved so far`,
       );
     } while (continuation);
 
     // apiCallsUsed is already tracked above
 
     if (totalItemsAdded === 0) {
-      logger.warn('[SYNC-OPTIMIZED] No items found or saved');
+      logger.warn("[SYNC-OPTIMIZED] No items found or saved");
       return {
         success: false,
         categoriesProcessed,
         itemsAdded: 0,
-        errors: [{ category: 'newsletters', error: 'No items found or saved' }],
+        errors: [{ category: "newsletters", error: "No items found or saved" }],
         apiCallsUsed,
       };
     }
@@ -282,7 +292,7 @@ export async function syncAllCategoriesOptimized(): Promise<{
     const success = categoriesProcessed.length === VALID_CATEGORIES.length;
 
     logger.info(
-      `[SYNC-OPTIMIZED] Complete: ${categoriesProcessed.length}/${VALID_CATEGORIES.length} categories, ${totalItemsAdded} total items, ${apiCallsUsed} API call(s)`
+      `[SYNC-OPTIMIZED] Complete: ${categoriesProcessed.length}/${VALID_CATEGORIES.length} categories, ${totalItemsAdded} total items, ${apiCallsUsed} API call(s)`,
     );
 
     return {
@@ -293,7 +303,7 @@ export async function syncAllCategoriesOptimized(): Promise<{
       apiCallsUsed,
     };
   } catch (error) {
-    logger.error('[SYNC-OPTIMIZED] Critical error in optimized sync', error);
+    logger.error("[SYNC-OPTIMIZED] Critical error in optimized sync", error);
 
     return {
       success: false,
@@ -301,7 +311,7 @@ export async function syncAllCategoriesOptimized(): Promise<{
       itemsAdded: totalItemsAdded,
       errors: [
         {
-          category: 'newsletters',
+          category: "newsletters",
           error: error instanceof Error ? error.message : String(error),
         },
       ],
@@ -326,18 +336,18 @@ export async function syncByLabel(labelId: string): Promise<{
 
   const client = createInoreaderClient();
 
-    try {
-      const response = await client.getStreamContents(labelId, {
-        n: 500,
-      });
+  try {
+    const response = await client.getStreamContents(labelId, {
+      n: 500,
+    });
 
-      // Track API call in budget
-      await incrementApiCalls(1);
+    // Track API call in budget
+    await incrementApiCalls(1);
 
-      if (!response.items || response.items.length === 0) {
-        logger.warn(`[SYNC-OPTIMIZED] No items found in label: ${labelId}`);
-        return { itemsAdded: 0, apiCallsUsed: 1 };
-      }
+    if (!response.items || response.items.length === 0) {
+      logger.warn(`[SYNC-OPTIMIZED] No items found in label: ${labelId}`);
+      return { itemsAdded: 0, apiCallsUsed: 1 };
+    }
 
     // Normalize and save
     let items = await normalizeItems(response.items);
@@ -345,7 +355,9 @@ export async function syncByLabel(labelId: string): Promise<{
 
     await saveItems(items);
 
-    logger.info(`[SYNC-OPTIMIZED] Saved ${items.length} items from label: ${labelId}`);
+    logger.info(
+      `[SYNC-OPTIMIZED] Saved ${items.length} items from label: ${labelId}`,
+    );
 
     return { itemsAdded: items.length, apiCallsUsed: 1 };
   } catch (error) {

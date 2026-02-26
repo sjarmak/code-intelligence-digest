@@ -1,9 +1,9 @@
 /**
  * Admin API for full text management
- * 
+ *
  * GET /api/admin/fulltext/status
  *   Returns cache statistics
- * 
+ *
  * POST /api/admin/fulltext/fetch
  *   Fetch full text for items
  *   Body: { category?, limit?, skip_cached? }
@@ -12,19 +12,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/src/lib/logger";
 import { loadItemsByCategory } from "@/src/lib/db/items";
-import { saveFullText, getFullTextCacheStats } from "@/src/lib/db/items";
+import { saveFullText, getFullTextCacheStats, saveExtractedUrl } from "@/src/lib/db/items";
 import { fetchFullTextBatch } from "@/src/lib/pipeline/fulltext";
 import { Category } from "@/src/lib/model";
-import { blockInProduction } from "@/src/lib/auth/guards";
-
 const VALID_CATEGORIES: Category[] = [
   "newsletters",
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 /**
@@ -32,22 +32,20 @@ const VALID_CATEGORIES: Category[] = [
  * Get cache statistics
  */
 export async function GET(request: NextRequest) {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
-
   try {
     const stats = await getFullTextCacheStats();
 
     return NextResponse.json({
       status: "ok",
       cache: stats,
-      percentCached: stats.total > 0 ? Math.round((stats.cached / stats.total) * 100) : 0,
+      percentCached:
+        stats.total > 0 ? Math.round((stats.cached / stats.total) * 100) : 0,
     });
   } catch (error) {
     logger.error("Failed to get full text stats", { error });
     return NextResponse.json(
       { error: "Failed to get full text stats" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -57,9 +55,6 @@ export async function GET(request: NextRequest) {
  * Fetch full text for items
  */
 export async function POST(request: NextRequest) {
-  const blocked = blockInProduction();
-  if (blocked) return blocked;
-
   try {
     const body = await request.json();
 
@@ -73,12 +68,12 @@ export async function POST(request: NextRequest) {
         {
           error: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(", ")}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     logger.info(
-      `Fetching full text for ${category || "all categories"}, limit: ${limit}, skip_cached: ${skipCached}`
+      `Fetching full text for ${category || "all categories"}, limit: ${limit}, skip_cached: ${skipCached}`,
     );
 
     // Load items
@@ -98,9 +93,9 @@ export async function POST(request: NextRequest) {
     // Filter out items that already have full text if skip_cached is true
     let itemsToFetch = items;
     if (skipCached) {
-      itemsToFetch = items.filter(item => !(item as any).fullText);
+      itemsToFetch = items.filter((item) => !(item as any).fullText);
       logger.info(
-        `Filtered to ${itemsToFetch.length} items (${items.length - itemsToFetch.length} already cached)`
+        `Filtered to ${itemsToFetch.length} items (${items.length - itemsToFetch.length} already cached)`,
       );
     }
 
@@ -132,6 +127,12 @@ export async function POST(request: NextRequest) {
     for (const [itemId, result] of results.entries()) {
       try {
         await saveFullText(itemId, result.text, result.source);
+        // If we resolved via Wayback Machine, save the archive URL so users get a working link
+        if (result.archivedUrl) {
+          await saveExtractedUrl(itemId, result.archivedUrl).catch(err => {
+            logger.warn(`Failed to save archived URL for ${itemId}`, { error: err });
+          });
+        }
         if (result.source !== "error") {
           successful++;
         } else {
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
     const stats = await getFullTextCacheStats();
 
     logger.info(
-      `Full text fetch complete: ${successful} successful, ${failed} failed in ${fetchDuration}ms`
+      `Full text fetch complete: ${successful} successful, ${failed} failed in ${fetchDuration}ms`,
     );
 
     return NextResponse.json({
@@ -167,7 +168,7 @@ export async function POST(request: NextRequest) {
         error: "Failed to fetch full text",
         message: errorMsg,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

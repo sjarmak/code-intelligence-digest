@@ -9,7 +9,7 @@ A focused application that aggregates content from Inoreader feeds and presents 
   - Newsletters
   - Podcasts
   - Tech Articles
-  - AI News
+  - AI News, AI Dev
   - Product News
   - Community (Reddit, forums)
   - Research (academic papers)
@@ -195,11 +195,13 @@ This project includes a `render.yaml` Blueprint for one-click deployment to [Ren
 PostgreSQL is the default database for local development to mirror production architecture.
 
 1. **Start local PostgreSQL with Docker:**
+
    ```bash
    npm run db:start
    ```
 
 2. **Configure `.env.local`:**
+
    ```bash
    # Local development database (used by default for app and scripts)
    LOCAL_DATABASE_URL=postgresql://code_intel_user:local_dev_password@localhost:5433/code_intel
@@ -214,11 +216,13 @@ PostgreSQL is the default database for local development to mirror production ar
    **Note:** The connection string uses port `5433` (not 5432) to avoid conflicts with system PostgreSQL.
 
 3. **Initialize the local database schema:**
+
    ```bash
    npx tsx scripts/init-local-postgres.ts
    ```
 
 4. **Workflow:**
+
    ```bash
    # Sync from production to local (get latest data)
    npm run db:sync:from-prod
@@ -232,6 +236,7 @@ PostgreSQL is the default database for local development to mirror production ar
    ```
 
 **Database Selection Priority:**
+
 - PostgreSQL is required for both development and production
 - If `LOCAL_DATABASE_URL` is set, it's used for local development (required)
 - If only `DATABASE_URL` is set, it's used (production)

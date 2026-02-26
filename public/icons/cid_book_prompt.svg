@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+  <path stroke-width="11.53" d="M39.23 70.62C74.12 46.84 117.06 52.79 135.85 72.6c18.78-19.81 61.72-25.76 96.61-1.98v142.67c-32.46-5.29-35-2-96.61-6.29c-25.85-1-55 2-96.62 6.29V70.62z" />
+  <line stroke-width="8.1" x1="136" y1="76" x2="136" y2="209" />
+  <polyline stroke-width="10" points="148,132 164,144 148,156" transform="matrix(0.9344649,0,0,1.0204257,-66.853469,-13.864378)" />
+  <line stroke-width="8.58" x1="77.59" y1="157.54" x2="105.18" y2="157.54" />
+  <line stroke-width="12" x1="156" y1="96" x2="212" y2="96" />
+  <line stroke-width="12" y1="128.5" y2="128.5" x1="156" x2="212" />
+  <line stroke-width="12" x1="156" y1="161" x2="212" y2="161" />
+</svg>

@@ -7,21 +7,60 @@ import { getDbClient, detectDriver } from "./driver";
 import { FeedItem } from "../model";
 import type { Category } from "../model";
 import { logger } from "../logger";
+import { tryResolveToArticleUrl } from "../url-curation";
 
 /**
- * Save items to database
+ * Curate items so only those with a valid article URL are saved.
+ * Resolves subscription/plan URLs to article URLs when possible; drops items that cannot be resolved.
+ */
+function itemsWithArticleUrlsOnly(items: FeedItem[]): FeedItem[] {
+  const out: FeedItem[] = [];
+  for (const item of items) {
+    const articleUrl = tryResolveToArticleUrl(item.url);
+    if (!articleUrl) {
+      logger.debug(
+        `Skipping item (subscription/plan URL, no article): "${item.title}" url=${item.url?.substring(0, 60)}...`,
+      );
+      continue;
+    }
+    out.push(articleUrl !== item.url ? { ...item, url: articleUrl } : item);
+  }
+  if (out.length < items.length) {
+    logger.info(
+      `URL curation: ${items.length} → ${out.length} items (dropped ${items.length - out.length} with subscription/plan URLs only)`,
+    );
+  }
+  return out;
+}
+
+/** Resolve URL to article URL for display; returns null if this is a subscription/plan-only URL (item should not be shown). */
+function articleUrlForDisplay(url: string | undefined): string | null {
+  if (!url) return null;
+  return tryResolveToArticleUrl(url);
+}
+
+/**
+ * Save items to database.
+ * Only items with a valid article URL are stored; subscription/plan-only URLs are skipped.
  */
 export async function saveItems(items: FeedItem[]): Promise<void> {
   try {
+    const toSave = itemsWithArticleUrlsOnly(items);
+    if (toSave.length === 0) {
+      logger.debug("saveItems: no items with valid article URLs to save");
+      return;
+    }
+
     const driver = detectDriver();
-    
-    if (driver === 'postgres') {
+
+    if (driver === "postgres") {
       const client = await getDbClient();
-      for (const item of items) {
-        await client.run(`
-          INSERT INTO items 
-          (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, EXTRACT(EPOCH FROM NOW())::INTEGER)
+      for (const item of toSave) {
+        await client.run(
+          `
+          INSERT INTO items
+          (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, full_text, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, EXTRACT(EPOCH FROM NOW())::INTEGER)
           ON CONFLICT (id) DO UPDATE SET
             stream_id = EXCLUDED.stream_id,
             source_title = EXCLUDED.source_title,
@@ -33,32 +72,50 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             content_snippet = EXCLUDED.content_snippet,
             categories = EXCLUDED.categories,
             category = EXCLUDED.category,
+            full_text = COALESCE(EXCLUDED.full_text, items.full_text),
             updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
-        `, [
-          item.id,
-          item.streamId,
-          item.sourceTitle,
-          item.title,
-          item.url,
-          item.author || null,
-          Math.floor(item.publishedAt.getTime() / 1000),
-          item.summary || null,
-          item.contentSnippet || null,
-          JSON.stringify(item.categories),
-          item.category
-        ]);
+        `,
+          [
+            item.id,
+            item.streamId,
+            item.sourceTitle,
+            item.title,
+            item.url,
+            item.author || null,
+            Math.floor(item.publishedAt.getTime() / 1000),
+            item.summary || null,
+            item.contentSnippet || null,
+            JSON.stringify(item.categories),
+            item.category,
+            item.fullText || null,
+          ],
+        );
       }
     } else {
       const sqlite = getSqlite();
 
+      // Use ON CONFLICT DO UPDATE so we don't overwrite existing full_text with null when saving items without fullText (e.g. raw sync)
       const stmt = sqlite.prepare(`
-        INSERT OR REPLACE INTO items 
-        (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        INSERT INTO items
+        (id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, full_text, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+        ON CONFLICT (id) DO UPDATE SET
+          stream_id = excluded.stream_id,
+          source_title = excluded.source_title,
+          title = excluded.title,
+          url = excluded.url,
+          author = excluded.author,
+          published_at = excluded.published_at,
+          summary = excluded.summary,
+          content_snippet = excluded.content_snippet,
+          categories = excluded.categories,
+          category = excluded.category,
+          full_text = COALESCE(excluded.full_text, full_text),
+          updated_at = strftime('%s', 'now')
       `);
 
-      const insertMany = sqlite.transaction((items: FeedItem[]) => {
-        for (const item of items) {
+      const insertMany = sqlite.transaction((itemsToInsert: FeedItem[]) => {
+        for (const item of itemsToInsert) {
           stmt.run(
             item.id,
             item.streamId,
@@ -70,14 +127,15 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
             item.summary || null,
             item.contentSnippet || null,
             JSON.stringify(item.categories),
-            item.category
+            item.category,
+            item.fullText || null,
           );
         }
       });
 
-      insertMany(items);
+      insertMany(toSave);
     }
-    logger.info(`Saved ${items.length} items to database`);
+    logger.info(`Saved ${toSave.length} items to database`);
   } catch (error) {
     logger.error("Failed to save items to database", error);
     throw error;
@@ -89,11 +147,13 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
  */
 export async function loadItemsByCategory(
   category: string,
-  periodDays: number
+  periodDays: number,
 ): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
-    const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+    const cutoffTime = Math.floor(
+      (Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000,
+    );
 
     let rows: Array<{
       id: string;
@@ -111,55 +171,60 @@ export async function loadItemsByCategory(
       extracted_url: string | null;
     }>;
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
-         FROM items 
+         FROM items
          WHERE category = $1 AND published_at >= $2
          ORDER BY published_at DESC`,
-        [category, cutoffTime]
+        [category, cutoffTime],
       );
       rows = result.rows as typeof rows;
     } else {
       const sqlite = getSqlite();
       rows = sqlite
         .prepare(
-          `SELECT * FROM items 
+          `SELECT * FROM items
            WHERE category = ? AND published_at >= ?
-           ORDER BY published_at DESC`
+           ORDER BY published_at DESC`,
         )
         .all(category, cutoffTime) as typeof rows;
     }
 
-    const items: FeedItem[] = rows.map((row) => {
-      const cat = row.category as Category;
-      const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
-        ? row.url 
-        : (row.extracted_url || row.url);
-      return {
-        id: row.id,
-        streamId: row.stream_id,
-        sourceTitle: row.source_title,
-        title: row.title,
-        url: finalUrl,
-        author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000),
-        summary: row.summary || undefined,
-        contentSnippet: row.content_snippet || undefined,
-        categories: JSON.parse(row.categories),
-        category: cat,
-        raw: {},
-        fullText: row.full_text || undefined,
-      };
-    });
+    const items = rows
+      .map((row) => {
+        const cat = row.category as Category;
+        const finalUrl =
+          row.url && !row.url.includes("inoreader.com")
+            ? row.url
+            : row.extracted_url || row.url;
+        const articleUrl = articleUrlForDisplay(finalUrl);
+        if (!articleUrl) return null;
+        return {
+          id: row.id,
+          streamId: row.stream_id,
+          sourceTitle: row.source_title,
+          title: row.title,
+          url: articleUrl,
+          author: row.author ?? undefined,
+          publishedAt: new Date(row.published_at * 1000),
+          summary: row.summary ?? undefined,
+          contentSnippet: row.content_snippet ?? undefined,
+          categories: JSON.parse(row.categories),
+          category: cat,
+          raw: {},
+          fullText: row.full_text ?? undefined,
+        } as FeedItem;
+      })
+      .filter((item): item is FeedItem => item != null);
 
     return items;
   } catch (error) {
     logger.error(
       `Failed to load items for category ${category} with period ${periodDays}d`,
-      error
+      error,
     );
     throw error;
   }
@@ -171,7 +236,7 @@ export async function loadItemsByCategory(
 export async function loadItemsByCategoryWithDateRange(
   category: string,
   startDate: Date,
-  endDate: Date
+  endDate: Date,
 ): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
@@ -194,55 +259,60 @@ export async function loadItemsByCategoryWithDateRange(
       extracted_url: string | null;
     }>;
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
-         FROM items 
+         FROM items
          WHERE category = $1 AND published_at >= $2 AND published_at <= $3
          ORDER BY published_at DESC`,
-        [category, startTime, endTime]
+        [category, startTime, endTime],
       );
       rows = result.rows as typeof rows;
     } else {
       const sqlite = getSqlite();
       rows = sqlite
         .prepare(
-          `SELECT * FROM items 
+          `SELECT * FROM items
            WHERE category = ? AND published_at >= ? AND published_at <= ?
-           ORDER BY published_at DESC`
+           ORDER BY published_at DESC`,
         )
         .all(category, startTime, endTime) as typeof rows;
     }
 
-    const items: FeedItem[] = rows.map((row) => {
-      const cat = row.category as Category;
-      const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
-        ? row.url 
-        : (row.extracted_url || row.url);
-      return {
-        id: row.id,
-        streamId: row.stream_id,
-        sourceTitle: row.source_title,
-        title: row.title,
-        url: finalUrl,
-        author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000),
-        summary: row.summary || undefined,
-        contentSnippet: row.content_snippet || undefined,
-        categories: JSON.parse(row.categories),
-        category: cat,
-        raw: {},
-        fullText: row.full_text || undefined,
-      };
-    });
+    const items = rows
+      .map((row) => {
+        const cat = row.category as Category;
+        const finalUrl =
+          row.url && !row.url.includes("inoreader.com")
+            ? row.url
+            : row.extracted_url || row.url;
+        const articleUrl = articleUrlForDisplay(finalUrl);
+        if (!articleUrl) return null;
+        return {
+          id: row.id,
+          streamId: row.stream_id,
+          sourceTitle: row.source_title,
+          title: row.title,
+          url: articleUrl,
+          author: row.author ?? undefined,
+          publishedAt: new Date(row.published_at * 1000),
+          summary: row.summary ?? undefined,
+          contentSnippet: row.content_snippet ?? undefined,
+          categories: JSON.parse(row.categories),
+          category: cat,
+          raw: {},
+          fullText: row.full_text ?? undefined,
+        } as FeedItem;
+      })
+      .filter((item): item is FeedItem => item != null);
 
     return items;
   } catch (error) {
     logger.error(
       `Failed to load items for category ${category} with date range ${startDate.toISOString()} to ${endDate.toISOString()}`,
-      error
+      error,
     );
     throw error;
   }
@@ -254,7 +324,7 @@ export async function loadItemsByCategoryWithDateRange(
 export async function loadItem(itemId: string): Promise<FeedItem | null> {
   try {
     const driver = detectDriver();
-    
+
     type ItemRow = {
       id: string;
       stream_id: string;
@@ -267,25 +337,26 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       content_snippet: string | null;
       categories: string;
       category: string;
+      full_text: string | null;
       extracted_url: string | null;
     };
 
     let row: ItemRow | undefined;
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at, 
-                summary, content_snippet, categories, category, extracted_url
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
+                summary, content_snippet, categories, category, full_text, extracted_url
          FROM items WHERE id = $1`,
-        [itemId]
+        [itemId],
       );
       row = result.rows[0] as ItemRow | undefined;
     } else {
       const sqlite = getSqlite();
-      row = sqlite
-        .prepare(`SELECT * FROM items WHERE id = ?`)
-        .get(itemId) as ItemRow | undefined;
+      row = sqlite.prepare(`SELECT * FROM items WHERE id = ?`).get(itemId) as
+        | ItemRow
+        | undefined;
     }
 
     if (!row) {
@@ -293,15 +364,18 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
     }
 
     const category = row.category as Category;
-    const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
-      ? row.url 
-      : (row.extracted_url || row.url);
+    const finalUrl =
+      row.url && !row.url.includes("inoreader.com")
+        ? row.url
+        : row.extracted_url || row.url;
+    const articleUrl = articleUrlForDisplay(finalUrl);
+    if (!articleUrl) return null;
     return {
       id: row.id,
       streamId: row.stream_id,
       sourceTitle: row.source_title,
       title: row.title,
-      url: finalUrl,
+      url: articleUrl,
       author: row.author || undefined,
       publishedAt: new Date(row.published_at * 1000),
       summary: row.summary || undefined,
@@ -309,6 +383,7 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
       categories: JSON.parse(row.categories),
       category,
       raw: {},
+      fullText: row.full_text ?? undefined,
     };
   } catch (error) {
     logger.error(`Failed to load item ${itemId} from database`, error);
@@ -341,13 +416,13 @@ export async function loadAllItems(): Promise<FeedItem[]> {
 
     let rows: ItemRow[];
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at, 
+        `SELECT id, stream_id, source_title, title, url, author, published_at,
                 summary, content_snippet, categories, category, full_text, extracted_url
-         FROM items 
-         ORDER BY published_at DESC`
+         FROM items
+         ORDER BY published_at DESC`,
       );
       rows = result.rows as ItemRow[];
     } else {
@@ -357,32 +432,37 @@ export async function loadAllItems(): Promise<FeedItem[]> {
         .all() as ItemRow[];
     }
 
-    const items: FeedItem[] = rows.map((row) => {
-      const cat = row.category as Category;
-      const finalUrl = (row.url && !row.url.includes("inoreader.com")) 
-        ? row.url 
-        : (row.extracted_url || row.url);
-      return {
-        id: row.id,
-        streamId: row.stream_id,
-        sourceTitle: row.source_title,
-        title: row.title,
-        url: finalUrl,
-        author: row.author || undefined,
-        publishedAt: new Date(row.published_at * 1000),
-        summary: row.summary || undefined,
-        contentSnippet: row.content_snippet || undefined,
-        categories: JSON.parse(row.categories),
-        category: cat,
-        raw: {},
-        fullText: row.full_text || undefined,
-      };
-    });
+    const items = rows
+      .map((row) => {
+        const cat = row.category as Category;
+        const finalUrl =
+          row.url && !row.url.includes("inoreader.com")
+            ? row.url
+            : row.extracted_url || row.url;
+        const articleUrl = articleUrlForDisplay(finalUrl);
+        if (!articleUrl) return null;
+        return {
+          id: row.id,
+          streamId: row.stream_id,
+          sourceTitle: row.source_title,
+          title: row.title,
+          url: articleUrl,
+          author: row.author ?? undefined,
+          publishedAt: new Date(row.published_at * 1000),
+          summary: row.summary ?? undefined,
+          contentSnippet: row.content_snippet ?? undefined,
+          categories: JSON.parse(row.categories),
+          category: cat,
+          raw: {},
+          fullText: row.full_text ?? undefined,
+        } as FeedItem;
+      })
+      .filter((item): item is FeedItem => item != null);
 
     logger.info(`Loaded ${items.length} items from database`);
     return items;
   } catch (error) {
-    logger.error('Failed to load all items from database', error);
+    logger.error("Failed to load all items from database", error);
     throw error;
   }
 }
@@ -394,10 +474,10 @@ export async function getEarliestPublishedDate(): Promise<Date | null> {
   try {
     const driver = detectDriver();
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
       const result = await client.query(
-        `SELECT MIN(published_at) as min_published FROM items`
+        `SELECT MIN(published_at) as min_published FROM items`,
       );
       const minPublished = result.rows[0]?.min_published;
       return minPublished ? new Date(Number(minPublished) * 1000) : null;
@@ -409,7 +489,7 @@ export async function getEarliestPublishedDate(): Promise<Date | null> {
       return row?.min_published ? new Date(row.min_published * 1000) : null;
     }
   } catch (error) {
-    logger.error('Failed to get earliest published date', error);
+    logger.error("Failed to get earliest published date", error);
     throw error;
   }
 }
@@ -420,14 +500,16 @@ export async function getEarliestPublishedDate(): Promise<Date | null> {
 export async function getItemsCount(): Promise<number> {
   try {
     const driver = detectDriver();
-    
-    if (driver === 'postgres') {
+
+    if (driver === "postgres") {
       const client = await getDbClient();
       const result = await client.query(`SELECT COUNT(*) as count FROM items`);
       return Number(result.rows[0]?.count ?? 0);
     } else {
       const sqlite = getSqlite();
-      const result = sqlite.prepare(`SELECT COUNT(*) as count FROM items`).get() as { count: number } | undefined;
+      const result = sqlite
+        .prepare(`SELECT COUNT(*) as count FROM items`)
+        .get() as { count: number } | undefined;
       return result?.count ?? 0;
     }
   } catch (error) {
@@ -439,15 +521,17 @@ export async function getItemsCount(): Promise<number> {
 /**
  * Get count of items for a specific category
  */
-export async function getItemsCountByCategory(category: string): Promise<number> {
+export async function getItemsCountByCategory(
+  category: string,
+): Promise<number> {
   try {
     const driver = detectDriver();
-    
-    if (driver === 'postgres') {
+
+    if (driver === "postgres") {
       const client = await getDbClient();
       const result = await client.query(
         `SELECT COUNT(*) as count FROM items WHERE category = $1`,
-        [category]
+        [category],
       );
       return Number(result.rows[0]?.count ?? 0);
     } else {
@@ -467,15 +551,26 @@ export async function getItemsCountByCategory(category: string): Promise<number>
  * Load pre-computed scores for items from the item_scores table
  */
 export async function loadScoresForItems(
-  itemIds: string[]
-): Promise<Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[]; bm25_score?: number; final_score?: number }>> {
+  itemIds: string[],
+): Promise<
+  Record<
+    string,
+    {
+      llm_relevance: number;
+      llm_usefulness: number;
+      llm_tags: string[];
+      bm25_score?: number;
+      final_score?: number;
+    }
+  >
+> {
   try {
     if (itemIds.length === 0) {
       return {};
     }
 
     const driver = detectDriver();
-    
+
     type ScoreRow = {
       item_id: string;
       llm_relevance: number;
@@ -487,15 +582,15 @@ export async function loadScoresForItems(
 
     let rows: ScoreRow[];
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
-      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(",");
       const result = await client.query(
         `SELECT item_id, llm_relevance, llm_usefulness, llm_tags, bm25_score, final_score
          FROM item_scores
          WHERE item_id IN (${placeholders})
          ORDER BY scored_at ASC`,
-        itemIds
+        itemIds,
       );
       rows = result.rows as ScoreRow[];
     } else {
@@ -506,12 +601,21 @@ export async function loadScoresForItems(
           `SELECT item_id, llm_relevance, llm_usefulness, llm_tags, bm25_score, final_score
            FROM item_scores
            WHERE item_id IN (${placeholders})
-           ORDER BY scored_at ASC`
+           ORDER BY scored_at ASC`,
         )
         .all(...itemIds) as ScoreRow[];
     }
 
-    const scores: Record<string, { llm_relevance: number; llm_usefulness: number; llm_tags: string[]; bm25_score?: number; final_score?: number }> = {};
+    const scores: Record<
+      string,
+      {
+        llm_relevance: number;
+        llm_usefulness: number;
+        llm_tags: string[];
+        bm25_score?: number;
+        final_score?: number;
+      }
+    > = {};
     const seen = new Set<string>();
 
     for (const row of rows) {
@@ -521,8 +625,10 @@ export async function loadScoresForItems(
           llm_relevance: Number(row.llm_relevance),
           llm_usefulness: Number(row.llm_usefulness),
           llm_tags: row.llm_tags ? JSON.parse(row.llm_tags) : [],
-          bm25_score: row.bm25_score !== null ? Number(row.bm25_score) : undefined,
-          final_score: row.final_score !== null ? Number(row.final_score) : undefined,
+          bm25_score:
+            row.bm25_score !== null ? Number(row.bm25_score) : undefined,
+          final_score:
+            row.final_score !== null ? Number(row.final_score) : undefined,
         };
       }
     }
@@ -535,25 +641,33 @@ export async function loadScoresForItems(
 }
 
 /**
- * Get the most recent created_at timestamp from all items in database
- * Used by daily sync to fetch only newer items from Inoreader
- * Uses created_at (when synced to DB) rather than published_at (when content was published)
- * This ensures sync fetches items based on when we last received them
+ * Get the most recent created_at timestamp from Inoreader-sourced items in database.
+ * Used by daily sync to determine the sync window for fetching newer items.
+ *
+ * Excludes research items (sourced from ADS, not Inoreader) because their
+ * created_at reflects DB insertion time, not Inoreader crawl time. Including
+ * them skews the sync window forward and causes the client-side filter to
+ * discard all Inoreader items whose crawlTimeMsec is older.
  */
 export async function getNewestItemTimestamp(): Promise<number | null> {
   try {
     const driver = detectDriver();
-    
-    if (driver === 'postgres') {
+
+    if (driver === "postgres") {
       const client = await getDbClient();
-      const result = await client.query(`SELECT MAX(created_at) as max_created FROM items`);
+      const result = await client.query(
+        `SELECT MAX(created_at) as max_created FROM items WHERE category != $1`,
+        ["research"],
+      );
       const val = result.rows[0]?.max_created;
-      return typeof val === 'number' ? val : null;
+      return typeof val === "number" ? val : null;
     } else {
       const sqlite = getSqlite();
       const result = sqlite
-        .prepare(`SELECT MAX(created_at) as max_created FROM items`)
-        .get() as { max_created: number | null } | undefined;
+        .prepare(
+          `SELECT MAX(created_at) as max_created FROM items WHERE category != ?`,
+        )
+        .get("research") as { max_created: number | null } | undefined;
       return result?.max_created ?? null;
     }
   } catch (error) {
@@ -569,12 +683,14 @@ export async function getNewestItemTimestamp(): Promise<number | null> {
 export async function getLastPublishedTimestamp(): Promise<number | null> {
   try {
     const driver = detectDriver();
-    
-    if (driver === 'postgres') {
+
+    if (driver === "postgres") {
       const client = await getDbClient();
-      const result = await client.query(`SELECT MAX(published_at) as max_published FROM items`);
+      const result = await client.query(
+        `SELECT MAX(published_at) as max_published FROM items`,
+      );
       const val = result.rows[0]?.max_published;
-      return typeof val === 'number' ? val : null;
+      return typeof val === "number" ? val : null;
     } else {
       const sqlite = getSqlite();
       const result = sqlite
@@ -588,16 +704,20 @@ export async function getLastPublishedTimestamp(): Promise<number | null> {
   }
 }
 
-
 /**
  * Update cache metadata for items
  */
-export async function updateItemsCacheMetadata(periodDays: number, count: number): Promise<void> {
+export async function updateItemsCacheMetadata(
+  periodDays: number,
+  count: number,
+): Promise<void> {
   try {
     const sqlite = getSqlite();
 
     const cacheKey = `items_${periodDays}d`;
-    sqlite.prepare(`
+    sqlite
+      .prepare(
+        `
       INSERT OR REPLACE INTO cache_metadata (key, last_refresh_at, count, expires_at)
       VALUES (
         ?,
@@ -605,7 +725,9 @@ export async function updateItemsCacheMetadata(periodDays: number, count: number
         ?,
         strftime('%s', 'now') + (1 * 3600)
       )
-    `).run(cacheKey, count);
+    `,
+      )
+      .run(cacheKey, count);
 
     logger.info(`Updated items cache metadata for ${periodDays}d period`);
   } catch (error) {
@@ -620,21 +742,35 @@ export async function updateItemsCacheMetadata(periodDays: number, count: number
 export async function saveFullText(
   itemId: string,
   fullText: string,
-  source: "web_scrape" | "arxiv" | "ads_api" | "error"
+  source: "web_scrape" | "arxiv" | "ads_api" | "web_archive" | "error",
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
-    sqlite.prepare(`
-      UPDATE items 
-      SET full_text = ?, 
-          full_text_fetched_at = strftime('%s', 'now'),
-          full_text_source = ?,
-          updated_at = strftime('%s', 'now')
-      WHERE id = ?
-    `).run(fullText || null, source, itemId);
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      await client.run(
+        `UPDATE items
+         SET full_text = ?, full_text_fetched_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
+             full_text_source = ?, updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
+         WHERE id = ?`,
+        [fullText || null, source, itemId],
+      );
+    } else {
+      const sqlite = getSqlite();
+      sqlite
+        .prepare(
+          `UPDATE items
+           SET full_text = ?, full_text_fetched_at = strftime('%s', 'now'),
+               full_text_source = ?, updated_at = strftime('%s', 'now')
+           WHERE id = ?`,
+        )
+        .run(fullText || null, source, itemId);
+    }
 
-    logger.info(`Saved full text for item ${itemId} (${fullText?.length || 0} chars, source: ${source})`);
+    logger.info(
+      `Saved full text for item ${itemId} (${fullText?.length || 0} chars, source: ${source})`,
+    );
   } catch (error) {
     logger.error(`Failed to save full text for item ${itemId}`, error);
     throw error;
@@ -644,22 +780,34 @@ export async function saveFullText(
 /**
  * Load full text for an item
  */
-export async function loadFullText(itemId: string): Promise<{ text: string; source: string } | null> {
+export async function loadFullText(
+  itemId: string,
+): Promise<{ text: string; source: string } | null> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
-    const row = sqlite
-      .prepare(`SELECT full_text, full_text_source FROM items WHERE id = ?`)
-      .get(itemId) as { full_text: string | null; full_text_source: string | null } | undefined;
-
-    if (!row || !row.full_text) {
-      return null;
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT full_text, full_text_source FROM items WHERE id = ?`,
+        [itemId],
+      );
+      const row = result.rows[0] as
+        | { full_text: string | null; full_text_source: string | null }
+        | undefined;
+      if (!row || !row.full_text) return null;
+      return { text: row.full_text, source: row.full_text_source || "unknown" };
     }
 
-    return {
-      text: row.full_text,
-      source: row.full_text_source || "unknown",
-    };
+    const sqlite = getSqlite();
+    const row = sqlite
+      .prepare(`SELECT full_text, full_text_source FROM items WHERE id = ?`)
+      .get(itemId) as
+      | { full_text: string | null; full_text_source: string | null }
+      | undefined;
+
+    if (!row || !row.full_text) return null;
+    return { text: row.full_text, source: row.full_text_source || "unknown" };
   } catch (error) {
     logger.error(`Failed to load full text for item ${itemId}`, error);
     return null;
@@ -675,29 +823,61 @@ export async function getFullTextCacheStats(): Promise<{
   bySource: Record<string, number>;
 }> {
   try {
+    const driver = detectDriver();
+
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const [totalRes, cachedRes, bySourceRes] = await Promise.all([
+        client.query(`SELECT COUNT(*) as count FROM items`),
+        client.query(
+          `SELECT COUNT(*) as count FROM items WHERE full_text IS NOT NULL`,
+        ),
+        client.query(
+          `SELECT full_text_source, COUNT(*)::int as count FROM items
+           WHERE full_text IS NOT NULL GROUP BY full_text_source`,
+        ),
+      ]);
+      const total = Number((totalRes.rows[0] as { count: string | number }).count);
+      const cached = Number((cachedRes.rows[0] as { count: string | number }).count);
+      const bySource = bySourceRes.rows as Array<{
+        full_text_source: string;
+        count: number;
+      }>;
+      return {
+        total,
+        cached,
+        bySource: Object.fromEntries(
+          bySource.map((row) => [row.full_text_source, row.count]),
+        ),
+      };
+    }
+
     const sqlite = getSqlite();
-
     const total = (
-      sqlite.prepare(`SELECT COUNT(*) as count FROM items`).get() as { count: number }
+      sqlite.prepare(`SELECT COUNT(*) as count FROM items`).get() as {
+        count: number;
+      }
     ).count;
-
     const cached = (
       sqlite
-        .prepare(`SELECT COUNT(*) as count FROM items WHERE full_text IS NOT NULL`)
+        .prepare(
+          `SELECT COUNT(*) as count FROM items WHERE full_text IS NOT NULL`,
+        )
         .get() as { count: number }
     ).count;
-
     const bySource = sqlite
       .prepare(
-        `SELECT full_text_source, COUNT(*) as count FROM items 
-         WHERE full_text IS NOT NULL GROUP BY full_text_source`
+        `SELECT full_text_source, COUNT(*) as count FROM items
+         WHERE full_text IS NOT NULL GROUP BY full_text_source`,
       )
       .all() as Array<{ full_text_source: string; count: number }>;
 
     return {
       total,
       cached,
-      bySource: Object.fromEntries(bySource.map(row => [row.full_text_source, row.count])),
+      bySource: Object.fromEntries(
+        bySource.map((row) => [row.full_text_source, row.count]),
+      ),
     };
   } catch (error) {
     logger.error("Failed to get full text cache stats", error);
@@ -708,16 +888,27 @@ export async function getFullTextCacheStats(): Promise<{
 /**
  * Save extracted URL for an item (discovered via web search)
  */
-export async function saveExtractedUrl(itemId: string, extractedUrl: string): Promise<void> {
+export async function saveExtractedUrl(
+  itemId: string,
+  extractedUrl: string,
+): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const driver = detectDriver();
 
-    sqlite.prepare(`
-      UPDATE items 
-      SET extracted_url = ?,
-          updated_at = strftime('%s', 'now')
-      WHERE id = ?
-    `).run(extractedUrl, itemId);
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      await client.run(
+        `UPDATE items SET extracted_url = ?, updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER WHERE id = ?`,
+        [extractedUrl, itemId],
+      );
+    } else {
+      const sqlite = getSqlite();
+      sqlite
+        .prepare(
+          `UPDATE items SET extracted_url = ?, updated_at = strftime('%s', 'now') WHERE id = ?`,
+        )
+        .run(extractedUrl, itemId);
+    }
 
     logger.debug(`Saved extracted URL for item ${itemId}: ${extractedUrl}`);
   } catch (error) {
@@ -729,11 +920,13 @@ export async function saveExtractedUrl(itemId: string, extractedUrl: string): Pr
 /**
  * Save extracted URLs for multiple items
  */
-export async function saveExtractedUrls(urlMap: Record<string, string>): Promise<void> {
+export async function saveExtractedUrls(
+  urlMap: Record<string, string>,
+): Promise<void> {
   try {
     const sqlite = getSqlite();
     const stmt = sqlite.prepare(`
-      UPDATE items 
+      UPDATE items
       SET extracted_url = ?,
           updated_at = strftime('%s', 'now')
       WHERE id = ?
@@ -768,45 +961,52 @@ export async function ensureItemExists(itemId: string): Promise<void> {
     const driver = detectDriver();
     const now = Math.floor(Date.now() / 1000);
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
-      await client.run(`
-        INSERT INTO items 
+      await client.run(
+        `
+        INSERT INTO items
         (id, stream_id, source_title, title, url, published_at, summary, content_snippet, categories, category, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (id) DO NOTHING
-      `, [
-        itemId,
-        'synthetic',
-        'Unknown',
-        'Placeholder Item',
-        '',
-        now,
-        null,
-        null,
-        '[]',
-        'tech_articles',
-        now
-      ]);
+      `,
+        [
+          itemId,
+          "synthetic",
+          "Unknown",
+          "Placeholder Item",
+          "",
+          now,
+          null,
+          null,
+          "[]",
+          "tech_articles",
+          now,
+        ],
+      );
     } else {
       const sqlite = getSqlite();
-      sqlite.prepare(`
-        INSERT OR IGNORE INTO items 
+      sqlite
+        .prepare(
+          `
+        INSERT OR IGNORE INTO items
         (id, stream_id, source_title, title, url, published_at, summary, content_snippet, categories, category, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        itemId,
-        'synthetic',
-        'Unknown',
-        'Placeholder Item',
-        '',
-        now,
-        null,
-        null,
-        '[]',
-        'tech_articles',
-        now
-      );
+      `,
+        )
+        .run(
+          itemId,
+          "synthetic",
+          "Unknown",
+          "Placeholder Item",
+          "",
+          now,
+          null,
+          null,
+          "[]",
+          "tech_articles",
+          now,
+        );
     }
 
     logger.debug(`Created placeholder item for ${itemId}`);
@@ -823,22 +1023,29 @@ export async function clearBadFullText(itemId: string): Promise<void> {
   try {
     const driver = detectDriver();
 
-    if (driver === 'postgres') {
+    if (driver === "postgres") {
       const client = await getDbClient();
-      await client.run(`
-        UPDATE items 
+      await client.run(
+        `
+        UPDATE items
         SET full_text = NULL,
             updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER
         WHERE id = $1
-      `, [itemId]);
+      `,
+        [itemId],
+      );
     } else {
       const sqlite = getSqlite();
-      sqlite.prepare(`
-        UPDATE items 
+      sqlite
+        .prepare(
+          `
+        UPDATE items
         SET full_text = NULL,
             updated_at = strftime('%s', 'now')
         WHERE id = ?
-      `).run(itemId);
+      `,
+        )
+        .run(itemId);
     }
 
     logger.info(`Cleared bad full text for item ${itemId}`);

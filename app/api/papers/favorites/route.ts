@@ -6,6 +6,8 @@ import {
   initializeAnnotationTables,
 } from '@/src/lib/db/paper-annotations';
 import { logger } from '@/src/lib/logger';
+import { auth } from '@/src/auth';
+import { LEGACY_USER_ID } from '@/src/lib/db/constants';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,13 +27,15 @@ async function ensureTablesInitialized() {
 
 /**
  * GET /api/papers/favorites
- * Get all favorite papers
+ * Get all favorite papers (per-user)
  */
 export async function GET() {
   try {
     await ensureTablesInitialized();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
 
-    const bibcodes = await getFavoritePapers();
+    const bibcodes = await getFavoritePapers(userId);
 
     logger.info('Fetched favorite papers', { count: bibcodes.length });
 
@@ -58,6 +62,8 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await ensureTablesInitialized();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
 
     const body = await request.json();
     const { bibcode, favorite } = body;
@@ -77,8 +83,8 @@ export async function POST(request: NextRequest) {
     }
 
     const success = favorite
-      ? await markPaperAsFavorite(bibcode)
-      : await unmarkPaperAsFavorite(bibcode);
+      ? await markPaperAsFavorite(bibcode, userId)
+      : await unmarkPaperAsFavorite(bibcode, userId);
 
     if (!success) {
       return NextResponse.json(

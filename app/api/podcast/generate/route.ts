@@ -8,8 +8,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/src/auth";
 import { v4 as uuid } from "uuid";
-import { loadItemsByCategory, loadItemsByCategoryWithDateRange } from "@/src/lib/db/items";
+import { LEGACY_USER_ID } from "@/src/lib/db/constants";
+import {
+  loadItemsByCategory,
+  loadItemsByCategoryWithDateRange,
+} from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { selectWithDiversity } from "@/src/lib/pipeline/select";
 
@@ -35,14 +40,29 @@ function deduplicateByUrl(rankedItems: RankedItem[]): RankedItem[] {
 
   return deduped;
 }
-import { buildPromptProfile, PromptProfile } from "@/src/lib/pipeline/promptProfile";
-import { rerankWithPrompt, filterByExclusions } from "@/src/lib/pipeline/promptRerank";
+import {
+  buildPromptProfile,
+  PromptProfile,
+} from "@/src/lib/pipeline/promptProfile";
+import {
+  rerankWithPrompt,
+  filterByExclusions,
+} from "@/src/lib/pipeline/promptRerank";
 import { extractPodcastBatchDigests } from "@/src/lib/pipeline/podcastDigest";
 import { generatePodcastRundown } from "@/src/lib/pipeline/podcastRundown";
 import { generatePodcastScript } from "@/src/lib/pipeline/podcastScript";
-import { verifyPodcastScript, generateVerificationReport } from "@/src/lib/pipeline/podcastVerify";
+import {
+  verifyPodcastScript,
+  generateVerificationReport,
+} from "@/src/lib/pipeline/podcastVerify";
 import { Category, FeedItem, RankedItem } from "@/src/lib/model";
 import { logger } from "@/src/lib/logger";
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import {
+  getDateRangeForPeriodDays,
+  formatDateRangeLabel,
+  formatDateLong,
+} from "@/src/lib/dateRange";
 
 interface PodcastRequest {
   sourceMode: "auto" | "manual" | "categories";
@@ -53,6 +73,8 @@ interface PodcastRequest {
   prompt?: string;
   format?: string;
   voiceStyle?: string;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   customDateRange?: {
     startDate: string;
     endDate: string;
@@ -106,9 +128,11 @@ const ALLOWED_CATEGORIES: Category[] = [
   "podcasts",
   "tech_articles",
   "ai_news",
+  "ai_dev",
   "product_news",
   "community",
   "research",
+  "marketing",
 ];
 
 const VOICE_STYLES = ["conversational", "technical", "executive"];
@@ -118,7 +142,7 @@ const VOICE_STYLES = ["conversational", "technical", "executive"];
  */
 function buildShowNotes(
   digests: Awaited<ReturnType<typeof extractPodcastBatchDigests>>,
-  rundown: Awaited<ReturnType<typeof generatePodcastRundown>>
+  rundown: Awaited<ReturnType<typeof generatePodcastRundown>>,
 ): string {
   let notes = "# Show Notes\n\n";
 
@@ -166,7 +190,11 @@ function buildShowNotes(
   return notes;
 }
 
-function validateRequest(body: unknown): { valid: boolean; error?: string; data?: PodcastRequest } {
+function validateRequest(body: unknown): {
+  valid: boolean;
+  error?: string;
+  data?: PodcastRequest;
+} {
   if (typeof body !== "object" || body === null) {
     return { valid: false, error: "Request body must be JSON object" };
   }
@@ -176,29 +204,43 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   // Validate sourceMode
   const sourceMode = req.sourceMode as string;
   if (!sourceMode || !["auto", "manual", "categories"].includes(sourceMode)) {
-    return { valid: false, error: 'sourceMode must be "auto", "manual", or "categories"' };
+    return {
+      valid: false,
+      error: 'sourceMode must be "auto", "manual", or "categories"',
+    };
   }
 
   // Validate voice style
-  const voiceStyle = req.voiceStyle as string || "conversational";
+  const voiceStyle = (req.voiceStyle as string) || "conversational";
   if (!VOICE_STYLES.includes(voiceStyle)) {
-    return { valid: false, error: `voiceStyle must be one of: ${VOICE_STYLES.join(", ")}` };
+    return {
+      valid: false,
+      error: `voiceStyle must be one of: ${VOICE_STYLES.join(", ")}`,
+    };
   }
 
   // Normalize prompt
   const prompt = typeof req.prompt === "string" ? req.prompt.trim() : "";
+
+  const openaiApiKey = typeof req.openaiApiKey === "string" ? req.openaiApiKey.trim() : undefined;
+  const openaiBaseUrl = typeof req.openaiBaseUrl === "string" ? req.openaiBaseUrl.trim() : undefined;
 
   const data: PodcastRequest = {
     sourceMode: sourceMode as "auto" | "manual" | "categories",
     prompt: prompt || undefined,
     format: "transcript",
     voiceStyle,
+    openaiApiKey: openaiApiKey || undefined,
+    openaiBaseUrl: openaiBaseUrl || undefined,
   };
 
   if (sourceMode === "categories") {
     // Categories mode: validate categories, period, limit (required)
     if (!Array.isArray(req.categories) || req.categories.length === 0) {
-      return { valid: false, error: "categories must be non-empty array in categories mode" };
+      return {
+        valid: false,
+        error: "categories must be non-empty array in categories mode",
+      };
     }
 
     const categories = req.categories as string[];
@@ -210,19 +252,32 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
     const period = req.period as string;
     if (!["week", "month", "all", "custom"].includes(period)) {
-      return { valid: false, error: 'period must be "week", "month", "all", or "custom" in categories mode' };
+      return {
+        valid: false,
+        error:
+          'period must be "week", "month", "all", or "custom" in categories mode',
+      };
     }
 
     // Validate custom date range if period is custom
     if (period === "custom") {
-      const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+      const customRange = req.customDateRange as
+        | { startDate?: string; endDate?: string }
+        | undefined;
       if (!customRange || !customRange.startDate || !customRange.endDate) {
-        return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
+        return {
+          valid: false,
+          error:
+            'customDateRange with startDate and endDate is required when period is "custom"',
+        };
       }
       const startDate = new Date(customRange.startDate);
       const endDate = new Date(customRange.endDate);
       if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-        return { valid: false, error: "Invalid date format in customDateRange" };
+        return {
+          valid: false,
+          error: "Invalid date format in customDateRange",
+        };
       }
       if (startDate > endDate) {
         return { valid: false, error: "startDate must be before endDate" };
@@ -243,8 +298,11 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
 
     if (period === "custom" && req.customDateRange) {
       data.customDateRange = {
-        startDate: (req.customDateRange as { startDate: string; endDate: string }).startDate,
-        endDate: (req.customDateRange as { startDate: string; endDate: string }).endDate,
+        startDate: (
+          req.customDateRange as { startDate: string; endDate: string }
+        ).startDate,
+        endDate: (req.customDateRange as { startDate: string; endDate: string })
+          .endDate,
       };
     }
   } else if (sourceMode === "auto") {
@@ -252,7 +310,10 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     // Only validate if provided
     if (req.categories !== undefined) {
       if (!Array.isArray(req.categories) || req.categories.length === 0) {
-        return { valid: false, error: "categories must be non-empty array if provided" };
+        return {
+          valid: false,
+          error: "categories must be non-empty array if provided",
+        };
       }
       const categories = req.categories as string[];
       for (const cat of categories) {
@@ -266,20 +327,33 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     if (req.period !== undefined) {
       const period = req.period as string;
       if (!["week", "month", "all", "custom"].includes(period)) {
-        return { valid: false, error: 'period must be "week", "month", "all", or "custom" if provided' };
+        return {
+          valid: false,
+          error:
+            'period must be "week", "month", "all", or "custom" if provided',
+        };
       }
       data.period = period as "week" | "month" | "all" | "custom";
 
       // Validate custom date range if period is custom
       if (period === "custom") {
-        const customRange = req.customDateRange as { startDate?: string; endDate?: string } | undefined;
+        const customRange = req.customDateRange as
+          | { startDate?: string; endDate?: string }
+          | undefined;
         if (!customRange || !customRange.startDate || !customRange.endDate) {
-          return { valid: false, error: 'customDateRange with startDate and endDate is required when period is "custom"' };
+          return {
+            valid: false,
+            error:
+              'customDateRange with startDate and endDate is required when period is "custom"',
+          };
         }
         const startDate = new Date(customRange.startDate);
         const endDate = new Date(customRange.endDate);
         if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-          return { valid: false, error: "Invalid date format in customDateRange" };
+          return {
+            valid: false,
+            error: "Invalid date format in customDateRange",
+          };
         }
         if (startDate > endDate) {
           return { valid: false, error: "startDate must be before endDate" };
@@ -303,8 +377,14 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
     }
   } else {
     // Manual mode: validate selectedItemIds
-    if (!Array.isArray(req.selectedItemIds) || req.selectedItemIds.length === 0) {
-      return { valid: false, error: "selectedItemIds must be non-empty array in manual mode" };
+    if (
+      !Array.isArray(req.selectedItemIds) ||
+      req.selectedItemIds.length === 0
+    ) {
+      return {
+        valid: false,
+        error: "selectedItemIds must be non-empty array in manual mode",
+      };
     }
 
     const selectedItemIds = req.selectedItemIds as string[];
@@ -323,15 +403,23 @@ function validateRequest(body: unknown): { valid: boolean; error?: string; data?
   };
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse<PodcastResponse | { error: string }>> {
+export async function POST(
+  request: NextRequest,
+): Promise<NextResponse<PodcastResponse | { error: string }>> {
   const startTime = Date.now();
 
   try {
     // Check rate limits
-    const { enforceRateLimit, recordUsage } = await import('@/src/lib/rate-limit');
-    const rateLimitResponse = await enforceRateLimit(request, '/api/podcast/generate');
+    const { enforceRateLimit, recordUsage } =
+      await import("@/src/lib/rate-limit");
+    const rateLimitResponse = await enforceRateLimit(
+      request,
+      "/api/podcast/generate",
+    );
     if (rateLimitResponse) {
-      return rateLimitResponse as NextResponse<PodcastResponse | { error: string }>;
+      return rateLimitResponse as NextResponse<
+        PodcastResponse | { error: string }
+      >;
     }
 
     const body = await request.json();
@@ -343,8 +431,37 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
 
     const req = validation.data!;
 
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
+
+    // Resolve LLM options (BYOK from body; session for Sourcegraph.com exception)
+    const llmOptions = resolveLLMOptions(
+      {
+        openaiApiKey: req.openaiApiKey,
+        openaiBaseUrl: req.openaiBaseUrl,
+      },
+      undefined,
+      sessionUser,
+    );
+    const llmClient = getOpenAICompatibleClient(llmOptions);
+    if (!llmClient) {
+      return NextResponse.json(
+        {
+          error:
+            "LLM is required for podcast generation. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.",
+        },
+        { status: 400 },
+      );
+    }
+
     logger.info(
-      `Podcast request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library (${req.categories?.join(",") || "all"})` : `selectedItemIds=${req.selectedItemIds?.length} items`}, voice=${req.voiceStyle}, prompt="${(req.prompt || "").substring(0, 50)}..."`
+      `Podcast request: sourceMode=${req.sourceMode}, ${req.sourceMode === "categories" ? `categories=${req.categories?.join(",")}, period=${req.period}` : req.sourceMode === "auto" ? `digest library (${req.categories?.join(",") || "all"})` : `selectedItemIds=${req.selectedItemIds?.length} items`}, voice=${req.voiceStyle}, prompt="${(req.prompt || "").substring(0, 50)}..."`,
     );
 
     // Step 1: Retrieve candidates
@@ -355,17 +472,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       // Auto mode: load from digest_items
       // In source mode, do NOT filter by category/period - use all items from digest library
       const { getDigestItems } = await import("@/src/lib/db/digestItems");
-      allItems = await getDigestItems();
-      logger.info(`Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`);
+      allItems = await getDigestItems(undefined, undefined, userId);
+      logger.info(
+        `Loaded ${allItems.length} items from digest library (no category/period filtering in source mode)`,
+      );
 
       // Early filtering to prevent OOM (sort by date, limit per category)
       const MAX_ITEMS_PER_CATEGORY = 500;
       const preFilteredItems: FeedItem[] = [];
-      const categories = [...new Set(allItems.map(item => item.category))];
+      const categories = [...new Set(allItems.map((item) => item.category))];
 
       for (const category of categories) {
-        const categoryItems = allItems.filter((item) => item.category === category);
-        const sorted = categoryItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+        const categoryItems = allItems.filter(
+          (item) => item.category === category,
+        );
+        const sorted = categoryItems.sort(
+          (a, b) => b.publishedAt.getTime() - a.publishedAt.getTime(),
+        );
         const limited = sorted.slice(0, MAX_ITEMS_PER_CATEGORY);
         preFilteredItems.push(...limited);
       }
@@ -376,10 +499,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
 
       const rankedPerCategory = await Promise.all(
         categories.map(async (category) => {
-          const categoryItems = preFilteredItems.filter((item) => item.category === category);
-          const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+          const categoryItems = preFilteredItems.filter(
+            (item) => item.category === category,
+          );
+          const ranked = await rankCategory(
+            categoryItems,
+            category as Category,
+            periodDays,
+          );
           return { category, items: ranked };
-        })
+        }),
       );
 
       // Merge ALL ranked items from all categories
@@ -398,7 +527,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
     } else if (req.sourceMode === "categories") {
       // Categories mode: load items by category and period from database
       if (!req.categories || !req.period) {
-        return NextResponse.json({ error: "categories and period are required in categories mode" }, { status: 400 });
+        return NextResponse.json(
+          { error: "categories and period are required in categories mode" },
+          { status: 400 },
+        );
       }
 
       let periodDays: number;
@@ -408,9 +540,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       if (req.period === "custom" && req.customDateRange) {
         startDate = new Date(req.customDateRange.startDate);
         endDate = new Date(req.customDateRange.endDate);
-        periodDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
+        periodDays = Math.ceil(
+          (endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000),
+        );
       } else {
-        periodDays = req.period === "week" ? 7 : req.period === "month" ? 30 : 90;
+        periodDays =
+          req.period === "week" ? 7 : req.period === "month" ? 30 : 90;
       }
 
       // Load items by category and period
@@ -420,22 +555,31 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
           categoryItems = await loadItemsByCategoryWithDateRange(
             category as Category,
             startDate,
-            endDate
+            endDate,
           );
         } else {
-          categoryItems = await loadItemsByCategory(category as Category, periodDays);
+          categoryItems = await loadItemsByCategory(
+            category as Category,
+            periodDays,
+          );
         }
         allItems.push(...categoryItems);
       }
 
-      logger.info(`Loaded ${allItems.length} items from categories mode (${req.categories.join(",")}, ${req.period})`);
+      logger.info(
+        `Loaded ${allItems.length} items from categories mode (${req.categories.join(",")}, ${req.period})`,
+      );
 
       // Early filtering to prevent OOM
       const MAX_ITEMS_PER_CATEGORY = 500;
       const preFilteredItems: FeedItem[] = [];
       for (const category of req.categories) {
-        const categoryItems = allItems.filter((item) => item.category === category);
-        const sorted = categoryItems.sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
+        const categoryItems = allItems.filter(
+          (item) => item.category === category,
+        );
+        const sorted = categoryItems.sort(
+          (a, b) => b.publishedAt.getTime() - a.publishedAt.getTime(),
+        );
         const limited = sorted.slice(0, MAX_ITEMS_PER_CATEGORY);
         preFilteredItems.push(...limited);
       }
@@ -443,10 +587,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       // Rank pre-filtered candidates
       const rankedPerCategory = await Promise.all(
         req.categories.map(async (category) => {
-          const categoryItems = preFilteredItems.filter((item) => item.category === category);
-          const ranked = await rankCategory(categoryItems, category as Category, periodDays);
+          const categoryItems = preFilteredItems.filter(
+            (item) => item.category === category,
+          );
+          const ranked = await rankCategory(
+            categoryItems,
+            category as Category,
+            periodDays,
+          );
           return { category, items: ranked };
-        })
+        }),
       );
 
       // Merge ALL ranked items from all categories
@@ -496,7 +646,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
         mergedItems = rerankWithPrompt(mergedItems, profile);
         // Apply exclusions
         mergedItems = filterByExclusions(mergedItems, profile);
-        logger.info(`Re-ranked with prompt profile: ${JSON.stringify(profile)}`);
+        logger.info(
+          `Re-ranked with prompt profile: ${JSON.stringify(profile)}`,
+        );
       }
     }
 
@@ -511,29 +663,54 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       const deduplicatedItems = deduplicateByUrl(mergedItems);
       deduplicatedItems.sort((a, b) => b.finalScore - a.finalScore);
       // For auto (digest library) and manual modes, use ALL items. For categories mode, use the requested limit.
-      const limit = req.sourceMode === "manual" || req.sourceMode === "auto" ? mergedItems.length : (req.limit || 15);
+      const limit =
+        req.sourceMode === "manual" || req.sourceMode === "auto"
+          ? mergedItems.length
+          : req.limit || 15;
       selectedItems = deduplicatedItems.slice(0, limit);
-      logger.info(`Selected ${selectedItems.length} highest relevance items (no prompt, sorted by finalScore)`);
+      logger.info(
+        `Selected ${selectedItems.length} highest relevance items (no prompt, sorted by finalScore)`,
+      );
     } else {
       // With prompt: Apply diversity constraints
-      const maxPerSource = req.period === "week" ? 2 : req.period === "month" ? 3 : 4;
+      const maxPerSource =
+        req.period === "week" ? 2 : req.period === "month" ? 3 : 4;
       // For auto (digest library) and manual modes, use ALL items. For categories mode, use the requested limit.
-      const limit = req.sourceMode === "manual" || req.sourceMode === "auto" ? mergedItems.length : (req.limit || 15);
+      const limit =
+        req.sourceMode === "manual" || req.sourceMode === "auto"
+          ? mergedItems.length
+          : req.limit || 15;
       const category = req.categories?.[0] || "tech_articles";
-      const selection = selectWithDiversity(mergedItems, category as Category, maxPerSource, limit);
+      const selection = selectWithDiversity(
+        mergedItems,
+        category as Category,
+        maxPerSource,
+        limit,
+      );
       selectedItems = selection.items;
-      logger.info(`Selected ${selectedItems.length} items (with prompt, diversity constraints applied)`);
+      logger.info(
+        `Selected ${selectedItems.length} items (with prompt, diversity constraints applied)`,
+      );
     }
 
     // For auto (digest library) and manual modes, use ALL items. For categories mode, use the requested limit.
-    const limit = req.sourceMode === "manual" || req.sourceMode === "auto" ? mergedItems.length : (req.limit || 15);
-    logger.info(`Selected ${selectedItems.length} items (requested limit: ${limit}) with diversity constraints`);
+    const limit =
+      req.sourceMode === "manual" || req.sourceMode === "auto"
+        ? mergedItems.length
+        : req.limit || 15;
+    logger.info(
+      `Selected ${selectedItems.length} items (requested limit: ${limit}) with diversity constraints`,
+    );
 
     // FOUR-STAGE PIPELINE:
 
     // Stage A: Extract per-item digests
     logger.info("Stage A: Extracting per-item digests (gpt-4o-mini)...");
-    const digests = await extractPodcastBatchDigests(selectedItems, req.prompt || "");
+    const digests = await extractPodcastBatchDigests(
+      selectedItems,
+      req.prompt || "",
+      llmOptions,
+    );
     logger.info(`Stage A complete: ${digests.length} digests extracted`);
 
     // Stage B: Build editorial rundown
@@ -542,43 +719,74 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       digests,
       req.period || "all",
       (req.categories as Category[]) || [],
-      profile
+      profile,
+      llmOptions,
     );
-    logger.info(`Stage B complete: ${rundown.segments.length} segments, ${rundown.total_time_seconds}s total`);
+    logger.info(
+      `Stage B complete: ${rundown.segments.length} segments, ${rundown.total_time_seconds}s total`,
+    );
 
     // Stage C: Write conversational script
     logger.info("Stage C: Writing podcast script (gpt-4o-mini)...");
-    const { transcript, segments, estimatedDuration } = await generatePodcastScript(
-      digests,
-      rundown,
-      req.period || "all",
-      (req.categories as Category[]) || [],
-      profile,
-      req.voiceStyle
+    const { transcript, segments, estimatedDuration } =
+      await generatePodcastScript(
+        digests,
+        rundown,
+        req.period || "all",
+        (req.categories as Category[]) || [],
+        profile,
+        req.voiceStyle,
+        llmOptions,
+      );
+    logger.info(
+      `Stage C complete: ${transcript.split(/\s+/).length} words, ${estimatedDuration} duration`,
     );
-    logger.info(`Stage C complete: ${transcript.split(/\s+/).length} words, ${estimatedDuration} duration`);
 
     // Stage D: Verify script
     logger.info("Stage D: Verifying script accuracy (gpt-4o-mini)...");
-    const verificationResult = await verifyPodcastScript(transcript, digests);
+    const verificationResult = await verifyPodcastScript(transcript, digests, llmOptions);
     const verificationReport = generateVerificationReport(verificationResult);
-    const errorCount = verificationResult.issues.filter((i) => i.severity === "error").length;
+    const errorCount = verificationResult.issues.filter(
+      (i) => i.severity === "error",
+    ).length;
     logger.info(
-      `Stage D complete: ${verificationResult.issues.length} issues found (${errorCount} errors), passed=${verificationResult.passedVerification}`
+      `Stage D complete: ${verificationResult.issues.length} issues found (${errorCount} errors), passed=${verificationResult.passedVerification}`,
     );
 
     // Build show notes from rundown
     const showNotes = buildShowNotes(digests, rundown);
 
-    // Build response
+    // Build response with date-aware title
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     const id = `pod-${uuid()}`;
 
+    const dateRangeLabel = ((): string | null => {
+      if (req.sourceMode === "manual") return null;
+      if (req.sourceMode === "auto") return formatDateLong(new Date());
+      const period = req.period || "all";
+      if (period === "custom" && req.customDateRange) {
+        return formatDateRangeLabel(
+          { start: req.customDateRange.startDate, end: req.customDateRange.endDate },
+          "custom",
+        );
+      }
+      if (period === "week" || period === "month") {
+        const range = getDateRangeForPeriodDays(period === "week" ? 7 : 30);
+        return formatDateRangeLabel(range, period);
+      }
+      return formatDateLong(new Date());
+    })();
+
+    const baseTitle =
+      req.sourceMode === "manual"
+        ? "Code Intelligence Digest – Curated Selection"
+        : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : req.period === "all" ? "All Time" : "Custom Range"}`;
+    const podcastTitle = (rundown.episode_title || baseTitle) +
+      (dateRangeLabel ? ` – ${dateRangeLabel}` : "");
+
     const response: PodcastResponse = {
       id,
-      title: rundown.episode_title || (req.sourceMode === "manual"
-        ? `Code Intelligence Digest – Curated Selection`
-        : `Code Intelligence Digest – ${req.period === "week" ? "Week" : req.period === "month" ? "Month" : req.period === "all" ? "All Time" : "Custom Range"}`),
+      title: podcastTitle,
       generatedAt: new Date().toISOString(),
       categories: req.categories || [],
       period: req.period || "all",
@@ -595,8 +803,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
       showNotes,
       generationMetadata: {
         promptUsed: req.prompt || "",
-        modelUsed: "gpt-4o-mini (all stages)",
-        tokensUsed: Math.ceil(transcript.split(/\s+/).length * 1.3 + digests.length * 300 + 2000), // Estimate all stages
+        modelUsed: "quality model (all stages)",
+        tokensUsed: Math.ceil(
+          transcript.split(/\s+/).length * 1.3 + digests.length * 300 + 2000,
+        ), // Estimate all stages
         voiceStyle: req.voiceStyle!,
         duration: `${duration}s`,
         promptProfile: profile,
@@ -615,7 +825,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<PodcastRe
     };
 
     // Record successful usage
-    await recordUsage(request, '/api/podcast/generate');
+    await recordUsage(request, "/api/podcast/generate");
 
     return NextResponse.json(response);
   } catch (error) {

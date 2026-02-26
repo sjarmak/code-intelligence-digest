@@ -40,6 +40,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   podcasts: "Podcasts",
   tech_articles: "Tech Articles",
   ai_news: "AI News",
+  ai_dev: "AI Dev",
   product_news: "Product News",
   community: "Community",
   research: "Research",

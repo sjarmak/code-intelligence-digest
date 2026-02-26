@@ -221,10 +221,12 @@ async function main() {
         title: item.title,
         url: articleUrl,
         sourceTitle: "",
-        sourceFeedUrl: "",
+        streamId: "",
         publishedAt: new Date(),
         createdAt: new Date(),
         category: "newsletters",
+        categories: [],
+        raw: {},
       });
 
       if (result.source === "error" || result.length < 100) {

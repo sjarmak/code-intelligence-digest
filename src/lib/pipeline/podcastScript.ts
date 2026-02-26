@@ -4,12 +4,14 @@
  * Facts-first tone, natural attribution, measured language
  */
 
-import OpenAI from "openai";
 import { Category } from "../model";
 import { PodcastItemDigest } from "./podcastDigest";
 import { PodcastRundown } from "./podcastRundown";
 import { PromptProfile } from "./promptProfile";
 import { logger } from "../logger";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 /**
  * Check if URL is valid for podcast script (not Inoreader, not Reddit, not Google News redirect)
@@ -31,17 +33,6 @@ export interface PodcastScript {
     duration: number; // seconds
   }>;
   estimatedDuration: string; // "MM:SS"
-}
-
-/**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
 }
 
 /**
@@ -93,7 +84,8 @@ export async function generatePodcastScript(
   period: "week" | "month" | "all" | "custom",
   _categories: Category[],
   profile: PromptProfile | null,
-  _voiceStyle: string = "conversational"
+  _voiceStyle: string = "conversational",
+  llmOptions?: LLMClientOptions
 ): Promise<PodcastScript> {
   // Filter digests with invalid URLs before processing
   const validDigests = digests.filter(d => isValidScriptUrl(d.url));
@@ -116,16 +108,13 @@ export async function generatePodcastScript(
   const digestContext = formatDigestsForScript(validDigests);
   // periodLabel and categoryLabels are embedded in the prompt below
 
-  const client = getClient();
-  if (!client) {
-    logger.warn("OPENAI_API_KEY not set, using fallback script");
+  if (!hasLLMConfigured()) {
+    logger.warn("No LLM configured, using fallback script");
     return generateFallbackScript(validDigests, rundown, _voiceStyle);
   }
 
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 5000,
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -203,9 +192,11 @@ Markdown with:
 Write the complete script in markdown. No JSON, no preamble, no explanations.`,
         },
       ],
+      max_tokens: 5000,
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = result.content;
     if (!content) {
       throw new Error("No script from LLM");
     }

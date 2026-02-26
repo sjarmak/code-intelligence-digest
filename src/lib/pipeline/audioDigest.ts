@@ -4,11 +4,13 @@
  * Reuses chunking infrastructure from extract.ts
  */
 
-import OpenAI from "openai";
 import { RankedItem } from "../model";
 import { logger } from "../logger";
 import { getPaper } from "../db/ads-papers";
 import { extractBibcodeFromUrl } from "../ads/client";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured } from "../llm/config";
+import type { LLMClientOptions } from "../llm/client";
 
 // Reuse chunking functions from extract.ts
 const CHUNK_SIZE = 2000; // Characters per chunk
@@ -46,14 +48,12 @@ function chunkText(text: string, chunkSize: number = CHUNK_SIZE): string[] {
  * Summarize a single chunk (reused from extract.ts)
  */
 async function summarizeChunk(
-  client: OpenAI,
   chunk: string,
   index: number,
-  total: number
+  total: number,
+  llmOptions?: LLMClientOptions
 ): Promise<string> {
-  const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    max_completion_tokens: 300,
+  const result = await createChatCompletion({
     messages: [
       {
         role: "user",
@@ -62,9 +62,10 @@ async function summarizeChunk(
 ${chunk}`,
       },
     ],
+    max_tokens: 300,
+    openaiOptions: llmOptions,
   });
-
-  return response.choices[0].message.content || "";
+  return result.content || "";
 }
 
 /**
@@ -105,19 +106,16 @@ export interface AudioDigestHighlight {
  */
 export async function extractArticleHighlights(
   item: RankedItem,
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<AudioDigestHighlight[]> {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    logger.warn(`OPENAI_API_KEY not set for item "${item.title}", using fallback highlights`);
+  if (!hasLLMConfigured()) {
+    logger.warn(`No LLM configured for item "${item.title}", using fallback highlights`);
     return [{
       text: item.summary || item.contentSnippet || "No summary available",
       sourceName: item.title,
     }];
   }
-
-  const client = new OpenAI({ apiKey });
 
   try {
     // For email newsletters/Inoreader URLs, use summary directly (it's the actual content)
@@ -155,7 +153,7 @@ export async function extractArticleHighlights(
           const chunkBatch = chunks.slice(i, i + CHUNK_BATCH_SIZE);
           const summaries = await Promise.all(
             chunkBatch.map((chunk, idx) =>
-              summarizeChunk(client, chunk, i + idx + 1, chunks.length)
+              summarizeChunk(chunk, i + idx + 1, chunks.length, llmOptions)
             )
           );
           chunkSummaries.push(...summaries);
@@ -172,10 +170,7 @@ export async function extractArticleHighlights(
     }
 
     // Extract highlights with specific excerpts
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 1000,
-      response_format: { type: "json_object" },
+    const result = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -209,9 +204,12 @@ Example:
 Return ONLY valid JSON, no markdown.`,
         },
       ],
+      max_tokens: 1000,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = result.content;
     if (!content) {
       throw new Error("No response from highlight extraction");
     }
@@ -296,19 +294,16 @@ export async function extractConclusionsFromPaper(
  */
 export async function extractPaperHighlights(
   item: RankedItem,
-  userPrompt: string = ""
+  userPrompt: string = "",
+  llmOptions?: LLMClientOptions
 ): Promise<AudioDigestHighlight[]> {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    logger.warn(`OPENAI_API_KEY not set for paper "${item.title}", using fallback highlights`);
+  if (!hasLLMConfigured()) {
+    logger.warn(`No LLM configured for paper "${item.title}", using fallback highlights`);
     return [{
       text: item.summary || item.contentSnippet || "No summary available",
       sourceName: item.title,
     }];
   }
-
-  const client = new OpenAI({ apiKey });
 
   try {
     // Get bibcode from item.raw (for ADS-synced research items) or extract from URL
@@ -327,7 +322,7 @@ export async function extractPaperHighlights(
     if (!bibcode) {
       logger.warn(`Could not find bibcode for research item: ${item.title} (URL: ${item.url})`);
       // Fallback to regular article extraction
-      return extractArticleHighlights(item, userPrompt);
+      return extractArticleHighlights(item, userPrompt, llmOptions);
     }
 
     // Get paper from database
@@ -335,7 +330,7 @@ export async function extractPaperHighlights(
     if (!paper) {
       logger.warn(`Paper not found in database: ${bibcode}`);
       // Fallback to regular article extraction
-      return extractArticleHighlights(item, userPrompt);
+      return extractArticleHighlights(item, userPrompt, llmOptions);
     }
 
     // Get abstract
@@ -361,7 +356,7 @@ export async function extractPaperHighlights(
           const chunkBatch = chunks.slice(i, i + CHUNK_BATCH_SIZE);
           const summaries = await Promise.all(
             chunkBatch.map((chunk, idx) =>
-              summarizeChunk(client, chunk, i + idx + 1, chunks.length)
+              summarizeChunk(chunk, i + idx + 1, chunks.length, llmOptions)
             )
           );
           chunkSummaries.push(...summaries);
@@ -396,10 +391,7 @@ export async function extractPaperHighlights(
     }
 
     // Extract highlights combining all sources
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: 1200,
-      response_format: { type: "json_object" },
+    const paperResult = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -427,9 +419,12 @@ Focus on:
 Return ONLY valid JSON, no markdown.`,
         },
       ],
+      max_tokens: 1200,
+      response_format: { type: "json_object" },
+      openaiOptions: llmOptions,
     });
 
-    const content = response.choices[0].message.content;
+    const content = paperResult.content;
     if (!content) {
       throw new Error("No response from paper highlight extraction");
     }
@@ -514,17 +509,6 @@ export interface AudioDigestContent {
 }
 
 /**
- * Lazy-load OpenAI client
- */
-function getClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return null;
-  }
-  return new OpenAI({ apiKey });
-}
-
-/**
  * Format seconds to MM:SS
  */
 function formatTime(seconds: number): string {
@@ -549,7 +533,8 @@ export async function generateAudioDigestTranscript(
   period: "week" | "month" | "all" | "custom",
   categories: string[],
   userPrompt: string = "",
-  targetDurationMinutes?: number
+  targetDurationMinutes?: number,
+  llmOptions?: LLMClientOptions
 ): Promise<AudioDigestContent> {
   if (itemsWithHighlights.length === 0) {
     return {
@@ -564,9 +549,8 @@ export async function generateAudioDigestTranscript(
     `Generating audio digest transcript for ${itemsWithHighlights.length} items, period=${period}`
   );
 
-  const client = getClient();
-  if (!client) {
-    logger.warn("OPENAI_API_KEY not set, using fallback transcript");
+  if (!hasLLMConfigured()) {
+    logger.warn("No LLM configured, using fallback transcript");
     return generateFallbackTranscript(itemsWithHighlights, period);
   }
 
@@ -625,9 +609,7 @@ If you generate less than ${Math.round(targetWordCount * 0.8)} words, the transc
     : 4000;
 
   try {
-    const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      max_completion_tokens: maxTokens,
+    const transcriptResult = await createChatCompletion({
       messages: [
         {
           role: "user",
@@ -667,9 +649,11 @@ IMPORTANT: Read out the highlights directly. This is not a synthesis - it's a re
 Generate only the transcript, no JSON.`,
         },
       ],
+      max_tokens: maxTokens,
+      openaiOptions: llmOptions,
     });
 
-    const transcript = response.choices[0].message.content || generateFallbackTranscript(itemsWithHighlights, period).transcript;
+    const transcript = transcriptResult.content || generateFallbackTranscript(itemsWithHighlights, period).transcript;
 
     // Parse segments
     const segments = parseTranscriptSegments(transcript, itemsWithHighlights);

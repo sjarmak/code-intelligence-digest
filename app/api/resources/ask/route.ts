@@ -1,18 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from "@/src/auth";
 import { getPaper, getLibraryPapers, getFavoritePapers, storePapersBatch, linkPapersToLibraryBatch, initializeADSTables } from '@/src/lib/db/ads-papers';
 import type { ADSPaperRecord } from '@/src/lib/db/ads-papers';
-import { getSavedItems } from '@/src/lib/db/savedItems';
+import { getSavedItems, LEGACY_USER_ID } from '@/src/lib/db/savedItems';
 import { getDigestItems } from '@/src/lib/db/digestItems';
-import { loadItem } from '@/src/lib/db/items';
+import { loadItem, saveFullText } from '@/src/lib/db/items';
+import { initializeDatabase } from '@/src/lib/db/index';
+import { getGeneratedNewsletter, listGeneratedNewsletters } from '@/src/lib/db/generated-newsletters';
+import { listUserPodcastAudio } from '@/src/lib/db/user-podcast-audio';
 import { logger } from '@/src/lib/logger';
 import { getADSUrl, getLibraryItems } from '@/src/lib/ads/client';
-import OpenAI from 'openai';
+import { resolveLLMOptions, getOpenAICompatibleClient } from "@/src/lib/llm/client";
+import { createChatCompletion } from "@/src/lib/llm/completion";
+import { fetchFullText } from '@/src/lib/pipeline/fulltext';
 
 export const dynamic = 'force-dynamic';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -23,10 +25,14 @@ interface ResourcesAskRequest {
   question: string;
   libraryId?: string; // Deprecated: use libraryIds instead
   libraryIds?: string[]; // Array of research library IDs
-  resourceLibraryIds?: string[]; // Array of resource library IDs ('saved-items' | 'digest-items')
+  resourceLibraryIds?: string[]; // 'saved-items' | 'digest-items' | 'newsletter-library' | 'podcast-library'
   selectedBibcodes?: string[]; // Papers selected by user
   selectedItemIds?: string[]; // Items selected by user
+  selectedNewsletterIds?: string[]; // Newsletters selected by user
+  selectedPodcastIds?: string[]; // Podcasts selected by user
   limit?: number;
+  openaiApiKey?: string;
+  openaiBaseUrl?: string;
   conversationHistory?: ConversationMessage[]; // For follow-up questions
   papersContext?: string; // Pre-computed papers context from initial query (for follow-ups)
   itemsContext?: string; // Pre-computed items context from initial query (for follow-ups)
@@ -37,6 +43,8 @@ interface ResourcesAskResponse {
   sourcesUsed: number;
   papersUsed?: number;
   itemsUsed?: number;
+  newslettersUsed?: number;
+  podcastsUsed?: number;
   papersContext?: string;
   itemsContext?: string;
   citedPapers?: Array<{
@@ -76,6 +84,7 @@ export async function POST(request: NextRequest) {
       return rateLimitResponse;
     }
 
+    const body = (await request.json()) as ResourcesAskRequest;
     const {
       question,
       limit = 20,
@@ -84,11 +93,14 @@ export async function POST(request: NextRequest) {
       resourceLibraryIds,
       selectedBibcodes,
       selectedItemIds,
+      selectedNewsletterIds,
+      selectedPodcastIds,
+      openaiApiKey: bodyOpenaiApiKey,
+      openaiBaseUrl: bodyOpenaiBaseUrl,
       conversationHistory,
       papersContext,
       itemsContext
-    } = (await request.json()) as ResourcesAskRequest;
-    const openaiKey = process.env.OPENAI_API_KEY;
+    } = body;
 
     if (!question || question.trim().length === 0) {
       return NextResponse.json(
@@ -97,17 +109,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!openaiKey) {
-      return NextResponse.json(
-        { error: 'OPENAI_API_KEY not configured in .env.local' },
-        { status: 500 }
-      );
-    }
+    await initializeDatabase();
+    const session = await auth();
+    const userId = session?.user?.id ?? LEGACY_USER_ID;
+    const sessionUser = session?.user
+      ? {
+          email: session.user.email ?? undefined,
+          emailVerified: (session.user as { emailVerified?: boolean }).emailVerified ?? undefined,
+        }
+      : undefined;
 
-    if (!openaiKey.startsWith('sk-')) {
+    const llmOptions = resolveLLMOptions(
+      { openaiApiKey: bodyOpenaiApiKey, openaiBaseUrl: bodyOpenaiBaseUrl },
+      undefined,
+      sessionUser,
+    );
+    const llmClient = getOpenAICompatibleClient(llmOptions);
+    if (!llmClient) {
       return NextResponse.json(
-        { error: 'OPENAI_API_KEY format is invalid. Must start with "sk-".' },
-        { status: 500 }
+        {
+          error:
+            'LLM is required. Provide openaiApiKey (and optionally openaiBaseUrl) in the request body, or sign in with a verified Sourcegraph.com account.',
+        },
+        { status: 400 }
       );
     }
 
@@ -128,6 +152,8 @@ export async function POST(request: NextRequest) {
     let items: Array<{ id: string; title: string; url: string; sourceTitle: string; summary?: string; contentSnippet?: string; fullText?: string; category?: string; publishedAt: Date }> = [];
     let papersContextString: string = '';
     let itemsContextString: string = '';
+    let newsletterContextString: string = '';
+    let podcastContextString: string = '';
 
     // For follow-up questions, reuse context
     if (isFollowUp && papersContext) {
@@ -154,8 +180,8 @@ export async function POST(request: NextRequest) {
         for (const libId of effectiveLibraryIds) {
           // Handle 'bookmarked' library specially - uses is_favorite flag, not junction table
           if (libId === 'bookmarked') {
-            const favoritePapers = await getFavoritePapers(limit);
-            logger.info('Fetched bookmarked papers', { count: favoritePapers.length });
+            const favoritePapers = await getFavoritePapers(userId, limit);
+            logger.info('Fetched bookmarked papers', { count: favoritePapers.length, userId });
             allPapers.push(...favoritePapers);
             continue;
           }
@@ -252,7 +278,7 @@ export async function POST(request: NextRequest) {
 
         for (const libId of resourceLibraryIds) {
           if (libId === 'saved-items') {
-            const savedItems = await getSavedItems(limit);
+            const savedItems = await getSavedItems(limit, undefined, userId);
             for (const item of savedItems) {
               allItems.push({
                 id: item.id,
@@ -267,7 +293,7 @@ export async function POST(request: NextRequest) {
               });
             }
           } else if (libId === 'digest-items') {
-            const digestItems = await getDigestItems(limit);
+            const digestItems = await getDigestItems(limit, undefined, userId);
             for (const item of digestItems) {
               allItems.push({
                 id: item.id,
@@ -285,6 +311,78 @@ export async function POST(request: NextRequest) {
         }
 
         items = allItems;
+      }
+    }
+
+    // Fetch newsletters (selected ids or full newsletter library)
+    const newsletterIdsToLoad: string[] =
+      Array.isArray(selectedNewsletterIds) && selectedNewsletterIds.length > 0
+        ? selectedNewsletterIds
+        : resourceLibraryIds?.includes('newsletter-library')
+          ? (await listGeneratedNewsletters(userId, limit)).map((n) => n.id)
+          : [];
+    const newsletters: Array<{ id: string; title: string; markdown: string | null }> = [];
+    for (const id of newsletterIdsToLoad.slice(0, 10)) {
+      const n = await getGeneratedNewsletter(id, userId);
+      if (n) newsletters.push({ id: n.id, title: n.title, markdown: n.markdown });
+    }
+
+    // Fetch podcasts (selected ids or full podcast library)
+    const podcastIdsToLoad: string[] =
+      Array.isArray(selectedPodcastIds) && selectedPodcastIds.length > 0
+        ? selectedPodcastIds
+        : resourceLibraryIds?.includes('podcast-library')
+          ? (await listUserPodcastAudio(userId, limit)).map((p) => p.id)
+          : [];
+    const podcasts: Array<{ id: string; title?: string; duration?: string }> = [];
+    if (podcastIdsToLoad.length > 0) {
+      const allPodcasts = await listUserPodcastAudio(userId, 50);
+      const byId = new Map(allPodcasts.map((p) => [p.id, p]));
+      for (const id of podcastIdsToLoad.slice(0, 10)) {
+        const p = byId.get(id);
+        if (p) podcasts.push({ id: p.id, title: p.title, duration: p.duration });
+      }
+    }
+
+    // Populate full text for items that only have summary (so answers use article content, not RSS snippet)
+    const MIN_FULLTEXT_LENGTH = 200;
+    const MAX_ON_DEMAND_FETCH = 3;
+    if (items.length > 0 && !itemsContextString) {
+      const needFullText = items.filter(
+        (item) => !item.fullText || item.fullText.length < MIN_FULLTEXT_LENGTH
+      );
+      const toFetch = needFullText.slice(0, MAX_ON_DEMAND_FETCH);
+      if (toFetch.length > 0) {
+        const results = await Promise.allSettled(
+          toFetch.map((item) =>
+            fetchFullText({
+              id: item.id,
+              streamId: '',
+              title: item.title,
+              url: item.url,
+              sourceTitle: item.sourceTitle,
+              summary: item.summary,
+              contentSnippet: item.contentSnippet,
+              category: (item.category || 'tech_articles') as import('@/src/lib/model').Category,
+              categories: [],
+              raw: {},
+              publishedAt: item.publishedAt,
+            })
+          )
+        );
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          const item = toFetch[i];
+          if (r.status === 'fulfilled' && r.value?.text && r.value.source !== 'error' && r.value.text.length >= MIN_FULLTEXT_LENGTH) {
+            try {
+              await saveFullText(item.id, r.value.text, r.value.source);
+              item.fullText = r.value.text;
+              logger.info('Fetched and saved full text for ask context', { itemId: item.id, title: item.title?.slice(0, 50), length: r.value.text.length });
+            } catch (err) {
+              logger.warn('Failed to save full text for item', { itemId: item.id, error: err });
+            }
+          }
+        }
       }
     }
 
@@ -347,17 +445,37 @@ export async function POST(request: NextRequest) {
       itemsContextString = itemContextParts.join('\n\n---\n\n');
     }
 
+    // Build context from newsletters
+    if (newsletters.length > 0) {
+      const parts = newsletters.map((n, idx) => {
+        const content = (n.markdown || '').slice(0, 8000);
+        return `[Newsletter ${idx + 1}] Title: ${n.title}\n\n${content}${content.length >= 8000 ? '\n[... truncated ...]' : ''}`;
+      });
+      newsletterContextString = parts.join('\n\n---\n\n');
+    }
+
+    // Build context from podcasts (title/duration only; no transcript stored)
+    if (podcasts.length > 0) {
+      const parts = podcasts.map(
+        (p, idx) =>
+          `[Podcast ${idx + 1}] Title: ${p.title?.trim() || 'Untitled'}\nDuration: ${p.duration || 'N/A'}\n(Content is audio; use title and duration for reference.)`
+      );
+      podcastContextString = parts.join('\n\n---\n\n');
+    }
+
     // Combine contexts
     const combinedContext = [
       papersContextString ? `RESEARCH PAPERS:\n${papersContextString}` : '',
       itemsContextString ? `RESOURCES:\n${itemsContextString}` : '',
+      newsletterContextString ? `NEWSLETTERS:\n${newsletterContextString}` : '',
+      podcastContextString ? `PODCASTS (metadata):\n${podcastContextString}` : '',
     ]
       .filter(Boolean)
       .join('\n\n==========\n\n');
 
     if (!combinedContext) {
       return NextResponse.json(
-        { error: 'No papers or items available to answer the question' },
+        { error: 'No papers, items, newsletters, or podcasts available to answer the question' },
         { status: 400 }
       );
     }
@@ -365,15 +483,17 @@ export async function POST(request: NextRequest) {
     logger.info('Generating answer from resources', {
       papersCount: papers.length,
       itemsCount: items.length,
+      newslettersCount: newsletters.length,
+      podcastsCount: podcasts.length,
       contextLength: combinedContext.length,
       isFollowUp,
     });
 
     // Build messages array
-    const systemPrompt = `You are an expert research analyst specializing in synthesizing information from academic papers and resources. When answering questions:
+    const systemPrompt = `You are an expert research analyst specializing in synthesizing information from academic papers, newsletters, podcasts, and resources. When answering questions:
 1. Provide concise, evidence-based answers (2-4 paragraphs for initial questions, shorter for follow-ups)
 2. Quote specific relevant excerpts from the sources
-3. For each quote or key finding, cite the source using [Paper N] or [Item N] format where N is the source index
+3. For each quote or key finding, cite the source using [Paper N], [Item N], [Newsletter N], or [Podcast N] format where N is the source index
 4. Highlight the most relevant sources for this specific question
 5. If sources conflict or differ in findings, note those differences
 6. Always ground your answer in the actual content provided
@@ -394,18 +514,18 @@ ${combinedContext}`;
     // Add current question
     const userContent = isFollowUp
       ? question
-      : `Based on the following research papers and resources, answer this question: "${question}"\n\nProvide an evidence-based answer with specific citations [Paper N] or [Item N] for each key claim. Include direct quotes where relevant to support your synthesis.`;
+      : `Based on the following research papers, resources, newsletters, and podcasts, answer this question: "${question}"\n\nProvide an evidence-based answer with specific citations [Paper N], [Item N], [Newsletter N], or [Podcast N] for each key claim. Include direct quotes where relevant to support your synthesis.`;
 
     messages.push({ role: 'user', content: userContent });
 
-    // Generate answer using GPT-4o-mini
-    const message = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 1500,
+    // Generate answer using quality model (BYOK or server env)
+    const result = await createChatCompletion({
       messages,
+      max_tokens: 1500,
+      openaiOptions: llmOptions,
     });
 
-    const answer = message.choices[0]?.message?.content || 'Failed to generate answer';
+    const answer = result.content || 'Failed to generate answer';
 
     logger.info('Question answered', { answerLength: answer.length });
 
@@ -509,11 +629,17 @@ ${combinedContext}`;
     // Record successful usage
     await recordUsage(request, '/api/resources/ask');
 
+    const newslettersCount = newsletters.length;
+    const podcastsCount = podcasts.length;
+    const totalSources = papers.length + items.length + newslettersCount + podcastsCount;
+
     return NextResponse.json({
       answer,
-      sourcesUsed: papers.length + items.length,
+      sourcesUsed: totalSources,
       papersUsed: papers.length,
       itemsUsed: items.length,
+      newslettersUsed: newslettersCount,
+      podcastsUsed: podcastsCount,
       papersContext: papersContextString, // Return context for follow-up conversations
       itemsContext: itemsContextString, // Return context for follow-up conversations
       citedPapers,
