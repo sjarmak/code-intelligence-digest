@@ -48,10 +48,11 @@ function formatReport(
       lines.push(`**Content ideas:**`);
       entry.contentIdeas.forEach((idea) => lines.push(`- ${stripHtml(idea)}`));
     }
-    const snippet = stripHtml(entry.doc.snippet?.slice(0, 300));
+    const snippetLimit = 600;
+    const snippet = stripHtml(entry.doc.snippet?.slice(0, snippetLimit));
     if (snippet)
       lines.push(
-        `Snippet: ${snippet}${(entry.doc.snippet?.length ?? 0) > 300 ? "..." : ""}`
+        `Snippet: ${snippet}${(entry.doc.snippet?.length ?? 0) > snippetLimit ? "..." : ""}`
       );
     lines.push("");
   });

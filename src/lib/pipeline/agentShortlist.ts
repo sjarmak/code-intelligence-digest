@@ -95,25 +95,26 @@ ${candidateList.join("\n\n")}
 
 Instructions:
 ${goalSpecificInstructions}
-- For each selected item, provide a short reason (one sentence) why it is useful for this goal.
-${goal === "content_ideas" ? `- For content_ideas only: also add "content_ideas": an array of 1–2 concrete content ideas inspired by this source (e.g. "Blog post: How to scale code search in monorepos", "Webinar: Demos of AI coding assistants"). Be specific and actionable.` : ""}
+- For each selected item, provide a complete "reason" (1–2 full sentences). Do not truncate; give the full thought.
+${goal === "content_ideas" ? `- You MUST also add "content_ideas" to each object: an array of 1–2 concrete, actionable content ideas inspired by that source. Examples: "Blog post: How to scale code search in monorepos", "Webinar: Demos of AI coding assistants", "Case study: Enterprise adoption of AI pair programming". Every selected item must include content_ideas.` : ""}
 - Use plain text only in all string fields; do not use HTML, markdown, or tags.
-- Return a JSON array of objects: [{"index": 1-based number from the list above, "reason": "why it's relevant"${goal === "content_ideas" ? ', "content_ideas": ["idea1", "idea2"]' : ""}}]. Only include selected items, in order of relevance (best first).
+- Return a JSON array of objects: [{"index": 1-based number from the list above, "reason": "why it's relevant"${goal === "content_ideas" ? ', "content_ideas": ["idea one", "idea two"]' : ""}}]. Only include selected items, in order of relevance (best first).
 - If none are relevant, return [].
 
 Return only the JSON array, no other text.`;
 
+  const maxTokens = goal === "content_ideas" ? 2500 : 3000;
   try {
     const response = await client.messages.create({
       model: AGENT_MODEL,
-      max_tokens: 1500,
+      max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
     });
 
     const textBlock = response.content.find((b) => b.type === "text");
     const content = (textBlock && "text" in textBlock ? textBlock.text : "").trim() || "[]";
     const jsonMatch = content.match(/\[[\s\S]*\]/);
-    type SelectedItem = { index: number; reason?: string; content_ideas?: string[] };
+    type SelectedItem = { index: number; reason?: string; content_ideas?: string[]; "content ideas"?: string[] };
     const selected: SelectedItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
 
     const result: ShortlistEntry[] = [];
@@ -122,8 +123,14 @@ Return only the JSON array, no other text.`;
       const idx = entry.index - 1;
       if (idx >= 0 && idx < docs.length) {
         const reason = stripHtml(entry.reason);
-        const contentIdeas = (entry.content_ideas ?? [])
-          .map((s) => stripHtml(s))
+        const rawIdeas = entry.content_ideas ?? (entry as Record<string, unknown>)["content ideas"];
+        const ideaList = Array.isArray(rawIdeas)
+          ? rawIdeas
+          : typeof rawIdeas === "string" && rawIdeas.trim()
+            ? [rawIdeas]
+            : [];
+        const contentIdeas = ideaList
+          .map((s) => stripHtml(typeof s === "string" ? s : String(s)))
           .filter(Boolean);
         result.push({
           doc: docs[idx],
@@ -133,6 +140,10 @@ Return only the JSON array, no other text.`;
           contentIdeas: contentIdeas.length > 0 ? contentIdeas : undefined,
         });
       }
+    }
+    if (goal === "content_ideas") {
+      const withIdeas = result.filter((r) => r.contentIdeas?.length);
+      logger.info("Content ideas shortlist", { total: result.length, withContentIdeas: withIdeas.length });
     }
     // If LLM returned too few or invalid, fill with top by score
     const included = new Set(result.map((r) => r.doc.id ?? r.doc.url ?? r.doc.title));
