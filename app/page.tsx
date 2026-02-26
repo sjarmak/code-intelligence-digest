@@ -148,6 +148,15 @@ export default function Home() {
               >
                 {navigatingTo === '/libraries' ? 'Loading...' : 'Libraries'}
               </button>
+              <button
+                onClick={() => { setMobileMenuOpen(false); handleNavigation('/agents'); }}
+                disabled={navigatingTo === '/agents'}
+                className={`block w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 ${
+                  navigatingTo === '/agents' ? 'animate-pulse' : ''
+                }`}
+              >
+                {navigatingTo === '/agents' ? 'Loading...' : 'Agent Reports'}
+              </button>
               {config.adminUIEnabled && (
                 <a
                   href="/admin"
@@ -218,6 +227,15 @@ export default function Home() {
               }`}
             >
               {navigatingTo === '/libraries' ? 'Loading...' : 'Libraries'}
+            </button>
+            <button
+              onClick={() => handleNavigation('/agents')}
+              disabled={navigatingTo === '/agents'}
+              className={`px-1 py-4 text-sm font-medium border-b-2 whitespace-nowrap transition-colors border-transparent text-muted hover:text-black disabled:opacity-50 ${
+                navigatingTo === '/agents' ? 'animate-pulse' : ''
+              }`}
+            >
+              {navigatingTo === '/agents' ? 'Loading...' : 'Agent Reports'}
             </button>
           </nav>
         </div>

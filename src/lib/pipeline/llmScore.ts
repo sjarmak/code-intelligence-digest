@@ -3,9 +3,11 @@
  * Evaluates relevance and usefulness of items
  */
 
-import { FeedItem, LLMScoreResult, Category } from "../model";
-import { logger } from "../logger";
+import { FeedItem, LLMScoreResult, Category } from "../model.js";
+import { logger } from "../logger.js";
 import OpenAI from "openai";
+import type { AgentGoal } from "../../config/agents.js";
+import { getAgentGoalConfig } from "../../config/agents.js";
 
 /**
  * Lazy-initialized OpenAI client
@@ -22,19 +24,21 @@ function getOpenAIClient(): OpenAI {
 }
 
 /**
- * Get category-specific system prompt for GPT-4o to evaluate item relevance
+ * Get category-specific system prompt for GPT-4o to evaluate item relevance.
+ * When goal is provided, adds guidance so usefulness is evaluated for that agent goal.
  */
-function getSystemPrompt(category: Category): string {
+function getSystemPrompt(category: Category, goal?: AgentGoal): string {
   const baseTags = [
     "code-search", "semantic-search", "agent", "context", "devex", "devops",
     "enterprise", "research", "infra", "off-topic"
   ];
 
+  let basePrompt: string;
   switch (category) {
     case "newsletters":
     case "podcasts":
     case "tech_articles":
-      return `You are an expert evaluator of technical content for a "Code Intelligence Digest" service.
+      basePrompt = `You are an expert evaluator of technical content for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
 1. **Relevance** (0-10): Focus on: code search, coding agent capabilities, developer productivity with AI tools, context management for agents, information retrieval for agents, information retrieval in codebases.
@@ -51,9 +55,9 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
-
+      break;
     case "ai_news":
-      return `You are an expert evaluator of AI news for a "Code Intelligence Digest" service.
+      basePrompt = `You are an expert evaluator of AI news for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
 1. **Relevance** (0-10): Focus on the biggest general updates in AI including: acquisitions, new model releases, breakthroughs, and summarized updates from various sources. Be more lenient - include significant AI developments even if not directly coding-related.
@@ -70,9 +74,9 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
-
+      break;
     case "product_news":
-      return `You are an expert evaluator of product news for a "Code Intelligence Digest" service.
+      basePrompt = `You are an expert evaluator of product news for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
 1. **Relevance** (0-10): Focus on updates from competitors or potential partners: Augment Code, Windsurf, Cursor, Claude Code, Codex CLI, Gemini CLI/Antigravity, and any other products that add codebase context to coding agents.
@@ -89,9 +93,9 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
-
+      break;
     case "community":
-      return `You are an expert evaluator of community discussions for a "Code Intelligence Digest" service.
+      basePrompt = `You are an expert evaluator of community discussions for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
 1. **Relevance** (0-10): Focus on discussions around: coding agents, AI in developer workflows (track sentiment around how developers view utility of these tools), code search, and Sourcegraph.
@@ -108,9 +112,9 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
-
+      break;
     case "research":
-      return `You are an expert evaluator of research papers for a "Code Intelligence Digest" service.
+      basePrompt = `You are an expert evaluator of research papers for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
 1. **Relevance** (0-10): Focus on papers about: coding agents, coding agent benchmarks, information retrieval in codebases, information retrieval in developer workflows. Match keywords like "coding agent", "code search", "context" with "agents", etc.
@@ -127,9 +131,9 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
-
+      break;
     default:
-      return `You are an expert evaluator of technical content for a "Code Intelligence Digest" service.
+      basePrompt = `You are an expert evaluator of technical content for a "Code Intelligence Digest" service.
 
 Evaluate each item for:
 1. **Relevance** (0-10): How relevant is it to: code tooling, code search, semantic search, agents, developer productivity, context management for LLMs, and complex enterprise codebases?
@@ -146,7 +150,16 @@ Return JSON with exactly this structure:
 Be objective. A score of 5-6 is average/neutral. 7+ is good/relevant. 8+ is very relevant. 9-10 is essential. Below 5 is weak relevance.
 
 CRITICAL: Items with minimal content (only a title, no summary or content) should be scored VERY conservatively (3-5). Do not assume high relevance just because a title contains domain keywords like "code". Without actual content to evaluate, you cannot determine true relevance.`;
+      break;
   }
+
+  // Append agent goal context when scoring for a specific agent
+  let prompt = basePrompt;
+  if (goal) {
+    const goalConfig = getAgentGoalConfig(goal);
+    prompt += `\n\nAGENT GOAL CONTEXT: This scoring may be used for the "${goalConfig.name}" agent. When assigning usefulness, consider whether this item is particularly valuable for: ${goalConfig.description} Target audience: ${goalConfig.icpDescription}. An item can be highly relevant for one agent goal (e.g. competitor intel) and less so for another (e.g. content ideas)—score usefulness for the current goal.`;
+  }
+  return prompt;
 }
 
 /**
@@ -293,13 +306,17 @@ function parseGPTResponse(
 /**
  * Score a batch of items using OpenAI GPT-4o
  */
-async function scoreItemsBatch(items: FeedItem[], category: Category): Promise<Record<string, LLMScoreResult>> {
+async function scoreItemsBatch(
+  items: FeedItem[],
+  category: Category,
+  goal?: AgentGoal
+): Promise<Record<string, LLMScoreResult>> {
   if (items.length === 0) {
     return {};
   }
 
   try {
-    const systemPrompt = getSystemPrompt(category);
+    const systemPrompt = getSystemPrompt(category, goal);
     const prompt = createBatchPrompt(items, category);
 
     logger.info(`Scoring ${items.length} items with GPT-4o for category ${category}`, {
@@ -354,11 +371,13 @@ async function scoreItemsBatch(items: FeedItem[], category: Category): Promise<R
  * @param items Items to score
  * @param category Category for category-specific relevance evaluation
  * @param batchSize Number of items per batch
+ * @param goal Optional agent goal for goal-aware usefulness scoring
  */
 export async function scoreWithLLM(
   items: FeedItem[],
   category: Category,
-  batchSize: number = 30
+  batchSize: number = 30,
+  goal?: AgentGoal
 ): Promise<Record<string, LLMScoreResult>> {
   const results: Record<string, LLMScoreResult> = {};
 
@@ -375,7 +394,7 @@ export async function scoreWithLLM(
       `Scoring batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(items.length / batchSize)} for category ${category}`
     );
 
-    const batchResults = await scoreItemsBatch(batch, category);
+    const batchResults = await scoreItemsBatch(batch, category, goal);
     Object.assign(results, batchResults);
 
     // Small delay between batches to avoid rate limits

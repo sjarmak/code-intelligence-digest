@@ -5,6 +5,9 @@
 
 import { Category } from "../lib/model";
 import { buildTermWeightMap } from "./domain-terms";
+import type { AgentGoal } from "./agents";
+import { getAgentGoalConfig } from "./agents";
+import { getCompetitorKeywords } from "./competitors";
 
 export interface CategoryConfig {
   name: string;
@@ -130,6 +133,24 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
  */
 export function getCategoryConfig(category: Category): CategoryConfig {
   return CATEGORY_CONFIG[category];
+}
+
+/**
+ * Get BM25/query string for a category, optionally refined for an agent goal.
+ * When goal is provided and the category is in that goal's primary categories,
+ * appends goal-specific terms and competitor keywords for product_news.
+ */
+export function getCategoryQuery(category: Category, goal?: AgentGoal): string {
+  const base = CATEGORY_CONFIG[category].query;
+  if (!goal) return base;
+  const config = getAgentGoalConfig(goal);
+  if (!config.primaryCategories.includes(category)) return base;
+  const extraTerms = [...config.postgresQueryTerms];
+  if (category === "product_news") {
+    extraTerms.push(...getCompetitorKeywords());
+  }
+  const unique = Array.from(new Set(extraTerms));
+  return [base, ...unique].join(" ");
 }
 
 /**
