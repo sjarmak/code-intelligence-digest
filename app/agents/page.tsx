@@ -103,15 +103,17 @@ export default function AgentReportsPage() {
 
   const handleDelete = async (goal: string, id: string) => {
     if (!confirm("Delete this report?")) return;
-    try {
-      const res = await fetch(`/api/agents/reports/${goal}/${encodeURIComponent(id)}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Delete failed");
-      setReports((prev) => prev.filter((r) => r.goal !== goal || r.id !== id));
-      if (viewing?.goal === goal && viewing?.id === id) setViewing(null);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+	  try {
+	    const res = await fetch(`/api/agents/reports/${goal}/${encodeURIComponent(id)}`, {
+	      method: "DELETE",
+	    });
+	    if (!res.ok) throw new Error("Delete failed");
+	    if (viewing?.goal === goal && viewing?.id === id) setViewing(null);
+	    await refetchReports();
+	  } catch (e) {
+	    console.error(e);
+	  }
+	};
 
   const formatDate = (iso: string | null) => {
     if (!iso) return "Never run";
