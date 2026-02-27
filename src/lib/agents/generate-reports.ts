@@ -11,6 +11,7 @@ import { buildAgentShortlist } from "../pipeline/agentShortlist";
 import { getAgentGoalConfig } from "../../config/agents";
 import type { AgentGoal } from "../../config/agents";
 import { logger } from "../logger";
+import { saveReport } from "./report-storage";
 
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 
@@ -99,6 +100,10 @@ export async function runAgentReport(
     if (!fs.existsSync(goalDir)) fs.mkdirSync(goalDir, { recursive: true });
     const outPath = path.join(goalDir, `${id}.md`);
     fs.writeFileSync(outPath, report, "utf-8");
+    const generatedAt = new Date().toISOString();
+    await saveReport(goal, id, report, generatedAt).catch((err) =>
+      logger.warn("Agent report DB save failed", { goal, id, error: err })
+    );
     logger.info("Agent report generated", { goal, id, path: outPath });
     return { ok: true, id };
   } catch (err) {

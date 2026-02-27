@@ -233,6 +233,15 @@ CREATE TABLE IF NOT EXISTS user_paper_favorites (
   favorited_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, bibcode)
 );
+
+-- Agent reports (content_ideas, market_brief, competitor_intel) for persistence in production
+CREATE TABLE IF NOT EXISTS agent_reports (
+  goal TEXT NOT NULL,
+  id TEXT NOT NULL,
+  content TEXT NOT NULL,
+  generated_at INTEGER NOT NULL,
+  PRIMARY KEY (goal, id)
+);
 `;
 
 /**
@@ -296,6 +305,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_user_id ON user_podcast_audio(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_podcast_audio_created_at ON user_podcast_audio(created_at);
 CREATE INDEX IF NOT EXISTS idx_user_paper_favorites_user_id ON user_paper_favorites(user_id);
+
+-- Agent reports list by goal and recency
+CREATE INDEX IF NOT EXISTS idx_agent_reports_goal_generated ON agent_reports(goal, generated_at DESC);
 `;
 
 /**

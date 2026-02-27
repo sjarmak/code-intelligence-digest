@@ -1,11 +1,14 @@
 /**
  * GET /api/agents/reports/[goal]
  * Return report content. Query ?id=xxx for a specific run; otherwise returns latest for that goal.
+ * Uses Postgres when DATABASE_URL is set; else reads from .data/agent-reports/.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { initializeDatabase } from "@/src/lib/db/index";
+import { getReport, useReportDb } from "@/src/lib/agents/report-storage";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
 const VALID_GOALS = ["content_ideas", "market_brief", "competitor_intel"];
@@ -20,8 +23,15 @@ export async function GET(
   }
 
   const id = req.nextUrl.searchParams.get("id") ?? undefined;
-  let filePath: string;
 
+  if (useReportDb()) {
+    await initializeDatabase();
+    const row = await getReport(goal, id ?? undefined);
+    if (row) return NextResponse.json(row);
+    return NextResponse.json({ error: "Report not found." }, { status: 404 });
+  }
+
+  let filePath: string;
   const goalDir = path.join(REPORT_DIR, goal);
   const legacyPath = path.join(REPORT_DIR, `${goal}.md`);
 
