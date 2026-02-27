@@ -12,6 +12,7 @@ import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
 import { computeProductBoost, findProductMentions } from "../../config/products";
 import { computeWatchlistBoost } from "../../config/watchlist";
+import { detectCompetitorSignals } from "../../config/competitor-intel";
 
 /**
  * Compute recency score with exponential decay
@@ -136,6 +137,24 @@ export async function computeAndSaveScoresForCategory(
       const watchlistBoost = computeWatchlistBoost(contentToSearch);
       boostMultiplier *= watchlistBoost.multiplier;
       boostTags.push(...watchlistBoost.matchedTerms);
+
+      // Product-news-specific competitor intelligence enrichment:
+      // detect competitor/entity and overlap surfaces, then apply a modest ranking boost.
+      if (category === "product_news") {
+        const intelSignals = detectCompetitorSignals(contentToSearch);
+        if (intelSignals.competitorIds.length > 0 || intelSignals.surfaces.length > 0) {
+          const intelBoost = 1 +
+            Math.min(
+              0.18,
+              intelSignals.competitorIds.length * 0.03 + intelSignals.surfaces.length * 0.02
+            );
+          boostMultiplier *= intelBoost;
+          boostTags.push(
+            ...intelSignals.competitorIds.map((id) => `competitor:${id}`),
+            ...intelSignals.surfaces.map((surface) => `surface:${surface}`)
+          );
+        }
+      }
 
       // Compute final score
       let finalScore =

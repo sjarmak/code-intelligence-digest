@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3002",
     "build": "next build",
-    "start": "NODE_OPTIONS=--max-old-space-size=1024 next start",
+    "start": "npm run playbook:ensure && NODE_OPTIONS=--max-old-space-size=1024 next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
@@ -17,9 +17,10 @@
     "db:sync:to-prod": "npx tsx scripts/sync-local-to-production-postgres.ts",
     "sync:daily": "npx tsx scripts/run-daily-sync.ts",
     "cron:daily": "NODE_OPTIONS=--max-old-space-size=460 npx tsx scripts/cron-daily-sync.ts",
-    "cron:agents": "npx tsx scripts/cron-agent-jobs.ts",
+    "cron:agents": "npm run playbook:ensure && npx tsx scripts/cron-agent-jobs.ts",
     "backfill:fulltext": "npx tsx scripts/archive/backfill-fulltext-production.ts",
-    "clear-audio-cache": "sqlite3 .data/digest.db 'DELETE FROM generated_podcast_audio;' && rm -rf .data/audio/* && echo 'Audio cache cleared'"
+    "clear-audio-cache": "sqlite3 .data/digest.db 'DELETE FROM generated_podcast_audio;' && rm -rf .data/audio/* && echo 'Audio cache cleared'",
+    "playbook:ensure": "npx tsx scripts/ensure-playbook-state.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
@@ -43,6 +44,7 @@
     "remark-gfm": "^4.0.1",
     "tsx": "^4.19.2",
     "uuid": "^13.0.0",
+    "yaml": "^2.8.2",
     "zod": "^4.1.13"
   },
   "devDependencies": {

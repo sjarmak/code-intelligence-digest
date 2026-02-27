@@ -10,6 +10,9 @@ import { createChatCompletion } from "../llm/completion";
 import { webSearchForAgentContext } from "../search/url-finder";
 import { saveAgentRun } from "../db/agent-runs";
 import { logger } from "../logger";
+import { gatherCompetitorIntel } from "./competitor-intel";
+import { generateMarketBrief } from "./market-brief";
+import { generateContentIdeas } from "./content-ideas";
 
 const MAX_CONTEXT_ITEMS = 50;
 const MAX_CHARS_PER_ITEM = 4000;
@@ -81,6 +84,98 @@ export async function runAgentJob(
   if (!job) {
     logger.warn("Agent job not found", { agentId, jobId });
     return null;
+  }
+
+  // Competitor intel scheduled jobs persist strict, structured output
+  // using the retrieval+triage contract (no narrative rewrite).
+  if (agentId === "competitive_intel") {
+    const periodDays = job.periodDays ?? 90;
+    const topPerCompetitor = jobId === "weekly_competitor_summary" ? 7 : 5;
+    const topOverall = jobId === "weekly_competitor_summary" ? 30 : 20;
+    const items = await gatherCompetitorIntel({
+      periodDays,
+      topPerCompetitor,
+      topOverall,
+      maxGeneratedQueries: 24,
+      webDocsPerQuery: 5,
+    });
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const title = `${job.name} (${dateStr})`;
+
+    const payload = {
+      goal: "competitor_intel",
+      periodDays,
+      topPerCompetitor,
+      topOverall: items.length,
+      items,
+      generatedAt: new Date().toISOString(),
+    };
+
+    const markdown = [
+      `# ${title}`,
+      "",
+      "```json",
+      JSON.stringify(payload, null, 2),
+      "```",
+      "",
+    ].join("\n");
+
+    const runId = await saveAgentRun(agentId, jobId, title, markdown, {
+      itemCount: items.length,
+      periodDays,
+      topPerCompetitor,
+      topOverall: items.length,
+      structuredOutput: true,
+    });
+
+    logger.info("Agent job completed with structured competitor intel", {
+      agentId,
+      jobId,
+      runId,
+      itemCount: items.length,
+    });
+    return { runId, title };
+  }
+
+  if (agentId === "icp_market") {
+    const periodDays = job.periodDays ?? 14;
+    const payload = await generateMarketBrief({ periodDays, maxItems: job.maxItems ?? 20 });
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const title = `${job.name} (${dateStr})`;
+    const markdown = ["# " + title, "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
+    const runId = await saveAgentRun(agentId, jobId, title, markdown, {
+      itemCount: payload.executive_delta.length + payload.watch_items.length,
+      periodDays,
+      structuredOutput: true,
+      playbookVersion: payload.playbook_version,
+    });
+    logger.info("Agent job completed with structured market brief", {
+      agentId,
+      jobId,
+      runId,
+    });
+    return { runId, title };
+  }
+
+  if (agentId === "gtm_content") {
+    const periodDays = job.periodDays ?? 30;
+    const payload = await generateContentIdeas({ periodDays, numIdeas: job.maxItems ?? 10 });
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const title = `${job.name} (${dateStr})`;
+    const markdown = ["# " + title, "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
+    const runId = await saveAgentRun(agentId, jobId, title, markdown, {
+      itemCount: payload.ideas.length,
+      periodDays,
+      structuredOutput: true,
+      playbookVersion: payload.playbook_version,
+    });
+    logger.info("Agent job completed with structured content ideas", {
+      agentId,
+      jobId,
+      runId,
+    });
+    return { runId, title };
   }
 
   const periodDays = job.periodDays ?? 3;

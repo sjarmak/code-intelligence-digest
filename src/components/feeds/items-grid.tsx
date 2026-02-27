@@ -111,7 +111,7 @@ export default function ItemsGrid({
         }
 
         // Add product filter params
-        if (productFilter) {
+        if (category === "product_news" && productFilter) {
           if (productFilter.selectedProducts.size > 0) {
             params.append(
               "products",

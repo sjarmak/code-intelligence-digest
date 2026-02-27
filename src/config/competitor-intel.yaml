@@ -1,0 +1,231 @@
+sourcegraph_context:
+  tracked_surfaces:
+    - deep_search
+    - code_search
+    - code_navigation
+    - mcp
+    - agent_context
+    - batch_changes
+    - insights
+    - monitoring
+    - governance
+    - enterprise_control
+    - large_codebase_understanding
+    - monorepo_multi_repo
+  problem_language:
+    - code understanding
+    - large codebase
+    - monorepo
+    - multi-repo
+    - semantic code search
+    - deep search
+    - natural language code search
+    - context engine
+    - agent context
+    - MCP
+    - bulk refactoring
+    - codemod
+    - migration
+    - remediation
+    - code insights
+    - governance
+    - monitoring
+    - enterprise code intelligence
+
+competitors:
+  - id: github
+    company: GitHub
+    display_name: GitHub / Copilot
+    tier: 1
+    categories: [platform, agent, code_search]
+    domains: [github.com, docs.github.com]
+    aliases: [GitHub, GitHub Copilot, Copilot, Copilot Enterprise]
+    products: [GitHub Code Search, GitHub Copilot, Copilot coding agent]
+    overlap_terms: [code search, agent mode, coding agent, enterprise, repo context, pull request, code review]
+    watch_terms: [pricing, Enterprise, Copilot Enterprise, GA, preview, release notes, docs, benchmark, customer]
+
+  - id: gitlab
+    company: GitLab
+    display_name: GitLab / Duo
+    tier: 1
+    categories: [platform, agent, code_search]
+    domains: [gitlab.com, docs.gitlab.com, about.gitlab.com]
+    aliases: [GitLab, GitLab Duo, Duo]
+    products: [Semantic code search, Exact code search, GitLab Duo]
+    overlap_terms: [semantic code search, exact code search, AI, enterprise, self-managed, MCP]
+    watch_terms: [beta, GA, tier, Premium, Ultimate, self-managed, release]
+
+  - id: augment
+    company: Augment Code
+    display_name: Augment Code
+    tier: 1
+    categories: [agent, context_engine, code_search]
+    domains: [augmentcode.com, docs.augmentcode.com]
+    aliases: [Augment, Augment Code]
+    products: [Context Engine, Augment CLI, Context Engine MCP]
+    overlap_terms: [context engine, semantic code search, relationship awareness, MCP, large codebase, monorepo, repo context]
+    watch_terms: [docs, release, enterprise, security, CLI, benchmark, pricing]
+
+  - id: moderne
+    company: Moderne
+    display_name: Moderne
+    tier: 1
+    categories: [bulk_change, modernization, code_search]
+    domains: [moderne.ai, moderne.io, docs.moderne.io]
+    aliases: [Moderne, OpenRewrite]
+    products: [Moderne Platform, OpenRewrite]
+    overlap_terms: [type-aware code search, refactoring, codemod, migration, remediation, modernization, bulk change]
+    watch_terms: [recipe, enterprise, security, vulnerability remediation, case study, pricing, GA]
+
+  - id: cursor
+    company: Cursor
+    display_name: Cursor
+    tier: 2
+    categories: [agent, large_codebase]
+    domains: [cursor.com]
+    aliases: [Cursor, Cursor AI]
+    products: [Cursor, Large Codebase Indexing, Cursor Enterprise]
+    overlap_terms: [semantic search, large codebase indexing, engineering knowledge base, complex codebases, enterprise]
+    watch_terms: [indexing, security, enterprise, pricing, agent, MCP]
+
+  - id: windsurf
+    company: Windsurf
+    display_name: Windsurf
+    tier: 2
+    categories: [agent, mcp, context]
+    domains: [windsurf.com, docs.windsurf.com]
+    aliases: [Windsurf, Cascade]
+    products: [Cascade, Windsurf]
+    overlap_terms: [MCP, context, agent, plugin, tool integration, codebase structure]
+    watch_terms: [MCP, server, enterprise, plugin, CLI, indexing]
+
+  - id: claude_code
+    company: Anthropic
+    display_name: Claude Code
+    tier: 2
+    categories: [agent, mcp]
+    domains: [code.claude.com, anthropic.com]
+    aliases: [Claude Code, Anthropic Claude Code]
+    products: [Claude Code]
+    overlap_terms: [entire codebase, agentic coding, MCP, tool integration, terminal, IDE]
+    watch_terms: [MCP, tooling, enterprise, security, remote, CLI]
+
+  - id: atlassian_rovo
+    company: Atlassian
+    display_name: Atlassian Rovo Dev / Bitbucket
+    tier: 2
+    categories: [platform, agent, workflow]
+    domains: [atlassian.com, bitbucket.org]
+    aliases: [Rovo Dev, Atlassian Rovo, Bitbucket AI, Bitbucket]
+    products: [Rovo Dev, Bitbucket, Teamwork Graph]
+    overlap_terms: [context-aware AI agent, code review, CLI, IDE, GitHub, Bitbucket, software development lifecycle]
+    watch_terms: [GA, VS Code, CLI, GitHub, Bitbucket, pricing, enterprise]
+
+  - id: qodo
+    company: Qodo
+    display_name: Qodo
+    tier: 2
+    categories: [code_review, context_engine, governance]
+    domains: [qodo.ai, docs.qodo.ai]
+    aliases: [Qodo, Qodo Aware]
+    products: [Qodo Aware, Qodo]
+    overlap_terms: [deep codebase context, context engine, large multi-repo, code review, governance, enterprise]
+    watch_terms: [Aware, context engine, enterprise, review, agentic workflows, benchmark]
+
+  - id: greptile
+    company: Greptile
+    display_name: Greptile
+    tier: 2
+    categories: [code_review, graph_context]
+    domains: [greptile.com]
+    aliases: [Greptile]
+    products: [Greptile, Graph-based Codebase Context]
+    overlap_terms: [graph-based context, full codebase context, PR review, dependencies, ripple effects]
+    watch_terms: [review, graph, GitHub, GitLab, enterprise, pricing]
+
+  - id: semgrep
+    company: Semgrep
+    display_name: Semgrep
+    tier: 3
+    categories: [security, governance, remediation]
+    domains: [semgrep.dev]
+    aliases: [Semgrep, Semgrep Code, Semgrep Assistant]
+    products: [Semgrep Code, Semgrep Assistant, Semgrep AppSec Platform]
+    overlap_terms: [code scanning, guardrails, remediation, policy, triage, organization scale]
+    watch_terms: [AI-assisted, remediation, policies, PR comments, analytics, enterprise]
+
+  - id: codesee
+    company: CodeSee
+    display_name: CodeSee
+    tier: 3
+    categories: [visibility, architecture]
+    domains: [codesee.io]
+    aliases: [CodeSee, Codebase Maps]
+    products: [Codebase Maps, CodeSee]
+    overlap_terms: [codebase maps, dependency visibility, architecture, ownership, code changes]
+    watch_terms: [maps, insights, dependencies, enterprise, security]
+
+query_families:
+  product_release:
+    - "{name} launch"
+    - "{name} GA"
+    - "{name} beta"
+    - "{name} preview"
+    - "{name} release notes"
+    - "{name} changelog"
+    - "{name} docs"
+  search_understanding:
+    - "{name} code search"
+    - "{name} semantic search"
+    - "{name} deep search"
+    - "{name} codebase understanding"
+    - "{name} large codebase"
+    - "{name} monorepo"
+    - "{name} multi-repo"
+  agent_mcp:
+    - "{name} MCP"
+    - "{name} model context protocol"
+    - "{name} context engine"
+    - "{name} coding agent"
+    - "{name} repo-aware agent"
+    - "{name} tool calling"
+  bulk_change_control:
+    - "{name} refactor"
+    - "{name} codemod"
+    - "{name} migration"
+    - "{name} remediation"
+    - "{name} modernization"
+    - "{name} batch changes"
+  insights_governance:
+    - "{name} insights"
+    - "{name} analytics"
+    - "{name} reporting"
+    - "{name} monitoring"
+    - "{name} governance"
+    - "{name} policy"
+    - "{name} audit"
+  enterprise_motion:
+    - "{name} enterprise"
+    - "{name} self-hosted"
+    - "{name} on-prem"
+    - "{name} security"
+    - "{name} compliance"
+    - "{name} SSO"
+    - "{name} RBAC"
+    - "{name} pricing"
+    - "{name} packaging"
+  market_proof:
+    - "{name} customer"
+    - "{name} case study"
+    - "{name} benchmark"
+    - "{name} comparison"
+    - "{name} Fortune 500"
+
+problem_language_queries:
+  - "AI code search for large codebases"
+  - "MCP for coding agents enterprise codebase"
+  - "context engine enterprise codebases"
+  - "type-aware code search refactoring"
+  - "bulk code remediation across repositories"
+  - "agentic code review full codebase context"
+  - "engineering knowledge base complex codebases"

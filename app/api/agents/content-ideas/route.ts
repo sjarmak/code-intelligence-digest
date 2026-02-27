@@ -4,9 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { retrieveForAgent } from "@/src/lib/pipeline/agentRetrieval";
-import { rankForAgent } from "@/src/lib/pipeline/agentRank";
-import { buildAgentShortlist } from "@/src/lib/pipeline/agentShortlist";
+import { generateContentIdeas } from "@/src/lib/agents/content-ideas";
 import { logger } from "@/src/lib/logger";
 
 export async function GET(req: NextRequest) {
@@ -16,33 +14,16 @@ export async function GET(req: NextRequest) {
     const numIdeas = Math.min(Math.max(1, parseInt(searchParams.get("numIdeas") || "10", 10)), 25);
     const focus = searchParams.get("focus") ?? undefined;
 
-    const docs = await retrieveForAgent("content_ideas", {
+    const ideas = await generateContentIdeas({
       periodDays,
-      query: focus ?? null,
-      maxEnrich: 0,
+      numIdeas,
+      focus: focus ?? null,
     });
-
-    const ranked = await rankForAgent("content_ideas", docs);
-    const shortlist = await buildAgentShortlist("content_ideas", ranked, numIdeas);
-
-    const sources = shortlist.map((e) => ({
-      title: e.doc.title,
-      url: e.doc.url,
-      snippet: e.doc.snippet,
-      reason: e.reason,
-      rank: e.rank,
-    }));
-
-    const response = {
-      goal: "content_ideas",
+    logger.info("Content ideas agent completed", {
       periodDays,
-      numIdeas: sources.length,
-      sources,
-      generatedAt: new Date().toISOString(),
-    };
-
-    logger.info("Content ideas agent completed", { periodDays, numSources: sources.length });
-    return NextResponse.json(response);
+      numIdeas: ideas.ideas.length,
+    });
+    return NextResponse.json(ideas);
   } catch (error) {
     logger.error("Content ideas agent failed", { error });
     return NextResponse.json(

@@ -1,0 +1,59 @@
+{
+  "playbook_version": "2026-02-15",
+  "primary_beachhead": "Capital Markets",
+  "adjacent_segments": [
+    "Banks",
+    "Diversified Financial Services",
+    "Insurance"
+  ],
+  "persona_priority": [
+    "Head of Developer Platform",
+    "VP Engineering",
+    "Staff/Principal Engineer",
+    "Security/Compliance"
+  ],
+  "messaging_guardrails": [
+    "Never compete on AI assistant capabilities",
+    "Never position against Cursor or Copilot directly; position as complementary via MCP context",
+    "Never say replace GitHub; say augment GitHub with cross-repo intelligence",
+    "For FinServ lead with code search, Batch Changes, compliance, BYOK/self-hosted, cross-repo scale"
+  ],
+  "channel_priority": [
+    "Events",
+    "Whitepapers",
+    "Organic Search",
+    "Direct"
+  ],
+  "campaign_themes": [
+    "code intelligence for trading systems",
+    "cross-repository vulnerability remediation",
+    "MCP as context layer for existing AI tools",
+    "onboarding for complex proprietary codebases"
+  ],
+  "competitive_rules": {
+    "github_native_search": "compete_directly",
+    "homegrown_search": "compete_directly",
+    "cursor": "position_as_complement",
+    "copilot": "position_as_complement"
+  },
+  "key_risks_to_monitor": [
+    "competitors closing cross-repo context gap",
+    "MCP auth/setup friction",
+    "category collapsing into AI assistant framing"
+  ],
+  "segment_priority": [
+    "Capital Markets",
+    "Banks",
+    "Diversified Financial Services",
+    "Insurance",
+    "Other"
+  ],
+  "confidence_flags": {
+    "primary_beachhead": "high",
+    "segment_priority": "medium",
+    "persona_priority": "medium",
+    "messaging_guardrails": "high",
+    "channel_priority": "medium",
+    "competitive_rules": "medium"
+  }
+}

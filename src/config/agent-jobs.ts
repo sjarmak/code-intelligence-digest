@@ -48,15 +48,24 @@ const COMPETITIVE_INTEL_REPORT_PROMPT = (
   context: string,
   date: string
 ): { system: string; user: string } => ({
-  system: `You are a competitive intelligence analyst for a developer tools company. Your audience is marketing and revenue teams. Produce a concise, actionable daily report.`,
-  user: `Based on the following recent items (from ${date}), write a 1–2 page competitive intel report in markdown.
+  system: `You are a competitive intelligence retrieval and triage analyst focused on Sourcegraph and its competitors. Prioritize evidence-first updates that materially change competitive positioning.`,
+  user: `Based on the following recent items (from ${date}), write a concise competitor intel report in markdown.
 
-Include:
-1. **Headlines**: Key competitor or market moves (product launches, positioning, partnerships).
-2. **Implications**: What this means for our GTM and positioning.
-3. **Sources**: Reference specific items by title or source where relevant.
+Priorities:
+- code understanding for humans and agents
+- deep/natural-language code search
+- MCP and agent context infrastructure
+- large codebase navigation, refactoring, remediation, and migration
+- insights, monitoring, governance, and enterprise control
 
-Be specific and cite the content. Avoid generic filler.
+For each key update:
+1. what changed
+2. overlap with Sourcegraph surface(s)
+3. impact on sales/product/messaging/exec awareness
+4. threat level (high/medium/low/negative)
+5. evidence (source URL/title)
+
+Deprioritize generic funding/hiring/thought-leadership unless it changes product reach or buying motion.
 
 Sources:
 ${context}`,
@@ -66,8 +75,12 @@ const COMPETITIVE_INTEL_WEEKLY_PROMPT = (
   context: string,
   date: string
 ): { system: string; user: string } => ({
-  system: `You are a competitive intelligence analyst. Produce a condensed weekly summary for leadership.`,
-  user: `Based on the following items from the past week (through ${date}), write a short weekly competitive summary in markdown: key themes, top 3–5 competitor/market developments, and one sentence of recommended action. Be concise.
+  system: `You are a competitive intelligence analyst for leadership. Produce a strict weekly summary of Sourcegraph-relevant competitor developments.`,
+  user: `Based on the following items from the past week (through ${date}), write a short weekly competitive summary in markdown:
+- key themes (2-4)
+- top 3-5 developments with explicit Sourcegraph overlap
+- one recommended action per development (sales/product/messaging/exec)
+- explicitly call out uncertainty when sources conflict
 
 Sources:
 ${context}`,
@@ -116,15 +129,16 @@ export const AGENT_JOBS: AgentJobConfig[] = [
     name: "Daily competitor report",
     schedule: "daily",
     scope: {
-      categories: ["product_news"],
+      categories: ["product_news", "tech_articles", "community", "research", "ai_news"],
       competitorsOnly: true,
     },
     maxItems: 25,
     periodDays: 3,
     webSearchQueries: (date) => [
-      `AI coding assistant product updates ${date}`,
-      "Cursor IDE Windsurf Claude Code competitor news 2025",
-      "developer tools competitive landscape",
+      `AI coding agents competitor updates ${date}`,
+      "GitHub Copilot GitLab Duo Augment Moderne release notes",
+      "Cursor Windsurf Claude Code MCP enterprise update",
+      "Qodo Greptile Semgrep CodeSee enterprise customer benchmark",
     ],
     buildPrompt: COMPETITIVE_INTEL_REPORT_PROMPT,
   },
@@ -134,14 +148,15 @@ export const AGENT_JOBS: AgentJobConfig[] = [
     name: "Weekly competitor summary",
     schedule: "weekly",
     scope: {
-      categories: ["product_news"],
+      categories: ["product_news", "tech_articles", "community", "research", "ai_news"],
       competitorsOnly: true,
     },
     maxItems: 40,
     periodDays: 7,
     webSearchQueries: (date) => [
-      "AI coding agents market weekly roundup",
-      "developer tools competitor moves",
+      `AI coding agents market weekly roundup ${date}`,
+      "code search deep search context engine enterprise updates",
+      "MCP coding agents enterprise compliance security updates",
     ],
     buildPrompt: COMPETITIVE_INTEL_WEEKLY_PROMPT,
   },
@@ -156,7 +171,7 @@ export const AGENT_JOBS: AgentJobConfig[] = [
     },
     maxItems: 25,
     periodDays: 3,
-    webSearchQueries: (date) => [
+    webSearchQueries: (_date) => [
       "developer tools GTM trends 2025",
       "technical buyer pain points B2B",
     ],
@@ -173,7 +188,7 @@ export const AGENT_JOBS: AgentJobConfig[] = [
     },
     maxItems: 20,
     periodDays: 3,
-    webSearchQueries: (date) => [
+    webSearchQueries: (_date) => [
       "developer marketing content trends",
       "demand gen for dev tools",
     ],

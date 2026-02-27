@@ -12,6 +12,8 @@ import { getAgentGoalConfig } from "../../config/agents";
 import type { AgentGoal } from "../../config/agents";
 import { logger } from "../logger";
 import { saveReport } from "./report-storage";
+import { generateMarketBrief } from "./market-brief";
+import { generateContentIdeas } from "./content-ideas";
 
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 
@@ -86,15 +88,22 @@ export async function runAgentReport(
     const periodDays = config.timeHorizonDays;
     const limit = goal === "content_ideas" ? 10 : 20;
 
-    const docs = await retrieveForAgent(goal, { periodDays, maxEnrich: 0 });
-
     let report: string;
-    if (docs.length === 0) {
-      report = `# ${config.name}\n\nNo documents retrieved for period ${periodDays} days.\n`;
+    if (goal === "market_brief") {
+      const payload = await generateMarketBrief({ periodDays, maxItems: limit });
+      report = ["# Market Brief Agent Report", "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
+    } else if (goal === "content_ideas") {
+      const payload = await generateContentIdeas({ periodDays, numIdeas: limit });
+      report = ["# Content Ideas Agent Report", "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
     } else {
-      const ranked = await rankForAgent(goal, docs);
-      const shortlist = await buildAgentShortlist(goal, ranked, limit);
-      report = formatReport(goal, shortlist);
+      const docs = await retrieveForAgent(goal, { periodDays, maxEnrich: 0 });
+      if (docs.length === 0) {
+        report = `# ${config.name}\n\nNo documents retrieved for period ${periodDays} days.\n`;
+      } else {
+        const ranked = await rankForAgent(goal, docs);
+        const shortlist = await buildAgentShortlist(goal, ranked, limit);
+        report = formatReport(goal, shortlist);
+      }
     }
 
     if (!fs.existsSync(goalDir)) fs.mkdirSync(goalDir, { recursive: true });

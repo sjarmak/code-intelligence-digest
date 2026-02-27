@@ -437,13 +437,15 @@ export default function Home() {
                 )}
 
                 {/* Product Filter */}
-                <div className="ml-auto">
-                  <ProductFilter
-                    value={productFilter}
-                    onChange={setProductFilter}
-                    availableProducts={availableProducts}
-                  />
-                </div>
+                {activeCategory === "product_news" && (
+                  <div className="ml-auto">
+                    <ProductFilter
+                      value={productFilter}
+                      onChange={setProductFilter}
+                      availableProducts={availableProducts}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -574,19 +576,21 @@ export default function Home() {
               )}
 
               {/* Mobile Product Filter */}
-              <div className="relative flex-1">
-                <MobileProductFilter
-                  value={productFilter}
-                  onChange={setProductFilter}
-                  availableProducts={availableProducts}
-                  isOpen={mobileProductFilterOpen}
-                  onToggle={() => {
-                    setMobileProductFilterOpen(!mobileProductFilterOpen);
-                    setMobileCategoryOpen(false);
-                    setMobilePeriodOpen(false);
-                  }}
-                />
-              </div>
+              {activeCategory === "product_news" && (
+                <div className="relative flex-1">
+                  <MobileProductFilter
+                    value={productFilter}
+                    onChange={setProductFilter}
+                    availableProducts={availableProducts}
+                    isOpen={mobileProductFilterOpen}
+                    onToggle={() => {
+                      setMobileProductFilterOpen(!mobileProductFilterOpen);
+                      setMobileCategoryOpen(false);
+                      setMobilePeriodOpen(false);
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </>
@@ -611,7 +615,9 @@ export default function Home() {
             <ItemsGrid
               category={activeCategory}
               period={period}
-              productFilter={productFilter}
+              productFilter={
+                activeCategory === "product_news" ? productFilter : undefined
+              }
               researchDateFilter={
                 activeCategory === "research" ? researchDateFilter : undefined
               }

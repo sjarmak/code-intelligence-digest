@@ -4,9 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { retrieveForAgent } from "@/src/lib/pipeline/agentRetrieval";
-import { rankForAgent } from "@/src/lib/pipeline/agentRank";
-import { buildAgentShortlist } from "@/src/lib/pipeline/agentShortlist";
+import { generateMarketBrief } from "@/src/lib/agents/market-brief";
 import { logger } from "@/src/lib/logger";
 
 export async function GET(req: NextRequest) {
@@ -16,33 +14,17 @@ export async function GET(req: NextRequest) {
     const maxItems = Math.min(Math.max(5, parseInt(searchParams.get("maxItems") || "20", 10)), 50);
     const focus = searchParams.get("focus") ?? undefined;
 
-    const docs = await retrieveForAgent("market_brief", {
+    const brief = await generateMarketBrief({
       periodDays,
-      query: focus ?? null,
-      maxEnrich: 0,
+      maxItems,
+      focus: focus ?? null,
     });
-
-    const ranked = await rankForAgent("market_brief", docs);
-    const shortlist = await buildAgentShortlist("market_brief", ranked, maxItems);
-
-    const sources = shortlist.map((e) => ({
-      title: e.doc.title,
-      url: e.doc.url,
-      snippet: e.doc.snippet,
-      reason: e.reason,
-      rank: e.rank,
-    }));
-
-    const response = {
-      goal: "market_brief",
+    logger.info("Market brief agent completed", {
       periodDays,
-      maxItems: sources.length,
-      sources,
-      generatedAt: new Date().toISOString(),
-    };
-
-    logger.info("Market brief agent completed", { periodDays, numSources: sources.length });
-    return NextResponse.json(response);
+      executiveDeltaCount: brief.executive_delta.length,
+      watchCount: brief.watch_items.length,
+    });
+    return NextResponse.json(brief);
   } catch (error) {
     logger.error("Market brief agent failed", { error });
     return NextResponse.json(

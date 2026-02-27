@@ -22,6 +22,34 @@ interface ReportDetail {
   createdAt: number;
 }
 
+interface StructuredIntelItem {
+  competitor: string;
+  date: string | null;
+  title: string;
+  source: string;
+  source_type: string;
+  url: string;
+  update_type: string;
+  overlap_with_sourcegraph: string[];
+  summary: string;
+  why_it_matters: string;
+  threat_level: 'high' | 'medium' | 'low' | 'negative';
+  confidence: 'high' | 'medium' | 'low';
+  novelty_score: number;
+  relevance_score: number;
+  actionability: string[];
+  evidence_notes: string[];
+}
+
+interface StructuredIntelPayload {
+  goal: string;
+  periodDays: number;
+  topPerCompetitor: number;
+  topOverall: number;
+  generatedAt: string;
+  items: StructuredIntelItem[];
+}
+
 export const dynamic = 'force-dynamic';
 
 export default function ReportViewPage() {
@@ -81,6 +109,8 @@ export default function ReportViewPage() {
     );
   }
 
+  const structuredIntel = parseStructuredIntel(report);
+
   return (
     <div className="min-h-screen bg-white text-black">
       <header className="border-b border-surface-border sticky top-0 z-10 bg-surface">
@@ -109,17 +139,106 @@ export default function ReportViewPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div
-          className="prose prose-sm max-w-none prose-p:whitespace-pre-wrap prose-headings:font-semibold prose-a:text-black prose-a:underline"
-          style={{ whiteSpace: 'pre-wrap' }}
-        >
-          {report.outputMarkdown ? (
-            <ReportMarkdown text={report.outputMarkdown} />
-          ) : (
-            <p className="text-muted">No content.</p>
-          )}
-        </div>
+        {structuredIntel ? (
+          <StructuredCompetitorIntel payload={structuredIntel} />
+        ) : (
+          <div
+            className="prose prose-sm max-w-none prose-p:whitespace-pre-wrap prose-headings:font-semibold prose-a:text-black prose-a:underline"
+            style={{ whiteSpace: 'pre-wrap' }}
+          >
+            {report.outputMarkdown ? (
+              <ReportMarkdown text={report.outputMarkdown} />
+            ) : (
+              <p className="text-muted">No content.</p>
+            )}
+          </div>
+        )}
       </main>
+    </div>
+  );
+}
+
+function parseStructuredIntel(report: ReportDetail): StructuredIntelPayload | null {
+  const isCompetitorIntel = report.agentId === 'competitive_intel';
+  const isStructured = report.outputMetadata && report.outputMetadata.structuredOutput === true;
+  if (!isCompetitorIntel || !isStructured || !report.outputMarkdown) return null;
+
+  const fenced = report.outputMarkdown.match(/```json\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1]?.trim() ?? report.outputMarkdown.trim();
+  if (!candidate) return null;
+  try {
+    const parsed = JSON.parse(candidate) as StructuredIntelPayload;
+    if (!Array.isArray(parsed.items)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function StructuredCompetitorIntel({ payload }: { payload: StructuredIntelPayload }) {
+  const threatClass = (level: string): string => {
+    if (level === 'high') return 'bg-red-100 text-red-800 border-red-200';
+    if (level === 'medium') return 'bg-amber-100 text-amber-800 border-amber-200';
+    if (level === 'negative') return 'bg-blue-100 text-blue-800 border-blue-200';
+    return 'bg-gray-100 text-gray-800 border-gray-200';
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-surface-border bg-gray-50 p-4">
+        <p className="text-sm text-muted">
+          {payload.items.length} items · {payload.periodDays}d window · Top {payload.topPerCompetitor} per competitor
+        </p>
+      </div>
+      {payload.items.map((item, idx) => (
+        <article key={`${item.url}-${idx}`} className="rounded-lg border border-surface-border p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium px-2 py-1 rounded border border-gray-300 bg-gray-100">
+              {item.competitor}
+            </span>
+            <span className={`text-xs font-medium px-2 py-1 rounded border ${threatClass(item.threat_level)}`}>
+              threat: {item.threat_level}
+            </span>
+            <span className="text-xs text-muted">
+              confidence: {item.confidence}
+            </span>
+            {item.date && <span className="text-xs text-muted">{item.date}</span>}
+          </div>
+
+          <h2 className="mt-3 text-lg font-semibold">{item.title}</h2>
+          <p className="mt-1 text-sm text-muted">{item.summary}</p>
+
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
+            <span className="px-2 py-1 rounded bg-gray-100 border border-gray-200">{item.update_type}</span>
+            {item.overlap_with_sourcegraph.map((s) => (
+              <span key={s} className="px-2 py-1 rounded bg-slate-100 border border-slate-200">
+                {s}
+              </span>
+            ))}
+          </div>
+
+          <p className="mt-3 text-sm"><strong>Why it matters:</strong> {item.why_it_matters}</p>
+          <p className="mt-2 text-sm">
+            <strong>Actionability:</strong> {item.actionability.join(', ')}
+          </p>
+          <p className="mt-2 text-sm">
+            <strong>Scores:</strong> relevance {item.relevance_score} · novelty {item.novelty_score}
+          </p>
+          {item.evidence_notes.length > 0 && (
+            <p className="mt-2 text-sm">
+              <strong>Evidence:</strong> {item.evidence_notes.join(' | ')}
+            </p>
+          )}
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block mt-3 text-sm font-medium underline"
+          >
+            {item.source} ({item.source_type})
+          </a>
+        </article>
+      ))}
     </div>
   );
 }
