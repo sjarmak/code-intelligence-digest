@@ -145,25 +145,10 @@ export default function AgentReportsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const exportPdf = async () => {
-    const el = reportContentRef.current;
-    if (!el || !viewing) return;
-    try {
-      const html2pdf = (await import("html2pdf.js")).default;
-      const worker = html2pdf();
-      await worker
-        .set({
-          margin: 12,
-          filename: `agent-report-${viewing.goal}-${viewing.id}.pdf`,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: { scale: 2 },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-        })
-        .from(el)
-        .save();
-    } catch (err) {
-      console.error("PDF export failed", err);
-    }
+  const exportPdf = () => {
+    if (typeof window === "undefined") return;
+    // Rely on the browser's native "Save as PDF" from the print dialog.
+    window.print();
   };
 
   if (viewing) {
