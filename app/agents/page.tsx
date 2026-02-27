@@ -146,9 +146,20 @@ export default function AgentReportsPage() {
   };
 
   const exportPdf = () => {
-    if (typeof window === "undefined") return;
-    // Rely on the browser's native "Save as PDF" from the print dialog.
+    if (typeof window === "undefined" || !viewing) return;
+    const previousTitle = document.title;
+    const label = GOAL_LABELS[viewing.goal] ?? viewing.goal;
+    const generated = new Date(viewing.generatedAt);
+    const timestamp = generated.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    document.title = `${label} Agent Report – ${timestamp}`;
     window.print();
+    // Restore original title shortly after print dialog opens
+    setTimeout(() => {
+      document.title = previousTitle;
+    }, 1000);
   };
 
   if (viewing) {
