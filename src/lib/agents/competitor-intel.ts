@@ -281,11 +281,17 @@ async function retrieveWebDocs(
 ): Promise<CandidateDoc[]> {
   const docs: CandidateDoc[] = [];
   for (const query of queries.slice(0, maxQueries)) {
+    const q = query.toLowerCase();
+    const isNarrativeQuery = /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/.test(q);
     const results = await searchWeb(query, {
       numResults: webDocsPerQuery,
       domains: competitor.domains,
-      topic: "news",
-      timeRange: "year",
+      // "general" captures primary docs/changelogs/blog posts better than "news"
+      // for competitive intel workflows.
+      topic: "general",
+      // Keep recency bias for routine queries, but allow older narrative-defining
+      // benchmark/pricing/case-study pages to surface.
+      timeRange: isNarrativeQuery ? undefined : "year",
     });
 
     for (const result of results) {
