@@ -247,6 +247,11 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
   const evidence_strength = Math.min(5, 2 + cluster.docs.length);
   const actionability = direct_overlap >= 3 || enterprise_relevance >= 4 || strategicNarrative >= 4 ? 5 : 2;
   const generic_news_penalty = overlap.length === 0 && strategicNarrative < 4 ? -4 : 0;
+  const operational_update_penalty = /(metrics report|usage metrics|telemetry|allowlist|cdn|download urls|api endpoint|cli activity)/i.test(
+    text,
+  )
+    ? -1.5
+    : 0;
   const material_update_boost = /(pricing|packaging|tier|enterprise|security|compliance|sso|rbac|ga|general availability|release|self[-\s]?host|on[-\s]?prem|admin|governance|policy)/i.test(
     text,
   )
@@ -271,6 +276,7 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     0.04 * evidence_strength +
     0.04 * actionability +
     material_update_boost +
+    operational_update_penalty +
     benchmark_marketing_penalty +
     generic_news_penalty +
     seo_comparison_penalty +
@@ -292,6 +298,7 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     actionability,
     duplication_penalty: 0,
     material_update_boost,
+    operational_update_penalty,
     benchmark_marketing_penalty,
     generic_news_penalty,
     seo_comparison_penalty,
@@ -313,10 +320,18 @@ function enrichOverlapWithSignals(base: string[], text: string): string[] {
   return Array.from(out);
 }
 
-function deriveActionability(score: Record<string, number>, tl: "high" | "medium" | "low" | "negative"): string[] {
+function deriveActionability(
+  score: Record<string, number>,
+  tl: "high" | "medium" | "low" | "negative",
+  overlap: string[],
+): string[] {
   const out = new Set<string>();
   if (score.enterprise_relevance >= 4) out.add("sales");
   if (score.direct_overlap >= 3 || (score.benchmark_signal ?? 1) >= 4) {
+    out.add("product");
+    out.add("messaging");
+  }
+  if (overlap.some((o) => o === "batch_changes" || o === "agent_context" || o === "code_search")) {
     out.add("product");
     out.add("messaging");
   }
@@ -355,7 +370,14 @@ function whyItMatters(
     actionability.length === 1 && actionability[0] === "monitoring"
       ? "monitoring only; no immediate GTM motion required"
       : actionability.join(", ");
-  return `Change: ${competitor.display_name} published a ${update} move touching ${surfaces}. GTM impact: ${gtmImpact}. Net assessment: ${net}. ${netThreatRationale(net, score)}`;
+  const impactDetail = actionability.includes("sales")
+    ? "Sales implication: this can shift enterprise selection criteria and objection handling."
+    : actionability.includes("product")
+      ? "Product implication: this affects backlog priority for parity and differentiation."
+      : actionability.includes("messaging")
+        ? "Messaging implication: update battlecards and proof points for active deals."
+        : "No immediate field action required; watch for follow-on enterprise adoption signals.";
+  return `Change: ${competitor.display_name} published a ${update} move touching ${surfaces}. GTM impact: ${gtmImpact}. ${impactDetail} Net assessment: ${net}. ${netThreatRationale(net, score)}`;
 }
 
 function tokenizedSignalPool(competitor: CompetitorIntelEntry, queries: string[]): string[] {
@@ -899,6 +921,22 @@ function isNarrativeNoise(doc: CandidateDoc): boolean {
   return false;
 }
 
+function isThirdPartyHowToNoise(doc: CandidateDoc): boolean {
+  if (doc.source_type === "primary") return false;
+  const text = `${doc.title} ${doc.summary} ${doc.url}`.toLowerCase();
+  const looksHowTo = /(how to|tutorial|tips|guide|refactoring|quick review|walkthrough)/.test(text);
+  const hasMaterialAnchor = /(pricing|packaging|tier|enterprise|security|compliance|sso|rbac|ga|general availability|release|benchmark|swe[\s-]?bench|case study|customer)/.test(
+    text,
+  );
+  return looksHowTo && !hasMaterialAnchor;
+}
+
+function isOperationalTelemetryUpdate(text: string): boolean {
+  return /(metrics report|usage metrics|telemetry|allowlist|cdn|download urls|api endpoint|cli activity|report urls update)/i.test(
+    text,
+  );
+}
+
 function shapeOfItem(item: RankedCompetitorIntelItem): "benchmark_blog" | "comparison_seo" | "generic_page" | "other" {
   const t = `${item.title} ${item.url}`.toLowerCase();
   if (/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(t)) return "comparison_seo";
@@ -920,6 +958,11 @@ function isMaterialRankedItem(item: RankedCompetitorIntelItem): boolean {
 function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number): RankedCompetitorIntelItem[] {
   const materialCount = items.filter(isMaterialRankedItem).length;
   const benchmarkCap = materialCount > 0 ? 1 : Math.max(2, Math.floor(topN / 2));
+  const operationalCap = materialCount > 0 ? 1 : 2;
+  const updateTypeCaps: Record<string, number> = {
+    product_launch: 2,
+    product_update: 2,
+  };
   const caps: Record<string, number> = {
     benchmark_blog: benchmarkCap,
     comparison_seo: 1,
@@ -927,14 +970,34 @@ function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number
     other: topN,
   };
   const counts: Record<string, number> = { benchmark_blog: 0, comparison_seo: 0, generic_page: 0, other: 0 };
+  const updateTypeCounts = new Map<string, number>();
+  const narrativeCounts = new Map<string, number>();
+  let operationalCount = 0;
   const selected: RankedCompetitorIntelItem[] = [];
   const deferred: RankedCompetitorIntelItem[] = [];
 
   for (const item of items) {
     const shape = shapeOfItem(item);
-    if (counts[shape] < caps[shape]) {
+    const text = `${item.title} ${item.summary} ${item.url}`;
+    const isOperational = isOperationalTelemetryUpdate(text);
+    const typeCap = updateTypeCaps[item.update_type];
+    const typeCount = updateTypeCounts.get(item.update_type) ?? 0;
+    const narrativeKey = `${item.update_type}|${item.overlap_with_sourcegraph.sort().join(",")}`;
+    const narrativeCount = narrativeCounts.get(narrativeKey) ?? 0;
+    const narrativeCap = item.update_type === "product_launch" && item.overlap_with_sourcegraph.includes("enterprise_control") ? 2 : topN;
+    const violatesTypeCap = typeCap != null && typeCount >= typeCap;
+    const violatesOperationalCap = isOperational && operationalCount >= operationalCap;
+    const lowPriorityMonitoring =
+      item.actionability.length === 1 &&
+      item.actionability[0] === "monitoring" &&
+      item.threat_level === "low" &&
+      selected.filter((s) => s.threat_level === "high" || s.threat_level === "medium").length >= 2;
+    if (counts[shape] < caps[shape] && !violatesTypeCap && !violatesOperationalCap && narrativeCount < narrativeCap && !lowPriorityMonitoring) {
       selected.push(item);
       counts[shape] += 1;
+      updateTypeCounts.set(item.update_type, typeCount + 1);
+      narrativeCounts.set(narrativeKey, narrativeCount + 1);
+      if (isOperational) operationalCount += 1;
     } else {
       deferred.push(item);
     }
@@ -961,6 +1024,7 @@ function canonicalUrlKey(url: string): string {
 function dedupeRankedEvents(items: RankedCompetitorIntelItem[]): RankedCompetitorIntelItem[] {
   const seen = new Set<string>();
   const seenBenchmarkNarratives = new Set<string>();
+  const seenOperationalNarratives = new Set<string>();
   const out: RankedCompetitorIntelItem[] = [];
   for (const item of items) {
     const key = `${item.competitor}|${canonicalUrlKey(item.url)}|${normalizeTitle(item.title)}`;
@@ -976,10 +1040,36 @@ function dedupeRankedEvents(items: RankedCompetitorIntelItem[]): RankedCompetito
       if (seenBenchmarkNarratives.has(narrativeKey)) continue;
       seenBenchmarkNarratives.add(narrativeKey);
     }
+    if (isOperationalTelemetryUpdate(`${item.title} ${item.summary} ${item.url}`)) {
+      const operationalNarrative = normalizeTitle(
+        item.title
+          .toLowerCase()
+          .replace(/\b(copilot|github|gitlab|duo|agent|coding)\b/g, " ")
+          .replace(/\b(update|now|includes|report|metrics|usage|telemetry|urls?)\b/g, " "),
+      );
+      const opKey = `${item.competitor}|${operationalNarrative}`;
+      if (seenOperationalNarratives.has(opKey)) continue;
+      seenOperationalNarratives.add(opKey);
+    }
     seen.add(key);
     out.push(item);
   }
   return out;
+}
+
+function capOverallPerCompetitor(items: RankedCompetitorIntelItem[], topOverall: number): RankedCompetitorIntelItem[] {
+  const cap = 3;
+  const counts = new Map<string, number>();
+  const selected: RankedCompetitorIntelItem[] = [];
+
+  for (const item of items) {
+    const count = counts.get(item.competitor) ?? 0;
+    if (count < cap) {
+      counts.set(item.competitor, count + 1);
+      selected.push(item);
+    }
+  }
+  return selected.slice(0, topOverall);
 }
 
 function parseDate(raw: string | null | undefined): Date | undefined {
@@ -1111,7 +1201,7 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
   const overlap = enrichOverlapWithSignals(classifyOverlapWithSourcegraph(text), text);
   const scores = clusterScore(cluster);
   const tl = threatLevel(scores);
-  const actionability = deriveActionability(scores, tl);
+  const actionability = deriveActionability(scores, tl, overlap);
   const dateConfidence = rep.dateConfidence ?? (rep.publishedAt ? "exact" : "unknown");
 
   return {
@@ -1221,6 +1311,7 @@ export async function gatherCompetitorIntel(
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
       if (doc.source_type === "community") return false;
       if (isNarrativeNoise(doc)) return false;
+      if (isThirdPartyHowToNoise(doc)) return false;
       if (!shouldKeepUndatedDoc(doc, periodDays, ownDomain)) return false;
       if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
       if (!hasMaterialSignal(doc)) return false;
@@ -1246,5 +1337,6 @@ export async function gatherCompetitorIntel(
     allRanked.push(...diversified);
   }
 
-  return dedupeRankedEvents(allRanked.sort((a, b) => b.relevance_score - a.relevance_score)).slice(0, topOverall);
+  const globallyRanked = dedupeRankedEvents(allRanked.sort((a, b) => b.relevance_score - a.relevance_score));
+  return capOverallPerCompetitor(globallyRanked, topOverall);
 }
