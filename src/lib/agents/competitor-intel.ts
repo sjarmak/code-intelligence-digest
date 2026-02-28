@@ -456,6 +456,21 @@ function dedupeDocs(docs: CandidateDoc[]): CandidateDoc[] {
   return Array.from(byUrl.values());
 }
 
+function domainMatchesCompetitor(url: string, competitor: CompetitorIntelEntry): boolean {
+  const domain = getDomainFromUrl(url);
+  if (!domain) return false;
+  return competitor.domains.some((d) => {
+    const base = d.toLowerCase();
+    return domain === base || domain.endsWith(`.${base}`);
+  });
+}
+
+function compactSummary(text: string, maxLen = 900): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLen) return normalized;
+  return `${normalized.slice(0, maxLen)}...`;
+}
+
 function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
   const rep = cluster.representative;
   const text = `${rep.title} ${rep.summary} ${rep.content}`;
@@ -479,7 +494,7 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
     url: rep.url,
     update_type: inferUpdateType(text),
     overlap_with_sourcegraph: overlap,
-    summary: rep.summary || rep.title,
+    summary: compactSummary(rep.summary || rep.title),
     why_it_matters: whyItMatters(cluster.competitor, overlap, scores),
     threat_level: tl,
     confidence: confidenceLevel(rep.source_type, cluster.docs.length),
@@ -562,10 +577,13 @@ export async function gatherCompetitorIntel(
       Math.min(webQueryLimit, maxWebQueriesPerCompetitor),
     );
 
-    // infer competitor if missing/uncertain and drop weak generic hits
+    // Strict attribution:
+    // - explicit competitor signal, OR
+    // - primary source domain owned by that competitor.
+    // Do NOT keep generic overlap-only items for a competitor.
     const deduped = dedupeDocs([...internalCandidates, ...webCandidates]).filter((doc) => {
       const signals = detectCompetitorSignals(`${doc.title} ${doc.summary} ${doc.content}`);
-      return signals.competitorIds.includes(competitor.id) || signals.surfaces.length > 0;
+      return signals.competitorIds.includes(competitor.id) || domainMatchesCompetitor(doc.url, competitor);
     });
 
     const clusters = clusterDocs(deduped, competitor);
