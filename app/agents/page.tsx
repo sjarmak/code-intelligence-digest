@@ -43,6 +43,7 @@ export default function AgentReportsPage() {
   const [timeRange, setTimeRange] = useState<(typeof TIME_RANGES)[number]>("month");
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateProgress, setGenerateProgress] = useState<string | null>(null);
 
   const refetchReports = () => {
     return fetch("/api/agents/reports")
@@ -73,22 +74,29 @@ export default function AgentReportsPage() {
     const goals = Array.from(selectedGoals);
     if (goals.length === 0) return;
     setGenerateError(null);
+    setGenerateProgress(null);
     setGenerating(true);
     try {
-      const res = await fetch("/api/agents/reports/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goals, timeRange }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setGenerateError(data.error ?? `HTTP ${res.status}`);
-        return;
+      const failed: string[] = [];
+      for (let i = 0; i < goals.length; i += 1) {
+        const goal = goals[i];
+        setGenerateProgress(`Generating ${GOAL_LABELS[goal] ?? goal} (${i + 1}/${goals.length})...`);
+        const res = await fetch("/api/agents/reports/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ goals: [goal], timeRange }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          failed.push(`${GOAL_LABELS[goal] ?? goal}: ${data.error ?? `HTTP ${res.status}`}`);
+        }
       }
+      if (failed.length > 0) setGenerateError(failed.join(" | "));
       await refetchReports();
     } catch (e) {
       setGenerateError(e instanceof Error ? e.message : "Request failed");
     } finally {
+      setGenerateProgress(null);
       setGenerating(false);
     }
   };
@@ -413,6 +421,9 @@ export default function AgentReportsPage() {
             >
               {generating ? "Generating…" : "Generate reports"}
             </button>
+            {generateProgress && (
+              <p className="text-sm text-gray-600">{generateProgress}</p>
+            )}
             {generateError && (
               <p className="text-sm text-red-600">{generateError}</p>
             )}
