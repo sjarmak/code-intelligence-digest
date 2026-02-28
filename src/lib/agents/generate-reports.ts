@@ -12,9 +12,10 @@ import { getAgentGoalConfig } from "../../config/agents";
 import type { AgentGoal } from "../../config/agents";
 import { logger } from "../logger";
 import { saveReport } from "./report-storage";
+import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
-import { formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
+import { formatCompetitorIntelMarkdown, formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
 
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 
@@ -97,6 +98,21 @@ export async function runAgentReport(
     } else if (goal === "content_ideas") {
       const payload = await generateContentIdeas({ periodDays, numIdeas: limit });
       report = formatContentIdeasMarkdown("Content Ideas Agent Report", payload);
+    } else if (goal === "competitor_intel") {
+      const items = await gatherCompetitorIntel({
+        periodDays,
+        topPerCompetitor: 5,
+        topOverall: limit,
+        maxGeneratedQueries: 24,
+        webDocsPerQuery: 4,
+        maxWebQueriesPerCompetitor: 4,
+      });
+      report = formatCompetitorIntelMarkdown("Competitor Intel Agent Report", {
+        generatedAt: new Date().toISOString(),
+        periodDays,
+        topPerCompetitor: 5,
+        items,
+      });
     } else {
       const docs = await retrieveForAgent(goal, { periodDays, maxEnrich: 0 });
       if (docs.length === 0) {

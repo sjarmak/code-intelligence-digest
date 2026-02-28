@@ -13,7 +13,7 @@ import { logger } from "../logger";
 import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
-import { formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
+import { formatCompetitorIntelMarkdown, formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
 
 const MAX_CONTEXT_ITEMS = 50;
 const MAX_CHARS_PER_ITEM = 4000;
@@ -105,23 +105,12 @@ export async function runAgentJob(
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
 
-    const payload = {
-      goal: "competitor_intel",
+    const markdown = formatCompetitorIntelMarkdown(title, {
+      generatedAt: new Date().toISOString(),
       periodDays,
       topPerCompetitor,
-      topOverall: items.length,
       items,
-      generatedAt: new Date().toISOString(),
-    };
-
-    const markdown = [
-      `# ${title}`,
-      "",
-      "```json",
-      JSON.stringify(payload, null, 2),
-      "```",
-      "",
-    ].join("\n");
+    });
 
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: items.length,

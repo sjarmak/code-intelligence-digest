@@ -1,4 +1,5 @@
 import type { ContentIdeasOutput } from "./content-ideas";
+import type { RankedCompetitorIntelItem } from "./competitor-intel";
 import type { MarketBriefOutput } from "./market-brief";
 
 function esc(s: string | undefined): string {
@@ -99,6 +100,47 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
         lines.push(`  - [${source.title}](${source.url}) (${source.source}, ${source.date})`)
       );
     }
+    lines.push("");
+  });
+
+  return lines.join("\n");
+}
+
+export function formatCompetitorIntelMarkdown(
+  title: string,
+  payload: {
+    generatedAt: string;
+    periodDays: number;
+    topPerCompetitor: number;
+    items: RankedCompetitorIntelItem[];
+  },
+): string {
+  const lines: string[] = [
+    `# ${title}`,
+    `Generated: ${payload.generatedAt}`,
+    `Window: last ${payload.periodDays} days`,
+    `Top per competitor: ${payload.topPerCompetitor}`,
+    "",
+    "## Prioritized Developments",
+    "",
+  ];
+
+  if (payload.items.length === 0) {
+    lines.push("No high-signal, Sourcegraph-overlap competitor updates identified in this run.", "");
+    return lines.join("\n");
+  }
+
+  payload.items.forEach((item, i) => {
+    lines.push(`### ${i + 1}. ${item.competitor}: ${item.title}`);
+    lines.push(`- Date/source: ${item.date ?? "unknown"} | **${item.source_type}** | ${item.source}`);
+    lines.push(`- URL: [Open source](${item.url})`);
+    lines.push(`- Threat/confidence: **${item.threat_level}** / **${item.confidence}**`);
+    lines.push(`- Update type: ${item.update_type}`);
+    lines.push(`- Overlap with Sourcegraph: ${item.overlap_with_sourcegraph.join(", ") || "none"}`);
+    lines.push(`- Summary: ${item.summary}`);
+    lines.push(`- Why it matters: ${item.why_it_matters}`);
+    lines.push(`- Actionability: ${item.actionability.join(" | ")}`);
+    lines.push(`<details><summary><strong>Evidence notes</strong></summary><div>${esc(item.evidence_notes.join(" | "))}</div></details>`);
     lines.push("");
   });
 
