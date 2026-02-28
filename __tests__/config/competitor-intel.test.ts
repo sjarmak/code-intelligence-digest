@@ -21,6 +21,8 @@ describe("competitor-intel config", () => {
     const queries = buildCompetitorQueries(augment!, 24);
     expect(queries.length).toBeGreaterThanOrEqual(20);
     expect(queries.length).toBeLessThanOrEqual(24);
+    const topQueries = queries.slice(0, 8).join(" ").toLowerCase();
+    expect(topQueries).toContain("benchmark");
   });
 
   it("classifies source domains", () => {

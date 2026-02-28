@@ -112,19 +112,41 @@ export function buildCompetitorQueries(
   );
 
   const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (query: string): void => {
+    const q = query.trim();
+    if (!q || seen.has(q)) return;
+    seen.add(q);
+    out.push(q);
+  };
+
+  // Priority-first queries to avoid truncating high-signal terms (benchmark, pricing, GA, etc.).
+  for (const term of competitor.watch_terms) {
+    add(`${competitor.display_name} ${term}`);
+    add(`${competitor.company} ${term}`);
+  }
+  for (const term of competitor.overlap_terms) {
+    add(`${competitor.display_name} ${term}`);
+  }
+  for (const product of competitor.products) {
+    add(`${product} release notes`);
+    add(`${product} docs`);
+    add(`${product} benchmark`);
+  }
+  for (const q of cfg.problem_language_queries) {
+    add(q);
+  }
+
+  // Then fill with broad family coverage.
   for (const name of names) {
     for (const templates of Object.values(cfg.query_families)) {
       for (const template of templates) {
-        out.push(template.replace("{name}", name));
+        add(template.replace("{name}", name));
       }
     }
   }
 
-  out.push(...cfg.problem_language_queries);
-  out.push(...competitor.overlap_terms.map((t) => `${competitor.display_name} ${t}`));
-  out.push(...competitor.watch_terms.map((t) => `${competitor.display_name} ${t}`));
-
-  return Array.from(new Set(out)).slice(0, maxQueries);
+  return out.slice(0, maxQueries);
 }
 
 export function classifyOverlapWithSourcegraph(text: string): string[] {

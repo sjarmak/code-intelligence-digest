@@ -393,7 +393,7 @@ export async function gatherCompetitorIntel(
   const topOverall = options.topOverall ?? 20;
   const maxGeneratedQueries = options.maxGeneratedQueries ?? 24;
   const webDocsPerQuery = options.webDocsPerQuery ?? 5;
-  const maxWebQueriesPerCompetitor = options.maxWebQueriesPerCompetitor ?? 2;
+  const maxWebQueriesPerCompetitor = options.maxWebQueriesPerCompetitor ?? 4;
 
   const internalItems = await loadInternalDocs(periodDays);
   const competitors = getCompetitorIntelEntries().filter((c) =>
@@ -420,9 +420,11 @@ export async function gatherCompetitorIntel(
     const webQueryLimit =
       options.maxWebQueriesPerCompetitor != null
         ? options.maxWebQueriesPerCompetitor
-        : competitors.length > 4
-          ? Math.min(2, maxGeneratedQueries)
-          : Math.min(4, maxGeneratedQueries);
+        : competitor.tier <= 1
+          ? Math.min(4, maxGeneratedQueries)
+          : competitor.tier === 2
+            ? Math.min(3, maxGeneratedQueries)
+            : Math.min(2, maxGeneratedQueries);
     const webCandidates = await retrieveWebDocs(
       competitor,
       queries,
