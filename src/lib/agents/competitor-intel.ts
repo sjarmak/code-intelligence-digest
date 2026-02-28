@@ -43,6 +43,7 @@ interface CandidateDoc {
   source: string;
   source_type: IntelSourceType;
   publishedAt?: Date;
+  dateConfidence?: "exact" | "inferred" | "unknown";
   retrievalScore: number;
 }
 
@@ -131,9 +132,12 @@ function confidenceLevel(sourceType: IntelSourceType, docsCount: number): "high"
   return "low";
 }
 
-function threatLevel(score: number): "high" | "medium" | "low" | "negative" {
+function threatLevel(scoreMap: Record<string, number>): "high" | "medium" | "low" | "negative" {
+  const score = scoreMap.final_score;
   if (score >= 4.2) return "high";
   if (score >= 3.0) return "medium";
+  if ((scoreMap.enterprise_relevance ?? 0) >= 4 && score >= 2.6) return "medium";
+  if ((scoreMap.benchmark_signal ?? 0) >= 4 && (scoreMap.direct_overlap ?? 0) >= 2 && score >= 2.6) return "medium";
   if (score >= 2.0) return "low";
   return "negative";
 }
@@ -299,7 +303,7 @@ function whyItMatters(competitor: CompetitorIntelEntry, overlap: string[], score
   if (score.final_score >= 4.2) functions.push("exec awareness");
   if (functions.length === 0) functions.push("monitoring");
   const update = inferUpdateType(text).replace(/_/g, " ");
-  const net = threatLevel(score.final_score);
+  const net = threatLevel(score);
   return `what changed: ${competitor.display_name} published a ${update} update. which Sourcegraph surface it overlaps with: ${surfaces}. whether this affects sales, product, messaging, or exec awareness: ${Array.from(new Set(functions)).join(", ")}. whether this is a net threat, neutral development, or competitor weakness: ${net}.`;
 }
 
@@ -470,6 +474,7 @@ function toCandidateFromFeed(item: InternalDoc, competitorId: string, retrievalS
     source: domain || item.sourceTitle || "unknown",
     source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
     publishedAt: item.publishedAt,
+    dateConfidence: item.publishedAt ? "exact" : "unknown",
     retrievalScore,
   };
 }
@@ -524,6 +529,7 @@ async function retrieveWebDocs(
         source: domain || "web",
         source_type: classifySourceTypeByDomain(domain),
         publishedAt: result.publishedDate ? new Date(result.publishedDate) : undefined,
+        dateConfidence: result.publishedDate ? "exact" : "unknown",
         retrievalScore: (result.score ?? 0.5) * 2,
       });
     }
@@ -568,6 +574,7 @@ async function retrieveStrategicBackfillDocs(
         source: domain || row.sourceTitle || "unknown",
         source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
         publishedAt,
+        dateConfidence: publishedAt ? "exact" : "unknown",
         retrievalScore: scoreBoost,
       });
       if (byUrl.size >= limit) break;
@@ -630,6 +637,7 @@ async function retrieveStrategicUrlBackfillDocs(
           source: sourceDomain || row.source_title || "unknown",
           source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
           publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+          dateConfidence: row.published_at ? "exact" : "unknown",
           retrievalScore: 4.6,
         });
       }
@@ -678,6 +686,7 @@ async function retrieveStrategicUrlBackfillDocs(
           source: sourceDomain || row.source_title || "unknown",
           source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
           publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+          dateConfidence: row.published_at ? "exact" : "unknown",
           retrievalScore: 4.6,
         });
       }
@@ -824,6 +833,21 @@ function compactSummary(text: string, maxLen = 900): string {
   return `${normalized.slice(0, maxLen)}...`;
 }
 
+function hasMaterialSignal(doc: CandidateDoc): boolean {
+  const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
+  return /(ga|general availability|launch|release|preview|beta|docs|changelog|pricing|packaging|tier|enterprise|self-host|on-prem|sso|rbac|security|compliance|audit|case study|customer|benchmark|swe[\s-]?bench|leaderboard|migration|refactor|codemod|remediation)/.test(
+    text,
+  );
+}
+
+function isNarrativeNoise(doc: CandidateDoc): boolean {
+  const text = `${doc.title} ${doc.summary} ${doc.content} ${doc.url}`.toLowerCase();
+  if (/(show hn|sponsor)/.test(text)) return true;
+  if (/(podcast|episode|spotify\.com|substack|newsletter)/.test(text)) return true;
+  if (/comments url:|points:\s*\d+|# comments:\s*\d+/.test(text)) return true;
+  return false;
+}
+
 function shapeOfItem(item: RankedCompetitorIntelItem): "benchmark_blog" | "comparison_seo" | "generic_page" | "other" {
   const t = `${item.title} ${item.url}`.toLowerCase();
   if (/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(t)) return "comparison_seo";
@@ -860,6 +884,29 @@ function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number
   return selected.slice(0, topN);
 }
 
+function canonicalUrlKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.replace(/\/+$/, "").toLowerCase();
+    return `${host}${path}`;
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+function dedupeRankedEvents(items: RankedCompetitorIntelItem[]): RankedCompetitorIntelItem[] {
+  const seen = new Set<string>();
+  const out: RankedCompetitorIntelItem[] = [];
+  for (const item of items) {
+    const key = `${item.competitor}|${canonicalUrlKey(item.url)}|${normalizeTitle(item.title)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc[]> {
   const missing = Array.from(new Set(docs.filter((d) => !d.publishedAt && !!d.url).map((d) => d.url)));
   if (missing.length === 0) return docs;
@@ -887,7 +934,12 @@ async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc
     }
   }
 
-  return docs.map((d) => (d.publishedAt ? d : { ...d, publishedAt: byUrl.get(d.url) }));
+  return docs.map((d) => {
+    if (d.publishedAt) return d;
+    const inferred = byUrl.get(d.url);
+    if (!inferred) return d;
+    return { ...d, publishedAt: inferred, dateConfidence: "inferred" };
+  });
 }
 
 function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
@@ -895,7 +947,7 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
   const text = `${rep.title} ${rep.summary} ${rep.content}`;
   const overlap = enrichOverlapWithSignals(classifyOverlapWithSourcegraph(text), text);
   const scores = clusterScore(cluster);
-  const tl = threatLevel(scores.final_score);
+  const tl = threatLevel(scores);
 
   const actionability = [
     scores.enterprise_relevance >= 4 ? "sales" : null,
@@ -924,6 +976,7 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
       `Underlying event: ${cluster.canonicalTitle}`,
       `Representative source type: ${rep.source_type}`,
       `Supporting docs in cluster: ${cluster.docs.length}`,
+      `Date confidence: ${rep.dateConfidence ?? (rep.publishedAt ? "exact" : "unknown")}`,
     ],
     debug_scores: {
       ...scores,
@@ -1006,8 +1059,11 @@ export async function gatherCompetitorIntel(
     const deduped = hydrated.filter((doc) => {
       if (looksNoisyCompetitorUrl(doc.url)) return false;
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
+      if (doc.source_type === "community") return false;
+      if (isNarrativeNoise(doc)) return false;
       if (!shouldKeepUndatedDoc(doc, periodDays, ownDomain)) return false;
       if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
+      if (!hasMaterialSignal(doc)) return false;
       const identityMatch = mentionsCompetitorIdentity(doc, competitor);
       const strongIdentityMatch = mentionsCompetitorIdentityInTitle(doc, competitor);
       const isOtherCompetitorDomain =
@@ -1024,11 +1080,11 @@ export async function gatherCompetitorIntel(
     const ranked = clusters
       .map(toRankedIntel)
       .filter((item) => item.relevance_score >= 2)
-      .sort((a, b) => b.relevance_score - a.relevance_score)
+      .sort((a, b) => b.relevance_score - a.relevance_score);
     const diversified = diversifyPerCompetitor(ranked, topPerCompetitor);
 
     allRanked.push(...diversified);
   }
 
-  return allRanked.sort((a, b) => b.relevance_score - a.relevance_score).slice(0, topOverall);
+  return dedupeRankedEvents(allRanked.sort((a, b) => b.relevance_score - a.relevance_score)).slice(0, topOverall);
 }
