@@ -2,6 +2,7 @@ import type { Category } from "../model";
 import { VALID_CATEGORIES } from "../model";
 import { getSqlite } from "../db/index";
 import { detectDriver, getDbClient } from "../db/driver";
+import { dbFullTextSearch } from "../db/search";
 import { searchWeb } from "../retrieval/webSearch";
 import {
   buildCompetitorQueries,
@@ -435,6 +436,49 @@ async function retrieveWebDocs(
   return docs;
 }
 
+async function retrieveStrategicBackfillDocs(
+  competitor: CompetitorIntelEntry,
+  limit = 8,
+): Promise<CandidateDoc[]> {
+  const queries = [
+    `${competitor.display_name} benchmark swe bench`,
+    `${competitor.display_name} case study customer enterprise`,
+    `${competitor.display_name} pricing packaging enterprise`,
+  ];
+  const byUrl = new Map<string, CandidateDoc>();
+
+  for (const query of queries) {
+    const rows = await dbFullTextSearch(query, { period: "all", limit: Math.max(12, limit * 2) });
+    for (const row of rows) {
+      if (!row.url || !row.title) continue;
+      if (!domainMatchesCompetitor(row.url, competitor)) continue;
+
+      const text = `${row.title} ${row.summary ?? ""} ${row.contentSnippet ?? ""}`.toLowerCase();
+      if (!/(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/.test(text)) continue;
+
+      const domain = getDomainFromUrl(row.url);
+      const sourceType = classifySourceTypeByDomain(domain);
+      const scoreBoost = /(benchmark|swe[\s-]?bench)/.test(text) ? 4.2 : 3.2;
+
+      byUrl.set(row.url, {
+        competitorId: competitor.id,
+        title: row.title,
+        summary: row.summary ?? row.contentSnippet ?? "",
+        content: row.contentSnippet ?? row.summary ?? "",
+        url: row.url,
+        source: domain || row.sourceTitle || "unknown",
+        source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
+        publishedAt: row.publishedAt ? new Date(row.publishedAt * 1000) : undefined,
+        retrievalScore: scoreBoost,
+      });
+      if (byUrl.size >= limit) break;
+    }
+    if (byUrl.size >= limit) break;
+  }
+
+  return Array.from(byUrl.values());
+}
+
 function dedupeDocs(docs: CandidateDoc[]): CandidateDoc[] {
   const byUrl = new Map<string, CandidateDoc>();
   for (const doc of docs) {
@@ -576,12 +620,13 @@ export async function gatherCompetitorIntel(
       webDocsPerQuery,
       Math.min(webQueryLimit, maxWebQueriesPerCompetitor),
     );
+    const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, 8);
 
     // Strict attribution:
     // - explicit competitor signal, OR
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
-    const deduped = dedupeDocs([...internalCandidates, ...webCandidates]).filter((doc) => {
+    const deduped = dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill]).filter((doc) => {
       const signals = detectCompetitorSignals(`${doc.title} ${doc.summary} ${doc.content}`);
       return signals.competitorIds.includes(competitor.id) || domainMatchesCompetitor(doc.url, competitor);
     });
