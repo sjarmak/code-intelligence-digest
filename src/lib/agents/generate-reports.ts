@@ -103,9 +103,10 @@ export async function runAgentReport(
         periodDays,
         topPerCompetitor: 5,
         topOverall: limit,
-        maxGeneratedQueries: 24,
-        webDocsPerQuery: 4,
-        maxWebQueriesPerCompetitor: 4,
+        // Keep on-demand report generation responsive in production.
+        maxGeneratedQueries: 16,
+        webDocsPerQuery: 3,
+        maxWebQueriesPerCompetitor: 2,
       });
       report = formatCompetitorIntelMarkdown("Competitor Intel Agent Report", {
         generatedAt: new Date().toISOString(),
