@@ -188,6 +188,11 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
   const rep = cluster.representative;
   const text = `${rep.title} ${rep.summary} ${rep.content}`;
   const overlap = classifyOverlapWithSourcegraph(text);
+  const strategicNarrative = /(benchmark|swe[\s-]?bench|case study|customer story|customer evidence|pricing|packaging|enterprise plan|leaderboard|eval)/i.test(
+    text,
+  )
+    ? 4.5
+    : 1.5;
 
   const direct_overlap = Math.max(1, Math.min(5, overlap.length));
   const agent_mcp_overlap = overlap.some((s) => s === "mcp" || s === "agent_context") ? 5 : 1;
@@ -197,8 +202,8 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
   const novelty = noveltyScore(rep.publishedAt);
   const source_quality = rep.source_type === "primary" ? 5 : rep.source_type === "internal_curated" ? 4.5 : rep.source_type === "secondary" ? 3 : 1.5;
   const evidence_strength = Math.min(5, 2 + cluster.docs.length);
-  const actionability = direct_overlap >= 3 || enterprise_relevance >= 4 ? 5 : 2;
-  const generic_news_penalty = overlap.length === 0 ? -4 : 0;
+  const actionability = direct_overlap >= 3 || enterprise_relevance >= 4 || strategicNarrative >= 4 ? 5 : 2;
+  const generic_news_penalty = overlap.length === 0 && strategicNarrative < 4 ? -4 : 0;
 
   const final_score =
     0.24 * direct_overlap +
@@ -206,6 +211,7 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     0.14 * enterprise_relevance +
     0.14 * product_materiality +
     0.08 * market_signal +
+    0.08 * strategicNarrative +
     0.1 * novelty +
     0.08 * source_quality +
     0.04 * evidence_strength +
@@ -218,6 +224,7 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     enterprise_relevance,
     product_materiality,
     market_signal,
+    strategic_narrative: strategicNarrative,
     novelty,
     source_quality,
     evidence_strength,
@@ -292,11 +299,14 @@ function internalRetrievalScore(item: InternalDoc, competitor: CompetitorIntelEn
   const competitorMention = [competitor.display_name, competitor.company, ...competitor.aliases, ...competitor.products]
     .map((x) => x.toLowerCase())
     .some((term) => text.includes(term));
+  const ownDomain = domainMatchesCompetitor(item.url, competitor);
 
   const overlap = classifyOverlapWithSourcegraph(text).length;
   const recency = noveltyScore(item.publishedAt);
-
-  return (competitorMention ? 2.5 : 0.6) + overlap * 0.8 + signalMatches * 0.08 + recency * 0.3;
+  if (!competitorMention && !ownDomain) {
+    return 1.2 + overlap * 0.3 + signalMatches * 0.02 + recency * 0.15;
+  }
+  return (competitorMention ? 2.7 : 2.1) + overlap * 0.8 + signalMatches * 0.08 + recency * 0.3;
 }
 
 async function loadInternalDocs(periodDays: number, maxDocs: number): Promise<InternalDoc[]> {
@@ -414,7 +424,17 @@ async function retrieveWebDocs(
   maxQueries: number,
 ): Promise<CandidateDoc[]> {
   const docs: CandidateDoc[] = [];
-  for (const query of queries.slice(0, maxQueries)) {
+  const strategicQueryPattern = /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/i;
+  const strategic = queries.filter((q) => strategicQueryPattern.test(q));
+  const routine = queries.filter((q) => !strategicQueryPattern.test(q));
+  const selectedQueries = Array.from(
+    new Set([
+      ...strategic.slice(0, Math.ceil(maxQueries / 2)),
+      ...routine.slice(0, Math.max(0, maxQueries - Math.ceil(maxQueries / 2))),
+    ]),
+  ).slice(0, maxQueries);
+
+  for (const query of selectedQueries) {
     const q = query.toLowerCase();
     const isNarrativeQuery = /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/.test(q);
     const results = await searchWeb(query, {
@@ -674,6 +694,25 @@ function mentionsCompetitorIdentity(doc: CandidateDoc, competitor: CompetitorInt
   return singleHits.size >= 2;
 }
 
+function mentionsCompetitorIdentityInTitle(doc: CandidateDoc, competitor: CompetitorIntelEntry): boolean {
+  const title = (doc.title ?? "").toLowerCase();
+  if (!title) return false;
+
+  const terms = normalizedIdentityTerms(competitor);
+  const phraseTerms = terms.filter((t) => t.includes(" ") || t.includes("/"));
+  if (phraseTerms.some((term) => title.includes(term))) return true;
+
+  const singleHits = new Set<string>();
+  for (const term of terms) {
+    if (term.includes(" ") || term.includes("/")) continue;
+    if (AMBIGUOUS_SINGLE_IDENTITY_TERMS.has(term)) continue;
+    if (term.length < 5) continue;
+    const re = new RegExp(`\\b${escapeRegex(term)}\\b`, "i");
+    if (re.test(title)) singleHits.add(term);
+  }
+  return singleHits.size >= 1;
+}
+
 function domainMatchesCompetitor(url: string, competitor: CompetitorIntelEntry): boolean {
   const domain = getDomainFromUrl(url);
   if (!domain) return false;
@@ -816,6 +855,7 @@ export async function gatherCompetitorIntel(
       if (looksNoisyCompetitorUrl(doc.url)) return false;
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
       const identityMatch = mentionsCompetitorIdentity(doc, competitor);
+      const strongIdentityMatch = mentionsCompetitorIdentityInTitle(doc, competitor);
       const isOtherCompetitorDomain =
         !ownDomain && domainMatchesAnyTrackedCompetitor(doc.url, competitors);
 
@@ -823,7 +863,7 @@ export async function gatherCompetitorIntel(
       // the competitor's own primary domain. Suppress cross-assignment from other
       // tracked competitor domains.
       if (isOtherCompetitorDomain && !ownDomain) return false;
-      return ownDomain || identityMatch;
+      return ownDomain || strongIdentityMatch || (identityMatch && /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/i.test(`${doc.title} ${doc.summary}`));
     });
 
     const clusters = clusterDocs(deduped, competitor);
