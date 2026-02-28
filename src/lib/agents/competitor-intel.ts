@@ -280,8 +280,9 @@ function internalRetrievalScore(item: InternalDoc, competitor: CompetitorIntelEn
 async function loadInternalDocs(periodDays: number, maxDocs: number): Promise<InternalDoc[]> {
   const categories = VALID_CATEGORIES as readonly Category[];
   const byId = new Map<string, InternalDoc>();
+  const perCategoryLimit = Math.max(20, Math.ceil(maxDocs / Math.max(1, categories.length)));
   for (const category of categories) {
-    const items = await loadItemsByCategory(category, periodDays);
+    const items = await loadItemsByCategory(category, periodDays, perCategoryLimit);
     for (const item of items) {
       if (!byId.has(item.id)) byId.set(item.id, toInternalDoc(item));
     }

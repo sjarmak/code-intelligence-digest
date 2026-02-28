@@ -148,6 +148,7 @@ export async function saveItems(items: FeedItem[]): Promise<void> {
 export async function loadItemsByCategory(
   category: string,
   periodDays: number,
+  limit?: number,
 ): Promise<FeedItem[]> {
   try {
     const driver = detectDriver();
@@ -173,24 +174,43 @@ export async function loadItemsByCategory(
 
     if (driver === "postgres") {
       const client = await getDbClient();
-      const result = await client.query(
-        `SELECT id, stream_id, source_title, title, url, author, published_at,
-                summary, content_snippet, categories, category, full_text, extracted_url
-         FROM items
-         WHERE category = $1 AND published_at >= $2
-         ORDER BY published_at DESC`,
-        [category, cutoffTime],
-      );
+      const sql = typeof limit === "number" && limit > 0
+        ? `SELECT id, stream_id, source_title, title, url, author, published_at,
+                  summary, content_snippet, categories, category, full_text, extracted_url
+           FROM items
+           WHERE category = $1 AND published_at >= $2
+           ORDER BY published_at DESC
+           LIMIT $3`
+        : `SELECT id, stream_id, source_title, title, url, author, published_at,
+                  summary, content_snippet, categories, category, full_text, extracted_url
+           FROM items
+           WHERE category = $1 AND published_at >= $2
+           ORDER BY published_at DESC`;
+      const args = typeof limit === "number" && limit > 0
+        ? [category, cutoffTime, limit]
+        : [category, cutoffTime];
+      const result = await client.query(sql, args);
       rows = result.rows as typeof rows;
     } else {
       const sqlite = getSqlite();
-      rows = sqlite
-        .prepare(
-          `SELECT * FROM items
-           WHERE category = ? AND published_at >= ?
-           ORDER BY published_at DESC`,
-        )
-        .all(category, cutoffTime) as typeof rows;
+      if (typeof limit === "number" && limit > 0) {
+        rows = sqlite
+          .prepare(
+            `SELECT * FROM items
+             WHERE category = ? AND published_at >= ?
+             ORDER BY published_at DESC
+             LIMIT ?`,
+          )
+          .all(category, cutoffTime, limit) as typeof rows;
+      } else {
+        rows = sqlite
+          .prepare(
+            `SELECT * FROM items
+             WHERE category = ? AND published_at >= ?
+             ORDER BY published_at DESC`,
+          )
+          .all(category, cutoffTime) as typeof rows;
+      }
     }
 
     const items = rows
