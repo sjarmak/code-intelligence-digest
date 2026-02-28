@@ -13,6 +13,7 @@ import { logger } from "../logger";
 import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
+import { formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
 
 const MAX_CONTEXT_ITEMS = 50;
 const MAX_CHARS_PER_ITEM = 4000;
@@ -96,8 +97,9 @@ export async function runAgentJob(
       periodDays,
       topPerCompetitor,
       topOverall,
-      maxGeneratedQueries: 24,
-      webDocsPerQuery: 5,
+      maxGeneratedQueries: 12,
+      webDocsPerQuery: 2,
+      maxWebQueriesPerCompetitor: 2,
     });
 
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -143,12 +145,13 @@ export async function runAgentJob(
     const payload = await generateMarketBrief({ periodDays, maxItems: job.maxItems ?? 20 });
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
-    const markdown = ["# " + title, "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
+    const markdown = formatMarketBriefMarkdown(title, payload);
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: payload.executive_delta.length + payload.watch_items.length,
       periodDays,
       structuredOutput: true,
       playbookVersion: payload.playbook_version,
+      structuredPayload: payload,
     });
     logger.info("Agent job completed with structured market brief", {
       agentId,
@@ -163,12 +166,13 @@ export async function runAgentJob(
     const payload = await generateContentIdeas({ periodDays, numIdeas: job.maxItems ?? 10 });
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
-    const markdown = ["# " + title, "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
+    const markdown = formatContentIdeasMarkdown(title, payload);
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: payload.ideas.length,
       periodDays,
       structuredOutput: true,
       playbookVersion: payload.playbook_version,
+      structuredPayload: payload,
     });
     logger.info("Agent job completed with structured content ideas", {
       agentId,

@@ -153,6 +153,22 @@ async function initializePostgresSchema() {
       // Column may already exist
     }
 
+    // Ensure agent_reports is per-account capable.
+    try {
+      await client.run(`
+        ALTER TABLE agent_reports ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'legacy';
+      `);
+      await client.run(`
+        UPDATE agent_reports SET user_id = 'legacy' WHERE user_id IS NULL;
+      `);
+      await client.run(`
+        CREATE INDEX IF NOT EXISTS idx_agent_reports_user_goal_generated
+        ON agent_reports(user_id, goal, generated_at DESC);
+      `);
+    } catch {
+      // Ignore migration failures; routes fall back to legacy behavior if needed.
+    }
+
     await ensurePostgresUserIdColumns(client);
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {

@@ -8,15 +8,21 @@ import fs from "fs";
 import path from "path";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { listReports, useReportDb } from "@/src/lib/agents/report-storage";
+import { auth } from "@/src/auth";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
 const GOALS = ["content_ideas", "market_brief", "competitor_intel"] as const;
 
 export async function GET() {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Sign in required." }, { status: 401 });
+    }
+
     if (useReportDb()) {
       await initializeDatabase();
-      const reports = await listReports();
+      const reports = await listReports(session.user.id);
       return NextResponse.json({ reports });
     }
 

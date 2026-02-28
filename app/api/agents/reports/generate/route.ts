@@ -8,11 +8,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { runAgentReports } from "@/src/lib/agents/generate-reports";
 import type { AgentGoal } from "@/src/config/agents";
+import { auth } from "@/src/auth";
 
 const VALID_GOALS: AgentGoal[] = ["content_ideas", "market_brief", "competitor_intel"];
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Sign in required." }, { status: 401 });
+    }
+
     let body: { goals?: unknown };
     try {
       body = (await request.json()) as { goals?: unknown };
@@ -34,7 +40,7 @@ export async function POST(request: NextRequest) {
     }
 
     await initializeDatabase();
-    const results = await runAgentReports(goals);
+    const results = await runAgentReports(goals, session.user.id);
 
     return NextResponse.json({ success: true, results });
   } catch (error) {

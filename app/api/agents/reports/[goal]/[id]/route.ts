@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { deleteReport, useReportDb } from "@/src/lib/agents/report-storage";
+import { auth } from "@/src/auth";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
 const VALID_GOALS = ["content_ideas", "market_brief", "competitor_intel"];
@@ -16,6 +17,11 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ goal: string; id: string }> }
 ) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Sign in required." }, { status: 401 });
+  }
+
   const { goal, id } = await params;
   if (!goal || !VALID_GOALS.includes(goal)) {
     return NextResponse.json({ error: "Invalid goal" }, { status: 400 });
@@ -29,7 +35,7 @@ export async function DELETE(
 
   if (useReportDb()) {
     await initializeDatabase();
-    const deleted = await deleteReport(goal, id);
+    const deleted = await deleteReport(goal, id, session.user.id);
     if (!deleted) {
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }

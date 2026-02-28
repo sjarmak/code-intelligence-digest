@@ -50,7 +50,9 @@ function getShortlistInstructionsForGoal(goal: AgentGoal, limit: number): string
 `;
     case "competitor_intel":
       return `- Exclude Sourcegraph (our product); only include external competitors and ecosystem tools.
-- Include at least 2–3 sources that are primarily about direct code-search/codebase competitors (e.g. Augment Code, Moderne, OpenGrok, GitHub MCP); the rest can be ecosystem tools (Cursor, Copilot, Claude Code, etc.).
+- Include at least 2–3 sources that are primarily about direct code-search/codebase competitors (e.g. Augment Code, Moderne, OpenGrok, GitHub MCP); the rest can be ecosystem tools (Cursor, Copilot, Claude Code, SWE-bench Pro, etc.).
+- Maximize diversity: do not use multiple slots on the same product. At most one source per product/company unless they cover clearly different developments (e.g. a launch and a separate partnership).
+- Prefer substantive competitor moves: launches, positioning, partnerships, benchmarks, pricing, or ecosystem news. Deprioritize minor version release notes and changelogs—if you include any, at most one per product and only when nothing more substantive is available.
 - Select the best ${limit} sources that clearly support this goal. You may select fewer if few are relevant.
 `;
     default:

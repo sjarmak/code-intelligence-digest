@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS user_paper_favorites (
 
 -- Agent reports (content_ideas, market_brief, competitor_intel) for persistence in production
 CREATE TABLE IF NOT EXISTS agent_reports (
+  user_id TEXT NOT NULL DEFAULT 'legacy',
   goal TEXT NOT NULL,
   id TEXT NOT NULL,
   content TEXT NOT NULL,

@@ -67,12 +67,14 @@ describe("structured gtm agents", () => {
     expect(out.executive_delta[0].evidence.length).toBeGreaterThan(0);
   });
 
-  it("generates content ideas with guardrails and policy/evidence basis", async () => {
+  it("generates content ideas with sources and distribution plan", async () => {
     const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
     expect(out.playbook_version).toBeTruthy();
     expect(out.ideas.length).toBeGreaterThan(0);
-    expect(out.ideas[0].policy_basis.length).toBeGreaterThan(0);
-    expect(out.ideas[0].evidence_basis.length).toBeGreaterThan(0);
+    expect(out.selection_debug).toBeDefined();
+    expect(out.ideas[0].sources.length).toBeGreaterThan(0);
+    expect(out.ideas[0].distribution_plan.primary_format.length).toBeGreaterThan(0);
+    expect(out.ideas[0].distribution_plan.setup_steps.length).toBeGreaterThan(0);
     expect(out.ideas[0].guardrails.length).toBeGreaterThan(0);
   });
 });

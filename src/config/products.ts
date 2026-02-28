@@ -348,6 +348,15 @@ export const PRODUCTS: readonly Product[] = [
     vendor: "Princeton NLP",
   },
   {
+    id: "swe-bench-pro",
+    name: "SWE-bench Pro",
+    aliases: ["swe-bench pro", "swe-bench", "swebench", "SWE bench pro"],
+    category: "autonomous_agent",
+    isOwnProduct: false,
+    isCompetitor: true,
+    vendor: "Scale AI",
+  },
+  {
     id: "factory",
     name: "Factory",
     // Removed "factory" alone - too common (factory pattern, factory method)

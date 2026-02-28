@@ -42,7 +42,13 @@ describe("agents pipeline", () => {
         baseScore: 0.8,
         goalScore: 0.8,
         agentScore: 0.8,
-        features: {},
+        features: {
+          competitorMatch: 0,
+          formatType: 0,
+          icpMatch: 0,
+          recency: 0,
+          trendLandscape: 0,
+        },
       },
     ];
     const shortlist = await buildAgentShortlist("competitor_intel", ranked, 5);

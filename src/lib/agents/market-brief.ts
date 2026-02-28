@@ -1,6 +1,7 @@
 import { retrieveForAgent } from "../pipeline/agentRetrieval";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
+import { getDomainFromUrl } from "../../config/competitor-intel";
 
 export interface MarketBriefEvidence {
   source: string;
@@ -159,7 +160,7 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
   if (item.contradiction) assumptions.push("Guardrail assumptions may be invalidated");
 
   const evidenceUrl = item.doc.url ?? "";
-  const evidenceSource = evidenceUrl ? new URL(evidenceUrl).hostname.replace(/^www\./, "") : "internal";
+  const evidenceSource = getDomainFromUrl(evidenceUrl) || "internal";
 
   return {
     title: item.doc.title,

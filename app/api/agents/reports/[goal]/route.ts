@@ -9,6 +9,7 @@ import fs from "fs";
 import path from "path";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { getReport, useReportDb } from "@/src/lib/agents/report-storage";
+import { auth } from "@/src/auth";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
 const VALID_GOALS = ["content_ideas", "market_brief", "competitor_intel"];
@@ -17,6 +18,11 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ goal: string }> }
 ) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Sign in required." }, { status: 401 });
+  }
+
   const { goal } = await params;
   if (!goal || !VALID_GOALS.includes(goal)) {
     return NextResponse.json({ error: "Invalid goal" }, { status: 400 });
@@ -26,7 +32,7 @@ export async function GET(
 
   if (useReportDb()) {
     await initializeDatabase();
-    const row = await getReport(goal, id ?? undefined);
+    const row = await getReport(goal, id ?? undefined, session.user.id);
     if (row) return NextResponse.json(row);
     return NextResponse.json({ error: "Report not found." }, { status: 404 });
   }

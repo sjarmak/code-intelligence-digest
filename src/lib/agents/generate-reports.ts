@@ -14,6 +14,7 @@ import { logger } from "../logger";
 import { saveReport } from "./report-storage";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
+import { formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
 
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 
@@ -76,7 +77,8 @@ export function reportRunId(): string {
 
 /** Generate a single agent report; writes to .data/agent-reports/{goal}/{id}.md (never overwrites). */
 export async function runAgentReport(
-  goal: AgentGoal
+  goal: AgentGoal,
+  userId: string = "legacy",
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
   if (!VALID_GOALS.includes(goal)) {
     return { ok: false, error: `Invalid goal: ${goal}` };
@@ -91,10 +93,10 @@ export async function runAgentReport(
     let report: string;
     if (goal === "market_brief") {
       const payload = await generateMarketBrief({ periodDays, maxItems: limit });
-      report = ["# Market Brief Agent Report", "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
+      report = formatMarketBriefMarkdown("Market Brief Agent Report", payload);
     } else if (goal === "content_ideas") {
       const payload = await generateContentIdeas({ periodDays, numIdeas: limit });
-      report = ["# Content Ideas Agent Report", "", "```json", JSON.stringify(payload, null, 2), "```", ""].join("\n");
+      report = formatContentIdeasMarkdown("Content Ideas Agent Report", payload);
     } else {
       const docs = await retrieveForAgent(goal, { periodDays, maxEnrich: 0 });
       if (docs.length === 0) {
@@ -110,7 +112,7 @@ export async function runAgentReport(
     const outPath = path.join(goalDir, `${id}.md`);
     fs.writeFileSync(outPath, report, "utf-8");
     const generatedAt = new Date().toISOString();
-    await saveReport(goal, id, report, generatedAt).catch((err) =>
+    await saveReport(goal, id, report, generatedAt, userId).catch((err) =>
       logger.warn("Agent report DB save failed", { goal, id, error: err })
     );
     logger.info("Agent report generated", { goal, id, path: outPath });
@@ -126,12 +128,13 @@ export async function runAgentReport(
 
 /** Generate reports for the given goals. Call initializeDatabase() before this if needed. Never overwrites. */
 export async function runAgentReports(
-  goals: AgentGoal[]
+  goals: AgentGoal[],
+  userId: string = "legacy",
 ): Promise<{ [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } }> {
   const results: { [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } } = {};
   for (const goal of goals) {
     if (!VALID_GOALS.includes(goal)) continue;
-    results[goal] = await runAgentReport(goal);
+    results[goal] = await runAgentReport(goal, userId);
   }
   return results;
 }

@@ -377,6 +377,7 @@ export interface CompetitorIntelOptions {
   competitorId?: string;
   maxGeneratedQueries?: number;
   webDocsPerQuery?: number;
+  maxWebQueriesPerCompetitor?: number;
 }
 
 /**
@@ -392,6 +393,7 @@ export async function gatherCompetitorIntel(
   const topOverall = options.topOverall ?? 20;
   const maxGeneratedQueries = options.maxGeneratedQueries ?? 24;
   const webDocsPerQuery = options.webDocsPerQuery ?? 5;
+  const maxWebQueriesPerCompetitor = options.maxWebQueriesPerCompetitor ?? 2;
 
   const internalItems = await loadInternalDocs(periodDays);
   const competitors = getCompetitorIntelEntries().filter((c) =>
@@ -415,12 +417,17 @@ export async function gatherCompetitorIntel(
       .slice(0, Math.max(80, queries.length * 10))
       .map((x) => toCandidateFromFeed(x.item, competitor.id, x.score));
 
-    const webQueryLimit = competitors.length > 4 ? 6 : maxGeneratedQueries;
+    const webQueryLimit =
+      options.maxWebQueriesPerCompetitor != null
+        ? options.maxWebQueriesPerCompetitor
+        : competitors.length > 4
+          ? Math.min(2, maxGeneratedQueries)
+          : Math.min(4, maxGeneratedQueries);
     const webCandidates = await retrieveWebDocs(
       competitor,
       queries,
       webDocsPerQuery,
-      webQueryLimit,
+      Math.min(webQueryLimit, maxWebQueriesPerCompetitor),
     );
 
     // infer competitor if missing/uncertain and drop weak generic hits

@@ -118,10 +118,12 @@ async function retrieveFromWeb(
   const config = getAgentGoalConfig(goal);
   const maxWeb = config.retrievalStrategies.maxWebDocs;
   const templates = config.webQueryTemplates;
+  // Use more diverse web queries for competitor_intel so we surface benchmarks, ecosystem tools, etc., not just the first few products
+  const templateLimit = goal === "competitor_intel" ? Math.min(templates.length, 8) : 4;
   const queries =
     options.query?.trim()
       ? [options.query, ...templates.slice(0, 2)]
-      : templates.slice(0, 4);
+      : templates.slice(0, templateLimit);
 
   const domains =
     goal === "competitor_intel" ? getCompetitorDomains() : undefined;

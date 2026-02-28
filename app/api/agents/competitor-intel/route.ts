@@ -21,8 +21,9 @@ export async function GET(req: NextRequest) {
       topPerCompetitor,
       topOverall,
       competitorId,
-      maxGeneratedQueries: 24,
-      webDocsPerQuery: 5,
+      maxGeneratedQueries: 16,
+      webDocsPerQuery: 3,
+      maxWebQueriesPerCompetitor: 2,
     });
 
     const response = {
