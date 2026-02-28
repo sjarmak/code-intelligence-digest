@@ -148,6 +148,12 @@ function noveltyScore(publishedAt?: Date): number {
   return 1;
 }
 
+function isWithinWindow(publishedAt: Date | undefined, periodDays: number): boolean {
+  if (!publishedAt) return true;
+  const cutoff = Date.now() - periodDays * 24 * 60 * 60 * 1000;
+  return publishedAt.getTime() >= cutoff;
+}
+
 function chooseRepresentative(docs: CandidateDoc[]): CandidateDoc {
   return [...docs].sort((a, b) => {
     const aScore = SOURCE_PRIORITY[a.source_type] + a.retrievalScore;
@@ -187,12 +193,20 @@ function clusterDocs(docs: CandidateDoc[], competitor: CompetitorIntelEntry): Ev
 function clusterScore(cluster: EventCluster): Record<string, number> {
   const rep = cluster.representative;
   const text = `${rep.title} ${rep.summary} ${rep.content}`;
+  const titleUrl = `${rep.title} ${rep.url}`.toLowerCase();
   const overlap = classifyOverlapWithSourcegraph(text);
   const strategicNarrative = /(benchmark|swe[\s-]?bench|case study|customer story|customer evidence|pricing|packaging|enterprise plan|leaderboard|eval)/i.test(
     text,
   )
     ? 4.5
     : 1.5;
+  const benchmark_signal = /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) ? 5 : 1;
+  const benchmark_evidence_boost =
+    /\/blog\//.test(rep.url.toLowerCase()) && /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) ? 0.6 : 0;
+  const seo_comparison_penalty = /\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(titleUrl) ? -1.2 : 0;
+  const generic_page_penalty = /\/$|\/blog\/?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(rep.url.toLowerCase())
+    ? -1
+    : 0;
 
   const direct_overlap = Math.max(1, Math.min(5, overlap.length));
   const agent_mcp_overlap = overlap.some((s) => s === "mcp" || s === "agent_context") ? 5 : 1;
@@ -212,11 +226,15 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     0.14 * product_materiality +
     0.08 * market_signal +
     0.08 * strategicNarrative +
+    0.1 * benchmark_signal +
     0.1 * novelty +
     0.08 * source_quality +
     0.04 * evidence_strength +
     0.04 * actionability +
-    generic_news_penalty;
+    generic_news_penalty +
+    seo_comparison_penalty +
+    generic_page_penalty +
+    benchmark_evidence_boost;
 
   return {
     direct_overlap,
@@ -225,12 +243,16 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     product_materiality,
     market_signal,
     strategic_narrative: strategicNarrative,
+    benchmark_signal,
+    benchmark_evidence_boost,
     novelty,
     source_quality,
     evidence_strength,
     actionability,
     duplication_penalty: 0,
     generic_news_penalty,
+    seo_comparison_penalty,
+    generic_page_penalty,
     final_score,
   };
 }
@@ -476,6 +498,7 @@ async function retrieveWebDocs(
 
 async function retrieveStrategicBackfillDocs(
   competitor: CompetitorIntelEntry,
+  periodDays: number,
   limit = 8,
 ): Promise<CandidateDoc[]> {
   const queries = [
@@ -486,7 +509,8 @@ async function retrieveStrategicBackfillDocs(
   const byUrl = new Map<string, CandidateDoc>();
 
   for (const query of queries) {
-    const rows = await dbFullTextSearch(query, { period: "all", limit: Math.max(12, limit * 2) });
+    const period = periodDays <= 1 ? "day" : periodDays <= 7 ? "week" : periodDays <= 31 ? "month" : "all";
+    const rows = await dbFullTextSearch(query, { period, limit: Math.max(12, limit * 2) });
     for (const row of rows) {
       if (!row.url || !row.title) continue;
       if (!domainMatchesCompetitor(row.url, competitor)) continue;
@@ -497,6 +521,8 @@ async function retrieveStrategicBackfillDocs(
       const domain = getDomainFromUrl(row.url);
       const sourceType = classifySourceTypeByDomain(domain);
       const scoreBoost = /(benchmark|swe[\s-]?bench)/.test(text) ? 4.2 : 3.2;
+      const publishedAt = row.publishedAt ? new Date(row.publishedAt * 1000) : undefined;
+      if (!isWithinWindow(publishedAt, periodDays)) continue;
 
       byUrl.set(row.url, {
         competitorId: competitor.id,
@@ -506,7 +532,7 @@ async function retrieveStrategicBackfillDocs(
         url: row.url,
         source: domain || row.sourceTitle || "unknown",
         source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
-        publishedAt: row.publishedAt ? new Date(row.publishedAt * 1000) : undefined,
+        publishedAt,
         retrievalScore: scoreBoost,
       });
       if (byUrl.size >= limit) break;
@@ -519,6 +545,7 @@ async function retrieveStrategicBackfillDocs(
 
 async function retrieveStrategicUrlBackfillDocs(
   competitor: CompetitorIntelEntry,
+  periodDays: number,
   limit = 6,
 ): Promise<CandidateDoc[]> {
   const patterns = ["%swe-bench%", "%swebench%", "%benchmark%"];
@@ -532,12 +559,20 @@ async function retrieveStrategicUrlBackfillDocs(
         `SELECT id, title, url, source_title, published_at, summary, content_snippet
          FROM items
          WHERE lower(url) LIKE $1
+           AND published_at >= $2
            AND (
-             lower(url) LIKE $2 OR lower(url) LIKE $3 OR lower(url) LIKE $4
+             lower(url) LIKE $3 OR lower(url) LIKE $4 OR lower(url) LIKE $5
            )
          ORDER BY published_at DESC
-         LIMIT $5`,
-        [`%${domain.toLowerCase()}%`, patterns[0], patterns[1], patterns[2], limit],
+         LIMIT $6`,
+        [
+          `%${domain.toLowerCase()}%`,
+          Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000),
+          patterns[0],
+          patterns[1],
+          patterns[2],
+          limit,
+        ],
       );
       for (const row of result.rows as Array<{
         title: string;
@@ -572,13 +607,21 @@ async function retrieveStrategicUrlBackfillDocs(
           `SELECT title, url, source_title, published_at, summary, content_snippet
            FROM items
            WHERE lower(url) LIKE ?
+             AND published_at >= ?
              AND (
                lower(url) LIKE ? OR lower(url) LIKE ? OR lower(url) LIKE ?
              )
            ORDER BY published_at DESC
            LIMIT ?`,
         )
-        .all(`%${domain.toLowerCase()}%`, patterns[0], patterns[1], patterns[2], limit) as Array<{
+        .all(
+          `%${domain.toLowerCase()}%`,
+          Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000),
+          patterns[0],
+          patterns[1],
+          patterns[2],
+          limit,
+        ) as Array<{
           title: string;
           url: string;
           source_title?: string | null;
@@ -851,8 +894,8 @@ export async function gatherCompetitorIntel(
       webDocsPerQuery,
       Math.min(webQueryLimit, maxWebQueriesPerCompetitor),
     );
-    const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, 8);
-    const strategicUrlBackfill = await retrieveStrategicUrlBackfillDocs(competitor, 6);
+    const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, periodDays, 8);
+    const strategicUrlBackfill = await retrieveStrategicUrlBackfillDocs(competitor, periodDays, 6);
 
     // Strict attribution:
     // - explicit competitor signal, OR
@@ -860,6 +903,7 @@ export async function gatherCompetitorIntel(
     // Do NOT keep generic overlap-only items for a competitor.
     const deduped = dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill]).filter((doc) => {
       if (looksNoisyCompetitorUrl(doc.url)) return false;
+      if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
       const identityMatch = mentionsCompetitorIdentity(doc, competitor);
       const strongIdentityMatch = mentionsCompetitorIdentityInTitle(doc, competitor);
