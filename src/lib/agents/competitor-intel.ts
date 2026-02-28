@@ -8,7 +8,6 @@ import {
   buildCompetitorQueries,
   classifyOverlapWithSourcegraph,
   classifySourceTypeByDomain,
-  detectCompetitorSignals,
   getCompetitorIntelEntries,
   getDomainFromUrl,
   type CompetitorIntelEntry,
@@ -500,6 +499,44 @@ function dedupeDocs(docs: CandidateDoc[]): CandidateDoc[] {
   return Array.from(byUrl.values());
 }
 
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizedIdentityTerms(competitor: CompetitorIntelEntry): string[] {
+  const raw = [
+    competitor.company,
+    competitor.display_name,
+    ...competitor.aliases,
+    ...competitor.products,
+  ]
+    .map((x) => x.toLowerCase().trim())
+    .filter(Boolean);
+
+  // Drop very short or obviously generic single tokens that create false positives.
+  const blockedSingles = new Set(["ai", "agent", "agents", "enterprise", "tools", "tool", "code"]);
+  const terms = raw.filter((term) => {
+    const parts = term.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) {
+      if (parts[0].length < 4) return false;
+      if (blockedSingles.has(parts[0])) return false;
+    }
+    return true;
+  });
+
+  return Array.from(new Set(terms));
+}
+
+function mentionsCompetitorIdentity(doc: CandidateDoc, competitor: CompetitorIntelEntry): boolean {
+  const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
+  const terms = normalizedIdentityTerms(competitor);
+  return terms.some((term) => {
+    if (term.includes(" ")) return text.includes(term);
+    const re = new RegExp(`\\b${escapeRegex(term)}\\b`, "i");
+    return re.test(text);
+  });
+}
+
 function domainMatchesCompetitor(url: string, competitor: CompetitorIntelEntry): boolean {
   const domain = getDomainFromUrl(url);
   if (!domain) return false;
@@ -507,6 +544,17 @@ function domainMatchesCompetitor(url: string, competitor: CompetitorIntelEntry):
     const base = d.toLowerCase();
     return domain === base || domain.endsWith(`.${base}`);
   });
+}
+
+function domainMatchesAnyTrackedCompetitor(url: string, competitors: CompetitorIntelEntry[]): boolean {
+  const domain = getDomainFromUrl(url);
+  if (!domain) return false;
+  return competitors.some((competitor) =>
+    competitor.domains.some((d) => {
+      const base = d.toLowerCase();
+      return domain === base || domain.endsWith(`.${base}`);
+    }),
+  );
 }
 
 function compactSummary(text: string, maxLen = 900): string {
@@ -627,8 +675,16 @@ export async function gatherCompetitorIntel(
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
     const deduped = dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill]).filter((doc) => {
-      const signals = detectCompetitorSignals(`${doc.title} ${doc.summary} ${doc.content}`);
-      return signals.competitorIds.includes(competitor.id) || domainMatchesCompetitor(doc.url, competitor);
+      const ownDomain = domainMatchesCompetitor(doc.url, competitor);
+      const identityMatch = mentionsCompetitorIdentity(doc, competitor);
+      const isOtherCompetitorDomain =
+        !ownDomain && domainMatchesAnyTrackedCompetitor(doc.url, competitors);
+
+      // Must be explicitly about this competitor (identity mention) or come from
+      // the competitor's own primary domain. Suppress cross-assignment from other
+      // tracked competitor domains.
+      if (isOtherCompetitorDomain && !ownDomain) return false;
+      return ownDomain || identityMatch;
     });
 
     const clusters = clusterDocs(deduped, competitor);
