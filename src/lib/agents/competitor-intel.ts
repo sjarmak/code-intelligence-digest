@@ -425,12 +425,19 @@ async function retrieveWebDocs(
 ): Promise<CandidateDoc[]> {
   const docs: CandidateDoc[] = [];
   const strategicQueryPattern = /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/i;
-  const strategic = queries.filter((q) => strategicQueryPattern.test(q));
+  const strategicSeeds = [
+    `${competitor.display_name} swe bench`,
+    `${competitor.display_name} benchmark`,
+    `${competitor.display_name} case study`,
+    `${competitor.display_name} pricing`,
+    `${competitor.display_name} enterprise`,
+  ];
+  const strategic = [...strategicSeeds, ...queries].filter((q) => strategicQueryPattern.test(q));
   const routine = queries.filter((q) => !strategicQueryPattern.test(q));
   const selectedQueries = Array.from(
     new Set([
-      ...strategic.slice(0, Math.ceil(maxQueries / 2)),
-      ...routine.slice(0, Math.max(0, maxQueries - Math.ceil(maxQueries / 2))),
+      ...strategic.slice(0, Math.max(2, Math.ceil((maxQueries * 2) / 3))),
+      ...routine.slice(0, Math.max(0, maxQueries - Math.max(2, Math.ceil((maxQueries * 2) / 3)))),
     ]),
   ).slice(0, maxQueries);
 
@@ -438,7 +445,7 @@ async function retrieveWebDocs(
     const q = query.toLowerCase();
     const isNarrativeQuery = /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/.test(q);
     const results = await searchWeb(query, {
-      numResults: webDocsPerQuery,
+      numResults: isNarrativeQuery ? Math.max(webDocsPerQuery, 8) : webDocsPerQuery,
       domains: competitor.domains,
       // "general" captures primary docs/changelogs/blog posts better than "news"
       // for competitive intel workflows.
