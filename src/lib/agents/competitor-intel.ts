@@ -154,6 +154,27 @@ function isWithinWindow(publishedAt: Date | undefined, periodDays: number): bool
   return publishedAt.getTime() >= cutoff;
 }
 
+function shouldKeepUndatedDoc(doc: CandidateDoc, periodDays: number, ownDomain: boolean): boolean {
+  if (doc.publishedAt) return true;
+  const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
+  const titleUrl = `${doc.title} ${doc.url}`.toLowerCase();
+  if (periodDays <= 31) {
+    return (
+      ownDomain &&
+      doc.source_type === "primary" &&
+      /swe[\s-]?bench/.test(titleUrl) &&
+      /\/blog\//.test(doc.url.toLowerCase())
+    );
+  }
+  if (periodDays <= 90) {
+    return (
+      doc.source_type === "primary" &&
+      /(ga|general availability|launch|release|changelog|pricing|enterprise|benchmark|swe[\s-]?bench|case study|customer)/.test(text)
+    );
+  }
+  return true;
+}
+
 function chooseRepresentative(docs: CandidateDoc[]): CandidateDoc {
   return [...docs].sort((a, b) => {
     const aScore = SOURCE_PRIORITY[a.source_type] + a.retrievalScore;
@@ -257,15 +278,29 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
   };
 }
 
-function whyItMatters(competitor: CompetitorIntelEntry, overlap: string[], score: Record<string, number>): string {
+function enrichOverlapWithSignals(base: string[], text: string): string[] {
+  const out = new Set(base);
+  const t = text.toLowerCase();
+  if (/(swe[\s-]?bench|benchmark|retrieval|indexing|cross[-\s]?file|repo[-\s]?aware|codebase context)/.test(t)) {
+    out.add("agent_context");
+    out.add("large_codebase_understanding");
+  }
+  if (/(semantic search|code search|retrieval|deep search)/.test(t)) {
+    out.add("code_search");
+  }
+  return Array.from(out);
+}
+
+function whyItMatters(competitor: CompetitorIntelEntry, overlap: string[], score: Record<string, number>, text: string): string {
   const surfaces = overlap.length > 0 ? overlap.join(", ") : "adjacent workflow surfaces";
   const functions: string[] = [];
   if (score.enterprise_relevance >= 4) functions.push("sales");
-  if (score.direct_overlap >= 3) functions.push("product", "messaging");
-  if (functions.length === 0) functions.push("exec awareness");
-
+  if (score.direct_overlap >= 3 || (score.benchmark_signal ?? 1) >= 4) functions.push("product", "messaging");
+  if (score.final_score >= 4.2) functions.push("exec awareness");
+  if (functions.length === 0) functions.push("monitoring");
+  const update = inferUpdateType(text).replace(/_/g, " ");
   const net = threatLevel(score.final_score);
-  return `what changed: competitor published a material update tied to ${surfaces}; which Sourcegraph surface it overlaps with: ${surfaces}; whether this affects sales, product, messaging, or exec awareness: ${Array.from(new Set(functions)).join(", ")}; whether this is a net threat, neutral development, or competitor weakness: ${net}.`;
+  return `what changed: ${competitor.display_name} published a ${update} update. which Sourcegraph surface it overlaps with: ${surfaces}. whether this affects sales, product, messaging, or exec awareness: ${Array.from(new Set(functions)).join(", ")}. whether this is a net threat, neutral development, or competitor weakness: ${net}.`;
 }
 
 function tokenizedSignalPool(competitor: CompetitorIntelEntry, queries: string[]): string[] {
@@ -446,7 +481,7 @@ async function retrieveWebDocs(
   maxQueries: number,
 ): Promise<CandidateDoc[]> {
   const docs: CandidateDoc[] = [];
-  const strategicQueryPattern = /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/i;
+  const strategicQueryPattern = /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/i;
   const strategicSeeds = [
     `${competitor.display_name} swe bench`,
     `${competitor.display_name} benchmark`,
@@ -465,7 +500,7 @@ async function retrieveWebDocs(
 
   for (const query of selectedQueries) {
     const q = query.toLowerCase();
-    const isNarrativeQuery = /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/.test(q);
+    const isNarrativeQuery = /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/.test(q);
     const results = await searchWeb(query, {
       numResults: isNarrativeQuery ? Math.max(webDocsPerQuery, 8) : webDocsPerQuery,
       domains: competitor.domains,
@@ -789,17 +824,83 @@ function compactSummary(text: string, maxLen = 900): string {
   return `${normalized.slice(0, maxLen)}...`;
 }
 
+function shapeOfItem(item: RankedCompetitorIntelItem): "benchmark_blog" | "comparison_seo" | "generic_page" | "other" {
+  const t = `${item.title} ${item.url}`.toLowerCase();
+  if (/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(t)) return "comparison_seo";
+  if (/swe[\s-]?bench|benchmark|leaderboard|eval/.test(t)) return "benchmark_blog";
+  if (/\/$|\/blog\/?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(item.url.toLowerCase())) return "generic_page";
+  return "other";
+}
+
+function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number): RankedCompetitorIntelItem[] {
+  const caps: Record<string, number> = {
+    benchmark_blog: Math.max(2, Math.floor(topN / 2)),
+    comparison_seo: 1,
+    generic_page: 1,
+    other: topN,
+  };
+  const counts: Record<string, number> = { benchmark_blog: 0, comparison_seo: 0, generic_page: 0, other: 0 };
+  const selected: RankedCompetitorIntelItem[] = [];
+  const deferred: RankedCompetitorIntelItem[] = [];
+
+  for (const item of items) {
+    const shape = shapeOfItem(item);
+    if (counts[shape] < caps[shape]) {
+      selected.push(item);
+      counts[shape] += 1;
+    } else {
+      deferred.push(item);
+    }
+  }
+
+  for (const item of deferred) {
+    if (selected.length >= topN) break;
+    selected.push(item);
+  }
+  return selected.slice(0, topN);
+}
+
+async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc[]> {
+  const missing = Array.from(new Set(docs.filter((d) => !d.publishedAt && !!d.url).map((d) => d.url)));
+  if (missing.length === 0) return docs;
+
+  const byUrl = new Map<string, Date>();
+  const driver = detectDriver();
+  if (driver === "postgres") {
+    const client = await getDbClient();
+    const result = await client.query(
+      `SELECT url, MAX(published_at) AS published_at
+       FROM items
+       WHERE url = ANY($1)
+       GROUP BY url`,
+      [missing],
+    );
+    for (const row of result.rows as Array<{ url: string; published_at: number | null }>) {
+      if (row.published_at) byUrl.set(row.url, new Date(row.published_at * 1000));
+    }
+  } else {
+    const sqlite = getSqlite();
+    const stmt = sqlite.prepare(`SELECT url, MAX(published_at) AS published_at FROM items WHERE url = ? GROUP BY url`);
+    for (const url of missing) {
+      const row = stmt.get(url) as { url?: string; published_at?: number } | undefined;
+      if (row?.url && row.published_at) byUrl.set(row.url, new Date(row.published_at * 1000));
+    }
+  }
+
+  return docs.map((d) => (d.publishedAt ? d : { ...d, publishedAt: byUrl.get(d.url) }));
+}
+
 function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
   const rep = cluster.representative;
   const text = `${rep.title} ${rep.summary} ${rep.content}`;
-  const overlap = classifyOverlapWithSourcegraph(text);
+  const overlap = enrichOverlapWithSignals(classifyOverlapWithSourcegraph(text), text);
   const scores = clusterScore(cluster);
   const tl = threatLevel(scores.final_score);
 
   const actionability = [
     scores.enterprise_relevance >= 4 ? "sales" : null,
-    scores.direct_overlap >= 3 ? "product" : null,
-    scores.direct_overlap >= 3 ? "messaging" : null,
+    scores.direct_overlap >= 3 || (scores.benchmark_signal ?? 1) >= 4 ? "product" : null,
+    scores.direct_overlap >= 3 || (scores.benchmark_signal ?? 1) >= 4 ? "messaging" : null,
     tl === "high" ? "exec" : null,
   ].filter((x): x is string => Boolean(x));
 
@@ -813,7 +914,7 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
     update_type: inferUpdateType(text),
     overlap_with_sourcegraph: overlap,
     summary: compactSummary(rep.summary || rep.title),
-    why_it_matters: whyItMatters(cluster.competitor, overlap, scores),
+    why_it_matters: whyItMatters(cluster.competitor, overlap, scores, text),
     threat_level: tl,
     confidence: confidenceLevel(rep.source_type, cluster.docs.length),
     novelty_score: Number(scores.novelty.toFixed(2)),
@@ -901,10 +1002,12 @@ export async function gatherCompetitorIntel(
     // - explicit competitor signal, OR
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
-    const deduped = dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill]).filter((doc) => {
+    const hydrated = await hydratePublishedDates(dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill]));
+    const deduped = hydrated.filter((doc) => {
       if (looksNoisyCompetitorUrl(doc.url)) return false;
-      if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
+      if (!shouldKeepUndatedDoc(doc, periodDays, ownDomain)) return false;
+      if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
       const identityMatch = mentionsCompetitorIdentity(doc, competitor);
       const strongIdentityMatch = mentionsCompetitorIdentityInTitle(doc, competitor);
       const isOtherCompetitorDomain =
@@ -914,7 +1017,7 @@ export async function gatherCompetitorIntel(
       // the competitor's own primary domain. Suppress cross-assignment from other
       // tracked competitor domains.
       if (isOtherCompetitorDomain && !ownDomain) return false;
-      return ownDomain || strongIdentityMatch || (identityMatch && /(benchmark|swe-?bench|case study|customer|pricing|packaging|enterprise)/i.test(`${doc.title} ${doc.summary}`));
+      return ownDomain || strongIdentityMatch || (identityMatch && /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/i.test(`${doc.title} ${doc.summary}`));
     });
 
     const clusters = clusterDocs(deduped, competitor);
@@ -922,9 +1025,9 @@ export async function gatherCompetitorIntel(
       .map(toRankedIntel)
       .filter((item) => item.relevance_score >= 2)
       .sort((a, b) => b.relevance_score - a.relevance_score)
-      .slice(0, topPerCompetitor);
+    const diversified = diversifyPerCompetitor(ranked, topPerCompetitor);
 
-    allRanked.push(...ranked);
+    allRanked.push(...diversified);
   }
 
   return allRanked.sort((a, b) => b.relevance_score - a.relevance_score).slice(0, topOverall);
