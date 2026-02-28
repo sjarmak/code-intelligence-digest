@@ -120,10 +120,13 @@ function normalizeTitle(title: string): string {
 
 function inferUpdateType(text: string): string {
   const t = text.toLowerCase();
-  if (/(ga|general availability|launch|preview|beta|release notes|changelog)/.test(t)) return "product_launch";
+  // Prefer benchmark/customer proof classification before launch language,
+  // since many benchmark posts include generic "introducing/new" phrasing.
+  if (/(case study|customer story|customer evidence|fortune 500|swe[\s-]?bench|leaderboard)/.test(t))
+    return "market_proof";
   if (/(pricing|package|packaging|tier|enterprise plan)/.test(t)) return "pricing_packaging";
-  if (/(case study|customer|benchmark|fortune 500)/.test(t)) return "market_proof";
   if (/(security|compliance|audit|policy|rbac|sso|self-hosted|on-prem)/.test(t)) return "security_enterprise";
+  if (/(ga|general availability|launch|preview|beta|release notes|changelog)/.test(t)) return "product_launch";
   return "product_update";
 }
 
@@ -1010,7 +1013,19 @@ function domainMatchesAnyTrackedCompetitor(url: string, competitors: CompetitorI
 }
 
 function compactSummary(text: string, maxLen = 900): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
+  const stripped = text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/section title:\s*/gi, " ")
+    .replace(/table of contents/gi, " ")
+    .replace(/navigation menu/gi, " ")
+    .replace(/toggle navigation/gi, " ")
+    .replace(/search or jump to/gi, " ")
+    .replace(/\bhome\.jpg\b/gi, " ")
+    .replace(/\bimage-\d+\.(jpg|png|webp)\b/gi, " ")
+    .replace(/\b[a-f0-9]{8,}-[a-f0-9-]{8,}\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalized = stripped;
   if (normalized.length <= maxLen) return normalized;
   return `${normalized.slice(0, maxLen)}...`;
 }
@@ -1044,6 +1059,21 @@ function isOperationalTelemetryUpdate(text: string): boolean {
   return /(metrics report|usage metrics|telemetry|allowlist|cdn|download urls|api endpoint|cli activity|report urls update)/i.test(
     text,
   );
+}
+
+function cleanedScoringText(rep: CandidateDoc): string {
+  return `${rep.title} ${rep.summary} ${rep.content}`
+    .replace(/<[^>]+>/g, " ")
+    .replace(/section title:\s*/gi, " ")
+    .replace(/table of contents/gi, " ")
+    .replace(/navigation menu/gi, " ")
+    .replace(/toggle navigation/gi, " ")
+    .replace(/search or jump to/gi, " ")
+    .replace(/\bhome\.jpg\b/gi, " ")
+    .replace(/\bimage-\d+\.(jpg|png|webp)\b/gi, " ")
+    .replace(/\b[a-f0-9]{8,}-[a-f0-9-]{8,}\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function shapeOfItem(item: RankedCompetitorIntelItem): "benchmark_blog" | "comparison_seo" | "generic_page" | "other" {
@@ -1306,11 +1336,19 @@ async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc
 
 function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
   const rep = cluster.representative;
-  const text = `${rep.title} ${rep.summary} ${rep.content}`;
+  const text = cleanedScoringText(rep);
   const overlap = enrichOverlapWithSignals(classifyOverlapWithSourcegraph(text), text);
   const scores = clusterScore(cluster);
-  const tl = threatLevel(scores);
+  let tl = threatLevel(scores);
   const actionability = deriveActionability(scores, tl, overlap);
+  // Cap escalation when overlap is weak or absent.
+  if (overlap.length === 0 && tl === "high") tl = "medium";
+  if (overlap.length <= 1 && tl === "high" && (scores.direct_overlap ?? 0) < 3) tl = "medium";
+  const adjustedActionability =
+    overlap.length === 0
+      ? actionability.filter((a) => a !== "exec" && a !== "sales")
+      : actionability;
+  if (adjustedActionability.length === 0) adjustedActionability.push("monitoring");
   const dateConfidence = rep.dateConfidence ?? (rep.publishedAt ? "exact" : "unknown");
 
   return {
@@ -1324,12 +1362,12 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
     update_type: inferUpdateType(text),
     overlap_with_sourcegraph: overlap,
     summary: compactSummary(rep.summary || rep.title),
-    why_it_matters: whyItMatters(cluster.competitor, overlap, scores, text, actionability),
+    why_it_matters: whyItMatters(cluster.competitor, overlap, scores, text, adjustedActionability),
     threat_level: tl,
     confidence: confidenceLevel(rep.source_type, cluster.docs.length),
     novelty_score: Number(scores.novelty.toFixed(2)),
     relevance_score: Number(scores.final_score.toFixed(2)),
-    actionability,
+    actionability: adjustedActionability,
     evidence_notes: [
       `Underlying event: ${cluster.canonicalTitle}`,
       `Representative source type: ${rep.source_type}`,
@@ -1424,6 +1462,8 @@ export async function gatherCompetitorIntel(
       if (doc.source_type === "community") return false;
       if (isNarrativeNoise(doc)) return false;
       if (isThirdPartyHowToNoise(doc)) return false;
+      const operationalNoise = isOperationalTelemetryUpdate(`${doc.title} ${doc.summary} ${doc.content} ${doc.url}`);
+      if (operationalNoise && periodDays <= 31) return false;
       if (!shouldKeepUndatedDoc(doc, periodDays, ownDomain)) return false;
       if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
       if (!hasMaterialSignal(doc)) return false;
