@@ -57,6 +57,18 @@ interface InternalDoc {
   searchText: string;
 }
 
+function looksNoisyCompetitorUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return (
+    lower.includes("#comment") ||
+    lower.includes("/comment") ||
+    lower.includes("/comments") ||
+    lower.includes("utm_source=") && lower.includes("subscribe") ||
+    lower.includes("reddit.com/") ||
+    lower.includes("news.ycombinator.com/")
+  );
+}
+
 interface EventCluster {
   competitor: CompetitorIntelEntry;
   eventKey: string;
@@ -478,6 +490,98 @@ async function retrieveStrategicBackfillDocs(
   return Array.from(byUrl.values());
 }
 
+async function retrieveStrategicUrlBackfillDocs(
+  competitor: CompetitorIntelEntry,
+  limit = 6,
+): Promise<CandidateDoc[]> {
+  const patterns = ["%swe-bench%", "%swebench%", "%benchmark%"];
+  const out: CandidateDoc[] = [];
+  const driver = detectDriver();
+
+  if (driver === "postgres") {
+    const client = await getDbClient();
+    for (const domain of competitor.domains) {
+      const result = await client.query(
+        `SELECT id, title, url, source_title, published_at, summary, content_snippet
+         FROM items
+         WHERE lower(url) LIKE $1
+           AND (
+             lower(url) LIKE $2 OR lower(url) LIKE $3 OR lower(url) LIKE $4
+           )
+         ORDER BY published_at DESC
+         LIMIT $5`,
+        [`%${domain.toLowerCase()}%`, patterns[0], patterns[1], patterns[2], limit],
+      );
+      for (const row of result.rows as Array<{
+        title: string;
+        url: string;
+        source_title?: string | null;
+        published_at: number;
+        summary?: string | null;
+        content_snippet?: string | null;
+      }>) {
+        const domainMatch = domainMatchesCompetitor(row.url, competitor);
+        if (!domainMatch) continue;
+        const sourceDomain = getDomainFromUrl(row.url);
+        const sourceType = classifySourceTypeByDomain(sourceDomain);
+        out.push({
+          competitorId: competitor.id,
+          title: row.title,
+          summary: row.summary ?? row.content_snippet ?? "",
+          content: row.content_snippet ?? row.summary ?? "",
+          url: row.url,
+          source: sourceDomain || row.source_title || "unknown",
+          source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
+          publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+          retrievalScore: 4.6,
+        });
+      }
+    }
+  } else {
+    const sqlite = getSqlite();
+    for (const domain of competitor.domains) {
+      const rows = sqlite
+        .prepare(
+          `SELECT title, url, source_title, published_at, summary, content_snippet
+           FROM items
+           WHERE lower(url) LIKE ?
+             AND (
+               lower(url) LIKE ? OR lower(url) LIKE ? OR lower(url) LIKE ?
+             )
+           ORDER BY published_at DESC
+           LIMIT ?`,
+        )
+        .all(`%${domain.toLowerCase()}%`, patterns[0], patterns[1], patterns[2], limit) as Array<{
+          title: string;
+          url: string;
+          source_title?: string | null;
+          published_at: number;
+          summary?: string | null;
+          content_snippet?: string | null;
+        }>;
+      for (const row of rows) {
+        const domainMatch = domainMatchesCompetitor(row.url, competitor);
+        if (!domainMatch) continue;
+        const sourceDomain = getDomainFromUrl(row.url);
+        const sourceType = classifySourceTypeByDomain(sourceDomain);
+        out.push({
+          competitorId: competitor.id,
+          title: row.title,
+          summary: row.summary ?? row.content_snippet ?? "",
+          content: row.content_snippet ?? row.summary ?? "",
+          url: row.url,
+          source: sourceDomain || row.source_title || "unknown",
+          source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
+          publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+          retrievalScore: 4.6,
+        });
+      }
+    }
+  }
+
+  return dedupeDocs(out).slice(0, limit);
+}
+
 function dedupeDocs(docs: CandidateDoc[]): CandidateDoc[] {
   const byUrl = new Map<string, CandidateDoc>();
   for (const doc of docs) {
@@ -504,11 +608,20 @@ function escapeRegex(input: string): string {
 }
 
 function normalizedIdentityTerms(competitor: CompetitorIntelEntry): string[] {
+  const companyTokens = competitor.company
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((t) => t.length >= 4);
+  const companyAnchor = companyTokens[0] ?? "";
+  const brandQualifiedProducts = competitor.products.filter((p) =>
+    companyAnchor ? p.toLowerCase().includes(companyAnchor) : false,
+  );
+
   const raw = [
     competitor.company,
     competitor.display_name,
     ...competitor.aliases,
-    ...competitor.products,
+    ...brandQualifiedProducts,
   ]
     .map((x) => x.toLowerCase().trim())
     .filter(Boolean);
@@ -527,14 +640,38 @@ function normalizedIdentityTerms(competitor: CompetitorIntelEntry): string[] {
   return Array.from(new Set(terms));
 }
 
+const AMBIGUOUS_SINGLE_IDENTITY_TERMS = new Set([
+  "augment",
+  "duo",
+  "cursor",
+  "windsurf",
+  "cascade",
+  "rovo",
+  "bitbucket",
+  "github",
+  "gitlab",
+  "claude",
+  "code",
+]);
+
 function mentionsCompetitorIdentity(doc: CandidateDoc, competitor: CompetitorIntelEntry): boolean {
   const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
   const terms = normalizedIdentityTerms(competitor);
-  return terms.some((term) => {
-    if (term.includes(" ")) return text.includes(term);
+  const phraseTerms = terms.filter((t) => t.includes(" ") || t.includes("/"));
+  const singleTerms = terms.filter((t) => !t.includes(" ") && !t.includes("/"));
+
+  // High precision: any phrase/company/product match is enough.
+  if (phraseTerms.some((term) => text.includes(term))) return true;
+
+  // For single-token aliases, require 2+ distinct hits and skip ambiguous terms.
+  const singleHits = new Set<string>();
+  for (const term of singleTerms) {
+    if (AMBIGUOUS_SINGLE_IDENTITY_TERMS.has(term)) continue;
+    if (term.length < 5) continue;
     const re = new RegExp(`\\b${escapeRegex(term)}\\b`, "i");
-    return re.test(text);
-  });
+    if (re.test(text)) singleHits.add(term);
+  }
+  return singleHits.size >= 2;
 }
 
 function domainMatchesCompetitor(url: string, competitor: CompetitorIntelEntry): boolean {
@@ -669,12 +806,14 @@ export async function gatherCompetitorIntel(
       Math.min(webQueryLimit, maxWebQueriesPerCompetitor),
     );
     const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, 8);
+    const strategicUrlBackfill = await retrieveStrategicUrlBackfillDocs(competitor, 6);
 
     // Strict attribution:
     // - explicit competitor signal, OR
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
-    const deduped = dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill]).filter((doc) => {
+    const deduped = dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill]).filter((doc) => {
+      if (looksNoisyCompetitorUrl(doc.url)) return false;
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
       const identityMatch = mentionsCompetitorIdentity(doc, competitor);
       const isOtherCompetitorDomain =
