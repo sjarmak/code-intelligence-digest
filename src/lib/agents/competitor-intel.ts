@@ -45,6 +45,17 @@ interface CandidateDoc {
   retrievalScore: number;
 }
 
+interface InternalDoc {
+  id: string;
+  title: string;
+  url: string;
+  sourceTitle?: string;
+  publishedAt?: Date;
+  summary: string;
+  snippet: string;
+  searchText: string;
+}
+
 interface EventCluster {
   competitor: CompetitorIntelEntry;
   eventKey: string;
@@ -232,8 +243,29 @@ function tokenizedSignalPool(competitor: CompetitorIntelEntry, queries: string[]
   return Array.from(new Set(tokens));
 }
 
-function internalRetrievalScore(item: FeedItem, competitor: CompetitorIntelEntry, tokens: string[]): number {
-  const text = `${item.title} ${item.summary ?? ""} ${item.contentSnippet ?? ""} ${item.fullText ?? ""}`.toLowerCase();
+function clampText(text: string | undefined, maxLen: number): string {
+  if (!text) return "";
+  return text.length > maxLen ? text.slice(0, maxLen) : text;
+}
+
+function toInternalDoc(item: FeedItem): InternalDoc {
+  const summary = clampText(item.summary, 1200);
+  const snippet = clampText(item.contentSnippet, 1600);
+  const full = clampText(item.fullText, 2400);
+  return {
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    sourceTitle: item.sourceTitle,
+    publishedAt: item.publishedAt,
+    summary,
+    snippet,
+    searchText: `${item.title} ${summary} ${snippet} ${full}`.toLowerCase(),
+  };
+}
+
+function internalRetrievalScore(item: InternalDoc, competitor: CompetitorIntelEntry, tokens: string[]): number {
+  const text = item.searchText;
   const signalMatches = tokens.reduce((acc, t) => acc + (text.includes(t) ? 1 : 0), 0);
   const competitorMention = [competitor.display_name, competitor.company, ...competitor.aliases, ...competitor.products]
     .map((x) => x.toLowerCase())
@@ -245,26 +277,28 @@ function internalRetrievalScore(item: FeedItem, competitor: CompetitorIntelEntry
   return (competitorMention ? 2.5 : 0.6) + overlap * 0.8 + signalMatches * 0.08 + recency * 0.3;
 }
 
-async function loadInternalDocs(periodDays: number): Promise<FeedItem[]> {
+async function loadInternalDocs(periodDays: number, maxDocs: number): Promise<InternalDoc[]> {
   const categories = VALID_CATEGORIES as readonly Category[];
-  const byId = new Map<string, FeedItem>();
+  const byId = new Map<string, InternalDoc>();
   for (const category of categories) {
     const items = await loadItemsByCategory(category, periodDays);
     for (const item of items) {
-      if (!byId.has(item.id)) byId.set(item.id, item);
+      if (!byId.has(item.id)) byId.set(item.id, toInternalDoc(item));
     }
   }
-  return Array.from(byId.values());
+  return Array.from(byId.values())
+    .sort((a, b) => (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0))
+    .slice(0, maxDocs);
 }
 
-function toCandidateFromFeed(item: FeedItem, competitorId: string, retrievalScore: number): CandidateDoc {
+function toCandidateFromFeed(item: InternalDoc, competitorId: string, retrievalScore: number): CandidateDoc {
   const domain = getDomainFromUrl(item.url);
   const sourceType = classifySourceTypeByDomain(domain);
   return {
     competitorId,
     title: item.title,
-    summary: item.summary ?? item.contentSnippet ?? "",
-    content: item.fullText ?? item.contentSnippet ?? item.summary ?? "",
+    summary: item.summary ?? item.snippet ?? "",
+    content: item.snippet ?? item.summary ?? "",
     url: item.url,
     source: domain || item.sourceTitle || "unknown",
     source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
@@ -384,6 +418,7 @@ export interface CompetitorIntelOptions {
   maxGeneratedQueries?: number;
   webDocsPerQuery?: number;
   maxWebQueriesPerCompetitor?: number;
+  internalDocsLimit?: number;
 }
 
 /**
@@ -400,8 +435,9 @@ export async function gatherCompetitorIntel(
   const maxGeneratedQueries = options.maxGeneratedQueries ?? 24;
   const webDocsPerQuery = options.webDocsPerQuery ?? 5;
   const maxWebQueriesPerCompetitor = options.maxWebQueriesPerCompetitor ?? 4;
+  const internalDocsLimit = options.internalDocsLimit ?? 1200;
 
-  const internalItems = await loadInternalDocs(periodDays);
+  const internalItems = await loadInternalDocs(periodDays, internalDocsLimit);
   const competitors = getCompetitorIntelEntries().filter((c) =>
     options.competitorId ? c.id === options.competitorId : true,
   );

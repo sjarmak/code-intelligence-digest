@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
       maxGeneratedQueries: 16,
       webDocsPerQuery: 3,
       maxWebQueriesPerCompetitor: 2,
+      internalDocsLimit: 600,
     });
 
     const response = {

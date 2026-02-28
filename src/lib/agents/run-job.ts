@@ -100,6 +100,7 @@ export async function runAgentJob(
       maxGeneratedQueries: 12,
       webDocsPerQuery: 2,
       maxWebQueriesPerCompetitor: 2,
+      internalDocsLimit: 500,
     });
 
     const dateStr = new Date().toISOString().slice(0, 10);
