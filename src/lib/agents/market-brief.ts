@@ -1,7 +1,7 @@
 import { retrieveForAgent } from "../pipeline/agentRetrieval";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
-import { getDomainFromUrl } from "../../config/competitor-intel";
+import { classifySourceTypeByDomain, getDomainFromUrl } from "../../config/competitor-intel";
 
 export interface MarketBriefEvidence {
   source: string;
@@ -87,6 +87,19 @@ function confidenceFromDoc(doc: AgentRankedDoc): "high" | "medium" | "low" {
   return "low";
 }
 
+function isMarketBriefNoise(doc: AgentRankedDoc): boolean {
+  const text = textOf(doc);
+  const domain = getDomainFromUrl(doc.url ?? "");
+  const sourceType = classifySourceTypeByDomain(domain);
+  if (sourceType === "community") return true;
+  if (/(reddit\.com|dev\.to|podcasters\.spotify\.com)/.test(domain)) return true;
+  if (/(best .* ai coding tools|top .* ai coding tools|tested\s*&\s*compared|awesome-monorepo|staff cuts the new ai normal)/.test(text)) {
+    return true;
+  }
+  if (/(vibe coding is fun until|dev community)/.test(text)) return true;
+  return false;
+}
+
 function ownerFromDoc(text: string): "PMM" | "Sales" | "SE" | "Product" | "Exec" {
   if (/(compliance|security|byok|self-hosted|audit)/.test(text)) return "SE";
   if (/(pricing|packaging|procurement|enterprise plan)/.test(text)) return "Sales";
@@ -150,7 +163,7 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
   const alignment: "reinforces" | "threatens" | "unknown" =
     item.contradiction
       ? "threatens"
-      : item.policyBasis.some((x) => x.includes("priority"))
+      : item.score >= 0.72 && item.policyBasis.length >= 2
         ? "reinforces"
         : "unknown";
 
@@ -165,7 +178,7 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
   return {
     title: item.doc.title,
     summary: (item.doc.snippet ?? item.doc.content ?? "").slice(0, 320),
-    segment_impact: item.segmentImpact.length > 0 ? item.segmentImpact : [state.primary_beachhead],
+    segment_impact: item.segmentImpact.length > 0 ? item.segmentImpact : ["Other"],
     persona_impact: item.personaImpact.length > 0 ? item.personaImpact : [state.persona_priority[0] ?? "Head of Developer Platform"],
     playbook_alignment: alignment,
     affected_assumptions: assumptions.length > 0 ? assumptions : ["Segment and messaging priority remain directionally valid"],
@@ -209,7 +222,10 @@ export async function generateMarketBrief(options: {
   });
 
   const ranked = await rankForAgent("market_brief", docs);
-  const scored = ranked.map((doc) => scoreDoc(doc, state)).sort((a, b) => b.score - a.score);
+  const scored = ranked
+    .filter((doc) => !isMarketBriefNoise(doc))
+    .map((doc) => scoreDoc(doc, state))
+    .sort((a, b) => b.score - a.score);
 
   const selected = scored.slice(0, maxItems);
   const executive = selected.slice(0, Math.min(8, selected.length)).map((x) => toDelta(x, state));

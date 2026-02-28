@@ -20,21 +20,28 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
     lines.push("No high-confidence GTM deltas identified in this run.", "");
   }
 
+  const allReinforces =
+    payload.executive_delta.length > 0 &&
+    payload.executive_delta.every((item) => item.playbook_alignment === "reinforces");
+
   payload.executive_delta.forEach((item, i) => {
     lines.push(`### ${i + 1}. ${item.title}`);
-    lines.push(`- Alignment: **${item.playbook_alignment}**`);
+    if (!allReinforces) {
+      lines.push(`- Alignment: **${item.playbook_alignment}**`);
+    }
     lines.push(`- Segment impact: ${item.segment_impact.join(", ")}`);
     lines.push(`- Persona impact: ${item.persona_impact.join(", ")}`);
     lines.push(`- Why it matters: ${item.why_it_matters}`);
     lines.push(`- Recommended owner/action: **${item.recommended_action.owner}** - ${item.recommended_action.action}`);
-
-    lines.push(`<details><summary><strong>Policy basis</strong></summary><div>${esc(item.policy_basis.join(" | "))}</div></details>`);
-    lines.push(`<details><summary><strong>Evidence basis</strong></summary><div>${esc(item.evidence_basis.join(" | "))}</div></details>`);
-    lines.push(
-      `<details><summary><strong>Evidence</strong></summary><ul>${item.evidence
-        .map((e) => `<li>${esc(e.date)} | ${esc(e.source)} | ${esc(e.confidence)} | <a href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">link</a></li>`)
-        .join("")}</ul></details>`,
-    );
+    lines.push("- Sources:");
+    if (item.evidence.length === 0) {
+      lines.push("  - No linked source available");
+    } else {
+      item.evidence.forEach((e) => {
+        const label = `${e.source} (${e.date}, ${e.confidence})`;
+        lines.push(`  - [${label}](${e.url})`);
+      });
+    }
     lines.push("");
   });
 
@@ -43,7 +50,15 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
     payload.watch_items.forEach((item, i) => {
       lines.push(`### ${i + 1}. ${item.title}`);
       lines.push(`- ${item.summary}`);
-      lines.push(`<details><summary><strong>Policy + Evidence</strong></summary><div>${esc(item.policy_basis.join(" | "))}<br/>${esc(item.evidence_basis.join(" | "))}</div></details>`);
+      lines.push("- Sources:");
+      if (item.evidence.length === 0) {
+        lines.push("  - No linked source available");
+      } else {
+        item.evidence.forEach((e) => {
+          const label = `${e.source} (${e.date}, ${e.confidence})`;
+          lines.push(`  - [${label}](${e.url})`);
+        });
+      }
       lines.push("");
     });
   }

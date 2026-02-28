@@ -191,6 +191,14 @@ function titleOverlapRatio(a: string, b: string): number {
   return overlap / Math.max(1, Math.min(aTokens.size, bTokens.size));
 }
 
+function normalizeIdeaTitleKey(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s:]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function buildSourcegraphIdeaTitle(
   _segment: ContentIdea["target_segment"],
   channel: ContentIdea["channel"],
@@ -616,7 +624,7 @@ export async function generateContentIdeas(options: {
     planned[idx].targetSegment = seg;
   }
 
-  const ideas = planned
+  const rawIdeas = planned
     .map(({ candidate, targetSegment }) => ({ candidate, idea: toIdea(candidate, state, targetSegment) }))
     .filter(({ candidate, idea }) => {
       const overlap = titleOverlapRatio(idea.title, candidate.doc.title);
@@ -624,6 +632,35 @@ export async function generateContentIdeas(options: {
       return overlap < 0.65;
     })
     .map(({ idea }) => idea);
+  const ideas = (() => {
+    const byTitle = new Map<string, ContentIdea>();
+    for (const idea of rawIdeas) {
+      const titleKey = normalizeIdeaTitleKey(idea.title);
+      const existing = byTitle.get(titleKey);
+      if (!existing || idea.priority_score > existing.priority_score) {
+        byTitle.set(titleKey, idea);
+      }
+    }
+    const deduped = Array.from(byTitle.values())
+      .sort((a, b) => b.priority_score - a.priority_score)
+      .slice(0, numIdeas);
+    const preferredPersonas: Array<ContentIdea["target_persona"]> = [
+      "Head of Developer Platform",
+      "VP Engineering",
+      "Staff Engineer",
+      "Security/Compliance",
+    ];
+    const personaCount = deduped.reduce<Record<string, number>>((acc, idea) => {
+      acc[idea.target_persona] = (acc[idea.target_persona] ?? 0) + 1;
+      return acc;
+    }, {});
+    const hasDiversity = Object.keys(personaCount).length >= 2;
+    if (hasDiversity) return deduped;
+    return deduped.map((idea, idx) => ({
+      ...idea,
+      target_persona: preferredPersonas[idx % preferredPersonas.length],
+    }));
+  })();
   const achievedBucketCounts = {
     beachhead: ideas.filter((i) => toSegmentBucket(i.target_segment, state) === "beachhead").length,
     adjacent: ideas.filter((i) => toSegmentBucket(i.target_segment, state) === "adjacent").length,
