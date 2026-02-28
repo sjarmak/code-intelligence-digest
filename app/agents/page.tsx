@@ -44,6 +44,8 @@ export default function AgentReportsPage() {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [generateProgress, setGenerateProgress] = useState<string | null>(null);
+  const [selectedReportKeys, setSelectedReportKeys] = useState<Set<string>>(new Set());
+  const [deletingBulk, setDeletingBulk] = useState(false);
 
   const refetchReports = () => {
     return fetch("/api/agents/reports")
@@ -55,6 +57,12 @@ export default function AgentReportsPage() {
   useEffect(() => {
     refetchReports().finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    // Drop selections that no longer exist after refresh/deletes.
+    const validKeys = new Set(reports.map((r) => `${r.goal}:${r.id}`));
+    setSelectedReportKeys((prev) => new Set(Array.from(prev).filter((k) => validKeys.has(k))));
+  }, [reports]);
 
   const allSelected = AGENT_GOALS.every((g) => selectedGoals.has(g));
   const toggleAll = () => {
@@ -130,6 +138,56 @@ export default function AgentReportsPage() {
 	    console.error(e);
 	  }
 	};
+
+  const toggleReportSelection = (goal: string, id: string) => {
+    const key = `${goal}:${id}`;
+    setSelectedReportKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const allReportKeys = reports.map((r) => `${r.goal}:${r.id}`);
+  const allReportsSelected = allReportKeys.length > 0 && allReportKeys.every((k) => selectedReportKeys.has(k));
+  const selectedCount = selectedReportKeys.size;
+
+  const toggleSelectAllReports = () => {
+    if (allReportsSelected) {
+      setSelectedReportKeys(new Set());
+      return;
+    }
+    setSelectedReportKeys(new Set(allReportKeys));
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedReportKeys.size === 0) return;
+    const count = selectedReportKeys.size;
+    if (!confirm(`Delete ${count} selected report${count === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    setDeletingBulk(true);
+    try {
+      const failed: string[] = [];
+      for (const key of selectedReportKeys) {
+        const [goal, id] = key.split(":");
+        const res = await fetch(`/api/agents/reports/${goal}/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) failed.push(`${goal}/${id}`);
+      }
+      if (viewing && selectedReportKeys.has(`${viewing.goal}:${viewing.id}`)) setViewing(null);
+      await refetchReports();
+      if (failed.length > 0) {
+        setGenerateError(`Failed to delete: ${failed.join(", ")}`);
+      } else {
+        setGenerateError(null);
+      }
+    } catch (e) {
+      setGenerateError(e instanceof Error ? e.message : "Bulk delete failed");
+    } finally {
+      setDeletingBulk(false);
+    }
+  };
 
   const formatDate = (iso: string | null) => {
     if (!iso) return "Never run";
@@ -434,6 +492,27 @@ export default function AgentReportsPage() {
           <p className="text-gray-500">Loading…</p>
         ) : (
           <div className="space-y-6">
+            <section className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={allReportsSelected}
+                    onChange={toggleSelectAllReports}
+                    className="rounded border-gray-300"
+                  />
+                  <span>Select all reports</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleDeleteSelected}
+                  disabled={selectedCount === 0 || deletingBulk}
+                  className="px-3 py-1.5 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deletingBulk ? "Deleting…" : `Delete selected (${selectedCount})`}
+                </button>
+              </div>
+            </section>
             {AGENT_GOALS.map((goal) => {
               const runs = reports.filter((r) => r.goal === goal).sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime());
               return (
@@ -448,7 +527,15 @@ export default function AgentReportsPage() {
                           key={`${r.goal}-${r.id}`}
                           className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 py-2 border-b border-gray-100 last:border-0"
                         >
-                          <span className="text-sm text-gray-600">{formatDate(r.generatedAt)}</span>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedReportKeys.has(`${r.goal}:${r.id}`)}
+                              onChange={() => toggleReportSelection(r.goal, r.id)}
+                              className="rounded border-gray-300"
+                            />
+                            <span className="text-sm text-gray-600">{formatDate(r.generatedAt)}</span>
+                          </div>
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => handleView(r.goal, r.id)}
