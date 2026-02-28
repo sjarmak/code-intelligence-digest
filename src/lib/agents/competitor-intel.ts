@@ -169,10 +169,10 @@ function shouldKeepUndatedDoc(doc: CandidateDoc, periodDays: number, ownDomain: 
     !/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(titleUrl);
 
   if (periodDays <= 7) {
-    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 4.8;
+    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 3.8;
   }
   if (periodDays <= 31) {
-    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 4.2;
+    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 2.6;
   }
   if (periodDays <= 90) {
     return (
@@ -769,6 +769,115 @@ async function retrieveStrategicUrlBackfillDocs(
   return dedupeDocs(out).slice(0, limit);
 }
 
+async function retrieveRecentDomainDocs(
+  competitor: CompetitorIntelEntry,
+  periodDays: number,
+  limit = 10,
+): Promise<CandidateDoc[]> {
+  const out: CandidateDoc[] = [];
+  const cutoff = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+  const driver = detectDriver();
+  if (driver === "postgres") {
+    const client = await getDbClient();
+    for (const domain of competitor.domains) {
+      const result = await client.query(
+        `SELECT title, url, source_title, published_at, summary, content_snippet
+         FROM items
+         WHERE lower(url) LIKE $1
+           AND published_at >= $2
+         ORDER BY published_at DESC
+         LIMIT $3`,
+        [`%${domain.toLowerCase()}%`, cutoff, limit],
+      );
+      for (const row of result.rows as Array<{
+        title: string;
+        url: string;
+        source_title?: string | null;
+        published_at: number;
+        summary?: string | null;
+        content_snippet?: string | null;
+      }>) {
+        if (!domainMatchesCompetitor(row.url, competitor)) continue;
+        const text = `${row.title ?? ""} ${row.summary ?? ""} ${row.content_snippet ?? ""}`.toLowerCase();
+        if (!hasMaterialSignal({
+          competitorId: competitor.id,
+          title: row.title ?? "",
+          summary: row.summary ?? "",
+          content: row.content_snippet ?? "",
+          url: row.url ?? "",
+          source: row.source_title ?? "unknown",
+          source_type: "primary",
+          retrievalScore: 3.1,
+        })) {
+          continue;
+        }
+        out.push({
+          competitorId: competitor.id,
+          title: row.title,
+          summary: row.summary ?? row.content_snippet ?? "",
+          content: row.content_snippet ?? row.summary ?? "",
+          url: row.url,
+          source: getDomainFromUrl(row.url) || row.source_title || "unknown",
+          source_type: "primary",
+          publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+          dateConfidence: row.published_at ? "exact" : "unknown",
+          retrievalScore: /(benchmark|swe[\s-]?bench|pricing|enterprise|security|mcp|release)/i.test(text) ? 3.8 : 3.1,
+        });
+      }
+    }
+  } else {
+    const sqlite = getSqlite();
+    for (const domain of competitor.domains) {
+      const rows = sqlite
+        .prepare(
+          `SELECT title, url, source_title, published_at, summary, content_snippet
+           FROM items
+           WHERE lower(url) LIKE ?
+             AND published_at >= ?
+           ORDER BY published_at DESC
+           LIMIT ?`,
+        )
+        .all(`%${domain.toLowerCase()}%`, cutoff, limit) as Array<{
+          title: string;
+          url: string;
+          source_title?: string | null;
+          published_at: number;
+          summary?: string | null;
+          content_snippet?: string | null;
+        }>;
+      for (const row of rows) {
+        if (!domainMatchesCompetitor(row.url, competitor)) continue;
+        const text = `${row.title ?? ""} ${row.summary ?? ""} ${row.content_snippet ?? ""}`.toLowerCase();
+        if (!hasMaterialSignal({
+          competitorId: competitor.id,
+          title: row.title ?? "",
+          summary: row.summary ?? "",
+          content: row.content_snippet ?? "",
+          url: row.url ?? "",
+          source: row.source_title ?? "unknown",
+          source_type: "primary",
+          retrievalScore: 3.1,
+        })) {
+          continue;
+        }
+        out.push({
+          competitorId: competitor.id,
+          title: row.title,
+          summary: row.summary ?? row.content_snippet ?? "",
+          content: row.content_snippet ?? row.summary ?? "",
+          url: row.url,
+          source: getDomainFromUrl(row.url) || row.source_title || "unknown",
+          source_type: "primary",
+          publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+          dateConfidence: row.published_at ? "exact" : "unknown",
+          retrievalScore: /(benchmark|swe[\s-]?bench|pricing|enterprise|security|mcp|release)/i.test(text) ? 3.8 : 3.1,
+        });
+      }
+    }
+  }
+  return dedupeDocs(out).slice(0, limit);
+}
+
 function dedupeDocs(docs: CandidateDoc[]): CandidateDoc[] {
   const byUrl = new Map<string, CandidateDoc>();
   for (const doc of docs) {
@@ -1299,12 +1408,15 @@ export async function gatherCompetitorIntel(
     );
     const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, periodDays, 8);
     const strategicUrlBackfill = await retrieveStrategicUrlBackfillDocs(competitor, periodDays, 6);
+    const recentDomainDocs = await retrieveRecentDomainDocs(competitor, periodDays, 10);
 
     // Strict attribution:
     // - explicit competitor signal, OR
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
-    const hydratedByDb = await hydratePublishedDates(dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill]));
+    const hydratedByDb = await hydratePublishedDates(
+      dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill, ...recentDomainDocs]),
+    );
     const hydrated = await hydratePublishedDatesFromMetadata(hydratedByDb, periodDays);
     const deduped = hydrated.filter((doc) => {
       if (looksNoisyCompetitorUrl(doc.url)) return false;
