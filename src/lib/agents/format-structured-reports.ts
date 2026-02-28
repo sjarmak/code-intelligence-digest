@@ -132,7 +132,7 @@ export function formatCompetitorIntelMarkdown(
 
   payload.items.forEach((item, i) => {
     lines.push(`### ${i + 1}. ${item.competitor}: ${item.title}`);
-    lines.push(`- Date/source: ${item.date ?? "unknown"} | **${item.source_type}** | ${item.source}`);
+    lines.push(`- Date/source: ${item.date ?? "unknown"} (${item.date_confidence}) | **${item.source_type}** | ${item.source}`);
     lines.push(`- URL: [Open source](${item.url})`);
     lines.push(`- Threat/confidence: **${item.threat_level}** / **${item.confidence}**`);
     lines.push(`- Update type: ${item.update_type}`);

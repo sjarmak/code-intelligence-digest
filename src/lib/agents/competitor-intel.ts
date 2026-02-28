@@ -17,6 +17,7 @@ import {
 export interface RankedCompetitorIntelItem {
   competitor: string;
   date: string | null;
+  date_confidence: "exact" | "inferred" | "unknown";
   title: string;
   source: string;
   source_type: IntelSourceType;
@@ -162,13 +163,16 @@ function shouldKeepUndatedDoc(doc: CandidateDoc, periodDays: number, ownDomain: 
   if (doc.publishedAt) return true;
   const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
   const titleUrl = `${doc.title} ${doc.url}`.toLowerCase();
+  const highSignalBenchmark =
+    /swe[\s-]?bench|benchmark|leaderboard|eval/.test(titleUrl) &&
+    /\/blog\/|\/news\/|\/updates\//.test(doc.url.toLowerCase()) &&
+    !/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(titleUrl);
+
+  if (periodDays <= 7) {
+    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 4.8;
+  }
   if (periodDays <= 31) {
-    return (
-      ownDomain &&
-      doc.source_type === "primary" &&
-      /swe[\s-]?bench/.test(titleUrl) &&
-      /\/blog\//.test(doc.url.toLowerCase())
-    );
+    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 4.2;
   }
   if (periodDays <= 90) {
     return (
@@ -243,6 +247,16 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
   const evidence_strength = Math.min(5, 2 + cluster.docs.length);
   const actionability = direct_overlap >= 3 || enterprise_relevance >= 4 || strategicNarrative >= 4 ? 5 : 2;
   const generic_news_penalty = overlap.length === 0 && strategicNarrative < 4 ? -4 : 0;
+  const material_update_boost = /(pricing|packaging|tier|enterprise|security|compliance|sso|rbac|ga|general availability|release|self[-\s]?host|on[-\s]?prem|admin|governance|policy)/i.test(
+    text,
+  )
+    ? 0.9
+    : 0;
+  const benchmark_marketing_penalty =
+    /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) &&
+    !/(pricing|packaging|tier|enterprise|security|compliance|sso|rbac|ga|general availability|release|self[-\s]?host|on[-\s]?prem|admin|governance|policy|case study|customer)/i.test(text)
+      ? -0.9
+      : 0;
 
   const final_score =
     0.24 * direct_overlap +
@@ -256,6 +270,8 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     0.08 * source_quality +
     0.04 * evidence_strength +
     0.04 * actionability +
+    material_update_boost +
+    benchmark_marketing_penalty +
     generic_news_penalty +
     seo_comparison_penalty +
     generic_page_penalty +
@@ -275,6 +291,8 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     evidence_strength,
     actionability,
     duplication_penalty: 0,
+    material_update_boost,
+    benchmark_marketing_penalty,
     generic_news_penalty,
     seo_comparison_penalty,
     generic_page_penalty,
@@ -295,16 +313,49 @@ function enrichOverlapWithSignals(base: string[], text: string): string[] {
   return Array.from(out);
 }
 
-function whyItMatters(competitor: CompetitorIntelEntry, overlap: string[], score: Record<string, number>, text: string): string {
+function deriveActionability(score: Record<string, number>, tl: "high" | "medium" | "low" | "negative"): string[] {
+  const out = new Set<string>();
+  if (score.enterprise_relevance >= 4) out.add("sales");
+  if (score.direct_overlap >= 3 || (score.benchmark_signal ?? 1) >= 4) {
+    out.add("product");
+    out.add("messaging");
+  }
+  if (tl === "high" || (tl === "medium" && score.final_score >= 3.8)) out.add("exec");
+  if (out.size === 0) out.add("monitoring");
+  return Array.from(out);
+}
+
+function netThreatRationale(tl: "high" | "medium" | "low" | "negative", score: Record<string, number>): string {
+  if (tl === "high") {
+    return "High threat: direct overlap and enterprise relevance are both strong, so this can influence active evaluations now.";
+  }
+  if (tl === "medium") {
+    if ((score.benchmark_signal ?? 0) >= 4) {
+      return "Medium threat: benchmark performance can reshape buyer perception, but enterprise proof depth is still mixed.";
+    }
+    return "Medium threat: the update is material for enterprise workflows, but immediate displacement risk is moderate.";
+  }
+  if (tl === "low") {
+    return "Low threat: signal is real but mostly incremental or peripheral to current Sourcegraph differentiators.";
+  }
+  return "Negative pressure on competitor: evidence points to limited strategic impact or weaker execution.";
+}
+
+function whyItMatters(
+  competitor: CompetitorIntelEntry,
+  overlap: string[],
+  score: Record<string, number>,
+  text: string,
+  actionability: string[],
+): string {
   const surfaces = overlap.length > 0 ? overlap.join(", ") : "adjacent workflow surfaces";
-  const functions: string[] = [];
-  if (score.enterprise_relevance >= 4) functions.push("sales");
-  if (score.direct_overlap >= 3 || (score.benchmark_signal ?? 1) >= 4) functions.push("product", "messaging");
-  if (score.final_score >= 4.2) functions.push("exec awareness");
-  if (functions.length === 0) functions.push("monitoring");
   const update = inferUpdateType(text).replace(/_/g, " ");
   const net = threatLevel(score);
-  return `what changed: ${competitor.display_name} published a ${update} update. which Sourcegraph surface it overlaps with: ${surfaces}. whether this affects sales, product, messaging, or exec awareness: ${Array.from(new Set(functions)).join(", ")}. whether this is a net threat, neutral development, or competitor weakness: ${net}.`;
+  const gtmImpact =
+    actionability.length === 1 && actionability[0] === "monitoring"
+      ? "monitoring only; no immediate GTM motion required"
+      : actionability.join(", ");
+  return `Change: ${competitor.display_name} published a ${update} move touching ${surfaces}. GTM impact: ${gtmImpact}. Net assessment: ${net}. ${netThreatRationale(net, score)}`;
 }
 
 function tokenizedSignalPool(competitor: CompetitorIntelEntry, queries: string[]): string[] {
@@ -856,9 +907,21 @@ function shapeOfItem(item: RankedCompetitorIntelItem): "benchmark_blog" | "compa
   return "other";
 }
 
+function isMaterialRankedItem(item: RankedCompetitorIntelItem): boolean {
+  if (item.update_type === "security_enterprise" || item.update_type === "pricing_packaging" || item.update_type === "product_launch") {
+    return true;
+  }
+  const text = `${item.title} ${item.summary}`.toLowerCase();
+  return /(enterprise|security|compliance|sso|rbac|self[-\s]?host|on[-\s]?prem|pricing|packaging|tier|ga|general availability|release)/.test(
+    text,
+  );
+}
+
 function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number): RankedCompetitorIntelItem[] {
+  const materialCount = items.filter(isMaterialRankedItem).length;
+  const benchmarkCap = materialCount > 0 ? 1 : Math.max(2, Math.floor(topN / 2));
   const caps: Record<string, number> = {
-    benchmark_blog: Math.max(2, Math.floor(topN / 2)),
+    benchmark_blog: benchmarkCap,
     comparison_seo: 1,
     generic_page: 1,
     other: topN,
@@ -897,14 +960,100 @@ function canonicalUrlKey(url: string): string {
 
 function dedupeRankedEvents(items: RankedCompetitorIntelItem[]): RankedCompetitorIntelItem[] {
   const seen = new Set<string>();
+  const seenBenchmarkNarratives = new Set<string>();
   const out: RankedCompetitorIntelItem[] = [];
   for (const item of items) {
     const key = `${item.competitor}|${canonicalUrlKey(item.url)}|${normalizeTitle(item.title)}`;
     if (seen.has(key)) continue;
+    if (shapeOfItem(item) === "benchmark_blog") {
+      const benchmarkNarrative = normalizeTitle(
+        item.title
+          .toLowerCase()
+          .replace(/\b(top|tops|number|#\d+|open[-\s]?source|verified|pro)\b/g, " ")
+          .replace(/\b\d+(\.\d+)?%?\b/g, " "),
+      );
+      const narrativeKey = `${item.competitor}|${benchmarkNarrative}`;
+      if (seenBenchmarkNarratives.has(narrativeKey)) continue;
+      seenBenchmarkNarratives.add(narrativeKey);
+    }
     seen.add(key);
     out.push(item);
   }
   return out;
+}
+
+function parseDate(raw: string | null | undefined): Date | undefined {
+  if (!raw) return undefined;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  if (parsed.getUTCFullYear() < 2018 || parsed.getTime() > Date.now() + 24 * 60 * 60 * 1000) return undefined;
+  return parsed;
+}
+
+function extractPublishedDateFromHtml(html: string): Date | undefined {
+  const lower = html.toLowerCase();
+  const patterns = [
+    /<meta[^>]+(?:property|name)=["'](?:article:published_time|og:published_time|publishdate|pubdate|date|dc\.date|datepublished)["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:article:published_time|og:published_time|publishdate|pubdate|date|dc\.date|datepublished)["']/i,
+    /<time[^>]+datetime=["']([^"']+)["']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    const parsed = parseDate(match?.[1]);
+    if (parsed) return parsed;
+  }
+
+  const jsonLdDateMatch = lower.match(/"datepublished"\s*:\s*"([^"]+)"/i) ?? lower.match(/"datemodified"\s*:\s*"([^"]+)"/i);
+  const parsedJsonLd = parseDate(jsonLdDateMatch?.[1]);
+  if (parsedJsonLd) return parsedJsonLd;
+
+  const fallbackIso = html.match(/\b(20\d{2}-\d{2}-\d{2})(?:[t\s][0-2]\d:[0-5]\d(?::[0-5]\d)?(?:\.\d+)?(?:z|[+-][0-2]\d:?[0-5]\d)?)?\b/i);
+  const parsedFallback = parseDate(fallbackIso?.[1]);
+  if (parsedFallback) return parsedFallback;
+
+  return undefined;
+}
+
+async function hydratePublishedDatesFromMetadata(docs: CandidateDoc[], periodDays: number): Promise<CandidateDoc[]> {
+  const maxAttempts = periodDays <= 31 ? 16 : 28;
+  const targets = docs
+    .filter(
+      (d) =>
+        !d.publishedAt &&
+        d.source_type !== "community" &&
+        /\/blog\/|\/news\/|\/updates\/|swe[\s-]?bench|benchmark|release|changelog|pricing|security/i.test(`${d.url} ${d.title}`),
+    )
+    .slice(0, maxAttempts);
+  if (targets.length === 0) return docs;
+
+  const inferredByUrl = new Map<string, Date>();
+  const withTimeout = async (url: string): Promise<void> => {
+    try {
+      const response = await fetch(url, {
+        headers: { "User-Agent": "code-intel-digest/1.0 competitor-intel" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) return;
+      const html = await response.text();
+      const date = extractPublishedDateFromHtml(html);
+      if (date) inferredByUrl.set(url, date);
+    } catch {
+      // best-effort inference only
+    }
+  };
+
+  // Small sequential batch keeps this reliable in serverless/local runs.
+  for (const target of targets) {
+    await withTimeout(target.url);
+  }
+
+  if (inferredByUrl.size === 0) return docs;
+  return docs.map((d) => {
+    if (d.publishedAt) return d;
+    const inferred = inferredByUrl.get(d.url);
+    if (!inferred) return d;
+    return { ...d, publishedAt: inferred, dateConfidence: "inferred" };
+  });
 }
 
 async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc[]> {
@@ -912,18 +1061,32 @@ async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc
   if (missing.length === 0) return docs;
 
   const byUrl = new Map<string, Date>();
+  const byCanonical = new Map<string, Date>();
+  const canonicalMissing = Array.from(new Set(missing.map(canonicalUrlKey)));
   const driver = detectDriver();
   if (driver === "postgres") {
     const client = await getDbClient();
-    const result = await client.query(
+    const exactResult = await client.query(
       `SELECT url, MAX(published_at) AS published_at
        FROM items
        WHERE url = ANY($1)
        GROUP BY url`,
       [missing],
     );
-    for (const row of result.rows as Array<{ url: string; published_at: number | null }>) {
+    for (const row of exactResult.rows as Array<{ url: string; published_at: number | null }>) {
       if (row.published_at) byUrl.set(row.url, new Date(row.published_at * 1000));
+    }
+
+    const canonicalResult = await client.query(
+      `SELECT regexp_replace(lower(split_part(regexp_replace(url, '^https?://', ''), '?', 1)), '/$', '') AS canonical,
+              MAX(published_at) AS published_at
+       FROM items
+       WHERE regexp_replace(lower(split_part(regexp_replace(url, '^https?://', ''), '?', 1)), '/$', '') = ANY($1)
+       GROUP BY canonical`,
+      [canonicalMissing],
+    );
+    for (const row of canonicalResult.rows as Array<{ canonical: string; published_at: number | null }>) {
+      if (row.published_at) byCanonical.set(row.canonical, new Date(row.published_at * 1000));
     }
   } else {
     const sqlite = getSqlite();
@@ -936,7 +1099,7 @@ async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc
 
   return docs.map((d) => {
     if (d.publishedAt) return d;
-    const inferred = byUrl.get(d.url);
+    const inferred = byUrl.get(d.url) ?? byCanonical.get(canonicalUrlKey(d.url));
     if (!inferred) return d;
     return { ...d, publishedAt: inferred, dateConfidence: "inferred" };
   });
@@ -948,17 +1111,13 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
   const overlap = enrichOverlapWithSignals(classifyOverlapWithSourcegraph(text), text);
   const scores = clusterScore(cluster);
   const tl = threatLevel(scores);
-
-  const actionability = [
-    scores.enterprise_relevance >= 4 ? "sales" : null,
-    scores.direct_overlap >= 3 || (scores.benchmark_signal ?? 1) >= 4 ? "product" : null,
-    scores.direct_overlap >= 3 || (scores.benchmark_signal ?? 1) >= 4 ? "messaging" : null,
-    tl === "high" ? "exec" : null,
-  ].filter((x): x is string => Boolean(x));
+  const actionability = deriveActionability(scores, tl);
+  const dateConfidence = rep.dateConfidence ?? (rep.publishedAt ? "exact" : "unknown");
 
   return {
     competitor: cluster.competitor.display_name,
     date: rep.publishedAt ? rep.publishedAt.toISOString().slice(0, 10) : null,
+    date_confidence: dateConfidence,
     title: rep.title,
     source: rep.source,
     source_type: rep.source_type,
@@ -966,17 +1125,17 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
     update_type: inferUpdateType(text),
     overlap_with_sourcegraph: overlap,
     summary: compactSummary(rep.summary || rep.title),
-    why_it_matters: whyItMatters(cluster.competitor, overlap, scores, text),
+    why_it_matters: whyItMatters(cluster.competitor, overlap, scores, text, actionability),
     threat_level: tl,
     confidence: confidenceLevel(rep.source_type, cluster.docs.length),
     novelty_score: Number(scores.novelty.toFixed(2)),
     relevance_score: Number(scores.final_score.toFixed(2)),
-    actionability: actionability.length > 0 ? actionability : ["monitoring"],
+    actionability,
     evidence_notes: [
       `Underlying event: ${cluster.canonicalTitle}`,
       `Representative source type: ${rep.source_type}`,
       `Supporting docs in cluster: ${cluster.docs.length}`,
-      `Date confidence: ${rep.dateConfidence ?? (rep.publishedAt ? "exact" : "unknown")}`,
+      `Date confidence: ${dateConfidence}`,
     ],
     debug_scores: {
       ...scores,
@@ -1055,7 +1214,8 @@ export async function gatherCompetitorIntel(
     // - explicit competitor signal, OR
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
-    const hydrated = await hydratePublishedDates(dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill]));
+    const hydratedByDb = await hydratePublishedDates(dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill]));
+    const hydrated = await hydratePublishedDatesFromMetadata(hydratedByDb, periodDays);
     const deduped = hydrated.filter((doc) => {
       if (looksNoisyCompetitorUrl(doc.url)) return false;
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
