@@ -2,6 +2,10 @@ import { retrieveForAgent } from "../pipeline/agentRetrieval";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
 import { classifySourceTypeByDomain, getDomainFromUrl } from "../../config/competitor-intel";
+import {
+  classifySourcegraphIntegrationOpportunity,
+  type IntegrationOpportunityLevel,
+} from "./sourcegraph-integration-opportunity";
 
 export interface MarketBriefEvidence {
   source: string;
@@ -24,6 +28,8 @@ export interface MarketBriefDelta {
     owner: "PMM" | "Sales" | "SE" | "Product" | "Exec";
     action: string;
   };
+  integration_opportunity: IntegrationOpportunityLevel;
+  sourcegraph_integration_play: string[];
   evidence: MarketBriefEvidence[];
 }
 
@@ -46,8 +52,53 @@ interface ScoredDoc {
   policyBasis: string[];
 }
 
+const MARKET_TRACKING_DOMAINS = new Set([
+  "click.kit-mail3.com",
+  "click.kit-mail.com",
+  "link.mail.beehiiv.com",
+]);
+
 function textOf(doc: AgentRankedDoc): string {
   return `${doc.title} ${doc.snippet ?? ""} ${doc.content ?? ""}`.toLowerCase();
+}
+
+function stripBoilerplateNoise(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\bsection title:\s*/gi, " ")
+    .replace(/\bcontent:\s*/gi, " ")
+    .replace(/\btable of contents\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function canonicalizeUrl(url: string): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+    parsed.hash = "";
+    ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source"].forEach((p) =>
+      parsed.searchParams.delete(p),
+    );
+    const query = parsed.searchParams.toString();
+    parsed.search = query ? `?${query}` : "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function isGenericMarketPage(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase().replace(/\/+$/, "");
+    if (path === "" || path === "/") return true;
+    if (/^\/(docs|documentation|product|products|features|pricing|careers|company|about)$/.test(path)) return true;
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function segmentImpactFromText(text: string, state: PlaybookState): string[] {
@@ -92,11 +143,22 @@ function isMarketBriefNoise(doc: AgentRankedDoc): boolean {
   const domain = getDomainFromUrl(doc.url ?? "");
   const sourceType = classifySourceTypeByDomain(domain);
   if (sourceType === "community") return true;
+  if (MARKET_TRACKING_DOMAINS.has(domain)) return true;
   if (/(reddit\.com|dev\.to|podcasters\.spotify\.com)/.test(domain)) return true;
   if (/(best .* ai coding tools|top .* ai coding tools|tested\s*&\s*compared|awesome-monorepo|staff cuts the new ai normal)/.test(text)) {
     return true;
   }
   if (/(vibe coding is fun until|dev community)/.test(text)) return true;
+  return false;
+}
+
+function isLowSignalMarketDoc(doc: AgentRankedDoc): boolean {
+  const text = textOf(doc);
+  const url = canonicalizeUrl(doc.url ?? "");
+  if (!url) return true;
+  if (isGenericMarketPage(url) && !/(benchmark|case study|pricing|security|compliance|launch|release|ga|enterprise)/.test(text)) {
+    return true;
+  }
   return false;
 }
 
@@ -160,6 +222,11 @@ function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
 
 function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
   const text = textOf(item.doc);
+  const integration = classifySourcegraphIntegrationOpportunity({
+    title: item.doc.title,
+    summary: item.doc.snippet ?? "",
+    content: item.doc.content ?? "",
+  });
   const alignment: "reinforces" | "threatens" | "unknown" =
     item.contradiction
       ? "threatens"
@@ -177,7 +244,7 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
 
   return {
     title: item.doc.title,
-    summary: (item.doc.snippet ?? item.doc.content ?? "").slice(0, 320),
+    summary: stripBoilerplateNoise((item.doc.snippet ?? item.doc.content ?? "").slice(0, 480)).slice(0, 320),
     segment_impact: item.segmentImpact.length > 0 ? item.segmentImpact : ["Other"],
     persona_impact: item.personaImpact.length > 0 ? item.personaImpact : [state.persona_priority[0] ?? "Head of Developer Platform"],
     playbook_alignment: alignment,
@@ -195,6 +262,8 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
           ? "Review playbook assumptions and update battlecard/messaging guidance within 48 hours."
           : "Incorporate this signal into active messaging, qualification, and campaign planning this week.",
     },
+    integration_opportunity: integration.level,
+    sourcegraph_integration_play: integration.sourcegraph_integration_play,
     evidence: [
       {
         source: evidenceSource,
@@ -203,6 +272,38 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
         confidence: confidenceFromDoc(item.doc),
       },
     ],
+  };
+}
+
+export function postProcessMarketBriefOutput(payload: MarketBriefOutput): MarketBriefOutput {
+  const cleanDelta = (delta: MarketBriefDelta): MarketBriefDelta | null => {
+    const evidence = delta.evidence
+      .map((e) => ({ ...e, url: canonicalizeUrl(e.url) }))
+      .filter((e) => !!e.url);
+    if (evidence.length === 0) return null;
+    const primaryUrl = evidence[0]?.url ?? "";
+    if (isGenericMarketPage(primaryUrl) && delta.playbook_alignment === "unknown") return null;
+
+    return {
+      ...delta,
+      summary: stripBoilerplateNoise(delta.summary).slice(0, 320),
+      playbook_alignment: delta.playbook_alignment === "unknown" ? "reinforces" : delta.playbook_alignment,
+      sourcegraph_integration_play:
+        delta.sourcegraph_integration_play.length > 0
+          ? delta.sourcegraph_integration_play
+          : classifySourcegraphIntegrationOpportunity({
+              title: delta.title,
+              summary: delta.summary,
+              content: delta.why_it_matters,
+            }).sourcegraph_integration_play,
+      evidence,
+    };
+  };
+
+  return {
+    ...payload,
+    executive_delta: payload.executive_delta.map(cleanDelta).filter((d): d is MarketBriefDelta => d !== null),
+    watch_items: payload.watch_items.map(cleanDelta).filter((d): d is MarketBriefDelta => d !== null),
   };
 }
 
@@ -223,7 +324,7 @@ export async function generateMarketBrief(options: {
 
   const ranked = await rankForAgent("market_brief", docs);
   const scored = ranked
-    .filter((doc) => !isMarketBriefNoise(doc))
+    .filter((doc) => !isMarketBriefNoise(doc) && !isLowSignalMarketDoc(doc))
     .map((doc) => scoreDoc(doc, state))
     .sort((a, b) => b.score - a.score);
 
@@ -233,7 +334,7 @@ export async function generateMarketBrief(options: {
   const invalidations = selected.filter((x) => x.contradiction).map((x) => x.doc.title).slice(0, 8);
   const noisySuppressed = scored.slice(maxItems).map((x) => x.doc.title).slice(0, 12);
 
-  return {
+  return postProcessMarketBriefOutput({
     brief_date: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
     playbook_confidence_flags: state.confidence_flags,
@@ -241,5 +342,5 @@ export async function generateMarketBrief(options: {
     watch_items: watchItems,
     invalidations_to_monitor: invalidations,
     noisy_items_suppressed: noisySuppressed,
-  };
+  });
 }

@@ -2,6 +2,10 @@ import { retrieveForAgent } from "../pipeline/agentRetrieval";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
 import { classifySourceTypeByDomain, getDomainFromUrl } from "../../config/competitor-intel";
+import {
+  classifySourcegraphIntegrationOpportunity,
+  type IntegrationOpportunityLevel,
+} from "./sourcegraph-integration-opportunity";
 
 export interface ContentIdea {
   title: string;
@@ -23,6 +27,8 @@ export interface ContentIdea {
   content_outline: string[];
   proof_required: string[];
   guardrails: string[];
+  integration_opportunity: IntegrationOpportunityLevel;
+  sourcegraph_integration_play: string[];
   distribution_plan: {
     primary_format: string;
     recommended_venue: string;
@@ -95,7 +101,19 @@ const NOISY_DOMAINS = new Set([
   "xcancel.com",
   "twitter.com",
   "x.com",
+  "click.kit-mail3.com",
+  "click.kit-mail.com",
+  "link.mail.beehiiv.com",
 ]);
+
+function isNoisyDomain(domain: string): boolean {
+  if (!domain) return false;
+  if (NOISY_DOMAINS.has(domain)) return true;
+  for (const noisy of NOISY_DOMAINS) {
+    if (domain.endsWith(`.${noisy}`)) return true;
+  }
+  return false;
+}
 
 const TITLE_SIMILARITY_STOPWORDS = new Set([
   "the",
@@ -130,6 +148,45 @@ const TITLE_SIMILARITY_STOPWORDS = new Set([
 function sourceFromUrl(url: string | undefined): string {
   const domain = getDomainFromUrl(url);
   return domain || "unknown";
+}
+
+function canonicalizeUrl(url: string | undefined): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return "";
+    parsed.hash = "";
+    ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source"].forEach((p) =>
+      parsed.searchParams.delete(p),
+    );
+    const query = parsed.searchParams.toString();
+    parsed.search = query ? `?${query}` : "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function isGenericIdeaPage(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase().replace(/\/+$/, "");
+    if (path === "" || path === "/") return true;
+    if (/^\/(docs|documentation|product|products|features|pricing|careers|company|about)$/.test(path)) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function stripBoilerplateNoise(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\bsection title:\s*/gi, " ")
+    .replace(/\bcontent:\s*/gi, " ")
+    .replace(/\btable of contents\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function toSegmentBucket(
@@ -427,7 +484,7 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
   const timeliness_score = doc.publishedAt ? Math.max(0.2, 1 - ((Date.now() - doc.publishedAt.getTime()) / (1000 * 60 * 60 * 24 * 120))) : 0.5;
   const source_quality_score =
     sourceType === "primary" ? 1 : sourceType === "secondary" ? 0.7 : sourceType === "internal_curated" ? 0.85 : 0.35;
-  const noisy_domain_penalty = NOISY_DOMAINS.has(domain) ? 0.3 : 0;
+  const noisy_domain_penalty = isNoisyDomain(domain) ? 0.3 : 0;
 
   const score =
     0.12 * segment_priority_score +
@@ -455,7 +512,12 @@ function toIdea(
   targetSegmentOverride?: ContentIdea["target_segment"],
 ): ContentIdea {
   const text = textOf(candidate.doc);
-  const evidenceUrl = candidate.doc.url ?? "";
+  const integration = classifySourcegraphIntegrationOpportunity({
+    title: candidate.doc.title,
+    summary: candidate.doc.snippet ?? "",
+    content: candidate.doc.content ?? "",
+  });
+  const evidenceUrl = canonicalizeUrl(candidate.doc.url ?? "");
   const evidenceSource = sourceFromUrl(evidenceUrl);
   const date = candidate.doc.publishedAt ? candidate.doc.publishedAt.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
@@ -477,7 +539,7 @@ function toIdea(
 
   return {
     title,
-    thesis,
+    thesis: stripBoilerplateNoise(thesis),
     target_segment: targetSegment,
     target_persona: candidate.persona,
     funnel_stage: funnel,
@@ -488,12 +550,46 @@ function toIdea(
       ? [{ title: candidate.doc.title, source: evidenceSource, url: evidenceUrl, date }]
       : [],
     core_claim: "Sourcegraph complements existing assistants by providing enterprise-grade cross-repo context, search, and change management.",
-    key_insights: keyInsights,
-    content_outline: contentOutline,
+    key_insights: keyInsights.map((x) => stripBoilerplateNoise(x)),
+    content_outline: contentOutline.map((x) => stripBoilerplateNoise(x)),
     proof_required: ["product evidence", "external trend", "customer story"],
     guardrails: state.messaging_guardrails,
+    integration_opportunity: integration.level,
+    sourcegraph_integration_play: integration.sourcegraph_integration_play,
     distribution_plan: distributionPlan,
     priority_score: Number(candidate.score.toFixed(3)),
+  };
+}
+
+export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): ContentIdeasOutput {
+  const ideas = payload.ideas
+    .map((idea) => {
+      const sources = idea.sources
+        .map((s) => ({ ...s, url: canonicalizeUrl(s.url) }))
+        .filter((s) => !!s.url && !isGenericIdeaPage(s.url) && !isNoisyDomain(sourceFromUrl(s.url)));
+      if (sources.length === 0) return null;
+      return {
+        ...idea,
+        title: stripBoilerplateNoise(idea.title),
+        thesis: stripBoilerplateNoise(idea.thesis),
+        key_insights: idea.key_insights.map((x) => stripBoilerplateNoise(x)),
+        content_outline: idea.content_outline.map((x) => stripBoilerplateNoise(x)),
+        sourcegraph_integration_play:
+          idea.sourcegraph_integration_play.length > 0
+            ? idea.sourcegraph_integration_play
+            : classifySourcegraphIntegrationOpportunity({
+                title: idea.title,
+                summary: idea.thesis,
+                content: idea.content_outline.join(" "),
+              }).sourcegraph_integration_play,
+        sources,
+      };
+    })
+    .filter((i): i is ContentIdea => i !== null);
+
+  return {
+    ...payload,
+    ideas,
   };
 }
 
@@ -520,9 +616,14 @@ export async function generateContentIdeas(options: {
       const domain = sourceFromUrl(c.doc.url);
       const sourceType = classifySourceTypeByDomain(domain);
       const hasGtmSignal = GTM_SIGNAL_TERMS.some((t) => text.includes(t));
+      const canonicalUrl = canonicalizeUrl(c.doc.url);
       if (c.guardrailViolation) return false;
       if (!hasGtmSignal) return false;
-      if (NOISY_DOMAINS.has(domain)) return false;
+      if (!canonicalUrl) return false;
+      if (isNoisyDomain(domain)) return false;
+      if (isGenericIdeaPage(canonicalUrl) && !/(benchmark|case study|customer|ga|release|pricing|security|compliance|enterprise)/.test(text)) {
+        return false;
+      }
       if (sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) return false;
       if (c.segment === "Other" && !/(capital market|bank|insurance|finserv|regulated)/.test(text) && c.score < 0.72) return false;
       return c.score >= 0.58;
@@ -595,7 +696,7 @@ export async function generateContentIdeas(options: {
   // If detected signals are too generic, rebalance targeting toward explicit GTM priorities
   // so output isn't over-biased to "Other".
   const rebalanceBucketMinimums: Record<SegmentBucket, number> = {
-    beachhead: numIdeas >= 4 ? 1 : 0,
+    beachhead: numIdeas >= 3 ? 1 : 0,
     adjacent: numIdeas >= 5 ? 1 : 0,
     broader: numIdeas >= 3 ? 1 : 0,
   };
@@ -679,7 +780,7 @@ export async function generateContentIdeas(options: {
     return acc;
   }, {});
 
-  return {
+  return postProcessContentIdeasOutput({
     generated_at: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
     playbook_confidence_flags: state.confidence_flags,
@@ -690,5 +791,5 @@ export async function generateContentIdeas(options: {
       achieved_segment_counts: achievedSegmentCounts,
     },
     ideas,
-  };
+  });
 }

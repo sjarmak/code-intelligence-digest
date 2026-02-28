@@ -32,6 +32,9 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
     lines.push(`- Segment impact: ${item.segment_impact.join(", ")}`);
     lines.push(`- Persona impact: ${item.persona_impact.join(", ")}`);
     lines.push(`- Why it matters: ${item.why_it_matters}`);
+    lines.push(`- Sourcegraph opportunity: **${item.integration_opportunity}**`);
+    lines.push(`- Sourcegraph integration play:`);
+    item.sourcegraph_integration_play.forEach((play) => lines.push(`  - ${play}`));
     lines.push(`- Recommended owner/action: **${item.recommended_action.owner}** - ${item.recommended_action.action}`);
     lines.push("- Sources:");
     if (item.evidence.length === 0) {
@@ -98,6 +101,9 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
     lines.push(`- Thesis: ${idea.thesis}`);
     lines.push(`- Why now: ${idea.why_now}`);
     lines.push(`- Core claim: ${idea.core_claim}`);
+    lines.push(`- Sourcegraph opportunity: **${idea.integration_opportunity}**`);
+    lines.push(`- Sourcegraph integration play:`);
+    idea.sourcegraph_integration_play.forEach((play) => lines.push(`  - ${play}`));
     lines.push(`- Primary format: **${idea.distribution_plan.primary_format}**`);
     lines.push(`- Recommended venue: ${idea.distribution_plan.recommended_venue}`);
     lines.push(`- Channel strategy: ${idea.distribution_plan.channel_strategy}`);
@@ -148,14 +154,17 @@ export function formatCompetitorIntelMarkdown(
   payload.items.forEach((item, i) => {
     lines.push(`### ${i + 1}. ${item.competitor}: ${item.title}`);
     lines.push(`- Date/source: ${item.date ?? "unknown"} (${item.date_confidence}) | **${item.source_type}** | ${item.source}`);
-    lines.push(`- URL: [Open source](${item.url})`);
+    lines.push(`- URL: ${item.url}`);
     lines.push(`- Threat/confidence: **${item.threat_level}** / **${item.confidence}**`);
     lines.push(`- Update type: ${item.update_type}`);
     lines.push(`- Overlap with Sourcegraph: ${item.overlap_with_sourcegraph.join(", ") || "none"}`);
     lines.push(`- Summary: ${item.summary}`);
     lines.push(`- Why it matters: ${item.why_it_matters}`);
+    lines.push(`- Sourcegraph opportunity: **${item.integration_opportunity}**`);
+    lines.push(`- Sourcegraph integration play: ${item.sourcegraph_integration_play.join(" | ")}`);
     lines.push(`- Actionability: ${item.actionability.join(" | ")}`);
-    lines.push(`<details><summary><strong>Evidence notes</strong></summary><div>${esc(item.evidence_notes.join(" | "))}</div></details>`);
+    const evidence = item.evidence_notes.length > 0 ? item.evidence_notes.join(" | ") : "No evidence notes captured";
+    lines.push(`<details><summary><strong>Evidence notes</strong></summary><div>${esc(evidence)}</div></details>`);
     lines.push("");
   });
 

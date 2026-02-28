@@ -13,6 +13,7 @@ import {
   type CompetitorIntelEntry,
   type IntelSourceType,
 } from "../../config/competitor-intel";
+import { classifySourcegraphIntegrationOpportunity, type IntegrationOpportunityLevel } from "./sourcegraph-integration-opportunity";
 
 export interface RankedCompetitorIntelItem {
   competitor: string;
@@ -31,9 +32,29 @@ export interface RankedCompetitorIntelItem {
   novelty_score: number;
   relevance_score: number;
   actionability: string[];
+  integration_opportunity: IntegrationOpportunityLevel;
+  sourcegraph_integration_play: string[];
   evidence_notes: string[];
   debug_scores: Record<string, number>;
 }
+
+interface CompetitorIntelQualityRubric {
+  requireCanonicalUrl: boolean;
+  minSummaryLength: number;
+  maxSummaryLength: number;
+  maxSummarySentences: number;
+  maxHighThreatWithoutStrongOverlap: boolean;
+  requireEvidenceNotes: boolean;
+}
+
+const DEFAULT_COMPETITOR_INTEL_RUBRIC: CompetitorIntelQualityRubric = {
+  requireCanonicalUrl: true,
+  minSummaryLength: 40,
+  maxSummaryLength: 420,
+  maxSummarySentences: 3,
+  maxHighThreatWithoutStrongOverlap: true,
+  requireEvidenceNotes: true,
+};
 
 interface CandidateDoc {
   competitorId: string;
@@ -120,13 +141,19 @@ function normalizeTitle(title: string): string {
 
 function inferUpdateType(text: string): string {
   const t = text.toLowerCase();
-  // Prefer benchmark/customer proof classification before launch language,
-  // since many benchmark posts include generic "introducing/new" phrasing.
+  // Prefer benchmark proof and launch classification before pricing:
+  // launch posts can include temporary pricing notes, but the primary
+  // competitive move is still product availability/performance.
   if (/(case study|customer story|customer evidence|fortune 500|swe[\s-]?bench|leaderboard)/.test(t))
     return "market_proof";
-  if (/(pricing|package|packaging|tier|enterprise plan)/.test(t)) return "pricing_packaging";
+  if (
+    /(introducing|now available|general availability|\bga\b|release notes|changelog|preview|beta|launch|launches|released)/.test(t)
+  ) {
+    return "product_launch";
+  }
+  if (/(pricing|package|packaging|tier|enterprise plan|credits? pricing|promotional pricing)/.test(t))
+    return "pricing_packaging";
   if (/(security|compliance|audit|policy|rbac|sso|self-hosted|on-prem)/.test(t)) return "security_enterprise";
-  if (/(ga|general availability|launch|preview|beta|release notes|changelog)/.test(t)) return "product_launch";
   return "product_update";
 }
 
@@ -138,11 +165,17 @@ function confidenceLevel(sourceType: IntelSourceType, docsCount: number): "high"
 
 function threatLevel(scoreMap: Record<string, number>): "high" | "medium" | "low" | "negative" {
   const score = scoreMap.final_score;
-  if (score >= 4.2) return "high";
-  if (score >= 3.0) return "medium";
-  if ((scoreMap.enterprise_relevance ?? 0) >= 4 && score >= 2.6) return "medium";
-  if ((scoreMap.benchmark_signal ?? 0) >= 4 && (scoreMap.direct_overlap ?? 0) >= 2 && score >= 2.6) return "medium";
-  if (score >= 2.0) return "low";
+  if (
+    score >= 5.1 &&
+    (scoreMap.direct_overlap ?? 0) >= 3 &&
+    (scoreMap.enterprise_relevance ?? 0) >= 4
+  ) {
+    return "high";
+  }
+  if (score >= 3.6) return "medium";
+  if ((scoreMap.enterprise_relevance ?? 0) >= 4 && score >= 3.2) return "medium";
+  if ((scoreMap.benchmark_signal ?? 0) >= 4 && (scoreMap.direct_overlap ?? 0) >= 3 && score >= 3.4) return "medium";
+  if (score >= 2.2) return "low";
   return "negative";
 }
 
@@ -1030,6 +1063,155 @@ function compactSummary(text: string, maxLen = 900): string {
   return `${normalized.slice(0, maxLen)}...`;
 }
 
+function stripBoilerplateNoise(text: string): string {
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\bcontent:\s*/gi, " ")
+    .replace(/\bsummary:\s*/gi, " ")
+    .replace(/\bsection title:\s*/gi, " ")
+    .replace(/\b(table of contents|navigation menu|toggle navigation|search or jump to)\b/gi, " ")
+    .replace(/\b(appearance settings|view docs|follow us|open source|resources|install)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isCanonicalHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function canonicalizeReportUrl(url: string): string {
+  if (!isCanonicalHttpUrl(url)) return "";
+  const parsed = new URL(url);
+  parsed.hash = "";
+  ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source"].forEach((key) => {
+    parsed.searchParams.delete(key);
+  });
+  const query = parsed.searchParams.toString();
+  parsed.search = query ? `?${query}` : "";
+  return parsed.toString();
+}
+
+function cleanIntelSummary(text: string, fallbackTitle: string, rubric: CompetitorIntelQualityRubric): string {
+  const raw = stripBoilerplateNoise(text);
+  const candidate = raw.length > 0 ? raw : fallbackTitle;
+  const sentences = candidate
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 18)
+    .filter((s) => !/^content[:\s]/i.test(s))
+    .slice(0, rubric.maxSummarySentences);
+
+  const summary = (sentences.length > 0 ? sentences.join(" ") : candidate)
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (summary.length < rubric.minSummaryLength) {
+    return fallbackTitle;
+  }
+  if (summary.length > rubric.maxSummaryLength) {
+    return `${summary.slice(0, rubric.maxSummaryLength - 3).trim()}...`;
+  }
+  return summary;
+}
+
+function refineUpdateType(item: RankedCompetitorIntelItem): string {
+  const text = `${item.title} ${item.summary} ${item.why_it_matters}`.toLowerCase();
+  if (
+    item.update_type === "pricing_packaging" &&
+    /(introducing|now available|general availability|\bga\b|release|launch|benchmark|swe[\s-]?bench)/.test(text) &&
+    !/(pricing|tier|credits?|promotional pricing|discount)/.test(text)
+  ) {
+    return "product_launch";
+  }
+  return inferUpdateType(text);
+}
+
+function buildEvidenceNotes(item: RankedCompetitorIntelItem): string[] {
+  const notes: string[] = [];
+  const dateLabel = item.date ?? "unknown date";
+  notes.push(`Primary citation: ${item.source} (${item.source_type}, ${dateLabel})`);
+  if (item.overlap_with_sourcegraph.length > 0) {
+    notes.push(`Sourcegraph overlap: ${item.overlap_with_sourcegraph.join(", ")}`);
+  } else {
+    notes.push("Sourcegraph overlap: none");
+  }
+  notes.push(`Signal confidence: ${item.confidence}`);
+  return notes;
+}
+
+function normalizeThreatByRubric(
+  item: RankedCompetitorIntelItem,
+  rubric: CompetitorIntelQualityRubric,
+): "high" | "medium" | "low" | "negative" {
+  if (!rubric.maxHighThreatWithoutStrongOverlap) return item.threat_level;
+  if (item.threat_level !== "high") return item.threat_level;
+  const overlapStrength = item.overlap_with_sourcegraph.length;
+  const enterpriseStrength = item.debug_scores.enterprise_relevance ?? 0;
+  if (overlapStrength < 3 || enterpriseStrength < 4) return "medium";
+  return "high";
+}
+
+function dedupeNarrativeNearDuplicates(items: RankedCompetitorIntelItem[]): RankedCompetitorIntelItem[] {
+  const seen = new Set<string>();
+  const out: RankedCompetitorIntelItem[] = [];
+  for (const item of items) {
+    const overlapKey = [...item.overlap_with_sourcegraph].sort().join(",");
+    const titleKey = normalizeTitle(item.title)
+      .replace(/\b(now|new|introducing|available|update|updates)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const key = `${item.competitor}|${item.update_type}|${item.date ?? "unknown"}|${overlapKey}|${titleKey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+export function postProcessCompetitorIntelItems(
+  items: RankedCompetitorIntelItem[],
+  rubric: CompetitorIntelQualityRubric = DEFAULT_COMPETITOR_INTEL_RUBRIC,
+): RankedCompetitorIntelItem[] {
+  const cleaned: RankedCompetitorIntelItem[] = [];
+  for (const item of items) {
+    const canonicalUrl = canonicalizeReportUrl(item.url);
+    if (rubric.requireCanonicalUrl && canonicalUrl.length === 0) continue;
+
+    const summary = cleanIntelSummary(item.summary, item.title, rubric);
+    const evidence = rubric.requireEvidenceNotes
+      ? item.evidence_notes.length > 0
+        ? item.evidence_notes
+        : buildEvidenceNotes(item)
+      : item.evidence_notes;
+
+    cleaned.push({
+      ...item,
+      url: canonicalUrl || item.url,
+      summary,
+      update_type: refineUpdateType(item),
+      threat_level: normalizeThreatByRubric(item, rubric),
+      sourcegraph_integration_play:
+        item.sourcegraph_integration_play.length > 0
+          ? item.sourcegraph_integration_play
+          : classifySourcegraphIntegrationOpportunity({
+              title: item.title,
+              summary: item.summary,
+              content: item.why_it_matters,
+              overlap: item.overlap_with_sourcegraph,
+              actionability: item.actionability,
+            }).sourcegraph_integration_play,
+      evidence_notes: evidence,
+    });
+  }
+
+  return dedupeNarrativeNearDuplicates(cleaned);
+}
+
 function hasMaterialSignal(doc: CandidateDoc): boolean {
   const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
   return /(ga|general availability|launch|release|preview|beta|docs|changelog|pricing|packaging|tier|enterprise|self-host|on-prem|sso|rbac|security|compliance|audit|case study|customer|benchmark|swe[\s-]?bench|leaderboard|migration|refactor|codemod|remediation)/.test(
@@ -1350,6 +1532,13 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
       : actionability;
   if (adjustedActionability.length === 0) adjustedActionability.push("monitoring");
   const dateConfidence = rep.dateConfidence ?? (rep.publishedAt ? "exact" : "unknown");
+  const integration = classifySourcegraphIntegrationOpportunity({
+    title: rep.title,
+    summary: rep.summary,
+    content: rep.content,
+    overlap,
+    actionability: adjustedActionability,
+  });
 
   return {
     competitor: cluster.competitor.display_name,
@@ -1368,6 +1557,8 @@ function toRankedIntel(cluster: EventCluster): RankedCompetitorIntelItem {
     novelty_score: Number(scores.novelty.toFixed(2)),
     relevance_score: Number(scores.final_score.toFixed(2)),
     actionability: adjustedActionability,
+    integration_opportunity: integration.level,
+    sourcegraph_integration_play: integration.sourcegraph_integration_play,
     evidence_notes: [
       `Underlying event: ${cluster.canonicalTitle}`,
       `Representative source type: ${rep.source_type}`,
@@ -1490,5 +1681,6 @@ export async function gatherCompetitorIntel(
   }
 
   const globallyRanked = dedupeRankedEvents(allRanked.sort((a, b) => b.relevance_score - a.relevance_score));
-  return capOverallPerCompetitor(globallyRanked, topOverall);
+  const postProcessed = postProcessCompetitorIntelItems(globallyRanked);
+  return capOverallPerCompetitor(postProcessed, topOverall);
 }
