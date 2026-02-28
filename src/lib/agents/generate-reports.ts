@@ -20,6 +20,14 @@ import { formatCompetitorIntelMarkdown, formatContentIdeasMarkdown, formatMarket
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 
 const VALID_GOALS: AgentGoal[] = ["content_ideas", "market_brief", "competitor_intel"];
+export type ReportTimeRange = "day" | "week" | "month" | "year";
+
+const RANGE_TO_DAYS: Record<ReportTimeRange, number> = {
+  day: 1,
+  week: 7,
+  month: 30,
+  year: 365,
+};
 
 function stripHtml(s: string | undefined): string {
   if (s == null || s === "") return "";
@@ -80,6 +88,7 @@ export function reportRunId(): string {
 export async function runAgentReport(
   goal: AgentGoal,
   userId: string = "legacy",
+  timeRange?: ReportTimeRange,
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
   if (!VALID_GOALS.includes(goal)) {
     return { ok: false, error: `Invalid goal: ${goal}` };
@@ -88,7 +97,7 @@ export async function runAgentReport(
   const goalDir = path.join(REPORT_DIR, goal);
   try {
     const config = getAgentGoalConfig(goal);
-    const periodDays = config.timeHorizonDays;
+    const periodDays = timeRange ? RANGE_TO_DAYS[timeRange] : config.timeHorizonDays;
     const limit = goal === "content_ideas" ? 10 : 20;
 
     let report: string;
@@ -148,11 +157,12 @@ export async function runAgentReport(
 export async function runAgentReports(
   goals: AgentGoal[],
   userId: string = "legacy",
+  timeRange?: ReportTimeRange,
 ): Promise<{ [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } }> {
   const results: { [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } } = {};
   for (const goal of goals) {
     if (!VALID_GOALS.includes(goal)) continue;
-    results[goal] = await runAgentReport(goal, userId);
+    results[goal] = await runAgentReport(goal, userId, timeRange);
   }
   return results;
 }

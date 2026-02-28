@@ -8,10 +8,17 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 
 const AGENT_GOALS = ["content_ideas", "market_brief", "competitor_intel"] as const;
+const TIME_RANGES = ["day", "week", "month", "year"] as const;
 const GOAL_LABELS: Record<string, string> = {
   content_ideas: "Content Ideas",
   market_brief: "Market Brief",
   competitor_intel: "Competitor Intel",
+};
+const TIME_RANGE_LABELS: Record<(typeof TIME_RANGES)[number], string> = {
+  day: "Past day",
+  week: "Past week",
+  month: "Past month",
+  year: "Past year",
 };
 
 interface ReportMeta {
@@ -33,6 +40,7 @@ export default function AgentReportsPage() {
   const [viewing, setViewing] = useState<ReportDetail | null>(null);
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
   const [selectedGoals, setSelectedGoals] = useState<Set<string>>(new Set(AGENT_GOALS));
+  const [timeRange, setTimeRange] = useState<(typeof TIME_RANGES)[number]>("month");
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
@@ -70,7 +78,7 @@ export default function AgentReportsPage() {
       const res = await fetch("/api/agents/reports/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goals }),
+        body: JSON.stringify({ goals, timeRange }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -379,6 +387,22 @@ export default function AgentReportsPage() {
                 <span className="text-sm">{GOAL_LABELS[goal] ?? goal}</span>
               </label>
             ))}
+          </div>
+          <div className="mb-3">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <span>Time range:</span>
+              <select
+                value={timeRange}
+                onChange={(e) => setTimeRange(e.target.value as (typeof TIME_RANGES)[number])}
+                className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm"
+              >
+                {TIME_RANGES.map((range) => (
+                  <option key={range} value={range}>
+                    {TIME_RANGE_LABELS[range]}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <div className="flex items-center gap-3">
             <button
