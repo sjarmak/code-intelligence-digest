@@ -1,6 +1,7 @@
-import type { Category, FeedItem } from "../model";
+import type { Category } from "../model";
 import { VALID_CATEGORIES } from "../model";
-import { loadItemsByCategory } from "../db/items";
+import { getSqlite } from "../db/index";
+import { detectDriver, getDbClient } from "../db/driver";
 import { searchWeb } from "../retrieval/webSearch";
 import {
   buildCompetitorQueries,
@@ -248,15 +249,24 @@ function clampText(text: string | undefined, maxLen: number): string {
   return text.length > maxLen ? text.slice(0, maxLen) : text;
 }
 
-function toInternalDoc(item: FeedItem): InternalDoc {
-  const summary = clampText(item.summary, 1200);
-  const snippet = clampText(item.contentSnippet, 1600);
-  const full = clampText(item.fullText, 2400);
+function toInternalDoc(item: {
+  id: string;
+  title: string;
+  url: string;
+  sourceTitle?: string | null;
+  publishedAt?: Date;
+  summary?: string | null;
+  snippet?: string | null;
+  fullText?: string | null;
+}): InternalDoc {
+  const summary = clampText(item.summary ?? undefined, 1200);
+  const snippet = clampText(item.snippet ?? undefined, 1600);
+  const full = clampText(item.fullText ?? undefined, 2400);
   return {
     id: item.id,
     title: item.title,
     url: item.url,
-    sourceTitle: item.sourceTitle,
+    sourceTitle: item.sourceTitle ?? undefined,
     publishedAt: item.publishedAt,
     summary,
     snippet,
@@ -281,12 +291,89 @@ async function loadInternalDocs(periodDays: number, maxDocs: number): Promise<In
   const categories = VALID_CATEGORIES as readonly Category[];
   const byId = new Map<string, InternalDoc>();
   const perCategoryLimit = Math.max(20, Math.ceil(maxDocs / Math.max(1, categories.length)));
+  const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
+  const driver = detectDriver();
+
   for (const category of categories) {
-    const items = await loadItemsByCategory(category, periodDays, perCategoryLimit);
-    for (const item of items) {
-      if (!byId.has(item.id)) byId.set(item.id, toInternalDoc(item));
+    if (driver === "postgres") {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT id, title, url, source_title, published_at, summary, content_snippet,
+                LEFT(COALESCE(full_text, ''), 2400) AS full_text_excerpt
+         FROM items
+         WHERE category = $1
+           AND published_at >= $2
+           AND url IS NOT NULL
+         ORDER BY published_at DESC
+         LIMIT $3`,
+        [category, cutoffTime, perCategoryLimit],
+      );
+      for (const row of result.rows as Array<{
+        id: string;
+        title: string;
+        url: string;
+        source_title?: string | null;
+        published_at: number;
+        summary?: string | null;
+        content_snippet?: string | null;
+        full_text_excerpt?: string | null;
+      }>) {
+        if (!row.id || !row.title || !row.url || byId.has(row.id)) continue;
+        byId.set(
+          row.id,
+          toInternalDoc({
+            id: row.id,
+            title: row.title,
+            url: row.url,
+            sourceTitle: row.source_title,
+            publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+            summary: row.summary,
+            snippet: row.content_snippet,
+            fullText: row.full_text_excerpt,
+          }),
+        );
+      }
+    } else {
+      const sqlite = getSqlite();
+      const rows = sqlite
+        .prepare(
+          `SELECT id, title, url, source_title, published_at, summary, content_snippet,
+                  substr(COALESCE(full_text, ''), 1, 2400) AS full_text_excerpt
+           FROM items
+           WHERE category = ? AND published_at >= ? AND url IS NOT NULL
+           ORDER BY published_at DESC
+           LIMIT ?`,
+        )
+        .all(category, cutoffTime, perCategoryLimit) as Array<{
+          id: string;
+          title: string;
+          url: string;
+          source_title?: string | null;
+          published_at: number;
+          summary?: string | null;
+          content_snippet?: string | null;
+          full_text_excerpt?: string | null;
+        }>;
+
+      for (const row of rows) {
+        if (!row.id || !row.title || !row.url || byId.has(row.id)) continue;
+        byId.set(
+          row.id,
+          toInternalDoc({
+            id: row.id,
+            title: row.title,
+            url: row.url,
+            sourceTitle: row.source_title,
+            publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
+            summary: row.summary,
+            snippet: row.content_snippet,
+            fullText: row.full_text_excerpt,
+          }),
+        );
+      }
     }
   }
+
   return Array.from(byId.values())
     .sort((a, b) => (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0))
     .slice(0, maxDocs);
