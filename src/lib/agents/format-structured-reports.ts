@@ -32,6 +32,9 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
     lines.push(`- Segment impact: ${item.segment_impact.join(", ")}`);
     lines.push(`- Persona impact: ${item.persona_impact.join(", ")}`);
     lines.push(`- Why it matters: ${item.why_it_matters}`);
+    if (item.evidence_quality_note) {
+      lines.push(`- Evidence quality: ${item.evidence_quality_note}`);
+    }
     lines.push(`- Sourcegraph opportunity: **${item.integration_opportunity}**`);
     lines.push(`- Sourcegraph integration play:`);
     item.sourcegraph_integration_play.forEach((play) => lines.push(`  - ${play}`));
@@ -101,6 +104,9 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
     lines.push(`- Thesis: ${idea.thesis}`);
     lines.push(`- Why now: ${idea.why_now}`);
     lines.push(`- Core claim: ${idea.core_claim}`);
+    if (idea.evidence_quality_note) {
+      lines.push(`- Evidence quality: ${idea.evidence_quality_note}`);
+    }
     lines.push(`- Sourcegraph opportunity: **${idea.integration_opportunity}**`);
     lines.push(`- Sourcegraph integration play:`);
     idea.sourcegraph_integration_play.forEach((play) => lines.push(`  - ${play}`));

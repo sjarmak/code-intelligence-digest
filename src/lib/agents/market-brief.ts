@@ -30,6 +30,7 @@ export interface MarketBriefDelta {
   };
   integration_opportunity: IntegrationOpportunityLevel;
   sourcegraph_integration_play: string[];
+  evidence_quality_note?: string;
   evidence: MarketBriefEvidence[];
 }
 
@@ -50,12 +51,21 @@ interface ScoredDoc {
   segmentImpact: string[];
   personaImpact: string[];
   policyBasis: string[];
+  evidenceSignalScore: number;
 }
 
 const MARKET_TRACKING_DOMAINS = new Set([
   "click.kit-mail3.com",
   "click.kit-mail.com",
   "link.mail.beehiiv.com",
+]);
+
+const LOW_SIGNAL_MARKET_DOMAINS = new Set([
+  "marketsandmarkets.com",
+  "htfmarketinsights.com",
+  "getpanto.ai",
+  "codewave.com",
+  "pieces.app",
 ]);
 
 function textOf(doc: AgentRankedDoc): string {
@@ -138,18 +148,58 @@ function confidenceFromDoc(doc: AgentRankedDoc): "high" | "medium" | "low" {
   return "low";
 }
 
+function evidenceQualityNote(input: {
+  contradiction: boolean;
+  confidence: "high" | "medium" | "low";
+  evidenceSignalScore: number;
+}): string {
+  if (input.contradiction) {
+    return "Potential invalidation signal. Confirm with a primary source before changing GTM guidance.";
+  }
+  if (input.confidence === "high" && input.evidenceSignalScore >= 0.75) {
+    return "High-confidence signal from a strong source with specific enterprise/coding evidence.";
+  }
+  if (input.evidenceSignalScore >= 0.6) {
+    return "Moderate-confidence signal. Corroborate with one additional primary source this week.";
+  }
+  return "Early or low-confidence signal. Monitor for repeat evidence before changing GTM direction.";
+}
+
 function isMarketBriefNoise(doc: AgentRankedDoc): boolean {
   const text = textOf(doc);
   const domain = getDomainFromUrl(doc.url ?? "");
   const sourceType = classifySourceTypeByDomain(domain);
   if (sourceType === "community") return true;
   if (MARKET_TRACKING_DOMAINS.has(domain)) return true;
+  if (LOW_SIGNAL_MARKET_DOMAINS.has(domain)) return true;
   if (/(reddit\.com|dev\.to|podcasters\.spotify\.com)/.test(domain)) return true;
+  if (
+    /((market|industry)\s+(size|share|forecast|outlook|landscape)|worth\s+\$\d+|growth opportunities|cagr|global\s+market)/.test(
+      text,
+    )
+  ) {
+    return true;
+  }
   if (/(best .* ai coding tools|top .* ai coding tools|tested\s*&\s*compared|awesome-monorepo|staff cuts the new ai normal)/.test(text)) {
     return true;
   }
   if (/(vibe coding is fun until|dev community)/.test(text)) return true;
   return false;
+}
+
+function isPlaybookContradiction(text: string): boolean {
+  if (/(replace github|replace copilot|replace sourcegraph|ai assistant replacement)/.test(text)) {
+    return true;
+  }
+
+  const competitorOrAssistantMention =
+    /(copilot|cursor|windsurf|codeium|gitlab duo|sourcegraph|ai coding assistant|code assistant|coding agent|developer assistant|assistant platform)/.test(
+      text,
+    );
+  const threatClaim = /(replace|replacement for|displace|obsolete|beats|outperform|directly competes|rip and replace)/.test(text);
+  const codingContext = /(coding|codebase|repository|repo|ide|developer|software|programming|pull request|ci\/cd)/.test(text);
+
+  return competitorOrAssistantMention && threatClaim && codingContext;
 }
 
 function isLowSignalMarketDoc(doc: AgentRankedDoc): boolean {
@@ -168,6 +218,17 @@ function ownerFromDoc(text: string): "PMM" | "Sales" | "SE" | "Product" | "Exec"
   if (/(launch|ga|feature|integration|api|mcp)/.test(text)) return "Product";
   if (/(positioning|narrative|message|category)/.test(text)) return "PMM";
   return "Exec";
+}
+
+function evidenceSignalScoreFromText(text: string): number {
+  const signals = [
+    /(launch|release|ga|generally available|pricing|customer|case study|benchmark|rollout|adoption trend)/.test(text),
+    /(compliance|security|audit|byok|rbac|self-hosted|governance|risk)/.test(text),
+    /(copilot|cursor|windsurf|codeium|gitlab duo|sourcegraph|coding assistant|developer platform)/.test(text),
+    /(mcp|context layer|code search|cross-repo|batch changes|migration|remediation|refactor)/.test(text),
+  ];
+  const hits = signals.filter(Boolean).length;
+  return hits / signals.length;
 }
 
 function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
@@ -194,20 +255,20 @@ function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
     ? 0.9
     : 0.3;
 
-  const contradiction =
-    /(replace github|replace copilot|ai assistant replacement|assistant platform)/.test(text) ||
-    ((/cursor|copilot/.test(text) && /(directly competes|replacement for|beats)/.test(text)));
+  const contradiction = isPlaybookContradiction(text);
+  const evidenceSignalScore = evidenceSignalScoreFromText(text);
 
   const contradiction_bonus = contradiction ? 0.35 : 0;
 
   const score =
-    0.22 * segment_priority_score +
-    0.14 * persona_priority_score +
+    0.14 * segment_priority_score +
+    0.1 * persona_priority_score +
     0.18 * competitive_risk_score +
     0.16 * enterprise_relevance_score +
-    0.15 * message_impact_score +
-    0.1 * actionability_score +
-    0.05 * Math.min(1, doc.agentScore) +
+    0.16 * message_impact_score +
+    0.12 * actionability_score +
+    0.08 * Math.min(1, doc.agentScore) +
+    0.06 * evidenceSignalScore +
     contradiction_bonus;
 
   const policyBasis: string[] = [];
@@ -217,7 +278,7 @@ function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
   if (message_impact_score > 0.8) policyBasis.push("context_layer_message_priority");
   if (contradiction) policyBasis.push("playbook_contradiction_bonus");
 
-  return { doc, score, contradiction, segmentImpact, personaImpact, policyBasis };
+  return { doc, score, contradiction, segmentImpact, personaImpact, policyBasis, evidenceSignalScore };
 }
 
 function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
@@ -230,7 +291,10 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
   const alignment: "reinforces" | "threatens" | "unknown" =
     item.contradiction
       ? "threatens"
-      : item.score >= 0.72 && item.policyBasis.length >= 2
+      : item.score >= 0.72 &&
+          item.evidenceSignalScore >= 0.6 &&
+          (/(mcp|context layer|repo context|code search|cross-repo)/.test(text) ||
+            /(compliance|security|audit|byok|self-hosted)/.test(text))
         ? "reinforces"
         : "unknown";
 
@@ -241,18 +305,21 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
 
   const evidenceUrl = item.doc.url ?? "";
   const evidenceSource = getDomainFromUrl(evidenceUrl) || "internal";
+  const confidence = confidenceFromDoc(item.doc);
 
   return {
     title: item.doc.title,
     summary: stripBoilerplateNoise((item.doc.snippet ?? item.doc.content ?? "").slice(0, 480)).slice(0, 320),
     segment_impact: item.segmentImpact.length > 0 ? item.segmentImpact : ["Other"],
-    persona_impact: item.personaImpact.length > 0 ? item.personaImpact : [state.persona_priority[0] ?? "Head of Developer Platform"],
+    persona_impact: item.personaImpact.length > 0 ? item.personaImpact : ["Unknown"],
     playbook_alignment: alignment,
-    affected_assumptions: assumptions.length > 0 ? assumptions : ["Segment and messaging priority remain directionally valid"],
+    affected_assumptions: assumptions.length > 0 ? assumptions : ["No direct playbook invalidation found; monitor for repeated signal."],
     why_it_matters:
       alignment === "threatens"
         ? "This development may invalidate a current GTM assumption and should be reviewed quickly to avoid messaging or deal-risk drift."
-        : "This development affects current segment, buyer, or enterprise-positioning decisions and should be incorporated into near-term GTM motion.",
+        : alignment === "reinforces"
+          ? "This development affects current segment, buyer, or enterprise-positioning decisions and should be incorporated into near-term GTM motion."
+          : "Signal is plausible but evidence is not yet strong enough to change GTM direction; monitor for corroboration.",
     policy_basis: item.policyBasis,
     evidence_basis: [item.doc.title],
     recommended_action: {
@@ -260,16 +327,23 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
       action:
         alignment === "threatens"
           ? "Review playbook assumptions and update battlecard/messaging guidance within 48 hours."
-          : "Incorporate this signal into active messaging, qualification, and campaign planning this week.",
+          : alignment === "reinforces"
+            ? "Incorporate this signal into active messaging, qualification, and campaign planning this week."
+            : "Track follow-on evidence this week and only update messaging after corroboration from high-confidence sources.",
     },
     integration_opportunity: integration.level,
     sourcegraph_integration_play: integration.sourcegraph_integration_play,
+    evidence_quality_note: evidenceQualityNote({
+      contradiction: item.contradiction,
+      confidence,
+      evidenceSignalScore: item.evidenceSignalScore,
+    }),
     evidence: [
       {
         source: evidenceSource,
         url: evidenceUrl,
         date: item.doc.publishedAt ? item.doc.publishedAt.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
-        confidence: confidenceFromDoc(item.doc),
+        confidence,
       },
     ],
   };
@@ -287,7 +361,6 @@ export function postProcessMarketBriefOutput(payload: MarketBriefOutput): Market
     return {
       ...delta,
       summary: stripBoilerplateNoise(delta.summary).slice(0, 320),
-      playbook_alignment: delta.playbook_alignment === "unknown" ? "reinforces" : delta.playbook_alignment,
       sourcegraph_integration_play:
         delta.sourcegraph_integration_play.length > 0
           ? delta.sourcegraph_integration_play

@@ -27,6 +27,7 @@ export interface ContentIdea {
   content_outline: string[];
   proof_required: string[];
   guardrails: string[];
+  evidence_quality_note?: string;
   integration_opportunity: IntegrationOpportunityLevel;
   sourcegraph_integration_play: string[];
   distribution_plan: {
@@ -452,11 +453,15 @@ function detectPersona(text: string): ContentIdea["target_persona"] {
 }
 
 function detectChannel(text: string, state: PlaybookState): ContentIdea["channel"] {
-  if (/(event|conference|summit|meetup|talk)/.test(text) || state.channel_priority[0]?.toLowerCase().includes("event")) return "event_talk";
-  if (/(whitepaper|white paper|guide|analyst)/.test(text) || state.channel_priority.some((c) => c.toLowerCase().includes("whitepaper"))) return "whitepaper";
+  void state;
+  if (/(event|conference|summit|meetup|talk)/.test(text)) return "event_talk";
+  if (/(webinar|workshop|panel)/.test(text)) return "webinar";
+  if (/(whitepaper|white paper|guide|analyst|research report)/.test(text)) return "whitepaper";
   if (/(seo|search trend|organic search|keyword)/.test(text)) return "SEO_page";
   if (/(case study|customer story|reference)/.test(text)) return "case_study";
-  if (/(webinar)/.test(text)) return "webinar";
+  if (/(one[-\s]?pager|battlecard|enablement sheet|deal sheet)/.test(text)) return "sales_one_pager";
+  if (/(email sequence|nurture|outreach cadence)/.test(text)) return "email_sequence";
+  if (/(blog|post|newsletter)/.test(text)) return "blog";
   return "blog";
 }
 
@@ -464,6 +469,47 @@ function detectGuardrailViolation(text: string): boolean {
   if (/(replace github|replace cursor|replace copilot|beat cursor|beat copilot)/.test(text)) return true;
   if (/(sourcegraph.*ai assistant|ai assistant.*sourcegraph)/.test(text)) return true;
   return false;
+}
+
+function hasConcreteEvidence(text: string): boolean {
+  return /(launch|release|ga|pricing|customer|case study|benchmark|docs|documentation|security|compliance|audit|byok|self-hosted|report)/.test(
+    text,
+  );
+}
+
+function buildWhyNow(doc: AgentRankedDoc, text: string): string {
+  const source = sourceFromUrl(doc.url);
+  const date = doc.publishedAt ? doc.publishedAt.toISOString().slice(0, 10) : "recently";
+  if (/(launch|release|ga|pricing)/.test(text)) {
+    return `Fresh product signal from ${source} (${date}) creates a concrete hook for near-term GTM content.`;
+  }
+  if (/(customer|case study|benchmark|report)/.test(text)) {
+    return `External proof signal from ${source} (${date}) can strengthen credibility in active opportunities.`;
+  }
+  return `Recent signal from ${source} (${date}) is relevant but should be paired with one corroborating source before broad activation.`;
+}
+
+function buildCoreClaim(text: string): string {
+  if (/(compliance|security|audit|byok|self-hosted)/.test(text)) {
+    return "Sourcegraph provides the control layer for AI coding workflows in regulated, enterprise environments.";
+  }
+  if (/(migration|remediation|codemod|batch changes)/.test(text)) {
+    return "Sourcegraph turns large-scale code change work into a controlled, cross-repo workflow with verification loops.";
+  }
+  if (/(mcp|context layer|repo context)/.test(text)) {
+    return "Sourcegraph acts as the repo context layer that makes existing assistants more reliable across complex codebases.";
+  }
+  return "Sourcegraph complements coding assistants with cross-repo understanding, precise retrieval, and safer execution.";
+}
+
+function buildEvidenceQualityNote(doc: AgentRankedDoc, text: string): string {
+  const domain = sourceFromUrl(doc.url);
+  const sourceType = classifySourceTypeByDomain(domain);
+  const concrete = hasConcreteEvidence(text);
+  if (sourceType === "primary" && concrete) return "High-confidence: primary source with concrete evidence.";
+  if (sourceType === "secondary" && concrete) return "Moderate confidence: concrete secondary source; corroborate once.";
+  if (sourceType === "community") return "Low confidence: community signal; use as hypothesis only.";
+  return "Low confidence: weak evidence; monitor before promoting.";
 }
 
 function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCandidate {
@@ -474,7 +520,6 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
   const persona = detectPersona(text);
   const channel = detectChannel(text, state);
   const guardrailViolation = detectGuardrailViolation(text);
-  const hasGtmSignal = GTM_SIGNAL_TERMS.some((t) => text.includes(t));
 
   const segment_priority_score = segment === "Capital Markets" ? 0.8 : segment === "Other" ? 0.55 : 0.7;
   const channel_efficiency_score = ["event_talk", "whitepaper", "SEO_page", "blog"].includes(channel) ? 0.9 : 0.6;
@@ -544,16 +589,17 @@ function toIdea(
     target_persona: candidate.persona,
     funnel_stage: funnel,
     channel: candidate.channel,
-    why_now: "A timely external development aligns with active playbook priorities and can be converted into near-term pipeline influence.",
+    why_now: buildWhyNow(candidate.doc, text),
     playbook_alignment: state.campaign_themes.slice(0, 2),
     sources: evidenceUrl
       ? [{ title: candidate.doc.title, source: evidenceSource, url: evidenceUrl, date }]
       : [],
-    core_claim: "Sourcegraph complements existing assistants by providing enterprise-grade cross-repo context, search, and change management.",
+    core_claim: buildCoreClaim(text),
     key_insights: keyInsights.map((x) => stripBoilerplateNoise(x)),
     content_outline: contentOutline.map((x) => stripBoilerplateNoise(x)),
     proof_required: ["product evidence", "external trend", "customer story"],
     guardrails: state.messaging_guardrails,
+    evidence_quality_note: buildEvidenceQualityNote(candidate.doc, text),
     integration_opportunity: integration.level,
     sourcegraph_integration_play: integration.sourcegraph_integration_play,
     distribution_plan: distributionPlan,
@@ -625,6 +671,7 @@ export async function generateContentIdeas(options: {
         return false;
       }
       if (sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) return false;
+      if ((sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) return false;
       if (c.segment === "Other" && !/(capital market|bank|insurance|finserv|regulated)/.test(text) && c.score < 0.72) return false;
       return c.score >= 0.58;
     })
@@ -644,7 +691,7 @@ export async function generateContentIdeas(options: {
 
   const maxOther = Math.max(2, Math.ceil(numIdeas * 0.35));
   const maxPerSegment = Math.max(2, Math.ceil(numIdeas * 0.45));
-  const maxPerChannel = Math.max(3, Math.ceil(numIdeas * 0.5));
+  const maxPerChannel = Math.max(2, Math.ceil(numIdeas * 0.4));
   const maxPerPersona = Math.max(4, Math.ceil(numIdeas * 0.6));
 
   const tryTake = (candidate: ScoredIdeaCandidate, enforceBucketQuota: boolean): boolean => {
@@ -745,22 +792,7 @@ export async function generateContentIdeas(options: {
     const deduped = Array.from(byTitle.values())
       .sort((a, b) => b.priority_score - a.priority_score)
       .slice(0, numIdeas);
-    const preferredPersonas: Array<ContentIdea["target_persona"]> = [
-      "Head of Developer Platform",
-      "VP Engineering",
-      "Staff Engineer",
-      "Security/Compliance",
-    ];
-    const personaCount = deduped.reduce<Record<string, number>>((acc, idea) => {
-      acc[idea.target_persona] = (acc[idea.target_persona] ?? 0) + 1;
-      return acc;
-    }, {});
-    const hasDiversity = Object.keys(personaCount).length >= 2;
-    if (hasDiversity) return deduped;
-    return deduped.map((idea, idx) => ({
-      ...idea,
-      target_persona: preferredPersonas[idx % preferredPersonas.length],
-    }));
+    return deduped;
   })();
   const achievedBucketCounts = {
     beachhead: ideas.filter((i) => toSegmentBucket(i.target_segment, state) === "beachhead").length,

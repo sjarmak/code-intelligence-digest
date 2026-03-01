@@ -4,7 +4,7 @@ import { postProcessMarketBriefOutput, type MarketBriefOutput } from "../../../s
 import { postProcessContentIdeasOutput, type ContentIdeasOutput } from "../../../src/lib/agents/content-ideas";
 
 describe("market brief quality guards", () => {
-  it("removes low-quality deltas and normalizes unknown alignment", () => {
+  it("removes low-quality deltas and preserves unknown alignment", () => {
     const payload: MarketBriefOutput = {
       brief_date: "2026-02-28",
       playbook_version: "2026.02.15.1",
@@ -61,7 +61,7 @@ describe("market brief quality guards", () => {
 
     const out = postProcessMarketBriefOutput(payload);
     expect(out.executive_delta).toHaveLength(1);
-    expect(out.executive_delta[0].playbook_alignment).toBe("reinforces");
+    expect(out.executive_delta[0].playbook_alignment).toBe("unknown");
     expect(out.executive_delta[0].summary).not.toContain("Section Title:");
     expect(out.executive_delta[0].summary).not.toContain("Content:");
     expect(out.executive_delta[0].evidence[0].url).toBe("https://vendor.example/blog/update");
