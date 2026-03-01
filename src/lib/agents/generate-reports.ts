@@ -114,20 +114,21 @@ export async function runAgentReport(
       });
       report = formatContentIdeasMarkdown("Content Ideas Agent Report", payload);
     } else if (goal === "competitor_intel") {
+      const competitorLimit = 45;
+      const competitorTopPer = 8;
       const items = await gatherCompetitorIntel({
         periodDays,
-        topPerCompetitor: 5,
-        topOverall: limit,
-        // Keep on-demand report generation responsive in production.
-        maxGeneratedQueries: 16,
-        webDocsPerQuery: 3,
-        maxWebQueriesPerCompetitor: 2,
-        internalDocsLimit: 600,
+        topPerCompetitor: competitorTopPer,
+        topOverall: competitorLimit,
+        maxGeneratedQueries: 20,
+        webDocsPerQuery: 4,
+        maxWebQueriesPerCompetitor: 3,
+        internalDocsLimit: 800,
       });
       report = formatCompetitorIntelMarkdown("Competitor Intel Agent Report", {
         generatedAt: new Date().toISOString(),
         periodDays,
-        topPerCompetitor: 5,
+        topPerCompetitor: competitorTopPer,
         items,
       });
     } else {

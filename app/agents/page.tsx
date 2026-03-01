@@ -251,7 +251,11 @@ export default function AgentReportsPage() {
         body: JSON.stringify({ reportKeys: [`${viewing.goal}:${viewing.id}`] }),
         credentials: "include",
       });
-      const data = (await res.json()) as { message?: string; error?: string };
+      const data = (await res.json()) as {
+        message?: string;
+        error?: string;
+        results?: Array<{ goal: string; sent: boolean; error?: string }>;
+      };
       if (!res.ok) {
         setSendEmailMessage(data.error ?? "Failed to send email");
         return;
@@ -275,7 +279,11 @@ export default function AgentReportsPage() {
         body: JSON.stringify({ reportKeys: Array.from(selectedReportKeys) }),
         credentials: "include",
       });
-      const data = (await res.json()) as { message?: string; error?: string };
+      const data = (await res.json()) as {
+        message?: string;
+        error?: string;
+        results?: Array<{ goal: string; sent: boolean; error?: string }>;
+      };
       if (!res.ok) {
         setSendEmailMessage(data.error ?? "Failed to send email");
         return;

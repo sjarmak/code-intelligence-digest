@@ -199,16 +199,28 @@ function shouldKeepUndatedDoc(doc: CandidateDoc, periodDays: number, ownDomain: 
   if (doc.publishedAt) return true;
   const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
   const titleUrl = `${doc.title} ${doc.url}`.toLowerCase();
+  const urlLower = doc.url.toLowerCase();
+  const looksOfficial =
+    /\/blog\/|\/news\/|\/updates\/|\/changelog\/|\/articles\/|\/post\/|\/insights\/|\/resources\/|release|changelog/.test(urlLower) ||
+    /release|changelog|blog|what'?s new|article|insight/.test(titleUrl);
   const highSignalBenchmark =
     /swe[\s-]?bench|benchmark|leaderboard|eval/.test(titleUrl) &&
-    /\/blog\/|\/news\/|\/updates\//.test(doc.url.toLowerCase()) &&
+    /\/blog\/|\/news\/|\/updates\//.test(urlLower) &&
     !/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(titleUrl);
 
   if (periodDays <= 7) {
-    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 3.8;
+    return (
+      ownDomain &&
+      doc.source_type === "primary" &&
+      (highSignalBenchmark ? doc.retrievalScore >= 3.8 : (looksOfficial && doc.retrievalScore >= 2))
+    );
   }
   if (periodDays <= 31) {
-    return ownDomain && doc.source_type === "primary" && highSignalBenchmark && doc.retrievalScore >= 2.6;
+    return (
+      ownDomain &&
+      doc.source_type === "primary" &&
+      (highSignalBenchmark ? doc.retrievalScore >= 2.6 : (looksOfficial && doc.retrievalScore >= 2))
+    );
   }
   if (periodDays <= 90) {
     return (
@@ -1222,7 +1234,7 @@ export function postProcessCompetitorIntelItems(
 
 function hasMaterialSignal(doc: CandidateDoc): boolean {
   const text = `${doc.title} ${doc.summary} ${doc.content}`.toLowerCase();
-  return /(ga|general availability|launch|release|preview|beta|docs|changelog|pricing|packaging|tier|enterprise|self-host|on-prem|sso|rbac|security|compliance|audit|case study|customer|benchmark|swe[\s-]?bench|leaderboard|migration|refactor|codemod|remediation)/.test(
+  return /(ga|general availability|launch|release|preview|beta|docs|blog|changelog|pricing|packaging|tier|enterprise|self-host|on-prem|sso|rbac|security|compliance|audit|case study|customer|benchmark|swe[\s-]?bench|leaderboard|migration|refactor|codemod|remediation)/.test(
     text,
   );
 }
@@ -1387,7 +1399,8 @@ function dedupeRankedEvents(items: RankedCompetitorIntelItem[]): RankedCompetito
 }
 
 function capOverallPerCompetitor(items: RankedCompetitorIntelItem[], topOverall: number): RankedCompetitorIntelItem[] {
-  const cap = 3;
+  // At most 2 per competitor so the report doesn't bunch up GitLab/Copilot; leaves room for others.
+  const cap = 2;
   const counts = new Map<string, number>();
   const selected: RankedCompetitorIntelItem[] = [];
 
@@ -1635,7 +1648,7 @@ export async function gatherCompetitorIntel(
         : competitor.tier <= 1
           ? Math.min(4, maxGeneratedQueries)
           : competitor.tier === 2
-            ? Math.min(3, maxGeneratedQueries)
+            ? Math.min(4, maxGeneratedQueries)
             : Math.min(2, maxGeneratedQueries);
     const webCandidates = await retrieveWebDocs(
       competitor,
@@ -1666,7 +1679,7 @@ export async function gatherCompetitorIntel(
       if (operationalNoise && periodDays <= 31) return false;
       if (!shouldKeepUndatedDoc(doc, periodDays, ownDomain)) return false;
       if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
-      if (!hasMaterialSignal(doc)) return false;
+      if (!ownDomain && !hasMaterialSignal(doc)) return false;
       const identityMatch = mentionsCompetitorIdentity(doc, competitor);
       const strongIdentityMatch = mentionsCompetitorIdentityInTitle(doc, competitor);
       const isOtherCompetitorDomain =
@@ -1682,7 +1695,7 @@ export async function gatherCompetitorIntel(
     const clusters = clusterDocs(deduped, competitor);
     const ranked = clusters
       .map(toRankedIntel)
-      .filter((item) => item.relevance_score >= 2)
+      .filter((item) => item.relevance_score >= 1.5)
       .sort((a, b) => b.relevance_score - a.relevance_score);
     const diversified = diversifyPerCompetitor(ranked, topPerCompetitor);
 

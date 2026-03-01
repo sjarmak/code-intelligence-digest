@@ -1,6 +1,7 @@
 import type { ContentIdeasOutput } from "./content-ideas";
 import type { RankedCompetitorIntelItem } from "./competitor-intel";
 import type { MarketBriefOutput } from "./market-brief";
+import { getCompetitorIntelEntries } from "../../config/competitor-intel";
 
 function esc(s: string | undefined): string {
   return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -25,15 +26,8 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
     lines.push("No high-confidence GTM deltas identified in this run.", "");
   }
 
-  const allReinforces =
-    payload.executive_delta.length > 0 &&
-    payload.executive_delta.every((item) => item.playbook_alignment === "reinforces");
-
   payload.executive_delta.forEach((item, i) => {
     lines.push(`### ${i + 1}. ${stripPdfPrefix(item.title)}`);
-    if (!allReinforces) {
-      lines.push(`- Alignment: **${item.playbook_alignment}**`);
-    }
     lines.push(`- Segment impact: ${item.segment_impact.join(", ")}`);
     lines.push(`- Persona impact: ${item.persona_impact.join(", ")}`);
     lines.push(`- Why it matters: ${item.why_it_matters}`);
@@ -91,12 +85,6 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
     `Generated: ${payload.generated_at}`,
     `Playbook version: ${payload.playbook_version}`,
     "",
-    ...(payload.selection_debug
-      ? [
-          `Selection mix (target -> achieved): beachhead ${payload.selection_debug.target_mix.beachhead} -> ${payload.selection_debug.achieved_mix.beachhead}, adjacent ${payload.selection_debug.target_mix.adjacent} -> ${payload.selection_debug.achieved_mix.adjacent}, broader ${payload.selection_debug.target_mix.broader} -> ${payload.selection_debug.achieved_mix.broader}`,
-          "",
-        ]
-      : []),
     "## Prioritized Ideas",
     "",
   ];
@@ -109,7 +97,6 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
     lines.push(`### ${i + 1}. ${stripPdfPrefix(idea.title)}`);
     lines.push(`- Segment/persona: **${idea.target_segment}** / **${idea.target_persona}**`);
     lines.push(`- Stage: **${idea.funnel_stage}**`);
-    lines.push(`- Priority score: **${idea.priority_score}**`);
     lines.push(`- Thesis: ${idea.thesis}`);
     lines.push(`- Why now: ${idea.why_now}`);
     lines.push(`- Core claim: ${idea.core_claim}`);
@@ -142,6 +129,28 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
   return lines.join("\n");
 }
 
+function formatOneCompetitorItem(item: RankedCompetitorIntelItem, index: number): string[] {
+  const lines: string[] = [];
+  lines.push(`### ${index + 1}. ${stripPdfPrefix(item.title)}`);
+  const sourceLink = item.url ? `[${item.source}](${item.url})` : item.source;
+  lines.push(`- Date/source: ${item.date ?? "unknown"} (${item.date_confidence}) | **${item.source_type}** | ${sourceLink}`);
+  if (item.url) {
+    lines.push(`- Link: [View article](${item.url})`);
+  }
+  lines.push(`- Confidence: **${item.confidence}**`);
+  lines.push(`- Update type: ${item.update_type}`);
+  lines.push(`- Overlap with Sourcegraph: ${item.overlap_with_sourcegraph.join(", ") || "none"}`);
+  lines.push(`- Summary: ${item.summary}`);
+  lines.push(`- Why it matters: ${item.why_it_matters}`);
+  lines.push(`- Sourcegraph opportunity: **${item.integration_opportunity}**`);
+  lines.push(`- Sourcegraph integration play: ${item.sourcegraph_integration_play.join(" | ")}`);
+  lines.push(`- Actionability: ${item.actionability.join(" | ")}`);
+  const evidence = item.evidence_notes.length > 0 ? item.evidence_notes.join(" | ") : "No evidence notes captured";
+  lines.push(`<details><summary><strong>Evidence notes</strong></summary><div>${esc(evidence)}</div></details>`);
+  lines.push("");
+  return lines;
+}
+
 export function formatCompetitorIntelMarkdown(
   title: string,
   payload: {
@@ -155,33 +164,28 @@ export function formatCompetitorIntelMarkdown(
     `# ${title}`,
     `Generated: ${payload.generatedAt}`,
     `Window: last ${payload.periodDays} days`,
-    `Top per competitor: ${payload.topPerCompetitor}`,
-    "",
-    "## Prioritized Developments",
     "",
   ];
 
-  if (payload.items.length === 0) {
-    lines.push("No high-signal, Sourcegraph-overlap competitor updates identified in this run.", "");
-    return lines.join("\n");
+  const byCompetitor = new Map<string, RankedCompetitorIntelItem[]>();
+  for (const item of payload.items) {
+    const list = byCompetitor.get(item.competitor) ?? [];
+    list.push(item);
+    byCompetitor.set(item.competitor, list);
   }
 
-  payload.items.forEach((item, i) => {
-    lines.push(`### ${i + 1}. ${item.competitor}: ${stripPdfPrefix(item.title)}`);
-    lines.push(`- Date/source: ${item.date ?? "unknown"} (${item.date_confidence}) | **${item.source_type}** | ${item.source}`);
-    lines.push(`- URL: ${item.url}`);
-    lines.push(`- Confidence: **${item.confidence}**`);
-    lines.push(`- Update type: ${item.update_type}`);
-    lines.push(`- Overlap with Sourcegraph: ${item.overlap_with_sourcegraph.join(", ") || "none"}`);
-    lines.push(`- Summary: ${item.summary}`);
-    lines.push(`- Why it matters: ${item.why_it_matters}`);
-    lines.push(`- Sourcegraph opportunity: **${item.integration_opportunity}**`);
-    lines.push(`- Sourcegraph integration play: ${item.sourcegraph_integration_play.join(" | ")}`);
-    lines.push(`- Actionability: ${item.actionability.join(" | ")}`);
-    const evidence = item.evidence_notes.length > 0 ? item.evidence_notes.join(" | ") : "No evidence notes captured";
-    lines.push(`<details><summary><strong>Evidence notes</strong></summary><div>${esc(evidence)}</div></details>`);
+  const competitorOrder = getCompetitorIntelEntries().map((c) => c.display_name);
+
+  for (const displayName of competitorOrder) {
+    const items = byCompetitor.get(displayName) ?? [];
+    if (items.length === 0) continue;
+
+    lines.push(`## ${displayName}`);
     lines.push("");
-  });
+    items.forEach((item, i) => {
+      lines.push(...formatOneCompetitorItem(item, i));
+    });
+  }
 
   return lines.join("\n");
 }

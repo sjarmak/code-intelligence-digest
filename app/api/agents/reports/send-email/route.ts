@@ -52,8 +52,32 @@ async function fetchReportContent(
   }
 }
 
-function markdownToEmailHtml(markdown: string): string {
-  const rawHtml = marked.parse(markdown, { async: false }) as string;
+/** Remove debug/tuning lines from content ideas reports (including old cached reports). */
+function stripContentIdeasDebugLines(markdown: string): string {
+  return markdown
+    .split("\n")
+    .filter(
+      (line) =>
+        !line.includes("Selection mix (target -> achieved)") &&
+        !line.includes("Priority score: **")
+    )
+    .join("\n");
+}
+
+/** Make HTML email-safe: replace <details>/<summary> with plain blocks (many clients don't support them). */
+function emailSafeHtml(html: string): string {
+  return html
+    .replace(/<details[^>]*>/gi, "<div style='margin:0.5rem 0 1rem;'>")
+    .replace(/<\/details>/gi, "</div>")
+    .replace(/<summary[^>]*>/gi, "<strong style='display:block;margin-bottom:0.25rem;'>")
+    .replace(/<\/summary>/gi, "</strong>");
+}
+
+function markdownToEmailHtml(markdown: string, goal?: string): string {
+  const cleaned =
+    goal === "content_ideas" ? stripContentIdeasDebugLines(markdown) : markdown;
+  let rawHtml = marked.parse(cleaned, { async: false }) as string;
+  rawHtml = emailSafeHtml(rawHtml);
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -113,7 +137,10 @@ export async function POST(req: Request) {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Email sending is not configured (RESEND_API_KEY missing)." },
+        {
+          error:
+            "Email sending is not configured. Set RESEND_API_KEY in .env.local (local) or in your host's environment (e.g. Render dashboard). Get an API key at https://resend.com/api-keys",
+        },
         { status: 503 }
       );
     }
@@ -154,12 +181,12 @@ export async function POST(req: Request) {
     for (const report of reports) {
       const label = GOAL_LABELS[report.goal] ?? report.goal;
       const generated = new Date(report.generatedAt);
-      const dateStr = generated.toLocaleDateString(undefined, {
+      const dateStr = generated.toLocaleString(undefined, {
         dateStyle: "medium",
         timeStyle: "short",
       });
       const subject = `${label} Agent Report – ${dateStr}`;
-      const html = markdownToEmailHtml(report.content);
+      const html = markdownToEmailHtml(report.content, report.goal);
 
       const { data, error } = await resend.emails.send({
         from,
@@ -177,11 +204,20 @@ export async function POST(req: Request) {
 
     const sent = results.filter((r) => r.sent).length;
     const failed = results.filter((r) => !r.sent);
+    const failedDetail =
+      failed.length > 0
+        ? failed
+            .map(
+              (r) =>
+                `${GOAL_LABELS[r.goal] ?? r.goal}: ${r.error ?? "unknown error"}`
+            )
+            .join("; ")
+        : "";
     return NextResponse.json({
       success: true,
       message: sent === reports.length
         ? `Sent ${sent} report(s) to ${email}.`
-        : `Sent ${sent} of ${reports.length} report(s). ${failed.length} failed.`,
+        : `Sent ${sent} of ${reports.length} report(s). Failed: ${failedDetail}`,
       results,
     });
   } catch (error) {
