@@ -930,6 +930,92 @@ async function retrieveRecentDomainDocs(
   return dedupeDocs(out).slice(0, limit);
 }
 
+const BLOG_INDEX_PATHS = ["/blog", "/news", "/updates", "/changelog"];
+
+/**
+ * Fetch the competitor's blog index page(s) and parse recent post links.
+ * Does not depend on search ranking — we get whatever is listed on their blog page.
+ */
+async function retrieveRecentBlogListing(
+  competitor: CompetitorIntelEntry,
+  limit = 20,
+): Promise<CandidateDoc[]> {
+  const docs: CandidateDoc[] = [];
+  const seen = new Set<string>();
+
+  for (const domain of competitor.domains) {
+    const origins = [`https://www.${domain}`, `https://${domain}`];
+    for (const origin of origins) {
+      for (const path of BLOG_INDEX_PATHS) {
+        const url = `${origin}${path}`;
+        try {
+          const response = await fetch(url, {
+            headers: { "User-Agent": "code-intel-digest/1.0 competitor-intel" },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (!response.ok) continue;
+          const html = await response.text();
+          const baseUrl = new URL(url);
+          // Links to posts: href contains /blog/ (or /news/, etc.) with at least one path segment after
+          const linkRe =
+            /<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+          let match: RegExpExecArray | null;
+          while ((match = linkRe.exec(html)) !== null) {
+            const rawHref = match[1].trim();
+            let linkText = match[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+            if (!rawHref || !linkText || linkText.length < 5) continue;
+            const hasPostPath = /\/blog\/[^/]|\/news\/[^/]|\/updates\/[^/]|\/changelog\/[^/]/.test(rawHref);
+            if (!hasPostPath) continue;
+            let absolute: string;
+            try {
+              absolute = new URL(rawHref, baseUrl).href;
+            } catch {
+              continue;
+            }
+            const docDomain = getDomainFromUrl(absolute);
+            if (!competitor.domains.some((d) => docDomain === d || docDomain.endsWith(`.${d}`))) continue;
+            const norm = absolute.replace(/#.*$/, "").replace(/\?.*$/, "");
+            if (seen.has(norm)) continue;
+            seen.add(norm);
+            const contextBefore = html.slice(Math.max(0, match.index - 500), match.index);
+            const dateFromContext = html.slice(Math.max(0, match.index - 80), match.index + 200).match(
+              /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2}/i,
+            );
+            const publishedAt = dateFromContext ? parseDate(dateFromContext[0]) : undefined;
+            const linkTextLooksLikeDate = /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d|^\d{4}-\d{2}-\d{2}/i.test(linkText) || linkText.length < 15;
+            const precedingHeading = linkTextLooksLikeDate
+              ? contextBefore.match(/<h[123][^>]*>([\s\S]*?)<\/h[123]>/gi)?.pop()?.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
+              : null;
+            let rawTitle = (precedingHeading && precedingHeading.length >= 10 ? precedingHeading : linkText).slice(0, 300);
+            const dateSuffix = rawTitle.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}|\d{4}-\d{2}-\d{2})/i);
+            if (dateSuffix && dateSuffix.index != null && dateSuffix.index > 5) {
+              rawTitle = rawTitle.slice(0, dateSuffix.index).trim();
+            }
+            const title = rawTitle;
+            const urlLooksLikeBenchmark = /swe[\s-]?bench|benchmark|results?|ranking|eval/i.test(absolute);
+            docs.push({
+              competitorId: competitor.id,
+              title,
+              summary: "",
+              content: urlLooksLikeBenchmark ? title : "",
+              url: absolute,
+              source: docDomain || domain,
+              source_type: classifySourceTypeByDomain(docDomain),
+              publishedAt,
+              dateConfidence: publishedAt ? "inferred" : "unknown",
+              retrievalScore: urlLooksLikeBenchmark ? 3.8 : 3.4,
+            });
+            if (docs.length >= limit) return dedupeDocs(docs).slice(0, limit);
+          }
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+  return dedupeDocs(docs).slice(0, limit);
+}
+
 /**
  * Fetch recent blog/release content from the competitor's own domains via web search.
  * Does not depend on Postgres ingest; ensures we surface competitor blog posts and
@@ -938,12 +1024,13 @@ async function retrieveRecentDomainDocs(
 async function retrieveCompetitorBlogFromWeb(
   competitor: CompetitorIntelEntry,
   periodDays: number,
-  limit = 12,
+  limit = 16,
 ): Promise<CandidateDoc[]> {
   const timeRange = periodDaysToWebTimeRange(periodDays) ?? "month";
   const queries = [
     `${competitor.display_name} blog`,
     `${competitor.display_name} release notes changelog`,
+    `${competitor.display_name} results benchmark evaluation`,
     `${competitor.display_name} updates`,
   ];
   const docs: CandidateDoc[] = [];
@@ -951,7 +1038,7 @@ async function retrieveCompetitorBlogFromWeb(
 
   for (const query of queries) {
     const results = await searchWeb(query, {
-      numResults: Math.max(8, Math.ceil(limit / queries.length)),
+      numResults: Math.max(10, Math.ceil(limit / queries.length)),
       domains: competitor.domains,
       timeRange,
       topic: "general",
@@ -1482,14 +1569,17 @@ function capOverallPerCompetitor(items: RankedCompetitorIntelItem[], topOverall:
   );
 
   // Ensure each tier-1 competitor with at least one item gets one slot (so e.g. Augment Code appears when it has signals).
+  // Prefer that slot for a benchmark/self-reported-performance post when present, so posts like "X tops SWE-Bench" surface.
   const guaranteed: RankedCompetitorIntelItem[] = [];
   const used = new Set<RankedCompetitorIntelItem>();
   for (const name of tier1DisplayNames) {
-    const best = items.find((i) => i.competitor === name);
-    if (best) {
-      guaranteed.push(best);
-      used.add(best);
-    }
+    const forCompetitor = items.filter((i) => i.competitor === name);
+    if (forCompetitor.length === 0) continue;
+    const byScore = [...forCompetitor].sort((a, b) => b.relevance_score - a.relevance_score);
+    const benchmark = byScore.find((i) => shapeOfItem(i) === "benchmark_blog");
+    const best = benchmark ?? byScore[0];
+    guaranteed.push(best);
+    used.add(best);
   }
 
   const counts = new Map<string, number>();
@@ -1756,7 +1846,8 @@ export async function gatherCompetitorIntel(
     const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, periodDays, 8);
     const strategicUrlBackfill = await retrieveStrategicUrlBackfillDocs(competitor, periodDays, 6);
     const recentDomainDocs = await retrieveRecentDomainDocs(competitor, periodDays, 10);
-    const blogFromWeb = await retrieveCompetitorBlogFromWeb(competitor, periodDays, 12);
+    const blogFromWeb = await retrieveCompetitorBlogFromWeb(competitor, periodDays, 16);
+    const blogListing = await retrieveRecentBlogListing(competitor, 20);
 
     // Strict attribution:
     // - explicit competitor signal, OR
@@ -1770,6 +1861,7 @@ export async function gatherCompetitorIntel(
         ...strategicUrlBackfill,
         ...recentDomainDocs,
         ...blogFromWeb,
+        ...blogListing,
       ]),
     );
     const hydrated = await hydratePublishedDatesFromMetadata(hydratedByDb, periodDays);
