@@ -639,10 +639,15 @@ export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): Cont
   };
 }
 
+/** Synthetic doc ID for injected market brief context (not a real URL). */
+const MARKET_BRIEF_CONTEXT_ID = "internal://market-brief-highlights";
+
 export async function generateContentIdeas(options: {
   periodDays?: number;
   focus?: string | null;
   numIdeas?: number;
+  /** When provided, market brief findings are injected as context so content ideas are informed by the same research. */
+  marketBriefSummary?: string | null;
 } = {}): Promise<ContentIdeasOutput> {
   const state = loadPlaybookState();
   const periodDays = options.periodDays ?? 30;
@@ -653,11 +658,31 @@ export async function generateContentIdeas(options: {
     query: options.focus ?? null,
     maxEnrich: 0,
   });
-  const ranked = await rankForAgent("content_ideas", docs);
+
+  // If market brief summary was passed (e.g. when run after market brief), inject it so findings inform ideas
+  const docsWithBrief =
+    options.marketBriefSummary?.trim()
+      ? [
+          {
+            id: MARKET_BRIEF_CONTEXT_ID,
+            source: "web" as const,
+            url: MARKET_BRIEF_CONTEXT_ID,
+            title: "Market brief highlights",
+            snippet: options.marketBriefSummary.trim().slice(0, 500),
+            content: options.marketBriefSummary.trim(),
+            publishedAt: new Date(),
+            metadata: { primarySource: "market_brief" },
+          },
+          ...docs,
+        ]
+      : docs;
+
+  const ranked = await rankForAgent("content_ideas", docsWithBrief);
 
   const candidates = ranked
     .map((doc) => scoreCandidate(doc, state))
     .filter((c) => {
+      if (c.doc.id === MARKET_BRIEF_CONTEXT_ID) return true;
       const text = textOf(c.doc);
       const domain = sourceFromUrl(c.doc.url);
       const sourceType = classifySourceTypeByDomain(domain);

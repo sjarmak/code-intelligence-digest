@@ -39,6 +39,10 @@ export interface AgentGoalConfig {
   blockedDomains?: string[];
   /** For competitor_intel: domains for "our" product to exclude from competitor list */
   excludeSelfDomains?: string[];
+  /** Optional domains to explicitly include (e.g. our changelog/product for content_ideas). Web search runs extra queries restricted to these domains. */
+  includeDomains?: string[];
+  /** Query templates for the includeDomains pass (e.g. "Sourcegraph changelog", "Sourcegraph product features"). */
+  includeDomainsQueryTemplates?: string[];
 }
 
 const ICP_DEFAULT =
@@ -48,15 +52,15 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
   content_ideas: {
     name: "Content Ideas",
     description:
-      "Marketing expert that surfaces content ideas and best practices for marketing in the code intelligence space: webinars, blogs, videos, white papers, case studies, and tutorials that align with our ICP.",
+      "Surfaces content ideas informed by market and industry research: webinars, blogs, case studies, and campaigns that align with our ICP and with the same research signals that inform the market brief. Research is inspired by ingested content but not limited to it—web discovery finds additional relevant signals.",
     primaryCategories: ["tech_articles", "product_news", "community", "newsletters"],
     icpDescription: ICP_DEFAULT,
     timeHorizonDays: 30,
     retrievalStrategies: {
-      postgresWeight: 0.6,
-      webWeight: 0.4,
-      maxPostgresDocs: 50,
-      maxWebDocs: 30,
+      postgresWeight: 0.45,
+      webWeight: 0.55,
+      maxPostgresDocs: 45,
+      maxWebDocs: 50,
     },
     rankingProfile: {
       baseScoreWeight: 0.3,
@@ -83,6 +87,10 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
       "white paper code search large codebase",
       "case study AI coding assistant enterprise",
       "best practices developer marketing content",
+      "code intelligence adoption trends developer tools",
+      "code search deep search market landscape content",
+      "enterprise codebase tooling developer productivity",
+      "AI coding assistant industry trends content marketing",
     ],
     blockedDomains: [
       "instagram.com",
@@ -91,20 +99,25 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
       "twitter.com",
       "x.com",
     ],
+    includeDomains: ["sourcegraph.com", "docs.sourcegraph.com"],
+    includeDomainsQueryTemplates: [
+      "Sourcegraph changelog product updates features",
+      "Sourcegraph code search deep search batch changes product",
+    ],
   },
 
   market_brief: {
     name: "Market Brief",
     description:
-      "Identifies potential leads and provides insights on tech and market landscape shifts to inform go-to-market strategy: adoption trends, new categories, and signals from the market.",
+      "Functions as a researcher: finds the most relevant content on industry state, adoption, and product-relevant signals so GTM and engineering can report on what matters for our positioning and product direction.",
     primaryCategories: ["product_news", "tech_articles", "ai_news", "community"],
     icpDescription: ICP_DEFAULT,
     timeHorizonDays: 14,
     retrievalStrategies: {
-      postgresWeight: 0.55,
-      webWeight: 0.45,
-      maxPostgresDocs: 60,
-      maxWebDocs: 40,
+      postgresWeight: 0.45,
+      webWeight: 0.55,
+      maxPostgresDocs: 50,
+      maxWebDocs: 55,
     },
     rankingProfile: {
       baseScoreWeight: 0.25,
@@ -131,6 +144,10 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
       "developer productivity trends",
       "large monorepo tooling market",
       "AI coding tools enterprise adoption",
+      "developer tools industry positioning enterprise codebase",
+      "code search deep search market landscape",
+      "enterprise codebase tooling trends",
+      "AI coding assistant industry analysis developer tools",
     ],
     blockedDomains: [
       "link.mail.beehiiv.com",

@@ -586,11 +586,22 @@ function toCandidateFromFeed(item: InternalDoc, competitorId: string, retrievalS
   };
 }
 
+function periodDaysToWebTimeRange(
+  periodDays: number
+): "day" | "week" | "month" | "year" | undefined {
+  if (periodDays <= 1) return "day";
+  if (periodDays <= 7) return "week";
+  if (periodDays <= 30) return "month";
+  if (periodDays <= 365) return "year";
+  return undefined;
+}
+
 async function retrieveWebDocs(
   competitor: CompetitorIntelEntry,
   queries: string[],
   webDocsPerQuery: number,
   maxQueries: number,
+  periodDays: number,
 ): Promise<CandidateDoc[]> {
   const docs: CandidateDoc[] = [];
   const strategicQueryPattern = /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/i;
@@ -610,18 +621,17 @@ async function retrieveWebDocs(
     ]),
   ).slice(0, maxQueries);
 
+  const timeRange = periodDaysToWebTimeRange(periodDays);
+
   for (const query of selectedQueries) {
     const q = query.toLowerCase();
     const isNarrativeQuery = /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/.test(q);
     const results = await searchWeb(query, {
       numResults: isNarrativeQuery ? Math.max(webDocsPerQuery, 8) : webDocsPerQuery,
       domains: competitor.domains,
-      // "general" captures primary docs/changelogs/blog posts better than "news"
-      // for competitive intel workflows.
       topic: "general",
-      // Keep recency bias for routine queries, but allow older narrative-defining
-      // benchmark/pricing/case-study pages to surface.
-      timeRange: isNarrativeQuery ? undefined : "year",
+      // Apply requested window so "last month" doesn't pull in old articles.
+      timeRange: isNarrativeQuery ? timeRange ?? "year" : timeRange ?? "year",
     });
 
     for (const result of results) {
@@ -1632,6 +1642,7 @@ export async function gatherCompetitorIntel(
       queries,
       webDocsPerQuery,
       Math.min(webQueryLimit, maxWebQueriesPerCompetitor),
+      periodDays,
     );
     const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, periodDays, 8);
     const strategicUrlBackfill = await retrieveStrategicUrlBackfillDocs(competitor, periodDays, 6);

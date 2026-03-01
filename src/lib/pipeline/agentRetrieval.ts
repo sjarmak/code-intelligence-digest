@@ -33,6 +33,25 @@ export interface RetrieveForAgentOptions {
   maxEnrich?: number;
 }
 
+/** Map periodDays to FTS period. Use "month" for 8–90 days so we never pass "all" when user requested a time window. */
+function periodDaysToFtsPeriod(periodDays: number): "day" | "week" | "month" | "all" {
+  if (periodDays <= 1) return "day";
+  if (periodDays <= 7) return "week";
+  if (periodDays <= 90) return "month";
+  return "all";
+}
+
+/** Map periodDays to web search timeRange. Undefined = no filter (provider may return any date). */
+function periodDaysToWebTimeRange(
+  periodDays: number
+): "day" | "week" | "month" | "year" | undefined {
+  if (periodDays <= 1) return "day";
+  if (periodDays <= 7) return "week";
+  if (periodDays <= 30) return "month";
+  if (periodDays <= 365) return "year";
+  return undefined;
+}
+
 /**
  * Load items from Postgres for the given goal: categories + time window from config,
  * optionally filtered by a search query.
@@ -61,8 +80,7 @@ async function retrieveFromPostgres(
   }
 
   if (effectiveQuery) {
-    const period =
-      periodDays <= 1 ? "day" : periodDays <= 7 ? "week" : periodDays <= 30 ? "month" : "all";
+    const period = periodDaysToFtsPeriod(periodDays);
     const searchResults = await dbFullTextSearch(effectiveQuery, {
       period,
       limit: Math.ceil(maxDocs / 2),
@@ -118,8 +136,13 @@ async function retrieveFromWeb(
   const config = getAgentGoalConfig(goal);
   const maxWeb = config.retrievalStrategies.maxWebDocs;
   const templates = config.webQueryTemplates;
-  // Use more diverse web queries for competitor_intel so we surface benchmarks, ecosystem tools, etc., not just the first few products
-  const templateLimit = goal === "competitor_intel" ? Math.min(templates.length, 8) : 4;
+  // Researcher-style: web discovery is inspired by but not limited by Postgres; run more diverse queries for brief and content ideas
+  const templateLimit =
+    goal === "competitor_intel"
+      ? Math.min(templates.length, 8)
+      : goal === "market_brief" || goal === "content_ideas"
+        ? Math.min(templates.length, 8)
+        : 4;
   const queries =
     options.query?.trim()
       ? [options.query, ...templates.slice(0, 2)]
@@ -131,20 +154,16 @@ async function retrieveFromWeb(
 
   const byUrl = new Map<string, RetrievedDoc>();
 
+  const effectivePeriodDays = options.periodDays ?? config.timeHorizonDays;
+  const timeRange = periodDaysToWebTimeRange(effectivePeriodDays);
+
   for (const q of queries) {
     if (byUrl.size >= maxWeb) break;
     const results = await searchWeb(q, {
       numResults: numPerQuery,
       domains: domains?.slice(0, 100),
       topic: goal === "market_brief" ? "news" : "general",
-      timeRange:
-        (config.timeHorizonDays <= 1
-          ? "day"
-          : config.timeHorizonDays <= 7
-            ? "week"
-            : config.timeHorizonDays <= 30
-              ? "month"
-              : undefined) as "day" | "week" | "month" | undefined,
+      timeRange,
     });
     for (const r of results) {
       const key = normalizeUrl(r.url);
@@ -159,6 +178,44 @@ async function retrieveFromWeb(
         metadata: { score: r.score },
       });
     }
+  }
+
+  // Optional pass: include our product (e.g. changelog, product pages) for content_ideas.
+  const includeDomains = config.includeDomains;
+  const includeTemplates = config.includeDomainsQueryTemplates;
+  if (
+    includeDomains?.length &&
+    includeTemplates?.length &&
+    byUrl.size < maxWeb
+  ) {
+    const maxInclude = Math.min(10, maxWeb - byUrl.size);
+    const numPerInclude = Math.max(2, Math.ceil(maxInclude / includeTemplates.length));
+    for (const q of includeTemplates.slice(0, 4)) {
+      if (byUrl.size >= maxWeb) break;
+      const results = await searchWeb(q, {
+        numResults: numPerInclude,
+        domains: includeDomains.slice(0, 20),
+        topic: "general",
+        timeRange,
+      });
+      for (const r of results) {
+        const key = normalizeUrl(r.url);
+        if (byUrl.has(key)) continue;
+        byUrl.set(key, {
+          source: "web",
+          url: r.url,
+          title: r.title,
+          snippet: r.content,
+          content: r.content,
+          publishedAt: r.publishedDate ? new Date(r.publishedDate) : undefined,
+          metadata: { score: r.score, primarySource: "include_domains" },
+        });
+      }
+    }
+    logger.info("Web retrieval includeDomains pass", {
+      goal,
+      domains: includeDomains.length,
+    });
   }
 
   const list = Array.from(byUrl.values()).slice(0, maxWeb);
@@ -295,23 +352,43 @@ export async function enrichWithFullText(
 }
 
 /**
+ * Filter merged docs to only those with publishedAt within the last periodDays.
+ * Docs without publishedAt are kept (e.g. web results with no date) to avoid over-filtering.
+ */
+function filterRetrievedDocsByDate(
+  docs: RetrievedDoc[],
+  periodDays: number
+): RetrievedDoc[] {
+  const cutoffMs = Date.now() - periodDays * 24 * 60 * 60 * 1000;
+  return docs.filter((doc) => {
+    if (!doc.publishedAt) return true;
+    return doc.publishedAt.getTime() >= cutoffMs;
+  });
+}
+
+/**
  * Retrieve documents for an agent goal from Postgres and web, then merge and optionally enrich.
+ * Respects options.periodDays for date filtering; docs older than that window are dropped after merge.
  */
 export async function retrieveForAgent(
   goal: AgentGoal,
   options: RetrieveForAgentOptions = {}
 ): Promise<RetrievedDoc[]> {
+  const config = getAgentGoalConfig(goal);
+  const periodDays = options.periodDays ?? config.timeHorizonDays;
+
   const [postgresDocs, webDocs] = await Promise.all([
     retrieveFromPostgres(goal, options),
     retrieveFromWeb(goal, options),
   ]);
 
   const merged = mergeRetrievedDocs(postgresDocs, webDocs, goal);
+  const dateFiltered = filterRetrievedDocsByDate(merged, periodDays);
 
   const maxEnrich = options.maxEnrich ?? 0;
   if (maxEnrich > 0) {
-    return enrichWithFullText(merged, maxEnrich);
+    return enrichWithFullText(dateFiltered, maxEnrich);
   }
 
-  return merged;
+  return dateFiltered;
 }

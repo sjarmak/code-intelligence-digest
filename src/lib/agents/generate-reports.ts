@@ -89,6 +89,8 @@ export async function runAgentReport(
   goal: AgentGoal,
   userId: string = "legacy",
   timeRange?: ReportTimeRange,
+  /** When goal is content_ideas, pass market brief findings so ideas are informed by the same research. */
+  marketBriefSummary?: string | null,
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
   if (!VALID_GOALS.includes(goal)) {
     return { ok: false, error: `Invalid goal: ${goal}` };
@@ -105,7 +107,11 @@ export async function runAgentReport(
       const payload = await generateMarketBrief({ periodDays, maxItems: limit });
       report = formatMarketBriefMarkdown("Market Brief Agent Report", payload);
     } else if (goal === "content_ideas") {
-      const payload = await generateContentIdeas({ periodDays, numIdeas: limit });
+      const payload = await generateContentIdeas({
+        periodDays,
+        numIdeas: limit,
+        marketBriefSummary: marketBriefSummary ?? undefined,
+      });
       report = formatContentIdeasMarkdown("Content Ideas Agent Report", payload);
     } else if (goal === "competitor_intel") {
       const items = await gatherCompetitorIntel({
@@ -160,9 +166,27 @@ export async function runAgentReports(
   timeRange?: ReportTimeRange,
 ): Promise<{ [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } }> {
   const results: { [key in AgentGoal]?: { ok: boolean; id?: string; error?: string } } = {};
-  for (const goal of goals) {
+  let marketBriefMarkdown: string | null = null;
+
+  const runOrder: AgentGoal[] = goals.includes("market_brief")
+    ? ["market_brief", ...goals.filter((g) => g !== "market_brief")]
+    : goals;
+
+  for (const goal of runOrder) {
     if (!VALID_GOALS.includes(goal)) continue;
-    results[goal] = await runAgentReport(goal, userId, timeRange);
+    if (goal === "market_brief") {
+      results[goal] = await runAgentReport(goal, userId, timeRange);
+      if (results[goal]?.ok && results[goal]?.id) {
+        const briefPath = path.join(REPORT_DIR, "market_brief", `${results[goal]!.id}.md`);
+        if (fs.existsSync(briefPath)) {
+          marketBriefMarkdown = fs.readFileSync(briefPath, "utf-8");
+        }
+      }
+    } else if (goal === "content_ideas" && marketBriefMarkdown) {
+      results[goal] = await runAgentReport(goal, userId, timeRange, marketBriefMarkdown);
+    } else {
+      results[goal] = await runAgentReport(goal, userId, timeRange);
+    }
   }
   return results;
 }
