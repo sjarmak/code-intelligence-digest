@@ -155,7 +155,7 @@ export function formatCompetitorIntelMarkdown(
     lines.push(`### ${i + 1}. ${item.competitor}: ${item.title}`);
     lines.push(`- Date/source: ${item.date ?? "unknown"} (${item.date_confidence}) | **${item.source_type}** | ${item.source}`);
     lines.push(`- URL: ${item.url}`);
-    lines.push(`- Threat/confidence: **${item.threat_level}** / **${item.confidence}**`);
+    lines.push(`- Confidence: **${item.confidence}**`);
     lines.push(`- Update type: ${item.update_type}`);
     lines.push(`- Overlap with Sourcegraph: ${item.overlap_with_sourcegraph.join(", ") || "none"}`);
     lines.push(`- Summary: ${item.summary}`);

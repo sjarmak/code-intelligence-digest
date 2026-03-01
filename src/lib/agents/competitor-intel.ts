@@ -376,22 +376,6 @@ function deriveActionability(
   return Array.from(out);
 }
 
-function netThreatRationale(tl: "high" | "medium" | "low" | "negative", score: Record<string, number>): string {
-  if (tl === "high") {
-    return "High threat: direct overlap and enterprise relevance are both strong, so this can influence active evaluations now.";
-  }
-  if (tl === "medium") {
-    if ((score.benchmark_signal ?? 0) >= 4) {
-      return "Medium threat: benchmark performance can reshape buyer perception, but enterprise proof depth is still mixed.";
-    }
-    return "Medium threat: the update is material for enterprise workflows, but immediate displacement risk is moderate.";
-  }
-  if (tl === "low") {
-    return "Low threat: signal is real but mostly incremental or peripheral to current Sourcegraph differentiators.";
-  }
-  return "Negative pressure on competitor: evidence points to limited strategic impact or weaker execution.";
-}
-
 function whyItMatters(
   competitor: CompetitorIntelEntry,
   overlap: string[],
@@ -401,19 +385,33 @@ function whyItMatters(
 ): string {
   const surfaces = overlap.length > 0 ? overlap.join(", ") : "adjacent workflow surfaces";
   const update = inferUpdateType(text).replace(/_/g, " ");
-  const net = threatLevel(score);
-  const gtmImpact =
-    actionability.length === 1 && actionability[0] === "monitoring"
-      ? "monitoring only; no immediate GTM motion required"
-      : actionability.join(", ");
-  const impactDetail = actionability.includes("sales")
-    ? "Sales implication: this can shift enterprise selection criteria and objection handling."
-    : actionability.includes("product")
-      ? "Product implication: this affects backlog priority for parity and differentiation."
+  const benchmark = (score.benchmark_signal ?? 0) >= 4;
+  const enterprise = (score.enterprise_relevance ?? 0) >= 4;
+  const workflow = overlap.includes("agent_context")
+    ? "agent context retrieval quality"
+    : overlap.includes("code_search")
+      ? "code search and grounding quality"
+      : overlap.includes("batch_changes")
+        ? "large-scale edit execution and review flow"
+        : "agent workflow reliability";
+  const nextAction = actionability.includes("product")
+    ? "Product: evaluate parity gaps and ship a concrete integration demo."
+    : actionability.includes("sales")
+      ? "Sales: update deal qualification and competitive handling for active evaluations."
       : actionability.includes("messaging")
-        ? "Messaging implication: update battlecards and proof points for active deals."
-        : "No immediate field action required; watch for follow-on enterprise adoption signals.";
-  return `Change: ${competitor.display_name} published a ${update} move touching ${surfaces}. GTM impact: ${gtmImpact}. ${impactDetail} Net assessment: ${net}. ${netThreatRationale(net, score)}`;
+        ? "Messaging: refresh battlecards with workflow-specific proof points."
+        : "Monitoring: track for follow-on customer adoption and integration depth.";
+
+  const evidenceAngle =
+    benchmark && enterprise
+      ? "This combines benchmark signal with enterprise workflow relevance."
+      : benchmark
+        ? "This adds benchmark signal that can influence tool evaluation criteria."
+        : enterprise
+          ? "This is materially relevant to enterprise implementation workflows."
+          : "This is a directional signal for workflow evolution.";
+
+  return `Change: ${competitor.display_name} published a ${update} move touching ${surfaces}. Why this matters for Sourcegraph: it affects ${workflow}. ${evidenceAngle} ${nextAction}`;
 }
 
 function tokenizedSignalPool(competitor: CompetitorIntelEntry, queries: string[]): string[] {
