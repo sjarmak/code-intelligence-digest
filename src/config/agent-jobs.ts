@@ -136,7 +136,7 @@ export const AGENT_JOBS: AgentJobConfig[] = [
     periodDays: 3,
     webSearchQueries: (date) => [
       `AI coding agents competitor updates ${date}`,
-      "GitHub Copilot GitLab Duo Augment Moderne release notes",
+      "GitHub Copilot GitLab Duo Augment Code Moderne release notes",
       "Cursor Windsurf Claude Code MCP enterprise update",
       "Qodo Greptile Semgrep CodeSee enterprise customer benchmark",
     ],
