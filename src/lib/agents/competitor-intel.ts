@@ -277,9 +277,9 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
   )
     ? 4.5
     : 1.5;
-  const benchmark_signal = /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) ? 5 : 1;
+  const benchmark_signal = /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) ? 2 : 1;
   const benchmark_evidence_boost =
-    /\/blog\//.test(rep.url.toLowerCase()) && /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) ? 0.6 : 0;
+    /\/blog\//.test(rep.url.toLowerCase()) && /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) ? 0.15 : 0;
   const seo_comparison_penalty = /\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(titleUrl) ? -1.2 : 0;
   const generic_page_penalty = /\/$|\/blog\/?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(rep.url.toLowerCase())
     ? -1
@@ -318,7 +318,7 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
     0.14 * product_materiality +
     0.08 * market_signal +
     0.08 * strategicNarrative +
-    0.1 * benchmark_signal +
+    0.04 * benchmark_signal +
     0.1 * novelty +
     0.08 * source_quality +
     0.04 * evidence_strength +
@@ -618,19 +618,15 @@ async function retrieveWebDocs(
   const docs: CandidateDoc[] = [];
   const strategicQueryPattern = /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/i;
   const strategicSeeds = [
-    `${competitor.display_name} swe bench`,
-    `${competitor.display_name} benchmark`,
     `${competitor.display_name} case study`,
     `${competitor.display_name} pricing`,
     `${competitor.display_name} enterprise`,
   ];
   const strategic = [...strategicSeeds, ...queries].filter((q) => strategicQueryPattern.test(q));
   const routine = queries.filter((q) => !strategicQueryPattern.test(q));
+  const strategicCap = Math.min(2, maxQueries);
   const selectedQueries = Array.from(
-    new Set([
-      ...strategic.slice(0, Math.max(2, Math.ceil((maxQueries * 2) / 3))),
-      ...routine.slice(0, Math.max(0, maxQueries - Math.max(2, Math.ceil((maxQueries * 2) / 3)))),
-    ]),
+    new Set([...strategic.slice(0, strategicCap), ...routine.slice(0, maxQueries - strategicCap)]),
   ).slice(0, maxQueries);
 
   const timeRange = periodDaysToWebTimeRange(periodDays);
@@ -690,7 +686,7 @@ async function retrieveStrategicBackfillDocs(
 
       const domain = getDomainFromUrl(row.url);
       const sourceType = classifySourceTypeByDomain(domain);
-      const scoreBoost = /(benchmark|swe[\s-]?bench)/.test(text) ? 4.2 : 3.2;
+      const scoreBoost = /(benchmark|swe[\s-]?bench)/.test(text) ? 3.4 : 3.2;
       const publishedAt = row.publishedAt ? new Date(row.publishedAt * 1000) : undefined;
       if (!isWithinWindow(publishedAt, periodDays)) continue;
 

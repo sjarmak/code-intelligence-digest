@@ -12,6 +12,70 @@ export function stripPdfPrefix(title: string): string {
   return (title ?? "").replace(/^\s*\[PDF\]\s*/i, "").trim() || (title ?? "");
 }
 
+/** Human-readable labels for report output (engineers/executives). */
+const UPDATE_TYPE_LABELS: Record<string, string> = {
+  market_proof: "Market proof",
+  product_launch: "Product launch",
+  product_update: "Product update",
+  pricing_packaging: "Pricing & packaging",
+  security_enterprise: "Security & enterprise",
+};
+
+const OVERLAP_LABELS: Record<string, string> = {
+  deep_search: "Deep search",
+  code_search: "Code search",
+  code_navigation: "Code navigation",
+  mcp: "MCP",
+  agent_context: "Agent context",
+  batch_changes: "Batch changes",
+  insights: "Insights",
+  monitoring: "Monitoring",
+  governance: "Governance",
+  enterprise_control: "Enterprise control",
+  large_codebase_understanding: "Large codebase understanding",
+  monorepo_multi_repo: "Monorepo / multi-repo",
+};
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  primary: "Primary source",
+  internal_curated: "Curated",
+  secondary: "Secondary",
+  community: "Community",
+};
+
+const OPPORTUNITY_LABELS: Record<string, string> = {
+  high_opportunity: "High",
+  medium_opportunity: "Medium",
+  low_opportunity: "Low",
+  monitor_only: "Monitor only",
+};
+
+const DATE_CONFIDENCE_LABELS: Record<string, string> = {
+  exact: "Exact date",
+  inferred: "Inferred",
+  unknown: "Unknown",
+};
+
+function formatLabel(value: string, labels: Record<string, string>): string {
+  return labels[value] ?? value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatOverlap(values: string[]): string {
+  if (!values.length) return "None";
+  return values.map((v) => formatLabel(v, OVERLAP_LABELS)).join(", ");
+}
+
+function formatActionability(values: string[]): string {
+  const labels: Record<string, string> = {
+    product: "Product",
+    messaging: "Messaging",
+    exec: "Executive",
+    sales: "Sales",
+    monitoring: "Monitoring",
+  };
+  return values.map((v) => formatLabel(v, labels)).join(", ");
+}
+
 export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOutput): string {
   const lines: string[] = [
     `# ${title}`,
@@ -133,18 +197,21 @@ function formatOneCompetitorItem(item: RankedCompetitorIntelItem, index: number)
   const lines: string[] = [];
   lines.push(`### ${index + 1}. ${stripPdfPrefix(item.title)}`);
   const sourceLink = item.url ? `[${item.source}](${item.url})` : item.source;
-  lines.push(`- Date/source: ${item.date ?? "unknown"} (${item.date_confidence}) | **${item.source_type}** | ${sourceLink}`);
+  const dateConfLabel = formatLabel(item.date_confidence, DATE_CONFIDENCE_LABELS);
+  const sourceTypeLabel = formatLabel(item.source_type, SOURCE_TYPE_LABELS);
+  lines.push(`- Date/source: ${item.date ?? "Unknown"} (${dateConfLabel}) · **${sourceTypeLabel}** · ${sourceLink}`);
   if (item.url) {
     lines.push(`- Link: [View article](${item.url})`);
   }
-  lines.push(`- Confidence: **${item.confidence}**`);
-  lines.push(`- Update type: ${item.update_type}`);
-  lines.push(`- Overlap with Sourcegraph: ${item.overlap_with_sourcegraph.join(", ") || "none"}`);
+  lines.push(`- Confidence: **${item.confidence.charAt(0).toUpperCase() + item.confidence.slice(1)}**`);
+  lines.push(`- Update type: ${formatLabel(item.update_type, UPDATE_TYPE_LABELS)}`);
+  lines.push(`- Overlap with Sourcegraph: ${formatOverlap(item.overlap_with_sourcegraph)}`);
   lines.push(`- Summary: ${item.summary}`);
   lines.push(`- Why it matters: ${item.why_it_matters}`);
-  lines.push(`- Sourcegraph opportunity: **${item.integration_opportunity}**`);
-  lines.push(`- Sourcegraph integration play: ${item.sourcegraph_integration_play.join(" | ")}`);
-  lines.push(`- Actionability: ${item.actionability.join(" | ")}`);
+  const oppLabel = formatLabel(item.integration_opportunity, OPPORTUNITY_LABELS);
+  lines.push(`- Sourcegraph opportunity: **${oppLabel}**`);
+  lines.push(`- Sourcegraph integration play: ${item.sourcegraph_integration_play.join(" · ")}`);
+  lines.push(`- Actionability: ${formatActionability(item.actionability)}`);
   const evidence = item.evidence_notes.length > 0 ? item.evidence_notes.join(" | ") : "No evidence notes captured";
   lines.push(`<details><summary><strong>Evidence notes</strong></summary><div>${esc(evidence)}</div></details>`);
   lines.push("");
