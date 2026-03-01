@@ -37,6 +37,8 @@ export interface MarketBriefDelta {
 export interface MarketBriefOutput {
   brief_date: string;
   playbook_version: string;
+  /** When set, rendered as "Period: last N days" in the report body. */
+  periodDays?: number;
   playbook_confidence_flags?: Record<string, "high" | "medium" | "low">;
   executive_delta: MarketBriefDelta[];
   watch_items: MarketBriefDelta[];
@@ -428,6 +430,7 @@ export async function generateMarketBrief(options: {
   return postProcessMarketBriefOutput({
     brief_date: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
+    periodDays,
     playbook_confidence_flags: state.confidence_flags,
     executive_delta: executive,
     watch_items: watchItems,

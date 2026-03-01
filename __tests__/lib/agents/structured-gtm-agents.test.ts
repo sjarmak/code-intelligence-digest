@@ -61,6 +61,7 @@ describe("structured gtm agents", () => {
 
   it("generates market brief with policy/evidence separation", async () => {
     const out = await generateMarketBrief({ periodDays: 14, maxItems: 5 });
+    expect(out.periodDays).toBe(14);
     expect(out.playbook_version).toBeTruthy();
     expect(out.executive_delta.length).toBeGreaterThan(0);
     expect(out.executive_delta[0].policy_basis.length).toBeGreaterThan(0);
@@ -140,6 +141,7 @@ describe("structured gtm agents", () => {
 
   it("generates content ideas with sources and distribution plan", async () => {
     const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
+    expect(out.periodDays).toBe(30);
     expect(out.playbook_version).toBeTruthy();
     expect(out.ideas.length).toBeGreaterThan(0);
     expect(out.selection_debug).toBeDefined();

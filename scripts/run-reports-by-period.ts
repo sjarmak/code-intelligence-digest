@@ -15,6 +15,22 @@ import { runAgentReports, VALID_GOALS } from "@/src/lib/agents/generate-reports"
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 const PERIODS: Array<"day" | "week" | "month"> = ["day", "week", "month"];
 
+/** Parse report markdown for period/window and (competitor_intel only) competitor count. */
+function verifyReportSummary(content: string, goal: string, period: string): string {
+  const windowMatch = content.match(/Window: last (\d+) days/);
+  const periodMatch = content.match(/Period: last (\d+) days/);
+  const days = windowMatch?.[1] ?? periodMatch?.[1];
+  const label = windowMatch ? "Window" : "Period";
+  if (!days) return `${goal} report-${period}: (no period/window line found)`;
+  const dayLabel = days === "1" ? "day" : "days";
+  let line = `${goal} report-${period}: ${label} ${days} ${dayLabel}`;
+  if (goal === "competitor_intel") {
+    const sectionCount = (content.match(/^## .+/gm) ?? []).length;
+    line += `, ${sectionCount} competitors`;
+  }
+  return line;
+}
+
 async function main() {
   console.log("Initializing database...");
   await initializeDatabase();
@@ -34,6 +50,8 @@ async function main() {
       if (fs.existsSync(srcPath)) {
         fs.copyFileSync(srcPath, destPath);
         console.log(`  ${goal}: ${r.id} -> report-${period}.md`);
+        const content = fs.readFileSync(destPath, "utf-8");
+        console.log(`  ✓ ${verifyReportSummary(content, goal, period)}`);
       } else {
         console.log(`  ${goal}: file not found ${srcPath}`);
       }

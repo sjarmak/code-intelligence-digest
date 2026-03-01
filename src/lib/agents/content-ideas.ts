@@ -42,6 +42,8 @@ export interface ContentIdea {
 export interface ContentIdeasOutput {
   generated_at: string;
   playbook_version: string;
+  /** When set, rendered as "Period: last N days" in the report body. */
+  periodDays?: number;
   playbook_confidence_flags?: Record<string, "high" | "medium" | "low">;
   selection_debug?: {
     target_mix: {
@@ -858,6 +860,7 @@ export async function generateContentIdeas(options: {
   return postProcessContentIdeasOutput({
     generated_at: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
+    periodDays,
     playbook_confidence_flags: state.confidence_flags,
     selection_debug: {
       target_mix: targetMix,
