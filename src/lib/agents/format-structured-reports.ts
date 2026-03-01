@@ -6,6 +6,11 @@ function esc(s: string | undefined): string {
   return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** Strip leading [PDF] (or similar) from document titles for display. */
+export function stripPdfPrefix(title: string): string {
+  return (title ?? "").replace(/^\s*\[PDF\]\s*/i, "").trim() || (title ?? "");
+}
+
 export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOutput): string {
   const lines: string[] = [
     `# ${title}`,
@@ -25,7 +30,7 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
     payload.executive_delta.every((item) => item.playbook_alignment === "reinforces");
 
   payload.executive_delta.forEach((item, i) => {
-    lines.push(`### ${i + 1}. ${item.title}`);
+    lines.push(`### ${i + 1}. ${stripPdfPrefix(item.title)}`);
     if (!allReinforces) {
       lines.push(`- Alignment: **${item.playbook_alignment}**`);
     }
@@ -44,7 +49,7 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
       lines.push("  - No linked source available");
     } else {
       item.evidence.forEach((e) => {
-        const label = `${e.source} (${e.date}, ${e.confidence})`;
+        const label = `${e.source} (${e.confidence})`;
         lines.push(`  - [${label}](${e.url})`);
       });
     }
@@ -54,14 +59,14 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
   if (payload.watch_items.length > 0) {
     lines.push("## Watch Items", "");
     payload.watch_items.forEach((item, i) => {
-      lines.push(`### ${i + 1}. ${item.title}`);
+      lines.push(`### ${i + 1}. ${stripPdfPrefix(item.title)}`);
       lines.push(`- ${item.summary}`);
       lines.push("- Sources:");
       if (item.evidence.length === 0) {
         lines.push("  - No linked source available");
       } else {
         item.evidence.forEach((e) => {
-          const label = `${e.source} (${e.date}, ${e.confidence})`;
+          const label = `${e.source} (${e.confidence})`;
           lines.push(`  - [${label}](${e.url})`);
         });
       }
@@ -70,7 +75,11 @@ export function formatMarketBriefMarkdown(title: string, payload: MarketBriefOut
   }
 
   if (payload.invalidations_to_monitor.length > 0) {
-    lines.push("## Invalidations To Monitor", ...payload.invalidations_to_monitor.map((x) => `- ${x}`), "");
+    lines.push(
+      "## Invalidations To Monitor",
+      ...payload.invalidations_to_monitor.map((x) => `- ${stripPdfPrefix(x)}`),
+      ""
+    );
   }
 
   return lines.join("\n");
@@ -97,7 +106,7 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
   }
 
   payload.ideas.forEach((idea, i) => {
-    lines.push(`### ${i + 1}. ${idea.title}`);
+    lines.push(`### ${i + 1}. ${stripPdfPrefix(idea.title)}`);
     lines.push(`- Segment/persona: **${idea.target_segment}** / **${idea.target_persona}**`);
     lines.push(`- Stage: **${idea.funnel_stage}**`);
     lines.push(`- Priority score: **${idea.priority_score}**`);
@@ -124,7 +133,7 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
       lines.push("  - No linked source available");
     } else {
       idea.sources.forEach((source) =>
-        lines.push(`  - [${source.title}](${source.url}) (${source.source}, ${source.date})`)
+        lines.push(`  - [${stripPdfPrefix(source.title)}](${source.url}) (${source.source})`)
       );
     }
     lines.push("");
@@ -158,7 +167,7 @@ export function formatCompetitorIntelMarkdown(
   }
 
   payload.items.forEach((item, i) => {
-    lines.push(`### ${i + 1}. ${item.competitor}: ${item.title}`);
+    lines.push(`### ${i + 1}. ${item.competitor}: ${stripPdfPrefix(item.title)}`);
     lines.push(`- Date/source: ${item.date ?? "unknown"} (${item.date_confidence}) | **${item.source_type}** | ${item.source}`);
     lines.push(`- URL: ${item.url}`);
     lines.push(`- Confidence: **${item.confidence}**`);

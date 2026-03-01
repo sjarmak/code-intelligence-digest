@@ -326,7 +326,7 @@ function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
       owner: ownerFromDoc(text),
       action:
         alignment === "threatens"
-          ? "Review playbook assumptions and update battlecard/messaging guidance within 48 hours."
+          ? "Review playbook assumptions and update battlecard/messaging guidance as needed."
           : alignment === "reinforces"
             ? "Incorporate this signal into active messaging, qualification, and campaign planning this week."
             : "Track follow-on evidence this week and only update messaging after corroboration from high-confidence sources.",

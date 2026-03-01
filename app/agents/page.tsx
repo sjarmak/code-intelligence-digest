@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, Copy, Download, FileDown } from "lucide-react";
+import { ArrowLeft, Copy, Download, FileDown, Mail } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -46,6 +46,8 @@ export default function AgentReportsPage() {
   const [generateProgress, setGenerateProgress] = useState<string | null>(null);
   const [selectedReportKeys, setSelectedReportKeys] = useState<Set<string>>(new Set());
   const [deletingBulk, setDeletingBulk] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [sendEmailMessage, setSendEmailMessage] = useState<string | null>(null);
 
   const refetchReports = () => {
     return fetch("/api/agents/reports")
@@ -238,6 +240,54 @@ export default function AgentReportsPage() {
     }, 1000);
   };
 
+  const sendCurrentReportToEmail = async () => {
+    if (!viewing) return;
+    setSendEmailMessage(null);
+    setSendingEmail(true);
+    try {
+      const res = await fetch("/api/agents/reports/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportKeys: [`${viewing.goal}:${viewing.id}`] }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) {
+        setSendEmailMessage(data.error ?? "Failed to send email");
+        return;
+      }
+      setSendEmailMessage(data.message ?? "Sent to your email.");
+    } catch (e) {
+      setSendEmailMessage(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
+  const sendSelectedReportsToEmail = async () => {
+    if (selectedReportKeys.size === 0) return;
+    setSendEmailMessage(null);
+    setSendingEmail(true);
+    try {
+      const res = await fetch("/api/agents/reports/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportKeys: Array.from(selectedReportKeys) }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) {
+        setSendEmailMessage(data.error ?? "Failed to send email");
+        return;
+      }
+      setSendEmailMessage(data.message ?? "Sent to your email.");
+    } catch (e) {
+      setSendEmailMessage(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
   if (viewing) {
     return (
       <div className="min-h-screen bg-white text-black flex flex-col">
@@ -245,7 +295,7 @@ export default function AgentReportsPage() {
           <div className="max-w-4xl mx-auto px-4 py-4">
             <button
               type="button"
-              onClick={() => setViewing(null)}
+              onClick={() => { setViewing(null); setSendEmailMessage(null); }}
               className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-black mb-2"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -282,7 +332,21 @@ export default function AgentReportsPage() {
                 <FileDown className="w-4 h-4" />
                 Export PDF
               </button>
+              <button
+                type="button"
+                onClick={sendCurrentReportToEmail}
+                disabled={sendingEmail}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Mail className="w-4 h-4" />
+                {sendingEmail ? "Sending…" : "Send to email"}
+              </button>
             </div>
+            {sendEmailMessage && (
+              <p className={`mt-2 text-sm ${sendEmailMessage.startsWith("Sent") ? "text-green-700" : "text-amber-700"}`}>
+                {sendEmailMessage}
+              </p>
+            )}
           </div>
         </header>
         <main className="max-w-4xl mx-auto w-full px-4 py-6 flex-1 min-h-0 flex flex-col">
@@ -505,12 +569,26 @@ export default function AgentReportsPage() {
                 </label>
                 <button
                   type="button"
+                  onClick={sendSelectedReportsToEmail}
+                  disabled={selectedCount === 0 || sendingEmail}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Mail className="w-4 h-4" />
+                  {sendingEmail ? "Sending…" : `Send selected to email (${selectedCount})`}
+                </button>
+                <button
+                  type="button"
                   onClick={handleDeleteSelected}
                   disabled={selectedCount === 0 || deletingBulk}
                   className="px-3 py-1.5 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {deletingBulk ? "Deleting…" : `Delete selected (${selectedCount})`}
                 </button>
+                {sendEmailMessage && !viewing && (
+                  <span className={`text-sm ${sendEmailMessage.startsWith("Sent") ? "text-green-700" : "text-amber-700"}`}>
+                    {sendEmailMessage}
+                  </span>
+                )}
               </div>
             </section>
             {AGENT_GOALS.map((goal) => {
