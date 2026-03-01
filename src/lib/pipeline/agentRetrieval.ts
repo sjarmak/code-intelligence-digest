@@ -353,15 +353,17 @@ export async function enrichWithFullText(
 
 /**
  * Filter merged docs to only those with publishedAt within the last periodDays.
- * Docs without publishedAt are kept (e.g. web results with no date) to avoid over-filtering.
+ * For short windows (<= 31 days), docs without publishedAt are excluded so we don't surface
+ * old undated web results in "last month" reports.
  */
 function filterRetrievedDocsByDate(
   docs: RetrievedDoc[],
   periodDays: number
 ): RetrievedDoc[] {
   const cutoffMs = Date.now() - periodDays * 24 * 60 * 60 * 1000;
+  const requireDate = periodDays <= 31;
   return docs.filter((doc) => {
-    if (!doc.publishedAt) return true;
+    if (!doc.publishedAt) return !requireDate;
     return doc.publishedAt.getTime() >= cutoffMs;
   });
 }

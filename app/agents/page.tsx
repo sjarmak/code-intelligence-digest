@@ -18,7 +18,7 @@ const TIME_RANGE_LABELS: Record<(typeof TIME_RANGES)[number], string> = {
   day: "Past day",
   week: "Past week",
   month: "Past month",
-  year: "Past year",
+  year: "Last 90 days",
 };
 
 interface ReportMeta {

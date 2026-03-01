@@ -29,6 +29,9 @@ const RANGE_TO_DAYS: Record<ReportTimeRange, number> = {
   year: 365,
 };
 
+/** Max period days for report generation to avoid OOM (e.g. competitor intel with 365d loads too much). */
+const MAX_REPORT_PERIOD_DAYS = 90;
+
 function stripHtml(s: string | undefined): string {
   if (s == null || s === "") return "";
   return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -99,7 +102,8 @@ export async function runAgentReport(
   const goalDir = path.join(REPORT_DIR, goal);
   try {
     const config = getAgentGoalConfig(goal);
-    const periodDays = timeRange ? RANGE_TO_DAYS[timeRange] : config.timeHorizonDays;
+    const rawDays = timeRange ? RANGE_TO_DAYS[timeRange] : config.timeHorizonDays;
+    const periodDays = Math.min(rawDays, MAX_REPORT_PERIOD_DAYS);
     const limit = goal === "content_ideas" ? 10 : 20;
 
     let report: string;
