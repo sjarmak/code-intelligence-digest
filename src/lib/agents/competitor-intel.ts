@@ -1326,10 +1326,16 @@ function cleanedScoringText(rep: CandidateDoc): string {
     .trim();
 }
 
+/** Self-reported performance: competitor posting about how well they're doing (benchmarks, results, rankings, etc.). */
+function isSelfReportedPerformance(item: RankedCompetitorIntelItem): boolean {
+  const t = `${item.title} ${item.summary}`.toLowerCase();
+  return /(benchmark|leaderboard|eval|results?|ranking|ranked|achieved|topped|evaluation|how we (built|achieved|reached)|swe[\s-]?bench)/.test(t);
+}
+
 function shapeOfItem(item: RankedCompetitorIntelItem): "benchmark_blog" | "comparison_seo" | "generic_page" | "other" {
   const t = `${item.title} ${item.url}`.toLowerCase();
   if (/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(t)) return "comparison_seo";
-  if (/swe[\s-]?bench|benchmark|leaderboard|eval/.test(t)) return "benchmark_blog";
+  if (isSelfReportedPerformance(item) || /swe[\s-]?bench|benchmark|leaderboard|eval/.test(t)) return "benchmark_blog";
   if (/\/$|\/blog\/?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(item.url.toLowerCase())) return "generic_page";
   return "other";
 }
@@ -1363,9 +1369,22 @@ function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number
   const narrativeCounts = new Map<string, number>();
   let operationalCount = 0;
   const selected: RankedCompetitorIntelItem[] = [];
-  const deferred: RankedCompetitorIntelItem[] = [];
 
-  for (const item of items) {
+  // Reserve one slot for "competitor posting about how well they're doing" when present — obviously relevant.
+  const performanceItems = items.filter((i) => shapeOfItem(i) === "benchmark_blog");
+  const bestPerformance = performanceItems.length
+    ? performanceItems.reduce((a, b) => (a.relevance_score >= b.relevance_score ? a : b))
+    : null;
+  if (bestPerformance && topN >= 1) {
+    selected.push(bestPerformance);
+    counts.benchmark_blog = 1;
+    updateTypeCounts.set(bestPerformance.update_type, (updateTypeCounts.get(bestPerformance.update_type) ?? 0) + 1);
+  }
+
+  const deferred: RankedCompetitorIntelItem[] = [];
+  const remaining = items.filter((i) => i !== bestPerformance);
+
+  for (const item of remaining) {
     const shape = shapeOfItem(item);
     const text = `${item.title} ${item.summary} ${item.url}`;
     const isOperational = isOperationalTelemetryUpdate(text);
@@ -1381,7 +1400,14 @@ function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number
       item.actionability[0] === "monitoring" &&
       item.threat_level === "low" &&
       selected.filter((s) => s.threat_level === "high" || s.threat_level === "medium").length >= 2;
-    if (counts[shape] < caps[shape] && !violatesTypeCap && !violatesOperationalCap && narrativeCount < narrativeCap && !lowPriorityMonitoring) {
+    if (
+      selected.length < topN &&
+      counts[shape] < caps[shape] &&
+      !violatesTypeCap &&
+      !violatesOperationalCap &&
+      narrativeCount < narrativeCap &&
+      !lowPriorityMonitoring
+    ) {
       selected.push(item);
       counts[shape] += 1;
       updateTypeCounts.set(item.update_type, typeCount + 1);
