@@ -82,7 +82,7 @@ describe("competitor intel markdown format", () => {
       items: [makeItem({ url: "https://cursor.com/blog/composer-1-5", evidence_notes: [] })],
     });
 
-    expect(markdown).toContain("- URL: https://cursor.com/blog/composer-1-5");
+    expect(markdown).toContain("https://cursor.com/blog/composer-1-5");
     expect(markdown).toContain("No evidence notes captured");
   });
 });

@@ -930,6 +930,58 @@ async function retrieveRecentDomainDocs(
   return dedupeDocs(out).slice(0, limit);
 }
 
+/**
+ * Fetch recent blog/release content from the competitor's own domains via web search.
+ * Does not depend on Postgres ingest; ensures we surface competitor blog posts and
+ * release notes even when they are not in our curated feeds.
+ */
+async function retrieveCompetitorBlogFromWeb(
+  competitor: CompetitorIntelEntry,
+  periodDays: number,
+  limit = 12,
+): Promise<CandidateDoc[]> {
+  const timeRange = periodDaysToWebTimeRange(periodDays) ?? "month";
+  const queries = [
+    `${competitor.display_name} blog`,
+    `${competitor.display_name} release notes changelog`,
+    `${competitor.display_name} updates`,
+  ];
+  const docs: CandidateDoc[] = [];
+  const byUrl = new Map<string, CandidateDoc>();
+
+  for (const query of queries) {
+    const results = await searchWeb(query, {
+      numResults: Math.max(8, Math.ceil(limit / queries.length)),
+      domains: competitor.domains,
+      timeRange,
+      topic: "general",
+    });
+    for (const result of results) {
+      if (!result.url || !result.title) continue;
+      if (byUrl.has(result.url)) continue;
+      const domain = getDomainFromUrl(result.url);
+      if (!competitor.domains.some((d) => domain === d || domain.endsWith(`.${d}`))) continue;
+      const doc: CandidateDoc = {
+        competitorId: competitor.id,
+        title: result.title,
+        summary: result.content ?? "",
+        content: result.content ?? "",
+        url: result.url,
+        source: domain || "web",
+        source_type: classifySourceTypeByDomain(domain),
+        publishedAt: result.publishedDate ? new Date(result.publishedDate) : undefined,
+        dateConfidence: result.publishedDate ? "exact" : "unknown",
+        retrievalScore: 3.5,
+      };
+      byUrl.set(result.url, doc);
+      docs.push(doc);
+      if (docs.length >= limit) break;
+    }
+    if (docs.length >= limit) break;
+  }
+  return dedupeDocs(docs).slice(0, limit);
+}
+
 function dedupeDocs(docs: CandidateDoc[]): CandidateDoc[] {
   const byUrl = new Map<string, CandidateDoc>();
   for (const doc of docs) {
@@ -1397,10 +1449,32 @@ function dedupeRankedEvents(items: RankedCompetitorIntelItem[]): RankedCompetito
 function capOverallPerCompetitor(items: RankedCompetitorIntelItem[], topOverall: number): RankedCompetitorIntelItem[] {
   // At most 2 per competitor so the report doesn't bunch up GitLab/Copilot; leaves room for others.
   const cap = 2;
-  const counts = new Map<string, number>();
-  const selected: RankedCompetitorIntelItem[] = [];
+  const tier1DisplayNames = new Set(
+    getCompetitorIntelEntries()
+      .filter((c) => c.tier <= 1)
+      .map((c) => c.display_name),
+  );
 
-  for (const item of items) {
+  // Ensure each tier-1 competitor with at least one item gets one slot (so e.g. Augment Code appears when it has signals).
+  const guaranteed: RankedCompetitorIntelItem[] = [];
+  const used = new Set<RankedCompetitorIntelItem>();
+  for (const name of tier1DisplayNames) {
+    const best = items.find((i) => i.competitor === name);
+    if (best) {
+      guaranteed.push(best);
+      used.add(best);
+    }
+  }
+
+  const counts = new Map<string, number>();
+  for (const g of guaranteed) {
+    counts.set(g.competitor, (counts.get(g.competitor) ?? 0) + 1);
+  }
+  const selected: RankedCompetitorIntelItem[] = [...guaranteed];
+  const remaining = items.filter((i) => !used.has(i));
+
+  for (const item of remaining) {
+    if (selected.length >= topOverall) break;
     const count = counts.get(item.competitor) ?? 0;
     if (count < cap) {
       counts.set(item.competitor, count + 1);
@@ -1656,13 +1730,21 @@ export async function gatherCompetitorIntel(
     const strategicBackfill = await retrieveStrategicBackfillDocs(competitor, periodDays, 8);
     const strategicUrlBackfill = await retrieveStrategicUrlBackfillDocs(competitor, periodDays, 6);
     const recentDomainDocs = await retrieveRecentDomainDocs(competitor, periodDays, 10);
+    const blogFromWeb = await retrieveCompetitorBlogFromWeb(competitor, periodDays, 12);
 
     // Strict attribution:
     // - explicit competitor signal, OR
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
     const hydratedByDb = await hydratePublishedDates(
-      dedupeDocs([...internalCandidates, ...webCandidates, ...strategicBackfill, ...strategicUrlBackfill, ...recentDomainDocs]),
+      dedupeDocs([
+        ...internalCandidates,
+        ...webCandidates,
+        ...strategicBackfill,
+        ...strategicUrlBackfill,
+        ...recentDomainDocs,
+        ...blogFromWeb,
+      ]),
     );
     const hydrated = await hydratePublishedDatesFromMetadata(hydratedByDb, periodDays);
     const deduped = hydrated.filter((doc) => {
