@@ -281,9 +281,10 @@ function clusterScore(cluster: EventCluster): Record<string, number> {
   const benchmark_evidence_boost =
     /\/blog\//.test(rep.url.toLowerCase()) && /(swe[\s-]?bench|benchmark|leaderboard|eval)/i.test(titleUrl) ? 0.15 : 0;
   const seo_comparison_penalty = /\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(titleUrl) ? -1.2 : 0;
-  const generic_page_penalty = /\/$|\/blog\/?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(rep.url.toLowerCase())
-    ? -1
-    : 0;
+  const urlPath = rep.url.toLowerCase().replace(/\?.*$/, "");
+  const isIndexOrPagination =
+    /\/$|\/blog\/?$|\/blog\/page\/\d+(\/)?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(urlPath);
+  const generic_page_penalty = isIndexOrPagination ? -1 : 0;
 
   const direct_overlap = Math.max(1, Math.min(5, overlap.length));
   const agent_mcp_overlap = overlap.some((s) => s === "mcp" || s === "agent_context") ? 5 : 1;
@@ -1200,8 +1201,25 @@ function domainMatchesAnyTrackedCompetitor(url: string, competitors: CompetitorI
   );
 }
 
+/** UI/nav chrome to strip from competitor intel summaries (same class as market-brief Watch Items). */
+const COMPETITOR_SUMMARY_CHROME: RegExp[] = [
+  /\bselect your language\s+english\s+deutsch\s+español[\s\S]{0,120}?/gi,
+  /\byou signed in with another tab or window[\s\S]{0,80}?reload to refresh[\s\S]{0,40}/gi,
+  /\byou signed out of your session[\s\S]{0,60}/gi,
+  /\breload to refresh your session[\s\S]{0,40}/gi,
+  /\bdismiss alert[\s\S]{0,30}/gi,
+  /\bnotifications\s+you must be signed in[\s\S]{0,60}/gi,
+  /\bskip to main content[\s\S]{0,20}/gi,
+  /\bskip to footer[\s\S]{0,20}/gi,
+  /\s*\[[^\]]*\]\s*\(\s*https?:\/\/[^\s)]+\)/g,
+];
+
 function compactSummary(text: string, maxLen = 900): string {
-  const stripped = text
+  let stripped = text;
+  for (const re of COMPETITOR_SUMMARY_CHROME) {
+    stripped = stripped.replace(re, " ");
+  }
+  stripped = stripped
     .replace(/<[^>]+>/g, " ")
     .replace(/section title:\s*/gi, " ")
     .replace(/table of contents/gi, " ")
@@ -1423,7 +1441,8 @@ function shapeOfItem(item: RankedCompetitorIntelItem): "benchmark_blog" | "compa
   const t = `${item.title} ${item.url}`.toLowerCase();
   if (/\/tools\/|(\bvs\b)|\bbest\b|\bcomparison\b/.test(t)) return "comparison_seo";
   if (isSelfReportedPerformance(item) || /swe[\s-]?bench|benchmark|leaderboard|eval/.test(t)) return "benchmark_blog";
-  if (/\/$|\/blog\/?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(item.url.toLowerCase())) return "generic_page";
+  const path = item.url.toLowerCase().replace(/\?.*$/, "");
+  if (/\/$|\/blog\/?$|\/blog\/page\/\d+(\/)?$|\/docs\/?$|\/changelog\/?$|\/pricing\/?$|\/context-engine\/?$/.test(path)) return "generic_page";
   return "other";
 }
 

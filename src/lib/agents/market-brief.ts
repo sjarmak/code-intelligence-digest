@@ -72,14 +72,32 @@ function textOf(doc: AgentRankedDoc): string {
   return `${doc.title} ${doc.snippet ?? ""} ${doc.content ?? ""}`.toLowerCase();
 }
 
+/** Common UI/nav/chrome phrases to strip from snippets so Watch Items show content only. */
+const PAGE_CHROME_PATTERNS: RegExp[] = [
+  /\bselect your language\s+english\s+deutsch\s+español[\s\S]{0,120}?/gi,
+  /\byou signed in with another tab or window[\s\S]{0,80}?reload to refresh[\s\S]{0,40}/gi,
+  /\byou signed out of your session[\s\S]{0,60}/gi,
+  /\breload to refresh your session[\s\S]{0,40}/gi,
+  /\byou switched accounts on another tab or window[\s\S]{0,40}/gi,
+  /\bdismiss alert[\s\S]{0,30}/gi,
+  /\bnotifications\s+you must be signed in[\s\S]{0,60}/gi,
+  /\bskip to main content[\s\S]{0,20}/gi,
+  /\bskip to footer[\s\S]{0,20}/gi,
+  /\bpublic\s+notifications\s+you\s+must be signed in[\s\S]{0,80}/gi,
+  /\s*\[[^\]]*\]\s*\(\s*https?:\/\/[^\s)]+\)/g,
+  /\b(?:free|team|enterprise)\s+plan\s+customers\s*\[[\s\S]{0,100}?\]/gi,
+];
+
 function stripBoilerplateNoise(text: string): string {
-  return text
+  let out = text
     .replace(/<[^>]+>/g, " ")
     .replace(/\bsection title:\s*/gi, " ")
     .replace(/\bcontent:\s*/gi, " ")
-    .replace(/\btable of contents\b/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/\btable of contents\b/gi, " ");
+  for (const re of PAGE_CHROME_PATTERNS) {
+    out = out.replace(re, " ");
+  }
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function canonicalizeUrl(url: string): string {

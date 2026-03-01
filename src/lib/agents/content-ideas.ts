@@ -107,6 +107,20 @@ const NOISY_DOMAINS = new Set([
   "link.mail.beehiiv.com",
 ]);
 
+/** Domains whose content is often appsec/fuzzing/tooling rather than AI coding workflows; downgrade when doc doesn't mention AI coding. */
+const TANGENTIAL_FOR_AI_CODING = new Set([
+  "code-intelligence.com", // fuzzing, appsec webinars
+  "snyk.io", // appsec, SAST (unless clearly AI coding)
+]);
+
+function isTangentialSourceForIdea(domain: string, text: string): boolean {
+  if (!domain) return false;
+  const base = domain.replace(/^www\./, "");
+  if (!TANGENTIAL_FOR_AI_CODING.has(base)) return false;
+  const strongAiCoding = /(ai coding|coding assistant|coding agent|context layer|mcp.*agent|agent.*mcp|copilot|cursor|claude code|code gen)/i.test(text);
+  return !strongAiCoding;
+}
+
 function isNoisyDomain(domain: string): boolean {
   if (!domain) return false;
   if (NOISY_DOMAINS.has(domain)) return true;
@@ -504,6 +518,9 @@ function buildCoreClaim(text: string): string {
 
 function buildEvidenceQualityNote(doc: AgentRankedDoc, text: string): string {
   const domain = sourceFromUrl(doc.url);
+  if (isTangentialSourceForIdea(domain, text)) {
+    return "Moderate confidence: source is tangential (e.g. appsec/fuzzing); use for monitoring only unless content clearly addresses AI coding workflows.";
+  }
   const sourceType = classifySourceTypeByDomain(domain);
   const concrete = hasConcreteEvidence(text);
   if (sourceType === "primary" && concrete) return "High-confidence: primary source with concrete evidence.";
@@ -557,13 +574,14 @@ function toIdea(
   targetSegmentOverride?: ContentIdea["target_segment"],
 ): ContentIdea {
   const text = textOf(candidate.doc);
+  const evidenceUrl = canonicalizeUrl(candidate.doc.url ?? "");
+  const evidenceSource = sourceFromUrl(evidenceUrl);
   const integration = classifySourcegraphIntegrationOpportunity({
     title: candidate.doc.title,
     summary: candidate.doc.snippet ?? "",
     content: candidate.doc.content ?? "",
   });
-  const evidenceUrl = canonicalizeUrl(candidate.doc.url ?? "");
-  const evidenceSource = sourceFromUrl(evidenceUrl);
+  const downgradeToMonitor = isTangentialSourceForIdea(evidenceSource, text);
   const date = candidate.doc.publishedAt ? candidate.doc.publishedAt.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 
   const funnel: ContentIdea["funnel_stage"] =
@@ -600,7 +618,7 @@ function toIdea(
     proof_required: ["product evidence", "external trend", "customer story"],
     guardrails: state.messaging_guardrails,
     evidence_quality_note: buildEvidenceQualityNote(candidate.doc, text),
-    integration_opportunity: integration.level,
+    integration_opportunity: downgradeToMonitor ? "monitor_only" : integration.level,
     sourcegraph_integration_play: integration.sourcegraph_integration_play,
     distribution_plan: distributionPlan,
     priority_score: Number(candidate.score.toFixed(3)),

@@ -17,8 +17,9 @@ async function main() {
   console.log("Initializing database...");
   await initializeDatabase();
 
-  console.log("\nGenerating reports for:", VALID_GOALS.join(", "));
-  const results = await runAgentReports([...VALID_GOALS]);
+  const timeRange = (process.env.REPORT_PERIOD as "day" | "week" | "month" | "year") || undefined;
+  console.log("\nGenerating reports for:", VALID_GOALS.join(", "), timeRange ? `(period: ${timeRange})` : "");
+  const results = await runAgentReports([...VALID_GOALS], "legacy", timeRange);
 
   for (const goal of VALID_GOALS) {
     const r = results[goal];
