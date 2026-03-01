@@ -699,6 +699,9 @@ export async function generateContentIdeas(options: {
 
   const ranked = await rankForAgent("content_ideas", docsWithBrief);
 
+  const windowMs = periodDays * 24 * 60 * 60 * 1000;
+  const cutoffMs = Date.now() - windowMs;
+
   const candidates = ranked
     .map((doc) => scoreCandidate(doc, state))
     .filter((c) => {
@@ -719,6 +722,12 @@ export async function generateContentIdeas(options: {
       if ((sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) return false;
       if (c.segment === "Other" && !/(capital market|bank|insurance|finserv|regulated)/.test(text) && c.score < 0.72) return false;
       return c.score >= 0.58;
+    })
+    .map((c) => {
+      // Boost recency for short windows so "day"/"week" reports favor truly recent items.
+      const inWindow = c.doc.publishedAt && c.doc.publishedAt.getTime() >= cutoffMs;
+      const recencyBoost = periodDays <= 14 && inWindow ? 0.18 : periodDays <= 30 && inWindow ? 0.08 : 0;
+      return { ...c, score: c.score + recencyBoost };
     })
     .sort((a, b) => b.score - a.score);
 
@@ -834,7 +843,21 @@ export async function generateContentIdeas(options: {
         byTitle.set(titleKey, idea);
       }
     }
-    const deduped = Array.from(byTitle.values())
+    const afterTitle = Array.from(byTitle.values());
+    // Dedupe by core_claim so we don't surface multiple ideas with the same "Core claim" line.
+    const byCoreClaim = new Map<string, ContentIdea>();
+    for (const idea of afterTitle) {
+      const key = (idea.core_claim ?? "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120);
+      if (!key) {
+        byCoreClaim.set(`title:${normalizeIdeaTitleKey(idea.title)}`, idea);
+        continue;
+      }
+      const existing = byCoreClaim.get(key);
+      if (!existing || idea.priority_score > existing.priority_score) {
+        byCoreClaim.set(key, idea);
+      }
+    }
+    const deduped = Array.from(byCoreClaim.values())
       .sort((a, b) => b.priority_score - a.priority_score)
       .slice(0, numIdeas);
     return deduped;

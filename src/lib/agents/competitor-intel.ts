@@ -1458,7 +1458,8 @@ function isMaterialRankedItem(item: RankedCompetitorIntelItem): boolean {
 
 function diversifyPerCompetitor(items: RankedCompetitorIntelItem[], topN: number): RankedCompetitorIntelItem[] {
   const materialCount = items.filter(isMaterialRankedItem).length;
-  const benchmarkCap = materialCount > 0 ? 1 : Math.max(2, Math.floor(topN / 2));
+  // Allow 2 benchmark slots so e.g. SWE-bench and another benchmark post can both appear per competitor.
+  const benchmarkCap = materialCount > 0 ? 2 : Math.max(2, Math.floor(topN / 2));
   const operationalCap = materialCount > 0 ? 1 : 2;
   const updateTypeCaps: Record<string, number> = {
     product_launch: 2,
@@ -1578,9 +1579,12 @@ function dedupeRankedEvents(items: RankedCompetitorIntelItem[]): RankedCompetito
   return out;
 }
 
+/** Minimum relevance to include regardless of per-competitor cap (surfaces e.g. SWE-bench, benchmarks). */
+const RELEVANCE_THRESHOLD = 3.6;
+
 function capOverallPerCompetitor(items: RankedCompetitorIntelItem[], topOverall: number): RankedCompetitorIntelItem[] {
-  // At most 2 per competitor so the report doesn't bunch up GitLab/Copilot; leaves room for others.
-  const cap = 2;
+  // Prefer relevance over strict per-competitor cap: include all items above threshold, then fill by score with cap 5.
+  const perCompetitorCap = 5;
   const tier1DisplayNames = new Set(
     getCompetitorIntelEntries()
       .filter((c) => c.tier <= 1)
@@ -1606,12 +1610,25 @@ function capOverallPerCompetitor(items: RankedCompetitorIntelItem[], topOverall:
     counts.set(g.competitor, (counts.get(g.competitor) ?? 0) + 1);
   }
   const selected: RankedCompetitorIntelItem[] = [...guaranteed];
-  const remaining = items.filter((i) => !used.has(i));
+  const remaining = items.filter((i) => !used.has(i)).sort((a, b) => b.relevance_score - a.relevance_score);
 
+  // First pass: include all items above relevance threshold (up to topOverall), respecting per-competitor cap.
   for (const item of remaining) {
     if (selected.length >= topOverall) break;
     const count = counts.get(item.competitor) ?? 0;
-    if (count < cap) {
+    const aboveThreshold = item.relevance_score >= RELEVANCE_THRESHOLD;
+    if (aboveThreshold && count < perCompetitorCap) {
+      counts.set(item.competitor, count + 1);
+      selected.push(item);
+      used.add(item);
+    }
+  }
+  // Second pass: fill remaining slots by score with same cap.
+  const stillRemaining = remaining.filter((i) => !used.has(i));
+  for (const item of stillRemaining) {
+    if (selected.length >= topOverall) break;
+    const count = counts.get(item.competitor) ?? 0;
+    if (count < perCompetitorCap) {
       counts.set(item.competitor, count + 1);
       selected.push(item);
     }
