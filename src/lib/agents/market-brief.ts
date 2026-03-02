@@ -497,10 +497,25 @@ export async function generateMarketBrief(options: {
   const strong = selected.filter((x) => isStrongExecutiveDelta(x));
   const weak = selected.filter((x) => !isStrongExecutiveDelta(x));
 
-  const executiveSource = strong.length > 0 ? strong : selected;
-  const executiveDocs = executiveSource.slice(0, Math.min(8, executiveSource.length));
-  const watchSource = strong.length > 0 ? weak : selected.slice(executiveDocs.length);
-  const watchDocs = watchSource.slice(0, Math.min(6, watchSource.length));
+  let executiveDocs = (strong.length > 0 ? strong : selected).slice(
+    0,
+    Math.min(8, selected.length),
+  );
+
+  // For longer windows (e.g. month), ensure we surface multiple deltas when we have candidates.
+  if (periodDays > 14 && executiveDocs.length < 3 && selected.length >= 3) {
+    const needed = 3 - executiveDocs.length;
+    const already = new Set(executiveDocs.map((x) => x.doc.id));
+    const promotionPool = (strong.length > 0 ? weak : selected).filter(
+      (x) => !already.has(x.doc.id),
+    );
+    executiveDocs = executiveDocs.concat(promotionPool.slice(0, needed));
+  }
+
+  const executiveIds = new Set(executiveDocs.map((x) => x.doc.id));
+  const watchDocs = selected
+    .filter((x) => !executiveIds.has(x.doc.id))
+    .slice(0, Math.min(6, selected.length));
 
   const executive = executiveDocs.map((x) => toDelta(x, state));
   const watchItems = watchDocs.map((x) => toDelta(x, state));

@@ -54,10 +54,9 @@ const MARKET_BRIEF_SYSTEM = `You are a GTM and technical landscape analyst for a
 
 Rules:
 - The JSON includes two buckets: items with bucket="executive" (pre-selected Executive Delta candidates) and bucket="watch" (pre-selected Watch Items).
-- Treat bucket="executive" items as the primary Executive Delta set. KEEP them in Executive Delta unless they are clearly best-practices/how-to/tutorial/guide/checklist content, in which case you MAY move them down to Watch Items.
-- Only promote bucket="watch" items into Executive Delta when they clearly deserve it (e.g., hard GTM signals like launches, pricing, benchmarks, roadmaps, partnerships, or major migrations) and there is room in a 3–5 item Executive Delta list.
+- Treat bucket="executive" items as the Executive Delta set and render ALL of them in the ## Executive Delta section (you may reorder and rewrite, but do not move them to Watch Items).
+- Treat bucket="watch" items as the Watch list and render ALL of them in the ## Watch Items section (you may shorten or drop only clearly off-topic items).
 - Include ONLY items that are clearly relevant to developer tools, code intelligence, AI coding assistants, enterprise SDLC, or our ICP. DROP off-topic items (e.g. Outlook/calendar features, Discord moderation drama, consumer mobile OS, one-off library releases with no GTM angle, spammy comments, generic infra news with no code/AI relevance).
-- Prefer 3–5 strong Executive Delta items and a short Watch list.
 - Start with a short technical landscape summary section: ## Landscape Themes, listing 2–4 bullets that synthesize the *overall* technical and adoption landscape for AI/dev tools from ALL items (executive + watch), even if some are not immediate GTM moves.
 - After that, output these exact section headers: ## Executive Delta, ## Watch Items, and if needed ## Invalidations To Monitor.
 - For each Executive Delta item use: ### N. Title, then bullet lines for Segment impact, Persona impact, Why it matters, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Recommended owner/action, Sources (links).
