@@ -755,7 +755,10 @@ export async function generateContentIdeas(options: {
 } = {}): Promise<ContentIdeasOutput> {
   const state = loadPlaybookState();
   const periodDays = options.periodDays ?? 30;
-  const numIdeas = options.numIdeas ?? 10;
+  // For month+ windows, target 4-6 ideas with multi-source grounding.
+  // For shorter windows, target more to show fresh signals.
+  const defaultNumIdeas = periodDays > 14 ? 6 : periodDays > 7 ? 8 : 10;
+  const numIdeas = options.numIdeas ?? defaultNumIdeas;
   const debugLog = options.debug ? new AgentScoringDebugger("content_ideas", periodDays) : null;
 
   const docs = await retrieveForAgent("content_ideas", {
@@ -827,7 +830,9 @@ export async function generateContentIdeas(options: {
       const canonicalUrl = canonicalizeUrl(c.doc.url);
       const isLongWindow = periodDays > 14;
       if (c.guardrailViolation) return false;
-      if (!hasMinimumContentIdeasRelevance(c.doc)) return false;
+      // For short windows (≤14 days), require strict relevance check; for month+, relax it
+      // because we're looking for diverse content seeds, not just GTM-focused items.
+      if (!isLongWindow && !hasMinimumContentIdeasRelevance(c.doc)) return false;
       if (!canonicalUrl) return false;
       if (isNoisyDomain(domain)) return false;
       if (isGenericIdeaPage(canonicalUrl) && !/(benchmark|case study|customer|ga|release|pricing|security|compliance|enterprise)/.test(text)) {
@@ -843,7 +848,7 @@ export async function generateContentIdeas(options: {
       }
       // For longer windows (e.g. month), allow a slightly broader set of sources while upstream
       // gates continue to block off-topic or obviously low-signal docs.
-      const minScore = periodDays > 14 ? 0.38 : 0.44;
+      const minScore = periodDays > 14 ? 0.35 : 0.42;
       return c.score >= minScore;
     })
     .map((c) => {
@@ -877,8 +882,10 @@ export async function generateContentIdeas(options: {
     }
   }
 
-  // Select top ideas by score only (product relevance); no ICP/beachhead quotas.
-  const selected = candidates.slice(0, numIdeas);
+  // For diversity, pre-select more candidates than we'll output, so domain-diversity filters
+  // have enough material to work with. For month windows, we may filter down to 4-6.
+  const selectionPoolSize = Math.ceil(numIdeas * (periodDays > 14 ? 2.5 : 1.5));
+  const selected = candidates.slice(0, selectionPoolSize);
 
   const planned: PlannedIdea[] = selected.map((candidate) => ({
     candidate,
