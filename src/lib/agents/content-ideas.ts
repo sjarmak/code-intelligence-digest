@@ -540,9 +540,8 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
   const channel = detectChannel(text, state);
   const guardrailViolation = detectGuardrailViolation(text);
 
-  const segment_priority_score = segment === "Capital Markets" ? 0.8 : segment === "Other" ? 0.55 : 0.7;
+  // Weight by product-relevant tech and evidence; no ICP/beachhead/segment boost (reduces noise).
   const channel_efficiency_score = ["event_talk", "whitepaper", "SEO_page", "blog"].includes(channel) ? 0.9 : 0.6;
-  const persona_fit_score = ["Head of Developer Platform", "VP Engineering", "Security/Compliance"].includes(persona) ? 0.9 : 0.7;
   const proof_feasibility_score = /(benchmark|customer|case study|release notes|docs|ga)/.test(text) ? 0.9 : 0.5;
   const message_fit_score = /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted)/.test(text) ? 1 : 0.2;
   const timeliness_score = doc.publishedAt ? Math.max(0.2, 1 - ((Date.now() - doc.publishedAt.getTime()) / (1000 * 60 * 60 * 24 * 120))) : 0.5;
@@ -551,12 +550,10 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
   const noisy_domain_penalty = isNoisyDomain(domain) ? 0.3 : 0;
 
   const score =
-    0.12 * segment_priority_score +
-    0.18 * channel_efficiency_score +
-    0.16 * persona_fit_score +
-    0.14 * proof_feasibility_score +
-    0.32 * message_fit_score +
-    0.06 * timeliness_score +
+    0.2 * channel_efficiency_score +
+    0.16 * proof_feasibility_score +
+    0.44 * message_fit_score +
+    0.08 * timeliness_score +
     0.02 * source_quality_score -
     noisy_domain_penalty;
 
@@ -720,7 +717,6 @@ export async function generateContentIdeas(options: {
       }
       if (sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) return false;
       if ((sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) return false;
-      if (c.segment === "Other" && !/(capital market|bank|insurance|finserv|regulated)/.test(text) && c.score < 0.72) return false;
       return c.score >= 0.58;
     })
     .map((c) => {
@@ -731,100 +727,13 @@ export async function generateContentIdeas(options: {
     })
     .sort((a, b) => b.score - a.score);
 
-  // Diversity-aware selection with soft GTM mix guidance (not strict quotas).
-  const selected: ScoredIdeaCandidate[] = [];
-  const selectedSet = new Set<ScoredIdeaCandidate>();
-  const segmentCounts = new Map<string, number>();
-  const channelCounts = new Map<string, number>();
-  const personaCounts = new Map<string, number>();
-  const targetMix = {
-    beachhead: 0.4,
-    adjacent: 0.35,
-    broader: 0.25,
-  } as const;
-
-  const maxOther = Math.max(2, Math.ceil(numIdeas * 0.35));
-  const maxPerSegment = Math.max(2, Math.ceil(numIdeas * 0.45));
-  const maxPerChannel = Math.max(2, Math.ceil(numIdeas * 0.4));
-  const maxPerPersona = Math.max(4, Math.ceil(numIdeas * 0.6));
-
-  const tryTake = (candidate: ScoredIdeaCandidate, enforceBucketQuota: boolean): boolean => {
-    if (selectedSet.has(candidate)) return false;
-    if (selected.length >= numIdeas) return false;
-
-    const seg = candidate.segment;
-    const ch = candidate.channel;
-    const per = candidate.persona;
-    const bucket = toSegmentBucket(seg, state);
-
-    const segCount = segmentCounts.get(seg) ?? 0;
-    const chCount = channelCounts.get(ch) ?? 0;
-    const perCount = personaCounts.get(per) ?? 0;
-
-    if (enforceBucketQuota && selected.length >= numIdeas) return false;
-    if (seg === "Other" && segCount >= maxOther) return false;
-    if (segCount >= maxPerSegment) return false;
-    if (chCount >= maxPerChannel) return false;
-    if (perCount >= maxPerPersona) return false;
-
-    selected.push(candidate);
-    selectedSet.add(candidate);
-    segmentCounts.set(seg, segCount + 1);
-    channelCounts.set(ch, chCount + 1);
-    personaCounts.set(per, perCount + 1);
-    return true;
-  };
-
-  // Pass 1: take top ideas with diversity caps.
-  for (const candidate of candidates) {
-    if (selected.length >= numIdeas) break;
-    tryTake(candidate, true);
-  }
-
-  // Backfill if diversity caps were too strict.
-  if (selected.length < numIdeas) {
-    for (const candidate of candidates) {
-      if (selected.length >= numIdeas) break;
-      tryTake(candidate, false);
-    }
-  }
+  // Select top ideas by score only (product relevance); no ICP/beachhead quotas.
+  const selected = candidates.slice(0, numIdeas);
 
   const planned: PlannedIdea[] = selected.map((candidate) => ({
     candidate,
     targetSegment: normalizeTargetSegment(candidate.segment),
   }));
-
-  // If detected signals are too generic, rebalance targeting toward explicit GTM priorities
-  // so output isn't over-biased to "Other".
-  const rebalanceBucketMinimums: Record<SegmentBucket, number> = {
-    beachhead: numIdeas >= 3 ? 1 : 0,
-    adjacent: numIdeas >= 5 ? 1 : 0,
-    broader: numIdeas >= 3 ? 1 : 0,
-  };
-  const adjacentPool = state.adjacent_segments.map((s) => normalizeTargetSegment(s)).filter((s) => s !== "Other");
-  let adjacentCursor = 0;
-  const bucketCountForPlan = (bucket: SegmentBucket): number =>
-    planned.filter((p) => toSegmentBucket(p.targetSegment, state) === bucket).length;
-  const indexFromBuckets = (buckets: SegmentBucket[]): number | undefined => {
-    for (const bucket of buckets) {
-      const idx = planned.findIndex((p) => toSegmentBucket(p.targetSegment, state) === bucket);
-      if (idx >= 0) return idx;
-    }
-    return undefined;
-  };
-
-  while (bucketCountForPlan("beachhead") < rebalanceBucketMinimums.beachhead) {
-    const idx = indexFromBuckets(["broader", "adjacent"]);
-    if (idx == null) break;
-    planned[idx].targetSegment = normalizeTargetSegment(state.primary_beachhead);
-  }
-  while (bucketCountForPlan("adjacent") < rebalanceBucketMinimums.adjacent) {
-    const idx = indexFromBuckets(["broader", "beachhead"]);
-    if (idx == null) break;
-    const seg = adjacentPool[adjacentCursor % Math.max(1, adjacentPool.length)] ?? "Banks";
-    adjacentCursor++;
-    planned[idx].targetSegment = seg;
-  }
 
   const rawIdeas = planned
     .map(({ candidate, targetSegment }) => ({ candidate, idea: toIdea(candidate, state, targetSegment) }))
@@ -886,7 +795,7 @@ export async function generateContentIdeas(options: {
     periodDays,
     playbook_confidence_flags: state.confidence_flags,
     selection_debug: {
-      target_mix: targetMix,
+      target_mix: { beachhead: 0, adjacent: 0, broader: 0 },
       achieved_mix: achievedMix,
       achieved_counts: achievedBucketCounts,
       achieved_segment_counts: achievedSegmentCounts,

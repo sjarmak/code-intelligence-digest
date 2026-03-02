@@ -70,6 +70,18 @@ const LOW_SIGNAL_MARKET_DOMAINS = new Set([
   "pieces.app",
 ]);
 
+/** Domains that are off-topic for GTM market brief (general news, finance news, lifestyle, health). */
+const OFF_TOPIC_MARKET_DOMAINS = new Set([
+  "morningstar.com",
+  "cnn.com",
+  "eff.org",
+  "bolde.com",
+  "medicalxpress.com",
+  "xcancel.com",
+  "x.com",
+  "quantamagazine.org",
+]);
+
 function textOf(doc: AgentRankedDoc): string {
   return `${doc.title} ${doc.snippet ?? ""} ${doc.content ?? ""}`.toLowerCase();
 }
@@ -134,7 +146,11 @@ function isGenericMarketPage(url: string): boolean {
 function segmentImpactFromText(text: string, state: PlaybookState): string[] {
   const out: string[] = [];
   const beachhead = state.primary_beachhead.toLowerCase();
-  if (text.includes(beachhead) || text.includes("capital market") || text.includes("trading")) {
+  const tradingRelevant =
+    text.includes("capital market") ||
+    (text.includes("trading") &&
+      !/\b(insider\s+trading|prediction[- ]?market|betting|bet\s+on)\b/i.test(text));
+  if (text.includes(beachhead) || tradingRelevant) {
     out.push(state.primary_beachhead);
   }
   for (const seg of state.adjacent_segments) {
@@ -185,6 +201,22 @@ function evidenceQualityNote(input: {
   return "Early or low-confidence signal. Monitor for repeat evidence before changing GTM direction.";
 }
 
+/** Title/snippet patterns that are off-topic for GTM market brief (not developer tools / code intelligence). */
+const OFF_TOPIC_MARKET_PATTERNS = [
+  /\binsider\s+trading\b/i,
+  /\bprediction[- ]?market\s+bet/i,
+  /\bdeceived\s+congress\b/i,
+  /\bsurveillance\s+powers\b/i,
+  /\biran\s+(conflict|strike|attack|war)\b/i,
+  /\b(elementary|girls?)\s+school\s+hit\b/i,
+  /\bquantum\s+mechanics\s+(beginning|mysteries)\b/i,
+  /\bpsychology.*(friend|close friend|independence)\b/i,
+  /\bfear\s+of\s+failure\b/i,
+  /\bmemories\s+can\s+reduce\s+fear\b/i,
+  /\bai\s+twitter\s+needs\s+this\s+guy\b/i,
+  /\bregistrarse\s+en\s+www\.binance\b/i,
+];
+
 function isMarketBriefNoise(doc: AgentRankedDoc): boolean {
   const text = textOf(doc);
   const domain = getDomainFromUrl(doc.url ?? "");
@@ -192,7 +224,9 @@ function isMarketBriefNoise(doc: AgentRankedDoc): boolean {
   if (sourceType === "community") return true;
   if (MARKET_TRACKING_DOMAINS.has(domain)) return true;
   if (LOW_SIGNAL_MARKET_DOMAINS.has(domain)) return true;
+  if (OFF_TOPIC_MARKET_DOMAINS.has(domain)) return true;
   if (/(reddit\.com|dev\.to|podcasters\.spotify\.com)/.test(domain)) return true;
+  if (OFF_TOPIC_MARKET_PATTERNS.some((re) => re.test(text))) return true;
   if (
     /((market|industry)\s+(size|share|forecast|outlook|landscape)|worth\s+\$\d+|growth opportunities|cagr|global\s+market)/.test(
       text,
@@ -256,12 +290,7 @@ function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
   const segmentImpact = segmentImpactFromText(text, state);
   const personaImpact = personaImpactFromText(text);
 
-  const segment_priority_score = segmentImpact.includes(state.primary_beachhead)
-    ? 1
-    : segmentImpact.length > 0
-      ? 0.75
-      : 0.2;
-  const persona_priority_score = Math.min(1, personaImpact.length * 0.35);
+  // Weight by product-relevant tech and positioning only; no ICP/beachhead boost (reduces noise).
   const competitive_risk_score = /(github|copilot|cursor|gitlab|augment|moderne|context engine|repo context)/.test(text)
     ? 1
     : 0.3;
@@ -281,19 +310,15 @@ function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
   const contradiction_bonus = contradiction ? 0.35 : 0;
 
   const score =
-    0.14 * segment_priority_score +
-    0.1 * persona_priority_score +
-    0.18 * competitive_risk_score +
-    0.16 * enterprise_relevance_score +
-    0.16 * message_impact_score +
-    0.12 * actionability_score +
+    0.22 * competitive_risk_score +
+    0.2 * enterprise_relevance_score +
+    0.28 * message_impact_score +
+    0.18 * actionability_score +
     0.08 * Math.min(1, doc.agentScore) +
-    0.06 * evidenceSignalScore +
+    0.12 * evidenceSignalScore +
     contradiction_bonus;
 
   const policyBasis: string[] = [];
-  if (segmentImpact.includes(state.primary_beachhead)) policyBasis.push(`beachhead:${state.primary_beachhead}`);
-  if (segmentImpact.some((s) => state.adjacent_segments.includes(s))) policyBasis.push("adjacent_finserv_corridor");
   if (enterprise_relevance_score > 0.8) policyBasis.push("enterprise_requirements_priority");
   if (message_impact_score > 0.8) policyBasis.push("context_layer_message_priority");
   if (contradiction) policyBasis.push("playbook_contradiction_bonus");
