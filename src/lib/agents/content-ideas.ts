@@ -629,14 +629,17 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
   // Penalties
   const noisy_domain_penalty = isNoisyDomain(domain) ? 0.3 : 0;
 
-  // Rebalanced scoring: prioritize content seed value over pure GTM intensity
+  // Rebalanced scoring: prioritize content seed value + quality differentiation
+  // Increased seedFormat (25%) and sourceQuality (15%) to create real variance between candidates.
+  // Reduced messageFit (25%) since most docs hit 0.6 and don't differentiate.
+  // Kept channel + evidence + timeliness moderate.
   const contentSeedScore =
-    0.15 * seedFormatScore +        // Format quality (case study > blog > newsletter > other)
-    0.15 * channel_efficiency_score +  // Channel fit
+    0.25 * seedFormatScore +           // Format quality (case study > blog > newsletter > other) - increased for differentiation
+    0.12 * channel_efficiency_score +  // Channel fit
     0.12 * proof_feasibility_score +   // Evidence availability
-    0.35 * message_fit_score +         // Message fit
-    0.08 * timeliness_score +          // Recency boost (lighter weight for month)
-    0.05 * source_quality_score -      // Source quality (light weight)
+    0.25 * message_fit_score +         // Message fit - reduced from 0.35 (too many docs hit 0.6)
+    0.10 * timeliness_score +          // Recency boost (lighter weight for month)
+    0.15 * source_quality_score -      // Source quality - increased from 0.05 (primary > secondary > community)
     noisy_domain_penalty;
 
   const score = contentSeedScore;
@@ -884,7 +887,8 @@ export async function generateContentIdeas(options: {
 
   // For diversity, pre-select more candidates than we'll output, so domain-diversity filters
   // have enough material to work with. For month windows, we may filter down to 4-6.
-  const selectionPoolSize = Math.ceil(numIdeas * (periodDays > 14 ? 2.5 : 1.5));
+  // Increased multiplier from 2.5x to 4x to ensure strong domain diversity when candidates cluster.
+  const selectionPoolSize = Math.ceil(numIdeas * (periodDays > 14 ? 4.0 : 1.5));
   const selected = candidates.slice(0, selectionPoolSize);
 
   const planned: PlannedIdea[] = selected.map((candidate) => ({
