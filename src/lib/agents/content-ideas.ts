@@ -1,11 +1,12 @@
 import { retrieveForAgent } from "../pipeline/agentRetrieval";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
-import { classifySourceTypeByDomain, getDomainFromUrl } from "../../config/competitor-intel";
+import { classifySourceTypeByDomain, getDomainFromUrl as getDomainFromUrlCompetitor } from "../../config/competitor-intel";
 import {
   classifySourcegraphIntegrationOpportunity,
   type IntegrationOpportunityLevel,
 } from "./sourcegraph-integration-opportunity";
+import { AgentScoringDebugger } from "./agent-scoring-debug";
 
 /**
  * Content ideas: when LLM is configured, "Generate reports" uses retrieve → rank → shortlist (LLM)
@@ -73,9 +74,13 @@ export interface ContentIdeasOutput {
   ideas: ContentIdea[];
 }
 
+export type ContentSeedType = "case_study" | "blog_post" | "newsletter_feature" | "webinar" | "research_report" | "benchmark" | "other";
+
 interface ScoredIdeaCandidate {
   doc: AgentRankedDoc;
+  seedType: ContentSeedType;
   score: number;
+  contentSeedScore: number;
   guardrailViolation: boolean;
   segment: ContentIdea["target_segment"];
   persona: ContentIdea["target_persona"];
@@ -195,7 +200,7 @@ const TITLE_SIMILARITY_STOPWORDS = new Set([
 ]);
 
 function sourceFromUrl(url: string | undefined): string {
-  const domain = getDomainFromUrl(url);
+  const domain = getDomainFromUrlCompetitor(url);
   return domain || "unknown";
 }
 
@@ -525,6 +530,24 @@ function hasConcreteEvidence(text: string): boolean {
   );
 }
 
+/** Classify the source/format type for content seeding. */
+function classifyContentSeedType(text: string, _domain: string): ContentSeedType {
+  const isCaseStudy = /(case study|customer story|customer success|reference account|reference customer)/.test(text);
+  const isBlog = /(blog|post|article|story|byline|written by)/.test(text) && !isCaseStudy && !/(newsletter|email|dispatch)/.test(text);
+  const isNewsletter = /(newsletter|email|dispatch|morning|update|digest|roundup)/.test(text);
+  const isWebinar = /(webinar|workshop|panel|presentation|conference talk|virtual event)/.test(text);
+  const isResearchReport = /(research|study|report|survey|analysis|benchmark|findings|data|whitepaper|white paper)/.test(text);
+  const isBenchmark = /(benchmark|benchmarking|performance|results|comparison|evaluated)/.test(text);
+
+  if (isCaseStudy) return "case_study";
+  if (isBlog) return "blog_post";
+  if (isNewsletter) return "newsletter_feature";
+  if (isWebinar) return "webinar";
+  if (isBenchmark) return "benchmark";
+  if (isResearchReport) return "research_report";
+  return "other";
+}
+
 function buildWhyNow(doc: AgentRankedDoc, text: string): string {
   const source = sourceFromUrl(doc.url);
   const date = doc.publishedAt ? doc.publishedAt.toISOString().slice(0, 10) : "recently";
@@ -567,37 +590,62 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
   const text = textOf(doc);
   const domain = sourceFromUrl(doc.url);
   const sourceType = classifySourceTypeByDomain(domain);
+  const seedType = classifyContentSeedType(text, domain);
   const segment = detectSegment(text);
   const persona = detectPersona(text);
   const channel = detectChannel(text, state);
   const guardrailViolation = detectGuardrailViolation(text);
 
-  // Weight by product-relevant tech and evidence; no ICP/beachhead/segment boost (reduces noise).
+  // Content seed value scoring (focus on format + depth + timeliness, not just GTM delta intensity)
+  // Prioritize long-form, deep-dive sources (case studies, blogs, reports) over tweets/press
+  const seedFormatScore =
+    seedType === "case_study" ? 1.0 :
+    seedType === "blog_post" ? 0.85 :
+    seedType === "webinar" ? 0.9 :
+    seedType === "research_report" ? 0.95 :
+    seedType === "benchmark" ? 0.92 :
+    seedType === "newsletter_feature" ? 0.7 :
+    0.4;
+
+  // Channel efficiency (long-form, evergreen formats preferred)
   const channel_efficiency_score = ["event_talk", "whitepaper", "SEO_page", "blog"].includes(channel) ? 0.9 : 0.6;
+  
+  // Evidence & proof (less strict for month windows; we do this downstream)
   const proof_feasibility_score = /(benchmark|customer|case study|release notes|docs|\bga\b)/.test(text) ? 0.9 : 0.5;
-  const strongProduct =
-    /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted)/.test(text);
-  const partialProduct =
-    /(developer (platform|tools|productivity)|coding assistant|ai coding|enterprise (codebase|tooling)|codebase (context|understanding))/i.test(
-      text,
-    );
+  
+  // Product/message fit (content seed value, not hard GTM signals)
+  const strongProduct = /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted)/.test(text);
+  const partialProduct = /(developer (platform|tools|productivity)|coding assistant|ai coding|enterprise (codebase|tooling)|codebase (context|understanding))/i.test(text);
   const message_fit_score = strongProduct ? 1 : partialProduct ? 0.6 : 0.35;
-  const timeliness_score = doc.publishedAt ? Math.max(0.2, 1 - ((Date.now() - doc.publishedAt.getTime()) / (1000 * 60 * 60 * 24 * 120))) : 0.5;
-  const source_quality_score =
-    sourceType === "primary" ? 1 : sourceType === "secondary" ? 0.7 : sourceType === "internal_curated" ? 0.85 : 0.35;
+  
+  // Timeliness (less aggressive weight for month windows; variety matters more)
+  const timeliness_score = doc.publishedAt 
+    ? Math.max(0.2, 1 - ((Date.now() - doc.publishedAt.getTime()) / (1000 * 60 * 60 * 24 * 120))) 
+    : 0.5;
+  
+  // Source quality (blogs, newsletters, reports are good seeds)
+  const source_quality_score = sourceType === "primary" ? 1 : sourceType === "secondary" ? 0.7 : sourceType === "internal_curated" ? 0.85 : 0.35;
+  
+  // Penalties
   const noisy_domain_penalty = isNoisyDomain(domain) ? 0.3 : 0;
 
-  const score =
-    0.2 * channel_efficiency_score +
-    0.16 * proof_feasibility_score +
-    0.44 * message_fit_score +
-    0.08 * timeliness_score +
-    0.02 * source_quality_score -
+  // Rebalanced scoring: prioritize content seed value over pure GTM intensity
+  const contentSeedScore =
+    0.15 * seedFormatScore +        // Format quality (case study > blog > newsletter > other)
+    0.15 * channel_efficiency_score +  // Channel fit
+    0.12 * proof_feasibility_score +   // Evidence availability
+    0.35 * message_fit_score +         // Message fit
+    0.08 * timeliness_score +          // Recency boost (lighter weight for month)
+    0.05 * source_quality_score -      // Source quality (light weight)
     noisy_domain_penalty;
+
+  const score = contentSeedScore;
 
   return {
     doc,
+    seedType,
     score,
+    contentSeedScore,
     guardrailViolation,
     segment,
     persona,
@@ -703,10 +751,12 @@ export async function generateContentIdeas(options: {
   numIdeas?: number;
   /** When provided, market brief findings are injected as context so content ideas are informed by the same research. */
   marketBriefSummary?: string | null;
+  debug?: boolean;
 } = {}): Promise<ContentIdeasOutput> {
   const state = loadPlaybookState();
   const periodDays = options.periodDays ?? 30;
   const numIdeas = options.numIdeas ?? 10;
+  const debugLog = options.debug ? new AgentScoringDebugger("content_ideas", periodDays) : null;
 
   const docs = await retrieveForAgent("content_ideas", {
     periodDays,
@@ -732,7 +782,37 @@ export async function generateContentIdeas(options: {
         ]
       : docs;
 
-  const ranked = await rankForAgent("content_ideas", docsWithBrief);
+  // Broaden the research pool: include sources used for market brief and competitor intel
+  // so content ideas can synthesize from the same landscape and competitive evidence.
+  const marketDocs = await retrieveForAgent("market_brief", {
+    periodDays,
+    maxEnrich: 0,
+  });
+  const competitorDocs = await retrieveForAgent("competitor_intel", {
+    periodDays,
+    maxEnrich: 0,
+  });
+
+  const existingIds = new Set(
+    docsWithBrief.map((d) => d.id).filter((id): id is string => !!id),
+  );
+  const existingUrls = new Set(
+    docsWithBrief.map((d) => canonicalizeUrl(d.url)).filter((u) => !!u),
+  );
+
+  const extraDocsRaw = [...marketDocs, ...competitorDocs];
+  const extraDocs = extraDocsRaw.filter((d) => {
+    if (d.id && existingIds.has(d.id)) return false;
+    const url = canonicalizeUrl(d.url);
+    if (!url) return false;
+    if (existingUrls.has(url)) return false;
+    existingUrls.add(url);
+    return true;
+  });
+
+  const allDocs = [...docsWithBrief, ...extraDocs];
+
+  const ranked = await rankForAgent("content_ideas", allDocs);
 
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
   const cutoffMs = Date.now() - windowMs;
@@ -745,6 +825,7 @@ export async function generateContentIdeas(options: {
       const domain = sourceFromUrl(c.doc.url);
       const sourceType = classifySourceTypeByDomain(domain);
       const canonicalUrl = canonicalizeUrl(c.doc.url);
+      const isLongWindow = periodDays > 14;
       if (c.guardrailViolation) return false;
       if (!hasMinimumContentIdeasRelevance(c.doc)) return false;
       if (!canonicalUrl) return false;
@@ -752,11 +833,18 @@ export async function generateContentIdeas(options: {
       if (isGenericIdeaPage(canonicalUrl) && !/(benchmark|case study|customer|ga|release|pricing|security|compliance|enterprise)/.test(text)) {
         return false;
       }
-      if (sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) return false;
-      if ((sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) return false;
-      // Slightly lower threshold so short time windows (e.g. week) still yield multiple ideas,
-      // while upstream gates continue to block off-topic or low-evidence docs.
-      return c.score >= 0.44;
+      // For short windows, keep community sources only when they point to concrete GTM/content signals
+      if (!isLongWindow && sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) {
+        return false;
+      }
+      // For short windows, require strong concrete evidence for secondary/community sources.
+      if (!isLongWindow && (sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) {
+        return false;
+      }
+      // For longer windows (e.g. month), allow a slightly broader set of sources while upstream
+      // gates continue to block off-topic or obviously low-signal docs.
+      const minScore = periodDays > 14 ? 0.38 : 0.44;
+      return c.score >= minScore;
     })
     .map((c) => {
       // Boost recency for short windows so "day"/"week" reports favor truly recent items.
@@ -765,6 +853,29 @@ export async function generateContentIdeas(options: {
       return { ...c, score: c.score + recencyBoost };
     })
     .sort((a, b) => b.score - a.score);
+
+  // Debug logging before selection
+  if (debugLog) {
+    for (const candidate of candidates.slice(0, Math.min(50, candidates.length))) {
+      const url = candidate.doc.url ?? "";
+      const domain = sourceFromUrl(url);
+      debugLog.log({
+        goal: "content_ideas",
+        docId: candidate.doc.id ?? "unknown",
+        url,
+        domain,
+        title: candidate.doc.title,
+        type: candidate.seedType,
+        componentScores: {
+          contentSeedScore: candidate.contentSeedScore,
+          baseScore: candidate.doc.baseScore,
+          agentScore: candidate.doc.agentScore,
+        },
+        finalScore: candidate.score,
+        fate: "dropped", // Will be updated post-selection if selected
+      });
+    }
+  }
 
   // Select top ideas by score only (product relevance); no ICP/beachhead quotas.
   const selected = candidates.slice(0, numIdeas);
@@ -805,10 +916,52 @@ export async function generateContentIdeas(options: {
         byCoreClaim.set(key, idea);
       }
     }
-    const deduped = Array.from(byCoreClaim.values())
-      .sort((a, b) => b.priority_score - a.priority_score)
-      .slice(0, numIdeas);
-    return deduped;
+    const deduped = Array.from(byCoreClaim.values()).sort(
+      (a, b) => b.priority_score - a.priority_score,
+    );
+
+    // Diversity: avoid over-indexing on a single domain (e.g. github.blog) when there are many sources.
+    // For month windows, enforce multiple distinct domains (min 3 when available)
+    const perDomainCap = periodDays > 14 ? 2 : 3;
+    const minDistinctDomains = periodDays > 14 ? 3 : 1;
+    const domainCounts = new Map<string, number>();
+    const diversified: ContentIdea[] = [];
+    
+    for (const idea of deduped) {
+      const primaryUrl = idea.sources[0]?.url;
+      const domain = sourceFromUrl(primaryUrl) || "unknown";
+      const count = domainCounts.get(domain) ?? 0;
+      if (count >= perDomainCap) continue;
+      domainCounts.set(domain, count + 1);
+      diversified.push(idea);
+      if (diversified.length >= numIdeas) break;
+    }
+
+    // For month windows, if we have fewer than target ideas, try to reach target by relaxing domain cap
+    // but only if we still have multiple distinct sources
+    if (periodDays > 14 && diversified.length < 4 && deduped.length > diversified.length) {
+      const distinctDomains = new Set(diversified.map((i) => sourceFromUrl(i.sources[0]?.url)));
+      if (distinctDomains.size >= minDistinctDomains) {
+        // We have enough domain diversity; add more items from top domains
+        const relaxedCap = perDomainCap + 1;
+        const domainCounts2 = new Map<string, number>();
+        for (const idea of diversified) {
+          const domain = sourceFromUrl(idea.sources[0]?.url) || "unknown";
+          domainCounts2.set(domain, (domainCounts2.get(domain) ?? 0) + 1);
+        }
+        for (const idea of deduped) {
+          const domain = sourceFromUrl(idea.sources[0]?.url) || "unknown";
+          if (diversified.some((i) => i.title === idea.title)) continue;
+          const count = domainCounts2.get(domain) ?? 0;
+          if (count >= relaxedCap) continue;
+          domainCounts2.set(domain, count + 1);
+          diversified.push(idea);
+          if (diversified.length >= numIdeas) break;
+        }
+      }
+    }
+
+    return diversified;
   })();
   const achievedBucketCounts = {
     beachhead: ideas.filter((i) => toSegmentBucket(i.target_segment, state) === "beachhead").length,
@@ -827,6 +980,29 @@ export async function generateContentIdeas(options: {
     acc[idea.target_segment] = (acc[idea.target_segment] ?? 0) + 1;
     return acc;
   }, {});
+
+  // Debug logging for final ideas
+  if (debugLog) {
+    for (const idea of ideas) {
+      const url = idea.sources[0]?.url ?? "";
+      const domain = sourceFromUrl(url);
+      debugLog.log({
+        goal: "content_ideas",
+        docId: url,
+        url,
+        domain,
+        title: idea.title,
+        type: "idea",
+        componentScores: {
+          priorityScore: idea.priority_score,
+        },
+        finalScore: idea.priority_score,
+        fate: "idea_seed",
+        flags: [idea.channel, idea.target_segment],
+      });
+    }
+    debugLog.flush();
+  }
 
   return postProcessContentIdeasOutput({
     generated_at: new Date().toISOString().slice(0, 10),

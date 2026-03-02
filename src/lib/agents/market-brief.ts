@@ -6,6 +6,7 @@ import {
   classifySourcegraphIntegrationOpportunity,
   type IntegrationOpportunityLevel,
 } from "./sourcegraph-integration-opportunity";
+import { AgentScoringDebugger } from "./agent-scoring-debug";
 
 export interface MarketBriefEvidence {
   source: string;
@@ -46,14 +47,19 @@ export interface MarketBriefOutput {
   noisy_items_suppressed: string[];
 }
 
+export type MarketDocType = "product_move" | "landscape_research" | "infra_background" | "tutorial_best_practices" | "unknown";
+
 interface ScoredDoc {
   doc: AgentRankedDoc;
+  docType: MarketDocType;
   score: number;
   contradiction: boolean;
   segmentImpact: string[];
   personaImpact: string[];
   policyBasis: string[];
   evidenceSignalScore: number;
+  productRelevanceScore: number;
+  landscapeScore: number;
 }
 
 const MARKET_TRACKING_DOMAINS = new Set([
@@ -291,21 +297,52 @@ function evidenceSignalScoreFromText(text: string): number {
   return hits / signals.length;
 }
 
+/** Classify document type for market brief scoring. */
+function classifyMarketDocType(text: string): MarketDocType {
+  // Product moves: launches, GA, pricing, roadmap, partnerships, migrations
+  const isProductMove = /(launch|release|\bga\b|generally available|pricing|roadmap|product plan|new|ga|feature release|announces|unveiled|partner(ship)?|partner announced|migration|critical vulnerability|security patch)/.test(
+    text
+  );
+  
+  // Landscape research: industry trends, capability analyses, adoption studies, benchmarks
+  const isLandscape = /(industry|trend|research|study|analysis|benchmark|survey|report|landscape|adoption|growth|state of|insights?|how organizations|companies|developers|report|capability analysis)/.test(
+    text
+  );
+  
+  // Infra background: infrastructure engineering, internal platform posts
+  const isInfra = /(uber\.com|meta\.com|internal|infrastructure|platform|scaling|deployment|monorepo|monolithic)/.test(
+    text
+  );
+  
+  // Tutorial/best practices: how-to, guides, walkthroughs
+  const isTutorial = /\b(best practices?|how to|tutorial|guide|checklist|tips|walkthrough|step.by.step)/.test(
+    text
+  );
+
+  if (isProductMove) return "product_move";
+  if (isLandscape) return "landscape_research";
+  if (isInfra) return "infra_background";
+  if (isTutorial) return "tutorial_best_practices";
+  return "unknown";
+}
+
 /**
  * Executive Delta should focus on hard GTM signals: launches, pricing, benchmarks,
- * roadmap/category moves, or clear playbook contradictions. Educational/how-to
- * content is better suited to Watch Items unless it is the only signal available.
+ * roadmap/category moves, or clear playbook contradictions, plus key landscape research.
+ * Educational/how-to content is better suited to Watch Items unless it is the only signal available.
  */
 function isStrongExecutiveDelta(item: ScoredDoc): boolean {
   const text = textOf(item.doc);
-  const hasHardSignal = /(launch|release|ga|generally available|pricing|customer|case study|benchmark|results?|roadmap|program|partner(ship)?|migration)/i.test(
-    text,
-  );
   const isBestPractices = /\b(best practices?|how to|tutorial|guide|checklist|tips)\b/i.test(text);
 
   if (item.contradiction) return true;
   if (isBestPractices) return false;
-  return item.evidenceSignalScore >= 0.6 && hasHardSignal;
+  
+  // For month windows, include both product moves (high evidence) and strong landscape signals
+  return (
+    item.docType === "product_move" ||
+    (item.docType === "landscape_research" && item.landscapeScore >= 0.7)
+  ) && item.evidenceSignalScore >= 0.55;
 }
 
 /**
@@ -333,6 +370,7 @@ function hasMinimumGTMRelevance(doc: AgentRankedDoc): boolean {
 
 function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
   const text = textOf(doc);
+  const docType = classifyMarketDocType(text);
   const segmentImpact = segmentImpactFromText(text, state);
   const personaImpact = personaImpactFromText(text);
 
@@ -353,6 +391,14 @@ function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
   const contradiction = isPlaybookContradiction(text);
   const evidenceSignalScore = evidenceSignalScoreFromText(text);
 
+  // Landscape research: industry trends, capabilities, adoption studies, benchmarks
+  const landscapeScore = docType === "landscape_research" ? Math.min(1, 0.5 + evidenceSignalScore * 0.5) : 0;
+  
+  // Product relevance: product moves + competitive threats
+  const productRelevanceScore = docType === "product_move" 
+    ? Math.min(1, 0.6 + (contradiction ? 0.3 : 0) + evidenceSignalScore * 0.1)
+    : 0.3;
+
   const contradiction_bonus = contradiction ? 0.35 : 0;
 
   const score =
@@ -368,8 +414,20 @@ function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
   if (enterprise_relevance_score > 0.8) policyBasis.push("enterprise_requirements_priority");
   if (message_impact_score > 0.8) policyBasis.push("context_layer_message_priority");
   if (contradiction) policyBasis.push("playbook_contradiction_bonus");
+  if (landscapeScore > 0.6) policyBasis.push("landscape_research_priority");
 
-  return { doc, score, contradiction, segmentImpact, personaImpact, policyBasis, evidenceSignalScore };
+  return { 
+    doc, 
+    docType,
+    score, 
+    contradiction, 
+    segmentImpact, 
+    personaImpact, 
+    policyBasis, 
+    evidenceSignalScore,
+    productRelevanceScore,
+    landscapeScore
+  };
 }
 
 function toDelta(item: ScoredDoc, state: PlaybookState): MarketBriefDelta {
@@ -475,10 +533,12 @@ export async function generateMarketBrief(options: {
   periodDays?: number;
   focus?: string | null;
   maxItems?: number;
+  debug?: boolean;
 } = {}): Promise<MarketBriefOutput> {
   const state = loadPlaybookState();
   const periodDays = options.periodDays ?? 14;
   const maxItems = options.maxItems ?? 20;
+  const debugLog = options.debug ? new AgentScoringDebugger("market_brief", periodDays) : null;
 
   const docs = await retrieveForAgent("market_brief", {
     periodDays,
@@ -503,19 +563,72 @@ export async function generateMarketBrief(options: {
   );
 
   // For longer windows (e.g. month), ensure we surface multiple deltas when we have candidates.
-  if (periodDays > 14 && executiveDocs.length < 3 && selected.length >= 3) {
-    const needed = 3 - executiveDocs.length;
-    const already = new Set(executiveDocs.map((x) => x.doc.id));
-    const promotionPool = (strong.length > 0 ? weak : selected).filter(
-      (x) => !already.has(x.doc.id),
-    );
-    executiveDocs = executiveDocs.concat(promotionPool.slice(0, needed));
+  // Target: 3-5 items mixing product_move and landscape_research
+  if (periodDays > 14) {
+    const productMoves = executiveDocs.filter((x) => x.docType === "product_move");
+    const landscapes = executiveDocs.filter((x) => x.docType === "landscape_research");
+    
+    // If we have fewer than 3 exec items, try to promote more (prioritize diversity)
+    if (executiveDocs.length < 3 && selected.length >= 3) {
+      const needed = Math.min(3, selected.length - executiveDocs.length);
+      const already = new Set(executiveDocs.map((x) => x.doc.id));
+      const promotionPool = weak.filter((x) => !already.has(x.doc.id));
+      executiveDocs = executiveDocs.concat(promotionPool.slice(0, needed));
+    }
+    
+    // If we have 3+ items, try to balance product_move vs landscape_research
+    if (executiveDocs.length >= 3 && productMoves.length > 0 && landscapes.length === 0) {
+      const extraPool = weak.filter(
+        (x) => !new Set(executiveDocs.map((e) => e.doc.id)).has(x.doc.id) &&
+        x.docType === "landscape_research"
+      );
+      if (extraPool.length > 0) {
+        // Replace a weaker item with a landscape signal
+        executiveDocs = executiveDocs
+          .slice(0, -1)
+          .concat(extraPool.slice(0, 1));
+      }
+    }
   }
 
   const executiveIds = new Set(executiveDocs.map((x) => x.doc.id));
   const watchDocs = selected
     .filter((x) => !executiveIds.has(x.doc.id))
     .slice(0, Math.min(6, selected.length));
+
+  // Debug logging
+  if (debugLog) {
+    for (const item of selected) {
+      const url = item.doc.url ?? "";
+      const domain = getDomainFromUrl(url);
+      let fate: "executive" | "watch" | "idea_seed" | "dropped" = "dropped";
+      if (executiveIds.has(item.doc.id)) {
+        fate = "executive";
+      } else if (watchDocs.some((x) => x.doc.id === item.doc.id)) {
+        fate = "watch";
+      }
+
+      debugLog.log({
+        goal: "market_brief",
+        docId: item.doc.id ?? "unknown",
+        url,
+        domain,
+        title: item.doc.title,
+        type: item.docType,
+        componentScores: {
+          baseScore: item.doc.baseScore,
+          agentScore: item.doc.agentScore,
+          evidenceSignal: item.evidenceSignalScore,
+          productRelevance: item.productRelevanceScore,
+          landscape: item.landscapeScore,
+        },
+        finalScore: item.score,
+        fate,
+        flags: item.policyBasis,
+      });
+    }
+    debugLog.flush();
+  }
 
   const executive = executiveDocs.map((x) => toDelta(x, state));
   const watchItems = watchDocs.map((x) => toDelta(x, state));
