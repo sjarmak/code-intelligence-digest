@@ -25,6 +25,7 @@ export type DomainCategory =
   | "enterprise"
   | "devtools"
   | "llm_code"
+  | "control_plane"
   | "sdlc";
 
 /**
@@ -82,6 +83,11 @@ export const DOMAIN_CATEGORIES: readonly DomainCategoryConfig[] = [
   {
     category: "llm_code",
     description: "LLM architecture for code",
+    weight: 1.2,
+  },
+  {
+    category: "control_plane",
+    description: "Control plane within software development: code review, documentation, onboarding, vulnerability tracing, batch changes, monitoring",
     weight: 1.2,
   },
   {
@@ -212,8 +218,28 @@ export const DOMAIN_TERMS: readonly DomainTerm[] = [
   { term: "training data", weight: 1.2, category: "llm_code" },
   { term: "model architecture", weight: 1.2, category: "llm_code" },
 
+  // Control Plane (1.2x) - Code review, documentation, onboarding, vulnerability, batch changes, monitoring
+  { term: "code review", weight: 1.2, category: "control_plane" },
+  { term: "pr review", weight: 1.2, category: "control_plane" },
+  { term: "pull request review", weight: 1.2, category: "control_plane" },
+  { term: "documentation", weight: 1.2, category: "control_plane" },
+  { term: "code documentation", weight: 1.2, category: "control_plane" },
+  { term: "runbook", weight: 1.2, category: "control_plane" },
+  { term: "onboarding", weight: 1.2, category: "control_plane" },
+  { term: "ramp-up", weight: 1.2, category: "control_plane" },
+  { term: "knowledge transfer", weight: 1.2, category: "control_plane" },
+  { term: "institutional knowledge", weight: 1.2, category: "control_plane" },
+  { term: "vulnerability", weight: 1.2, category: "control_plane" },
+  { term: "vulnerability tracing", weight: 1.2, category: "control_plane" },
+  { term: "vulnerability remediation", weight: 1.2, category: "control_plane" },
+  { term: "remediation", weight: 1.2, category: "control_plane" },
+  { term: "batch changes", weight: 1.2, category: "control_plane" },
+  { term: "bulk change", weight: 1.2, category: "control_plane" },
+  { term: "monitoring", weight: 1.2, category: "control_plane" },
+  { term: "observability", weight: 1.2, category: "control_plane" },
+
   // SDLC Processes (1.0x) - General development
-  { term: "code review", weight: 1.0, category: "sdlc" },
+  { term: "testing", weight: 1.0, category: "sdlc" },
   { term: "testing", weight: 1.0, category: "sdlc" },
   { term: "test suite", weight: 1.0, category: "sdlc" },
   { term: "unit test", weight: 1.0, category: "sdlc" },
@@ -273,6 +299,7 @@ export function getTermsByCategory(): Record<DomainCategory, { weight: number; t
     enterprise: { weight: 1.3, terms: [] },
     devtools: { weight: 1.2, terms: [] },
     llm_code: { weight: 1.2, terms: [] },
+    control_plane: { weight: 1.2, terms: [] },
     sdlc: { weight: 1.0, terms: [] },
   };
 

@@ -42,6 +42,14 @@ const ICP_TERMS: string[] = [
   "AI coding",
   "coding agent",
   "context retrieval",
+  "code review",
+  "documentation",
+  "onboarding",
+  "vulnerability",
+  "remediation",
+  "batch changes",
+  "monitoring",
+  "observability",
 ];
 
 const TREND_LANDSCAPE_TERMS: string[] = [

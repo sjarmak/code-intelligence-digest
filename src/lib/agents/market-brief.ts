@@ -70,7 +70,7 @@ const LOW_SIGNAL_MARKET_DOMAINS = new Set([
   "pieces.app",
 ]);
 
-/** Domains that are off-topic for GTM market brief (general news, finance news, lifestyle, health). */
+/** Domains that are off-topic for GTM market brief (general news, finance news, lifestyle, health, local/breaking). */
 const OFF_TOPIC_MARKET_DOMAINS = new Set([
   "morningstar.com",
   "cnn.com",
@@ -80,6 +80,7 @@ const OFF_TOPIC_MARKET_DOMAINS = new Set([
   "xcancel.com",
   "x.com",
   "quantamagazine.org",
+  "mysanantonio.com",
 ]);
 
 function textOf(doc: AgentRankedDoc): string {
@@ -215,6 +216,10 @@ const OFF_TOPIC_MARKET_PATTERNS = [
   /\bmemories\s+can\s+reduce\s+fear\b/i,
   /\bai\s+twitter\s+needs\s+this\s+guy\b/i,
   /\bregistrarse\s+en\s+www\.binance\b/i,
+  // Autonomous-vehicle / local incident news (not dev tools or code intelligence)
+  /\bblocking\s+ambulance\b/i,
+  /\bwaymo\b.*\b(blocking|ambulance|incident|accident|shooting)\b/i,
+  /\b(autonomous\s+vehicle|self-driving)\s+.*\b(blocking|ambulance|incident)\b/i,
 ];
 
 function isMarketBriefNoise(doc: AgentRankedDoc): boolean {
@@ -280,9 +285,33 @@ function evidenceSignalScoreFromText(text: string): number {
     /(compliance|security|audit|byok|rbac|self-hosted|governance|risk)/.test(text),
     /(copilot|cursor|windsurf|codeium|gitlab duo|sourcegraph|coding assistant|developer platform)/.test(text),
     /(mcp|context layer|code search|cross-repo|batch changes|migration|remediation|refactor)/.test(text),
+    /(code review|documentation|onboarding|vulnerability|remediation|batch changes|monitoring|observability)/.test(text),
   ];
   const hits = signals.filter(Boolean).length;
   return hits / signals.length;
+}
+
+/**
+ * True iff the doc is clearly about our GTM domain: developer tools, code intelligence,
+ * enterprise dev, or known competitors. Excludes general news, local news, and off-topic
+ * stories that have no relevance to positioning or product.
+ */
+function hasMinimumGTMRelevance(doc: AgentRankedDoc): boolean {
+  const text = textOf(doc);
+  const competitive =
+    /(github|copilot|cursor|gitlab|augment|moderne|context engine|repo context)/.test(text);
+  const enterprise =
+    /(compliance|security|self-hosted|self hosted|byok|rbac|audit)/.test(text);
+  const messageImpact =
+    /(cross-repo|code search|deep search|batch changes|mcp|context layer|migration|remediation)/.test(
+      text,
+    );
+  const controlPlane =
+    /(code review|documentation|onboarding|vulnerability|remediation|batch changes|monitoring|observability)/.test(
+      text,
+    );
+  const evidenceSignals = evidenceSignalScoreFromText(text) >= 0.5;
+  return competitive || enterprise || messageImpact || controlPlane || evidenceSignals;
 }
 
 function scoreDoc(doc: AgentRankedDoc, state: PlaybookState): ScoredDoc {
@@ -443,6 +472,7 @@ export async function generateMarketBrief(options: {
   const ranked = await rankForAgent("market_brief", docs);
   const scored = ranked
     .filter((doc) => !isMarketBriefNoise(doc) && !isLowSignalMarketDoc(doc))
+    .filter((doc) => hasMinimumGTMRelevance(doc))
     .map((doc) => scoreDoc(doc, state))
     .sort((a, b) => b.score - a.score);
 

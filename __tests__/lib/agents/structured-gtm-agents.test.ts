@@ -136,7 +136,82 @@ describe("structured gtm agents", () => {
     expect(out.invalidations_to_monitor).not.toContain(
       "Show HN: Xmloxide – an agent made rust replacement for libxml2",
     );
-    expect(out.executive_delta.length).toBe(2);
+    // Xmloxide has no GTM relevance (no code-intel/competitor/enterprise vocabulary), so excluded by relevance gate
+    expect(out.executive_delta.length).toBe(1);
+  });
+
+  it("excludes items without minimum GTM relevance (dev tools / code intelligence)", async () => {
+    const offTopicTitles = [
+      "Waymo blocking ambulance during deadly Austin shooting",
+      "Fed raises interest rates again",
+      "Apple announces new iPhone event",
+    ];
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://example.com/waymo-ambulance",
+          title: offTopicTitles[0],
+          snippet: "Autonomous vehicle blocked emergency response during incident",
+          metadata: {},
+          baseScore: 0.7,
+          goalScore: 0.72,
+          agentScore: 0.7,
+          features: {
+            competitorMatch: 0.2,
+            formatType: 0.1,
+            icpMatch: 0.3,
+            recency: 0.9,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/fed-rates",
+          title: offTopicTitles[1],
+          snippet: "Central bank signals further tightening",
+          metadata: {},
+          baseScore: 0.68,
+          goalScore: 0.7,
+          agentScore: 0.68,
+          features: {
+            competitorMatch: 0.1,
+            formatType: 0.1,
+            icpMatch: 0.2,
+            recency: 0.95,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/enterprise-security-update",
+          title: "Enterprise coding assistant adds BYOK audit controls",
+          snippet: "VP Engineering and security teams requested stronger governance",
+          metadata: {},
+          baseScore: 0.82,
+          goalScore: 0.85,
+          agentScore: 0.84,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.2,
+            icpMatch: 0.8,
+            recency: 0.9,
+            trendLandscape: 0.5,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateMarketBrief({ periodDays: 14, maxItems: 5 });
+    const allTitles = [...out.executive_delta, ...out.watch_items].map((d) => d.title);
+    for (const title of offTopicTitles) {
+      expect(allTitles).not.toContain(title);
+    }
+    expect(out.executive_delta.length).toBe(1);
+    expect(out.executive_delta[0].title).toBe("Enterprise coding assistant adds BYOK audit controls");
   });
 
   it("generates content ideas with sources and distribution plan", async () => {
@@ -217,5 +292,54 @@ describe("structured gtm agents", () => {
     const channels = out.ideas.map((i) => i.channel);
     expect(channels.length).toBeGreaterThan(0);
     expect(channels.every((c) => c !== "event_talk")).toBe(true);
+  });
+
+  it("excludes off-topic web docs from content ideas via relevance gate", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://example.com/fed-rates",
+          title: "Fed raises interest rates again",
+          snippet: "Central bank signals further tightening",
+          metadata: {},
+          baseScore: 0.7,
+          goalScore: 0.72,
+          agentScore: 0.7,
+          features: {
+            competitorMatch: 0.1,
+            formatType: 0.2,
+            icpMatch: 0.2,
+            recency: 0.95,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/mcp-enterprise",
+          title: "MCP context layer for enterprise code search",
+          snippet: "Compliance and self-hosted deployment guide",
+          metadata: {},
+          baseScore: 0.85,
+          goalScore: 0.88,
+          agentScore: 0.86,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.5,
+            icpMatch: 0.9,
+            recency: 0.9,
+            trendLandscape: 0.5,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
+    const sourceTitles = out.ideas.flatMap((i) => i.sources.map((s) => s.title));
+    // Relevance gate must exclude the off-topic doc (Fed rates) from any content idea source.
+    expect(sourceTitles).not.toContain("Fed raises interest rates again");
   });
 });

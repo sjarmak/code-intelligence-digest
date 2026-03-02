@@ -363,6 +363,14 @@ export async function rankCategory(
       'evaluation',
       'developer productivity',
       'ai tooling',
+      'code review',
+      'documentation',
+      'onboarding',
+      'vulnerability',
+      'remediation',
+      'batch changes',
+      'monitoring',
+      'observability',
     ];
 
     if (hasSourcegraph) {
@@ -738,6 +746,14 @@ export async function rankCategoryWithoutRecency(
       'evaluation',
       'developer productivity',
       'ai tooling',
+      'code review',
+      'documentation',
+      'onboarding',
+      'vulnerability',
+      'remediation',
+      'batch changes',
+      'monitoring',
+      'observability',
     ];
 
     if (hasSourcegraph) {

@@ -106,6 +106,32 @@ const GTM_SIGNAL_TERMS = [
   "platform team",
 ];
 
+/**
+ * True iff the doc is clearly relevant to GTM content ideas: developer tools, code intelligence,
+ * enterprise dev, competitors, or control plane. Excludes web-search noise that has no real
+ * relevance to our positioning or product.
+ */
+function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
+  const text = textOf(doc);
+  const competitive =
+    /(github|copilot|cursor|gitlab|augment|moderne|context engine|repo context)/.test(text);
+  const enterprise =
+    /(compliance|security|self-hosted|self hosted|byok|rbac|audit)/.test(text);
+  const messageImpact =
+    /(cross-repo|code search|deep search|batch changes|mcp|context layer|migration|remediation)/.test(
+      text,
+    );
+  const controlPlane =
+    /(code review|documentation|onboarding|vulnerability|remediation|batch changes|monitoring|observability)/.test(
+      text,
+    );
+  const evidenceStyle =
+    /(launch|release|\bga\b|pricing|customer|case study|benchmark|coding assistant|developer platform)/.test(
+      text,
+    );
+  return competitive || enterprise || messageImpact || controlPlane || evidenceStyle;
+}
+
 const NOISY_DOMAINS = new Set([
   "xcancel.com",
   "twitter.com",
@@ -494,7 +520,7 @@ function detectGuardrailViolation(text: string): boolean {
 }
 
 function hasConcreteEvidence(text: string): boolean {
-  return /(launch|release|ga|pricing|customer|case study|benchmark|docs|documentation|security|compliance|audit|byok|self-hosted|report)/.test(
+  return /(launch|release|\bga\b|pricing|customer|case study|benchmark|docs|documentation|security|compliance|audit|byok|self-hosted|report)/.test(
     text,
   );
 }
@@ -502,7 +528,7 @@ function hasConcreteEvidence(text: string): boolean {
 function buildWhyNow(doc: AgentRankedDoc, text: string): string {
   const source = sourceFromUrl(doc.url);
   const date = doc.publishedAt ? doc.publishedAt.toISOString().slice(0, 10) : "recently";
-  if (/(launch|release|ga|pricing)/.test(text)) {
+  if (/(launch|release|\bga\b|pricing)/.test(text)) {
     return `Fresh product signal from ${source} (${date}) creates a concrete hook for near-term GTM content.`;
   }
   if (/(customer|case study|benchmark|report)/.test(text)) {
@@ -548,7 +574,7 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
 
   // Weight by product-relevant tech and evidence; no ICP/beachhead/segment boost (reduces noise).
   const channel_efficiency_score = ["event_talk", "whitepaper", "SEO_page", "blog"].includes(channel) ? 0.9 : 0.6;
-  const proof_feasibility_score = /(benchmark|customer|case study|release notes|docs|ga)/.test(text) ? 0.9 : 0.5;
+  const proof_feasibility_score = /(benchmark|customer|case study|release notes|docs|\bga\b)/.test(text) ? 0.9 : 0.5;
   const strongProduct =
     /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted)/.test(text);
   const partialProduct =
@@ -718,10 +744,9 @@ export async function generateContentIdeas(options: {
       const text = textOf(c.doc);
       const domain = sourceFromUrl(c.doc.url);
       const sourceType = classifySourceTypeByDomain(domain);
-      const hasGtmSignal = GTM_SIGNAL_TERMS.some((t) => text.includes(t));
       const canonicalUrl = canonicalizeUrl(c.doc.url);
       if (c.guardrailViolation) return false;
-      if (!hasGtmSignal) return false;
+      if (!hasMinimumContentIdeasRelevance(c.doc)) return false;
       if (!canonicalUrl) return false;
       if (isNoisyDomain(domain)) return false;
       if (isGenericIdeaPage(canonicalUrl) && !/(benchmark|case study|customer|ga|release|pricing|security|compliance|enterprise)/.test(text)) {

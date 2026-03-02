@@ -31,7 +31,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     description:
       "Curated newsletters and columns on code intelligence and developer tools",
     query:
-      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
+      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review documentation onboarding vulnerability remediation batch changes monitoring observability devtools IDE",
     halfLifeDays: 3,
     maxItems: 10,
     minRelevance: 5,
@@ -45,7 +45,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     name: "Podcasts",
     description: "Podcast episodes about AI, coding, and developer tools",
     query:
-      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
+      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review documentation onboarding vulnerability remediation batch changes monitoring observability devtools IDE",
     halfLifeDays: 7,
     maxItems: 10,
     minRelevance: 5,
@@ -60,7 +60,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     description:
       "In-depth technical articles and essays on code and development",
     query:
-      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review devtools IDE",
+      "code search coding agent developer productivity AI tools context management information retrieval codebase intelligence agents code review documentation onboarding vulnerability remediation batch changes monitoring observability devtools IDE",
     halfLifeDays: 5,
     maxItems: 10,
     minRelevance: 5,
@@ -105,7 +105,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     description:
       "Tool releases, feature announcements, and changelogs for dev tools",
     query:
-      "Augment Code Windsurf Cursor Claude Code Codex CLI Gemini CLI Antigravity codebase context coding agent release feature announcement changelog",
+      "Augment Code Windsurf Cursor Claude Code Codex CLI Gemini CLI Antigravity codebase context coding agent code review batch changes monitoring release feature announcement changelog",
     halfLifeDays: 4,
     maxItems: 10,
     minRelevance: 5,
@@ -120,7 +120,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     description:
       "Discussions and posts from Reddit, forums, and community channels",
     query:
-      "coding agent AI developer workflow sentiment code search Sourcegraph discussion",
+      "coding agent AI developer workflow sentiment code search code review documentation onboarding vulnerability batch changes monitoring Sourcegraph discussion",
     halfLifeDays: 3,
     maxItems: 10,
     minRelevance: 4,
@@ -136,7 +136,7 @@ export const CATEGORY_CONFIG: Record<Category, CategoryConfig> = {
     description:
       "Academic papers on software engineering, IR, PL, and ML for code",
     query:
-      "coding agent code search context agent information retrieval codebase developer workflow benchmark",
+      "coding agent code search context agent information retrieval codebase developer workflow code review documentation vulnerability remediation batch changes monitoring benchmark",
     halfLifeDays: 10,
     maxItems: 10,
     minRelevance: 5,

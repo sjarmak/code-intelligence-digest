@@ -26,7 +26,8 @@ export type WatchlistTheme =
   | "context_and_retrieval"
   | "developer_productivity"
   | "codebase_complexity"
-  | "knowledge_transfer";
+  | "knowledge_transfer"
+  | "control_plane";
 
 export interface WatchlistThemeConfig {
   id: WatchlistTheme;
@@ -41,6 +42,7 @@ export const WATCHLIST_THEMES: readonly WatchlistThemeConfig[] = [
   { id: "developer_productivity", description: "Developer productivity measurement, tooling, and workflows" },
   { id: "codebase_complexity", description: "Codebase complexity, technical debt, and maintainability" },
   { id: "knowledge_transfer", description: "Knowledge transfer, onboarding, and institutional knowledge in code" },
+  { id: "control_plane", description: "Control plane within software development: code review, vulnerability tracing, batch changes, monitoring" },
 ] as const;
 
 export const WATCHLIST_TERMS: readonly WatchlistTerm[] = [
@@ -127,6 +129,14 @@ export const WATCHLIST_TERMS: readonly WatchlistTerm[] = [
   { term: "code familiarity", weight: 1.6, theme: "knowledge_transfer" },
   { term: "tribal knowledge", weight: 1.6, theme: "knowledge_transfer" },
   { term: "code documentation", weight: 1.3, theme: "knowledge_transfer" },
+
+  // ── Control Plane (1.3x) ──
+  { term: "vulnerability tracing", weight: 1.6, theme: "control_plane" },
+  { term: "vulnerability remediation", weight: 1.6, theme: "control_plane" },
+  { term: "batch changes", weight: 1.3, theme: "control_plane" },
+  { term: "monitoring", weight: 1.3, theme: "control_plane" },
+  { term: "observability", weight: 1.3, theme: "control_plane" },
+  { term: "code review", weight: 1.3, theme: "control_plane" },
 ] as const;
 
 /**

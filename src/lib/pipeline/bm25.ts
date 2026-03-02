@@ -23,11 +23,13 @@ const CATEGORY_QUERIES: Record<
   newsletters: [
     { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
     { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
+    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
   ],
   podcasts: [
     { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
     { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
+    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
   ],
   tech_articles: [
@@ -35,6 +37,7 @@ const CATEGORY_QUERIES: Record<
     { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
     { terms: DOMAIN_TERMS.context.terms, weight: 1.5 },
     { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
+    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
   ],
   ai_news: [
     { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
@@ -44,6 +47,7 @@ const CATEGORY_QUERIES: Record<
   ai_dev: [
     { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
     { terms: DOMAIN_TERMS.devtools.terms, weight: 1.3 },
+    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.context.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.ir.terms, weight: 1.2 },
@@ -52,16 +56,19 @@ const CATEGORY_QUERIES: Record<
     { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
     { terms: DOMAIN_TERMS.enterprise.terms, weight: 1.3 },
+    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
   ],
   community: [
     { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
     { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
+    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
   ],
   research: [
     { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
-    { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
     { terms: DOMAIN_TERMS.context.terms, weight: 1.5 },
+    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
+    { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
   ],
   marketing: [
     { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
