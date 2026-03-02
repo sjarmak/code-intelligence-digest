@@ -10,14 +10,12 @@ import { rankForAgent } from "../pipeline/agentRank";
 import { buildAgentShortlist, type ShortlistEntry } from "../pipeline/agentShortlist";
 import { getAgentGoalConfig } from "../../config/agents";
 import type { AgentGoal } from "../../config/agents";
-import { getDomainFromUrl } from "../../config/competitor-intel";
 import { logger } from "../logger";
 import { saveReport } from "./report-storage";
 import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
-import type { ContentIdea, ContentIdeasOutput } from "./content-ideas";
+import { generateContentIdeas } from "./content-ideas";
 import { formatCompetitorIntelMarkdown, formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
-import { loadPlaybookState } from "./playbook-state";
 
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 
@@ -89,57 +87,6 @@ export function reportRunId(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-/** Build ContentIdeasOutput from LLM shortlist so we can use formatContentIdeasMarkdown. */
-function contentIdeasPayloadFromShortlist(
-  shortlist: ShortlistEntry[],
-  periodDays: number
-): ContentIdeasOutput {
-  const state = loadPlaybookState();
-  const ideas: ContentIdea[] = shortlist.map((entry, i) => {
-    const doc = entry.doc;
-    const source = doc.url ? getDomainFromUrl(doc.url) : "internal";
-    const date = doc.publishedAt ? doc.publishedAt.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
-    const thesis = entry.reason ?? "Selected for relevance to content ideas goal.";
-    const keyIdeas = entry.contentIdeas ?? [];
-    return {
-      title: doc.title ?? "Untitled",
-      thesis,
-      target_segment: "Other",
-      target_persona: "VP Engineering",
-      funnel_stage: "awareness",
-      channel: "blog",
-      why_now: "From selected source; timing supports current GTM priorities.",
-      playbook_alignment: state.campaign_themes.slice(0, 2),
-      sources: doc.url
-        ? [{ title: doc.title ?? "Source", source, url: doc.url, date }]
-        : [],
-      core_claim: thesis.slice(0, 200),
-      key_insights: keyIdeas.length > 0 ? keyIdeas : [thesis.slice(0, 150)],
-      content_outline: keyIdeas.length > 0 ? keyIdeas : ["Draft outline from source"],
-      proof_required: ["product evidence", "external trend"],
-      guardrails: state.messaging_guardrails,
-      integration_opportunity: "high_opportunity",
-      sourcegraph_integration_play: [
-        "Use Sourcegraph as the agent context layer: fetch cross-repo symbols, ownership, and usage paths before generation.",
-        "Add a Sourcegraph-backed verification step: compare proposed edits against references/tests before merge.",
-      ],
-      distribution_plan: {
-        primary_format: "Blog post",
-        recommended_venue: "Company blog and content hub",
-        channel_strategy: "Blog as anchor; distribute via email and social.",
-        setup_steps: ["Define thesis and persona", "Draft outline", "Review with PMM"],
-      },
-      priority_score: 1 - (i + 1) / 100,
-    };
-  });
-  return {
-    generated_at: new Date().toISOString().slice(0, 10),
-    playbook_version: state.playbook_version,
-    periodDays,
-    ideas,
-  };
-}
-
 /** Generate a single agent report; writes to .data/agent-reports/{goal}/{id}.md (never overwrites). */
 export async function runAgentReport(
   goal: AgentGoal,
@@ -164,25 +111,11 @@ export async function runAgentReport(
       const payload = await generateMarketBrief({ periodDays, maxItems: limit });
       report = formatMarketBriefMarkdown("Market Brief Agent Report", payload);
     } else if (goal === "content_ideas") {
-      const docs = await retrieveForAgent("content_ideas", { periodDays, maxEnrich: 0 });
-      const docsWithBrief = marketBriefSummary?.trim()
-        ? [
-            ...docs,
-            {
-              id: "internal://market-brief-highlights",
-              source: "web" as const,
-              url: "internal://market-brief-highlights",
-              title: "Market brief highlights",
-              snippet: marketBriefSummary.trim().slice(0, 500),
-              content: marketBriefSummary.trim(),
-              publishedAt: new Date(),
-              metadata: {},
-            },
-          ]
-        : docs;
-      const ranked = await rankForAgent("content_ideas", docsWithBrief);
-      const shortlist = await buildAgentShortlist("content_ideas", ranked, limit);
-      const payload = contentIdeasPayloadFromShortlist(shortlist, periodDays);
+      const payload = await generateContentIdeas({
+        periodDays,
+        numIdeas: limit,
+        marketBriefSummary: marketBriefSummary ?? null,
+      });
       report = formatContentIdeasMarkdown("Content Ideas Agent Report", payload);
     } else if (goal === "competitor_intel") {
       const competitorLimit = 45;
