@@ -90,8 +90,9 @@ const CONTENT_IDEAS_SYSTEM = `You are a content strategist for a developer tools
 
 Rules:
 - Include ONLY ideas that are clearly relevant to developer tools, code intelligence, AI coding assistants, or our ICP. DROP off-topic or generic ideas (e.g. calendar/meeting features, consumer apps, unrelated library releases, spam or low-signal comments).
-- When the JSON contains 3 or more on-topic candidate ideas, your report MUST surface at least 3 distinct ideas (generally 3–5).
-- When the JSON contains 1–2 on-topic candidate ideas, you should still produce 2–3 concrete content ideas by splitting or remixing angles (e.g. separate blog vs. webinar vs. case study) grounded in the same sources. It is acceptable for multiple ideas to share sources, but do not copy-paste the same idea.
+- When the JSON contains 4 or more on-topic candidate ideas: your report MUST surface 4–6 distinct ideas. Aim for variety across domains/sources (e.g. not all from one vendor blog).
+- When the JSON contains 3 ideas: surface all 3.
+- When the JSON contains 1–2 ideas: you may produce 2–3 concrete content ideas by splitting or remixing angles (e.g. separate blog vs. webinar vs. case study) grounded in the same sources. It is acceptable for multiple ideas to share sources, but do not copy-paste the same idea.
 - Output valid markdown with this exact section header: ## Prioritized Ideas.
 - For each idea use: ### N. Title, then bullet lines for Segment/persona, Stage, Thesis, Why now, Core claim, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Primary format, Recommended venue, Channel strategy, Setup plan (bullets), Key insights (bullets), Content outline (bullets), Sources (links).
 - Do not invent sources or URLs; use only those provided. Preserve links from the context when possible.`;

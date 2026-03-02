@@ -24,11 +24,10 @@ async function run() {
       });
       const execCount = brief.executive_delta.length;
       const watchCount = brief.watch_items.length;
-      const themesCount = brief.landscape_themes?.length || 0;
+      // Note: landscape themes are in the final markdown output, not in the structured output
       
       console.log(`   ✅ Exec Delta: ${execCount} items`);
       console.log(`   ✅ Watch Items: ${watchCount} items`);
-      console.log(`   ✅ Landscape Themes: ${themesCount} sections`);
       
       if (execCount > 0) {
         console.log(`   Types: ${brief.executive_delta.map((d) => d.playbook_alignment[0] || "other").join(", ")}`);
