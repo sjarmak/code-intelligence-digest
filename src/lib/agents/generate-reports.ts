@@ -16,6 +16,11 @@ import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
 import { formatCompetitorIntelMarkdown, formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
+import {
+  writeCompetitorIntelWithLLM,
+  writeContentIdeasWithLLM,
+  writeMarketBriefWithLLM,
+} from "./llm-report-writer";
 
 const REPORT_DIR = path.resolve(process.cwd(), ".data", "agent-reports");
 
@@ -107,16 +112,19 @@ export async function runAgentReport(
     const limit = goal === "content_ideas" ? 10 : 20;
 
     let report: string;
+    const reportTitle = `${config.name} Agent Report`;
     if (goal === "market_brief") {
       const payload = await generateMarketBrief({ periodDays, maxItems: limit });
-      report = formatMarketBriefMarkdown("Market Brief Agent Report", payload);
+      const llmReport = await writeMarketBriefWithLLM(payload, reportTitle);
+      report = llmReport ?? formatMarketBriefMarkdown(reportTitle, payload);
     } else if (goal === "content_ideas") {
       const payload = await generateContentIdeas({
         periodDays,
         numIdeas: limit,
         marketBriefSummary: marketBriefSummary ?? null,
       });
-      report = formatContentIdeasMarkdown("Content Ideas Agent Report", payload);
+      const llmReport = await writeContentIdeasWithLLM(payload, reportTitle);
+      report = llmReport ?? formatContentIdeasMarkdown(reportTitle, payload);
     } else if (goal === "competitor_intel") {
       const competitorLimit = 45;
       const competitorTopPer = 8;
@@ -129,12 +137,21 @@ export async function runAgentReport(
         maxWebQueriesPerCompetitor: 3,
         internalDocsLimit: 800,
       });
-      report = formatCompetitorIntelMarkdown("Competitor Intel Agent Report", {
-        generatedAt: new Date().toISOString(),
-        periodDays,
-        topPerCompetitor: competitorTopPer,
+      const generatedAt = new Date().toISOString();
+      const llmReport = await writeCompetitorIntelWithLLM(
         items,
-      });
+        periodDays,
+        reportTitle,
+        generatedAt
+      );
+      report =
+        llmReport ??
+        formatCompetitorIntelMarkdown(reportTitle, {
+          generatedAt,
+          periodDays,
+          topPerCompetitor: competitorTopPer,
+          items,
+        });
     } else {
       const docs = await retrieveForAgent(goal, { periodDays, maxEnrich: 0 });
       if (docs.length === 0) {

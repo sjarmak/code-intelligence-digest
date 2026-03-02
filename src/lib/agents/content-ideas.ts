@@ -754,7 +754,9 @@ export async function generateContentIdeas(options: {
       }
       if (sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) return false;
       if ((sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) return false;
-      return c.score >= 0.46;
+      // Slightly lower threshold so short time windows (e.g. week) still yield multiple ideas,
+      // while upstream gates continue to block off-topic or low-evidence docs.
+      return c.score >= 0.44;
     })
     .map((c) => {
       // Boost recency for short windows so "day"/"week" reports favor truly recent items.

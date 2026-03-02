@@ -14,6 +14,11 @@ import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
 import { formatCompetitorIntelMarkdown, formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
+import {
+  writeCompetitorIntelWithLLM,
+  writeContentIdeasWithLLM,
+  writeMarketBriefWithLLM,
+} from "./llm-report-writer";
 
 const MAX_CONTEXT_ITEMS = 50;
 const MAX_CHARS_PER_ITEM = 4000;
@@ -105,13 +110,17 @@ export async function runAgentJob(
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
+    const generatedAt = new Date().toISOString();
 
-    const markdown = formatCompetitorIntelMarkdown(title, {
-      generatedAt: new Date().toISOString(),
-      periodDays,
-      topPerCompetitor,
-      items,
-    });
+    const llmMarkdown = await writeCompetitorIntelWithLLM(items, periodDays, title, generatedAt);
+    const markdown =
+      llmMarkdown ??
+      formatCompetitorIntelMarkdown(title, {
+        generatedAt,
+        periodDays,
+        topPerCompetitor,
+        items,
+      });
 
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: items.length,
@@ -135,7 +144,8 @@ export async function runAgentJob(
     const payload = await generateMarketBrief({ periodDays, maxItems: job.maxItems ?? 20 });
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
-    const markdown = formatMarketBriefMarkdown(title, payload);
+    const llmMarkdown = await writeMarketBriefWithLLM(payload, title);
+    const markdown = llmMarkdown ?? formatMarketBriefMarkdown(title, payload);
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: payload.executive_delta.length + payload.watch_items.length,
       periodDays,
@@ -156,7 +166,8 @@ export async function runAgentJob(
     const payload = await generateContentIdeas({ periodDays, numIdeas: job.maxItems ?? 10 });
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
-    const markdown = formatContentIdeasMarkdown(title, payload);
+    const llmMarkdown = await writeContentIdeasWithLLM(payload, title);
+    const markdown = llmMarkdown ?? formatContentIdeasMarkdown(title, payload);
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: payload.ideas.length,
       periodDays,

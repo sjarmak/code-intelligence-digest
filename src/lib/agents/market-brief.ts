@@ -292,6 +292,23 @@ function evidenceSignalScoreFromText(text: string): number {
 }
 
 /**
+ * Executive Delta should focus on hard GTM signals: launches, pricing, benchmarks,
+ * roadmap/category moves, or clear playbook contradictions. Educational/how-to
+ * content is better suited to Watch Items unless it is the only signal available.
+ */
+function isStrongExecutiveDelta(item: ScoredDoc): boolean {
+  const text = textOf(item.doc);
+  const hasHardSignal = /(launch|release|ga|generally available|pricing|customer|case study|benchmark|results?|roadmap|program|partner(ship)?|migration)/i.test(
+    text,
+  );
+  const isBestPractices = /\b(best practices?|how to|tutorial|guide|checklist|tips)\b/i.test(text);
+
+  if (item.contradiction) return true;
+  if (isBestPractices) return false;
+  return item.evidenceSignalScore >= 0.6 && hasHardSignal;
+}
+
+/**
  * True iff the doc is clearly about our GTM domain: developer tools, code intelligence,
  * enterprise dev, or known competitors. Excludes general news, local news, and off-topic
  * stories that have no relevance to positioning or product.
@@ -477,8 +494,16 @@ export async function generateMarketBrief(options: {
     .sort((a, b) => b.score - a.score);
 
   const selected = scored.slice(0, maxItems);
-  const executive = selected.slice(0, Math.min(8, selected.length)).map((x) => toDelta(x, state));
-  const watchItems = selected.slice(Math.min(8, selected.length), Math.min(14, selected.length)).map((x) => toDelta(x, state));
+  const strong = selected.filter((x) => isStrongExecutiveDelta(x));
+  const weak = selected.filter((x) => !isStrongExecutiveDelta(x));
+
+  const executiveSource = strong.length > 0 ? strong : selected;
+  const executiveDocs = executiveSource.slice(0, Math.min(8, executiveSource.length));
+  const watchSource = strong.length > 0 ? weak : selected.slice(executiveDocs.length);
+  const watchDocs = watchSource.slice(0, Math.min(6, watchSource.length));
+
+  const executive = executiveDocs.map((x) => toDelta(x, state));
+  const watchItems = watchDocs.map((x) => toDelta(x, state));
   const invalidations = selected.filter((x) => x.contradiction).map((x) => x.doc.title).slice(0, 8);
   const noisySuppressed = scored.slice(maxItems).map((x) => x.doc.title).slice(0, 12);
 
