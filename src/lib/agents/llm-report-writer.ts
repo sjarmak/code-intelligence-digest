@@ -26,6 +26,7 @@ function truncate(s: string, max: number): string {
 function buildMarketBriefContext(payload: MarketBriefOutput): string {
   const period = payload.periodDays != null ? `Period: last ${payload.periodDays} days` : "";
   const exec = payload.executive_delta.slice(0, MAX_PAYLOAD_ITEMS).map((d, i) => ({
+    bucket: "executive" as const,
     n: i + 1,
     title: truncate(d.title, MAX_ITEM_TITLE),
     why_it_matters: truncate(d.why_it_matters, MAX_ITEM_SUMMARY),
@@ -35,6 +36,7 @@ function buildMarketBriefContext(payload: MarketBriefOutput): string {
     owner_action: `${d.recommended_action.owner}: ${truncate(d.recommended_action.action, 100)}`,
   }));
   const watch = payload.watch_items.slice(0, 10).map((d, i) => ({
+    bucket: "watch" as const,
     n: i + 1,
     title: truncate(d.title, MAX_ITEM_TITLE),
     summary: truncate(d.summary, MAX_ITEM_SUMMARY),
@@ -51,8 +53,11 @@ function buildMarketBriefContext(payload: MarketBriefOutput): string {
 const MARKET_BRIEF_SYSTEM = `You are a GTM analyst for a developer tools company (code search, code intelligence, AI-assisted development). Your job is to write a Market Brief report in markdown.
 
 Rules:
+- The JSON includes two buckets: items with bucket="executive" (pre-selected Executive Delta candidates) and bucket="watch" (pre-selected Watch Items).
+- Treat bucket="executive" items as the primary Executive Delta set. KEEP them in Executive Delta unless they are clearly best-practices/how-to/tutorial/guide/checklist content, in which case you MAY move them down to Watch Items.
+- Only promote bucket="watch" items into Executive Delta when they clearly deserve it (e.g., hard GTM signals like launches, pricing, benchmarks, roadmaps, partnerships, or major migrations) and there is room in a 3–5 item Executive Delta list.
 - Include ONLY items that are clearly relevant to developer tools, code intelligence, AI coding assistants, enterprise SDLC, or our ICP. DROP off-topic items (e.g. Outlook/calendar features, Discord moderation drama, consumer mobile OS, one-off library releases with no GTM angle, spammy comments, generic infra news with no code/AI relevance).
-- If an item is borderline, move it to Watch Items or omit it. Prefer 3–5 strong Executive Delta items and a short Watch list.
+- Prefer 3–5 strong Executive Delta items and a short Watch list.
 - Output valid markdown with these exact section headers: ## Executive Delta, ## Watch Items, and if needed ## Invalidations To Monitor.
 - For each Executive Delta item use: ### N. Title, then bullet lines for Segment impact, Persona impact, Why it matters, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Recommended owner/action, Sources (links).
 - For Watch Items use: ### N. Title, summary, Sources.
