@@ -1,16 +1,15 @@
 /**
  * LLM-based shortlist for agent retrieval.
  * Selects and reorders top candidates per agent goal with justifications.
- * Uses Anthropic Claude Sonnet 4.6 (ANTHROPIC_API_KEY).
+ * Uses the configured quality model (DIGEST_QUALITY_MODEL / getQualityModel()), e.g. Claude Sonnet 4.6.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import { getAgentGoalConfig } from "../../config/agents";
 import type { AgentGoal } from "../../config/agents";
+import { hasLLMConfigured } from "../llm/config";
+import { createChatCompletion } from "../llm/completion";
 import { logger } from "../logger";
 import type { AgentRankedDoc } from "./agentRank";
-
-const AGENT_MODEL = "claude-sonnet-4-6";
 
 export interface ShortlistEntry {
   doc: AgentRankedDoc;
@@ -28,14 +27,6 @@ function stripHtml(s: string | undefined): string {
     .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-let anthropicClient: Anthropic | null = null;
-
-function getAnthropic(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!anthropicClient) anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return anthropicClient;
 }
 
 function getShortlistInstructionsForGoal(goal: AgentGoal, limit: number): string {
@@ -62,8 +53,8 @@ function getShortlistInstructionsForGoal(goal: AgentGoal, limit: number): string
 }
 
 /**
- * Build a shortlist of docs for an agent goal: Claude Sonnet 4.6 selects best subset and adds reasons.
- * If ANTHROPIC_API_KEY is not set, returns the top `limit` docs by existing agentScore.
+ * Build a shortlist of docs for an agent goal: quality model selects best subset and adds reasons.
+ * If no LLM is configured, returns the top `limit` docs by existing agentScore.
  */
 export async function buildAgentShortlist(
   goal: AgentGoal,
@@ -71,14 +62,12 @@ export async function buildAgentShortlist(
   limit: number
 ): Promise<ShortlistEntry[]> {
   const config = getAgentGoalConfig(goal);
-  const client = getAnthropic();
 
-  if (!client || docs.length === 0) {
-    return docs.slice(0, limit).map((doc, i) => ({
-      doc,
-      rank: i + 1,
-      selected: true,
-    }));
+  if (docs.length === 0) {
+    return [];
+  }
+  if (!hasLLMConfigured()) {
+    throw new Error("LLM required for agent shortlist. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (and optionally DIGEST_QUALITY_MODEL).");
   }
 
   const candidateList = docs.slice(0, 40).map((d, i) => {
@@ -107,19 +96,16 @@ Return only the JSON array, no other text.`;
 
   const maxTokens = goal === "content_ideas" ? 2500 : 3000;
   try {
-    const response = await client.messages.create({
-      model: AGENT_MODEL,
-      max_tokens: maxTokens,
+    const result = await createChatCompletion({
       messages: [{ role: "user", content: prompt }],
+      max_tokens: maxTokens,
     });
-
-    const textBlock = response.content.find((b) => b.type === "text");
-    const content = (textBlock && "text" in textBlock ? textBlock.text : "").trim() || "[]";
+    const content = (result.content ?? "").trim() || "[]";
     const jsonMatch = content.match(/\[[\s\S]*\]/);
     type SelectedItem = { index: number; reason?: string; content_ideas?: string[]; "content ideas"?: string[] };
     const selected: SelectedItem[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
 
-    const result: ShortlistEntry[] = [];
+    const shortlistResult: ShortlistEntry[] = [];
     let rank = 1;
     for (const entry of selected) {
       const idx = entry.index - 1;
@@ -134,7 +120,7 @@ Return only the JSON array, no other text.`;
         const contentIdeas = ideaList
           .map((s) => stripHtml(typeof s === "string" ? s : String(s)))
           .filter(Boolean);
-        result.push({
+        shortlistResult.push({
           doc: docs[idx],
           rank: rank++,
           selected: true,
@@ -144,27 +130,23 @@ Return only the JSON array, no other text.`;
       }
     }
     if (goal === "content_ideas") {
-      const withIdeas = result.filter((r) => r.contentIdeas?.length);
-      logger.info("Content ideas shortlist", { total: result.length, withContentIdeas: withIdeas.length });
+      const withIdeas = shortlistResult.filter((r) => r.contentIdeas?.length);
+      logger.info("Content ideas shortlist", { total: shortlistResult.length, withContentIdeas: withIdeas.length });
     }
     // If LLM returned too few or invalid, fill with top by score
-    const included = new Set(result.map((r) => r.doc.id ?? r.doc.url ?? r.doc.title));
+    const included = new Set(shortlistResult.map((r) => r.doc.id ?? r.doc.url ?? r.doc.title));
     for (const doc of docs) {
-      if (result.length >= limit) break;
+      if (shortlistResult.length >= limit) break;
       const key = doc.id ?? doc.url ?? doc.title;
       if (included.has(key)) continue;
       included.add(key);
-      result.push({ doc, rank: rank++, selected: true });
+      shortlistResult.push({ doc, rank: rank++, selected: true });
     }
 
-    logger.info("Agent shortlist built", { goal, requested: limit, selected: result.length });
-    return result.slice(0, limit);
+    logger.info("Agent shortlist built", { goal, requested: limit, selected: shortlistResult.length });
+    return shortlistResult.slice(0, limit);
   } catch (error) {
-    logger.warn("Agent shortlist LLM failed, using score order", { goal, error });
-    return docs.slice(0, limit).map((doc, i) => ({
-      doc,
-      rank: i + 1,
-      selected: true,
-    }));
+    logger.error("Agent shortlist LLM failed", { goal, error });
+    throw error;
   }
 }

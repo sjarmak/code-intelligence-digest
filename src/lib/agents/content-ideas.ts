@@ -7,6 +7,12 @@ import {
   type IntegrationOpportunityLevel,
 } from "./sourcegraph-integration-opportunity";
 
+/**
+ * Content ideas: when LLM is configured, "Generate reports" uses retrieve → rank → shortlist (LLM)
+ * and formats the shortlist as ContentIdeasOutput. When no LLM is configured, this module's
+ * heuristic scoring + templates are used. The quality model is also used for scheduled jobs (run-job.ts).
+ */
+
 export interface ContentIdea {
   title: string;
   thesis: string;
@@ -543,7 +549,13 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
   // Weight by product-relevant tech and evidence; no ICP/beachhead/segment boost (reduces noise).
   const channel_efficiency_score = ["event_talk", "whitepaper", "SEO_page", "blog"].includes(channel) ? 0.9 : 0.6;
   const proof_feasibility_score = /(benchmark|customer|case study|release notes|docs|ga)/.test(text) ? 0.9 : 0.5;
-  const message_fit_score = /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted)/.test(text) ? 1 : 0.2;
+  const strongProduct =
+    /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted)/.test(text);
+  const partialProduct =
+    /(developer (platform|tools|productivity)|coding assistant|ai coding|enterprise (codebase|tooling)|codebase (context|understanding))/i.test(
+      text,
+    );
+  const message_fit_score = strongProduct ? 1 : partialProduct ? 0.6 : 0.35;
   const timeliness_score = doc.publishedAt ? Math.max(0.2, 1 - ((Date.now() - doc.publishedAt.getTime()) / (1000 * 60 * 60 * 24 * 120))) : 0.5;
   const source_quality_score =
     sourceType === "primary" ? 1 : sourceType === "secondary" ? 0.7 : sourceType === "internal_curated" ? 0.85 : 0.35;
@@ -717,7 +729,7 @@ export async function generateContentIdeas(options: {
       }
       if (sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) return false;
       if ((sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) return false;
-      return c.score >= 0.58;
+      return c.score >= 0.46;
     })
     .map((c) => {
       // Boost recency for short windows so "day"/"week" reports favor truly recent items.
