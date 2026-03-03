@@ -23,6 +23,48 @@ export interface WebSearchOptions {
 const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 const PARALLEL_SEARCH_URL = "https://api.parallel.ai/v1beta/search";
 
+function parseLikelyDate(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  return undefined;
+}
+
+function inferDateFromTextOrUrl(input: string): string | undefined {
+  const patterns = [
+    /\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b/,
+    /\b(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])\b/,
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+([0-2]?\d|3[01]),?\s+(20\d{2})\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = input.match(pattern);
+    if (!match) continue;
+    const iso = parseLikelyDate(match[0]);
+    if (iso) return iso;
+  }
+  return undefined;
+}
+
+function inferPublishedDate(url: string, title?: string, excerpt?: string): string | undefined {
+  return inferDateFromTextOrUrl(url) ?? inferDateFromTextOrUrl(title ?? "") ?? inferDateFromTextOrUrl(excerpt ?? "");
+}
+
+function objectiveWithTimeRange(
+  query: string,
+  timeRange?: "day" | "week" | "month" | "year",
+): string {
+  if (!timeRange) return query;
+  const suffix =
+    timeRange === "day"
+      ? "published in the last 24 hours"
+      : timeRange === "week"
+        ? "published in the last 7 days"
+        : timeRange === "month"
+          ? "published in the last 30 days"
+          : "published in the last 12 months";
+  return `${query} (${suffix})`;
+}
+
 function matchesIncludedDomains(url: string, domains?: string[]): boolean {
   if (!domains || domains.length === 0) return true;
   try {
@@ -53,7 +95,7 @@ async function searchParallel(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        objective: query,
+        objective: objectiveWithTimeRange(query, options.timeRange),
         search_queries: options.domains?.slice(0, 5).map((d) => `site:${d}`),
         processor: "base",
         max_results: Math.min(options.numResults ?? 10, 20),
@@ -84,7 +126,7 @@ async function searchParallel(
         url: r.url ?? "",
         content: r.excerpts?.[0],
         score: 0.55,
-        publishedDate: undefined,
+        publishedDate: inferPublishedDate(r.url ?? "", r.title, r.excerpts?.[0]),
       }))
       .filter((r) => r.url && r.title && matchesIncludedDomains(r.url, options.domains));
 

@@ -67,4 +67,10 @@ describe("agent-jobs", () => {
       }
     }
   });
+
+  it("daily content ideas job uses month window", () => {
+    const job = getJobConfig("gtm_content" as AgentId, "daily_content_ideas" as JobId);
+    expect(job).not.toBeNull();
+    expect(job?.periodDays).toBe(30);
+  });
 });

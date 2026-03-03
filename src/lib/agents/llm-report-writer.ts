@@ -77,7 +77,12 @@ function buildContentIdeasContext(payload: ContentIdeasOutput): string {
     content_outline: (d.content_outline ?? []).slice(0, 2).map((s) => truncate(s, 100)),
     integration_play: (d.sourcegraph_integration_play ?? []).slice(0, 2),
     primary_format: d.distribution_plan?.primary_format,
-    sources: (d.sources ?? []).map((s) => s.source || s.url).filter(Boolean).slice(0, 2),
+    sources: (d.sources ?? []).slice(0, 3).map((s) => ({
+      source: s.source,
+      title: truncate(s.title, 110),
+      url: s.url,
+      date: s.date,
+    })),
   }));
   return JSON.stringify(
     { period, playbook_version: payload.playbook_version, generated_at: payload.generated_at, ideas },
@@ -89,10 +94,11 @@ function buildContentIdeasContext(payload: ContentIdeasOutput): string {
 const CONTENT_IDEAS_SYSTEM = `You are a content strategist for a developer tools company (code search, code intelligence, AI-assisted development). Your job is to write a Content Ideas report in markdown.
 
 Rules:
-- Include ONLY ideas that are clearly relevant to developer tools, code intelligence, AI coding assistants, or our ICP. DROP off-topic or generic ideas (e.g. calendar/meeting features, consumer apps, unrelated library releases, spam or low-signal comments).
-- When the JSON contains 4 or more on-topic candidate ideas: your report MUST surface 4–6 distinct ideas. Aim for variety across domains/sources (e.g. not all from one vendor blog).
-- When the JSON contains 3 ideas: surface all 3.
-- When the JSON contains 1–2 ideas: you may produce 2–3 concrete content ideas by splitting or remixing angles (e.g. separate blog vs. webinar vs. case study) grounded in the same sources. It is acceptable for multiple ideas to share sources, but do not copy-paste the same idea.
+- Source-first: ideas must be driven by the provided sources and evidence, not by forcing a pre-set narrative.
+- Include ONLY ideas that are clearly relevant to developer tools, code intelligence, AI coding assistants, or enterprise engineering audiences. DROP off-topic or generic ideas (e.g. calendar/meeting features, consumer apps, unrelated library releases, spam or low-signal comments).
+- Render one output idea per input idea. Do NOT split/remix one candidate into multiple ideas and do NOT invent extra ideas.
+- Preserve source fidelity: include only URLs from the input JSON and keep source/date details aligned to those URLs.
+- Keep variety across domains when the input already contains domain-diverse ideas.
 - Output valid markdown with this exact section header: ## Prioritized Ideas.
 - For each idea use: ### N. Title, then bullet lines for Segment/persona, Stage, Thesis, Why now, Core claim, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Primary format, Recommended venue, Channel strategy, Setup plan (bullets), Key insights (bullets), Content outline (bullets), Sources (links).
 - Do not invent sources or URLs; use only those provided. Preserve links from the context when possible.`;
@@ -184,6 +190,7 @@ Playbook version: ${payload.playbook_version}
 Generated: ${payload.generated_at}
 
 Structured candidate ideas (drop off-topic; keep only GTM-relevant; you may shorten the list):
+Structured candidate ideas (drop off-topic; keep only source-grounded and audience-relevant; you may shorten the list):
 
 ${context}
 

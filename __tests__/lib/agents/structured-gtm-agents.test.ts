@@ -342,4 +342,260 @@ describe("structured gtm agents", () => {
     // Relevance gate must exclude the off-topic doc (Fed rates) from any content idea source.
     expect(sourceTitles).not.toContain("Fed raises interest rates again");
   });
+
+  it("prioritizes month-window ideas with corroborated (2+) sources when available", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://vendor-a.example.com/mcp-enterprise",
+          title: "MCP context layer for enterprise codebases",
+          snippet: "Benchmark report: cross-repo context and agent retrieval in production",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.4,
+            icpMatch: 0.9,
+            recency: 0.9,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-b.example.com/mcp-agent-context",
+          title: "Agent context architecture with MCP",
+          snippet: "Documentation: model context protocol and cross-repo symbol retrieval",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.4,
+            icpMatch: 0.9,
+            recency: 0.9,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-02-27"),
+        },
+        {
+          source: "web" as const,
+          url: "https://single-source.example.com/compliance-announcement",
+          title: "Security tool update for coding agents",
+          snippet: "Operational network updates for coding assistant traffic",
+          metadata: {},
+          baseScore: 0.82,
+          goalScore: 0.82,
+          agentScore: 0.81,
+          features: {
+            competitorMatch: 0.4,
+            formatType: 0.3,
+            icpMatch: 0.7,
+            recency: 0.9,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-02-26"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 4 });
+    expect(out.ideas.length).toBeGreaterThan(0);
+    const corroborated = out.ideas.filter((idea) => new Set(idea.sources.map((s) => s.url)).size >= 2);
+    expect(corroborated.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(corroborated[0].sources.map((s) => s.url)).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not map generic network-config updates to compliance frame", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://github.blog/changelog/network-config-coding-agent",
+          title: "Network configuration changes for coding agent now in effect",
+          snippet: "Release notes: operational routing update for enterprise orgs using coding assistants with cross-repo code search",
+          metadata: {},
+          baseScore: 0.86,
+          goalScore: 0.86,
+          agentScore: 0.84,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.3,
+            icpMatch: 0.75,
+            recency: 0.95,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-02"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/mcp-context-enterprise",
+          title: "MCP context layer patterns for enterprise code search",
+          snippet: "Documentation and benchmark: cross-repo context retrieval and symbol-level grounding for coding assistants",
+          metadata: {},
+          baseScore: 0.87,
+          goalScore: 0.87,
+          agentScore: 0.86,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.4,
+            icpMatch: 0.82,
+            recency: 0.92,
+            trendLandscape: 0.35,
+          },
+          publishedAt: new Date("2026-03-01"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
+    expect(out.ideas.length).toBeGreaterThan(0);
+    expect(out.ideas[0].title).not.toContain("Secure and Compliant AI Coding Workflows");
+  });
+
+  it("does not emit compliance idea without hard compliance controls in month window", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://github.blog/changelog/network-configuration-coding-agent",
+          title: "Network configuration changes for Copilot coding agent now in effect",
+          snippet: "Operational routing and policy update for enterprise orgs",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.88,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.3,
+            icpMatch: 0.8,
+            recency: 0.95,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-02"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.latent.space/p/reviews-dead",
+          title: "How to Kill the Code Review",
+          snippet: "Commentary on agent workflows and review bottlenecks",
+          metadata: {},
+          baseScore: 0.86,
+          goalScore: 0.86,
+          agentScore: 0.85,
+          features: {
+            competitorMatch: 0.4,
+            formatType: 0.3,
+            icpMatch: 0.75,
+            recency: 0.9,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-01"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/mcp-context-enterprise",
+          title: "MCP context layer patterns for enterprise code search",
+          snippet: "Documentation and benchmark: cross-repo context retrieval",
+          metadata: {},
+          baseScore: 0.87,
+          goalScore: 0.87,
+          agentScore: 0.86,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.4,
+            icpMatch: 0.82,
+            recency: 0.92,
+            trendLandscape: 0.35,
+          },
+          publishedAt: new Date("2026-03-01"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 3 });
+    expect(out.ideas.length).toBeGreaterThan(0);
+    expect(out.ideas.every((idea) => !idea.title.includes("Secure and Compliant AI Coding Workflows"))).toBe(true);
+  });
+
+  it("returns 3-5 ideas with channel diversity for month window", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://vendor-a.example.com/mcp-launch",
+          title: "MCP context layer launch for enterprise coding agents",
+          snippet: "GA release notes and docs",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.92,
+          agentScore: 0.9,
+          features: { competitorMatch: 0.6, formatType: 0.5, icpMatch: 0.9, recency: 0.9, trendLandscape: 0.4 },
+          publishedAt: new Date("2026-03-02"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-b.example.com/mcp-webinar",
+          title: "Webinar: scaling agent context across multi-repo codebases",
+          snippet: "Customer case study and benchmark results",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.88,
+          features: { competitorMatch: 0.5, formatType: 0.6, icpMatch: 0.85, recency: 0.9, trendLandscape: 0.35 },
+          publishedAt: new Date("2026-03-01"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-c.example.com/mcp-conference-talk",
+          title: "Conference talk: enterprise code search context patterns",
+          snippet: "Launch and implementation walkthrough",
+          metadata: {},
+          baseScore: 0.89,
+          goalScore: 0.89,
+          agentScore: 0.87,
+          features: { competitorMatch: 0.5, formatType: 0.5, icpMatch: 0.82, recency: 0.88, trendLandscape: 0.34 },
+          publishedAt: new Date("2026-03-01"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-d.example.com/mcp-video-walkthrough",
+          title: "Video walkthrough: MCP architecture for large codebases",
+          snippet: "Demo video and docs",
+          metadata: {},
+          baseScore: 0.88,
+          goalScore: 0.88,
+          agentScore: 0.86,
+          features: { competitorMatch: 0.5, formatType: 0.5, icpMatch: 0.8, recency: 0.87, trendLandscape: 0.33 },
+          publishedAt: new Date("2026-02-28"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-e.example.com/mcp-ad-campaign",
+          title: "Paid campaign guide for AI coding assistant adoption",
+          snippet: "Ad campaign playbook and benchmark",
+          metadata: {},
+          baseScore: 0.87,
+          goalScore: 0.87,
+          agentScore: 0.85,
+          features: { competitorMatch: 0.45, formatType: 0.5, icpMatch: 0.8, recency: 0.86, trendLandscape: 0.32 },
+          publishedAt: new Date("2026-02-28"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
+    expect(out.ideas.length).toBeGreaterThanOrEqual(3);
+    expect(out.ideas.length).toBeLessThanOrEqual(5);
+    const uniqueChannels = new Set(out.ideas.map((idea) => idea.channel));
+    expect(uniqueChannels.size).toBeGreaterThanOrEqual(3);
+  });
 });

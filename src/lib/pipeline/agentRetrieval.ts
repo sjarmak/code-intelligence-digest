@@ -234,6 +234,31 @@ function normalizeUrl(url: string): string {
   }
 }
 
+function parseDateLike(raw: string | undefined): Date | undefined {
+  if (!raw) return undefined;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed;
+}
+
+function inferDateFromDocText(doc: RetrievedDoc): Date | undefined {
+  const text = `${doc.url ?? ""} ${doc.title} ${doc.snippet ?? ""} ${doc.content ?? ""}`;
+  const patterns = [
+    /\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b/,
+    /\b(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])\b/,
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+([0-2]?\d|3[01]),?\s+(20\d{2})\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const parsed = parseDateLike(match[0]);
+    if (parsed) return parsed;
+  }
+
+  return undefined;
+}
+
 /** Return true if url's host equals or ends with any of the given domains (e.g. instagram.com matches www.instagram.com). */
 function urlHostInList(url: string | undefined, domains: string[]): boolean {
   if (!url || domains.length === 0) return false;
@@ -368,6 +393,26 @@ function filterRetrievedDocsByDate(
   });
 }
 
+function hydrateMissingDates(
+  docs: RetrievedDoc[],
+  periodDays: number,
+): RetrievedDoc[] {
+  // Date filtering is strict for month-or-shorter windows. Infer dates from URL/title/snippet
+  // so relevant web/blog results aren't discarded solely because provider metadata is sparse.
+  if (periodDays > 31) return docs;
+
+  return docs.map((doc) => {
+    if (doc.publishedAt) return doc;
+    const inferred = inferDateFromDocText(doc);
+    if (!inferred) return doc;
+    return {
+      ...doc,
+      publishedAt: inferred,
+      metadata: { ...doc.metadata, dateInferred: true },
+    };
+  });
+}
+
 /**
  * Retrieve documents for an agent goal from Postgres and web, then merge and optionally enrich.
  * Respects options.periodDays for date filtering; docs older than that window are dropped after merge.
@@ -385,7 +430,8 @@ export async function retrieveForAgent(
   ]);
 
   const merged = mergeRetrievedDocs(postgresDocs, webDocs, goal);
-  const dateFiltered = filterRetrievedDocsByDate(merged, periodDays);
+  const hydrated = hydrateMissingDates(merged, periodDays);
+  const dateFiltered = filterRetrievedDocsByDate(hydrated, periodDays);
 
   const maxEnrich = options.maxEnrich ?? 0;
   if (maxEnrich > 0) {

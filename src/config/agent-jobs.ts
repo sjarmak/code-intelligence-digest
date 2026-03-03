@@ -187,7 +187,7 @@ export const AGENT_JOBS: AgentJobConfig[] = [
       competitorsOnly: false,
     },
     maxItems: 20,
-    periodDays: 3,
+    periodDays: 30,
     webSearchQueries: (_date) => [
       "developer marketing content trends",
       "demand gen for dev tools",

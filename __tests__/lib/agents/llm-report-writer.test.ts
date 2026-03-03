@@ -159,6 +159,8 @@ describe("llm-report-writer", () => {
       expect(mockCreate).toHaveBeenCalledTimes(1);
       const call = mockCreate.mock.calls[0][0];
       expect(call.messages.some((m) => m.role === "user" && m.content.includes("Prioritized Ideas"))).toBe(true);
+      expect(call.messages.some((m) => m.role === "user" && m.content.includes("https://example.com"))).toBe(true);
+      expect(call.messages.some((m) => m.role === "system" && m.content.includes("Do NOT split/remix"))).toBe(true);
     });
   });
 
