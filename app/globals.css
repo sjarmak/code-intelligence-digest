@@ -299,3 +299,28 @@ select.custom-select-arrow {
   padding: 0.75rem 1rem;
   background: #fafafa;
 }
+
+/* Agent report: print-friendly PDF export */
+@media print {
+  /* Hide global chrome while printing agent reports */
+  body {
+    background: #ffffff;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  /* Only show the report content when printing */
+  .report-markdown,
+  .report-markdown * {
+    visibility: visible;
+  }
+
+  .report-markdown {
+    overflow: visible !important;
+    max-height: none !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+}
