@@ -117,6 +117,13 @@ const GTM_SIGNAL_TERMS = [
   "platform team",
 ];
 
+const SOURCEGRAPH_PRODUCT_SUITE_SIGNALS = [
+  "Code Search",
+  "Deep Search",
+  "Batch Changes",
+  "Cody",
+];
+
 /**
  * True iff the doc is clearly relevant to GTM content ideas: developer tools, code intelligence,
  * enterprise dev, competitors, or control plane. Excludes web-search noise that has no real
@@ -338,6 +345,11 @@ function normalizeIdeaTitleKey(title: string): string {
     .trim();
 }
 
+function topicKeyFromIdeaTitle(title: string): string {
+  const topic = title.replace(/^[^:]+:\s*/, "").trim().toLowerCase();
+  return topic.replace(/\s+/g, " ").trim();
+}
+
 function topicFromSourceTitle(title: string): string | null {
   const cleaned = title
     .replace(/^\s*(webinar|guide|blog|case study|talk track|brief|playbook)\s*:\s*/i, "")
@@ -429,7 +441,7 @@ function buildContentOutline(
   return [
     `Context: why ${segment === "Other" ? "platform teams" : segment} teams care about ${frame.toLowerCase()} now`,
     `Problem framing for ${persona}: limits of assistant-only workflows in large, complex codebases`,
-    "Sourcegraph POV: context layer + cross-repo search + deep understanding + safe bulk change",
+    "Sourcegraph POV: use Code Search + Deep Search for accurate context, then Batch Changes for safe large-scale execution.",
     "Proof section: product evidence + customer signal + external market trigger",
     `CTA for ${channelLabel}: convert to a scoped next step (buyer workshop, follow-up meeting, or technical validation).`,
   ];
@@ -652,7 +664,7 @@ function buildWhyNow(doc: AgentRankedDoc, text: string): string {
 
 function buildCoreClaim(text: string): string {
   if (/(compliance|security|audit|byok|self-hosted)/.test(text)) {
-    return "Sourcegraph provides the control layer for AI coding workflows in regulated, enterprise environments.";
+    return "Sourcegraph provides an enterprise control layer (Code Search, Deep Search, Batch Changes) for governed AI coding workflows.";
   }
   if (/(migration|remediation|codemod|batch changes)/.test(text)) {
     return "Sourcegraph turns large-scale code change work into a controlled, cross-repo workflow with verification loops.";
@@ -674,6 +686,98 @@ function buildEvidenceQualityNote(doc: AgentRankedDoc, text: string): string {
   if (sourceType === "secondary" && concrete) return "Moderate confidence: concrete secondary source; corroborate once.";
   if (sourceType === "community") return "Low confidence: community signal; use as hypothesis only.";
   return "Low confidence: weak evidence; monitor before promoting.";
+}
+
+function hasStrongMaterialSignal(text: string): boolean {
+  return /(ga|general availability|launch|release|pricing|customer|case study|benchmark|security|compliance|byok|rbac|self-hosted|enterprise)/.test(
+    text,
+  );
+}
+
+function isAcademicResearchDomain(domain: string): boolean {
+  const d = domain.toLowerCase().replace(/^www\./, "");
+  return (
+    d === "arxiv.org" ||
+    d === "openreview.net" ||
+    d === "acm.org" ||
+    d.endsWith(".acm.org")
+  );
+}
+
+function hasCommercialProductMarketSignal(text: string): boolean {
+  const launchOrProof =
+    /(launch|release|\bga\b|general availability|pricing|customer|case study|benchmark|docs|documentation|enterprise plan|security|compliance|byok|self-hosted|rbac)/.test(
+      text,
+    );
+  const vendorOrCompetitor =
+    /(github|copilot|cursor|augment|gitlab duo|windsurf|codeium|claude code|sourcegraph|moderne|qodo|greptile|semgrep|codesee)/.test(
+      text,
+    );
+  return launchOrProof || vendorOrCompetitor;
+}
+
+function isResearchOnlySource(doc: AgentRankedDoc, periodDays: number): boolean {
+  if (periodDays <= 14) return false;
+  const domain = sourceFromUrl(doc.url);
+  if (!isAcademicResearchDomain(domain)) return false;
+  const text = textOf(doc);
+  const directWorkflowSignal =
+    /(mcp|context layer|code search|deep search|cross-repo|batch changes|migration|remediation|onboarding|compliance|governance)/.test(
+      text,
+    );
+  const commercialSignal = hasCommercialProductMarketSignal(text);
+  // For month-window content ideation, avoid academic-only sources unless they clearly tie
+  // to live market/product signals and GTM-relevant workflows.
+  return !(commercialSignal && directWorkflowSignal);
+}
+
+function isLowLeverageOperationalSource(doc: AgentRankedDoc, periodDays: number): boolean {
+  const text = textOf(doc);
+  const url = (doc.url ?? "").toLowerCase();
+  const title = (doc.title ?? "").toLowerCase();
+
+  // For month windows, avoid operational changelog noise unless it's a material market move.
+  if (periodDays > 14 && /github\.blog\/changelog\//.test(url)) {
+    const operationalOnly = /(network configuration|allowlist|allow list|ip range|routing|telemetry|endpoint|connectivity)/.test(
+      `${title} ${text}`,
+    );
+    const strategicSignal = /(customer|case study|benchmark|pricing|\bga\b|general availability|launch|security|compliance|byok|rbac|self-hosted|mcp|code search|deep search|batch changes)/.test(
+      text,
+    );
+    const lowLeverageOperational = operationalOnly && !strategicSignal;
+    if (lowLeverageOperational) return true;
+  }
+
+  // Listicles and generic ranking pages are weak ideation anchors.
+  if (
+    /(best\s+\d*.*ai tools?|top\s+\d+.*ai tools?|ranked overview|tools? for coding in \d{4})/.test(
+      `${title} ${text}`,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildSourcegraphPositioningAnchors(text: string): string[] {
+  const lower = text.toLowerCase();
+  const anchors: string[] = [];
+  if (/(mcp|context layer|repo context|agent context)/.test(lower)) {
+    anchors.push("Use Sourcegraph Deep Search + Code Search as the context and retrieval layer for coding agents.");
+  }
+  if (/(migration|remediation|codemod|large-scale|batch)/.test(lower)) {
+    anchors.push("Pair agent suggestions with Sourcegraph Batch Changes for controlled cross-repo rollout and rollback.");
+  }
+  if (/(compliance|security|audit|byok|self-hosted|rbac|policy)/.test(lower)) {
+    anchors.push("Frame governance with Sourcegraph controls: repository-aware search context, auditable change sets, and enterprise deployment controls.");
+  }
+  if (anchors.length === 0) {
+    anchors.push(
+      `Anchor the narrative to Sourcegraph product pillars: ${SOURCEGRAPH_PRODUCT_SUITE_SIGNALS.join(", ")}.`,
+    );
+  }
+  return anchors.slice(0, 2);
 }
 
 function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCandidate {
@@ -750,6 +854,7 @@ function toIdea(
   candidate: ScoredIdeaCandidate,
   state: PlaybookState,
   targetSegmentOverride?: ContentIdea["target_segment"],
+  channelOverride?: ContentIdea["channel"],
 ): ContentIdea {
   const text = textOf(candidate.doc);
   const evidenceUrl = canonicalizeUrl(candidate.doc.url ?? "");
@@ -772,11 +877,17 @@ function toIdea(
           : "awareness";
 
   const targetSegment = targetSegmentOverride ?? candidate.segment;
-  const title = buildSourcegraphIdeaTitle(targetSegment, candidate.channel, text, candidate.doc.title);
+  const channel = channelOverride ?? candidate.channel;
+  const title = buildSourcegraphIdeaTitle(targetSegment, channel, text, candidate.doc.title);
   const thesis = buildSourcegraphThesis(targetSegment, candidate.persona, text);
   const keyInsights = buildKeyInsights(targetSegment, candidate.persona, text);
-  const contentOutline = buildContentOutline(targetSegment, candidate.persona, candidate.channel, text);
-  const distributionPlan = buildDistributionPlan(candidate.channel, text);
+  const contentOutline = buildContentOutline(targetSegment, candidate.persona, channel, text);
+  const distributionPlan = buildDistributionPlan(channel, text);
+  const suiteAnchors = buildSourcegraphPositioningAnchors(text);
+  const sourcegraphIntegrationPlay =
+    integration.sourcegraph_integration_play.length > 0
+      ? Array.from(new Set([...integration.sourcegraph_integration_play, ...suiteAnchors])).slice(0, 3)
+      : suiteAnchors;
 
   return {
     title,
@@ -784,7 +895,7 @@ function toIdea(
     target_segment: targetSegment,
     target_persona: candidate.persona,
     funnel_stage: funnel,
-    channel: candidate.channel,
+    channel,
     why_now: buildWhyNow(candidate.doc, text),
     playbook_alignment: state.campaign_themes.slice(0, 2),
     sources: evidenceUrl
@@ -797,7 +908,7 @@ function toIdea(
     guardrails: state.messaging_guardrails,
     evidence_quality_note: buildEvidenceQualityNote(candidate.doc, text),
     integration_opportunity: downgradeToMonitor ? "monitor_only" : integration.level,
-    sourcegraph_integration_play: integration.sourcegraph_integration_play,
+    sourcegraph_integration_play: sourcegraphIntegrationPlay,
     distribution_plan: distributionPlan,
     priority_score: Number(candidate.score.toFixed(3)),
   };
@@ -876,6 +987,7 @@ function isAuthoritativeResearchOrStandardsDomain(domain: string): boolean {
 
 function isStrongSourceCandidate(doc: AgentRankedDoc, frame: string, periodDays: number): boolean {
   if (!docSupportsFrame(doc, frame)) return false;
+  if (isResearchOnlySource(doc, periodDays)) return false;
   const entry = sourceEntryFromDoc(doc);
   if (!entry) return false;
   if (isIndexOrRoundupSource(entry.url, doc.title, doc.snippet)) return false;
@@ -1078,6 +1190,268 @@ function enforceChannelDiversity(
   return selected;
 }
 
+function enforceFrameDiversity(
+  ideas: ContentIdea[],
+  targetCount: number,
+  minDistinctFrames: number,
+  allowDuplicateFill = true,
+): ContentIdea[] {
+  if (ideas.length <= 1) return ideas.slice(0, targetCount);
+
+  const byFrame = new Map<string, ContentIdea[]>();
+  for (const idea of ideas) {
+    const frame = topicKeyFromIdeaTitle(idea.title);
+    const list = byFrame.get(frame) ?? [];
+    list.push(idea);
+    byFrame.set(frame, list);
+  }
+  for (const list of byFrame.values()) {
+    list.sort((a, b) => b.priority_score - a.priority_score);
+  }
+
+  const selected: ContentIdea[] = [];
+  const usedTitle = new Set<string>();
+  const framesByBest = Array.from(byFrame.entries())
+    .sort((a, b) => (b[1][0]?.priority_score ?? 0) - (a[1][0]?.priority_score ?? 0))
+    .map(([frame]) => frame);
+
+  // First pass: one per frame to maximize topical spread.
+  for (const frame of framesByBest) {
+    const top = byFrame.get(frame)?.[0];
+    if (!top) continue;
+    const key = normalizeIdeaTitleKey(top.title);
+    if (usedTitle.has(key)) continue;
+    selected.push(top);
+    usedTitle.add(key);
+    if (selected.length >= targetCount) return selected;
+  }
+
+  // If we did not hit the minimum frame count, keep top-scoring remainder (best effort fallback).
+  const distinctFrames = new Set(selected.map((i) => topicKeyFromIdeaTitle(i.title))).size;
+  if (distinctFrames < minDistinctFrames) {
+    if (!allowDuplicateFill) {
+      return selected.slice(0, targetCount);
+    }
+    const byScore = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
+    for (const idea of byScore) {
+      const key = normalizeIdeaTitleKey(idea.title);
+      if (usedTitle.has(key)) continue;
+      selected.push(idea);
+      usedTitle.add(key);
+      if (selected.length >= targetCount) break;
+    }
+    return selected;
+  }
+
+  if (!allowDuplicateFill) {
+    return selected.slice(0, targetCount);
+  }
+
+  // Second pass: fill remaining slots by score.
+  const byScore = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
+  for (const idea of byScore) {
+    const key = normalizeIdeaTitleKey(idea.title);
+    if (usedTitle.has(key)) continue;
+    selected.push(idea);
+    usedTitle.add(key);
+    if (selected.length >= targetCount) break;
+  }
+
+  return selected;
+}
+
+function backfillMonthIdeasWithFormatDiversity(
+  ideas: ContentIdea[],
+  candidates: ScoredIdeaCandidate[],
+  state: PlaybookState,
+  targetCount: number,
+): ContentIdea[] {
+  const minimum = Math.min(Math.max(3, targetCount), 5);
+  if (ideas.length >= minimum) return ideas.slice(0, targetCount);
+
+  const preferredChannels: ContentIdea["channel"][] = [
+    "blog",
+    "webinar",
+    "long_video",
+    "whitepaper",
+    "case_study",
+    "event_talk",
+  ];
+
+  const out = [...ideas];
+  const usedTitleKeys = new Set(out.map((i) => normalizeIdeaTitleKey(i.title)));
+  const usedChannels = new Set(out.map((i) => i.channel));
+  const usedFrames = new Set(out.map((i) => ideaFrameKey(i)));
+  const minDistinctFrames = Math.min(3, minimum);
+  const viableCandidates = candidates.filter((c) => c.doc.id !== MARKET_BRIEF_CONTEXT_ID);
+
+  // First ensure topic/frame diversity for month outputs before channel variants.
+  if (usedFrames.size < minDistinctFrames) {
+    for (const candidate of viableCandidates) {
+      if (usedFrames.size >= minDistinctFrames || out.length >= minimum) break;
+      const variant = toIdea(candidate, state, normalizeTargetSegment(candidate.segment));
+      const frame = ideaFrameKey(variant);
+      if (usedFrames.has(frame)) continue;
+      const key = normalizeIdeaTitleKey(variant.title);
+      if (usedTitleKeys.has(key)) continue;
+      out.push(variant);
+      usedTitleKeys.add(key);
+      usedChannels.add(variant.channel);
+      usedFrames.add(frame);
+    }
+  }
+
+  for (const channel of preferredChannels) {
+    if (out.length >= minimum) break;
+    if (usedChannels.has(channel) && out.length >= 2) continue;
+
+    let added = false;
+    // Prefer a candidate that also adds a new frame.
+    for (const candidate of viableCandidates) {
+      const variant = toIdea(
+        candidate,
+        state,
+        normalizeTargetSegment(candidate.segment),
+        channel,
+      );
+      const key = normalizeIdeaTitleKey(variant.title);
+      if (usedTitleKeys.has(key)) continue;
+      const frame = ideaFrameKey(variant);
+      if (usedFrames.has(frame)) continue;
+      out.push(variant);
+      usedTitleKeys.add(key);
+      usedChannels.add(channel);
+      usedFrames.add(frame);
+      added = true;
+      break;
+    }
+    if (added) continue;
+
+    for (const candidate of viableCandidates) {
+      const variant = toIdea(
+        candidate,
+        state,
+        normalizeTargetSegment(candidate.segment),
+        channel,
+      );
+      const key = normalizeIdeaTitleKey(variant.title);
+      if (usedTitleKeys.has(key)) continue;
+      out.push(variant);
+      usedTitleKeys.add(key);
+      usedChannels.add(channel);
+      usedFrames.add(ideaFrameKey(variant));
+      break;
+    }
+  }
+
+  if (out.length < minimum) {
+    for (const candidate of viableCandidates) {
+      if (out.length >= minimum) break;
+      const variant = toIdea(candidate, state, normalizeTargetSegment(candidate.segment));
+      const key = normalizeIdeaTitleKey(variant.title);
+      if (usedTitleKeys.has(key)) continue;
+      out.push(variant);
+      usedTitleKeys.add(key);
+      usedFrames.add(ideaFrameKey(variant));
+    }
+  }
+
+  return out.slice(0, targetCount);
+}
+
+function backfillMonthWithSecondaryDistinctThemes(
+  ideas: ContentIdea[],
+  candidates: ScoredIdeaCandidate[],
+  state: PlaybookState,
+  targetCount: number,
+): ContentIdea[] {
+  const minimum = Math.min(Math.max(3, targetCount), 5);
+  if (ideas.length >= minimum) return ideas.slice(0, targetCount);
+
+  const out = [...ideas];
+  const usedTitleKeys = new Set(out.map((i) => normalizeIdeaTitleKey(i.title)));
+  const usedTopicKeys = new Set(out.map((i) => topicKeyFromIdeaTitle(i.title)));
+  const usedChannels = new Set(out.map((i) => i.channel));
+  const preferredChannels: ContentIdea["channel"][] = [
+    "blog",
+    "webinar",
+    "long_video",
+    "whitepaper",
+    "case_study",
+    "event_talk",
+  ];
+
+  const viable = candidates
+    .filter((c) => {
+      if (c.doc.id === MARKET_BRIEF_CONTEXT_ID) return false;
+      const text = textOf(c.doc);
+      const domain = sourceFromUrl(c.doc.url);
+      const sourceType = classifySourceTypeByDomain(domain);
+      const canonicalUrl = canonicalizeUrl(c.doc.url);
+      if (sourceType === "community") return false;
+      if (!hasMinimumContentIdeasRelevance(c.doc)) return false;
+      if (!canonicalUrl) return false;
+      if (isNoisyDomain(domain)) return false;
+      if (isLowLeverageOperationalSource(c.doc, 30)) return false;
+      if (isResearchOnlySource(c.doc, 30)) return false;
+      if (isGenericIdeaPage(canonicalUrl) && !hasConcreteEvidence(text)) return false;
+      return c.score >= 0.3;
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const secondaryFirst = [
+    ...viable.filter((c) => classifySourceTypeByDomain(sourceFromUrl(c.doc.url)) === "secondary"),
+    ...viable.filter((c) => classifySourceTypeByDomain(sourceFromUrl(c.doc.url)) !== "secondary"),
+  ];
+
+  for (const candidate of secondaryFirst) {
+    if (out.length >= minimum) break;
+    const channelOverride =
+      candidate.channel && !usedChannels.has(candidate.channel)
+        ? candidate.channel
+        : preferredChannels.find((ch) => !usedChannels.has(ch));
+    const idea = toIdea(
+      candidate,
+      state,
+      normalizeTargetSegment(candidate.segment),
+      channelOverride,
+    );
+    const titleKey = normalizeIdeaTitleKey(idea.title);
+    const topicKey = topicKeyFromIdeaTitle(idea.title);
+    if (usedTitleKeys.has(titleKey)) continue;
+    if (usedTopicKeys.has(topicKey)) continue;
+    out.push(idea);
+    usedTitleKeys.add(titleKey);
+    usedTopicKeys.add(topicKey);
+    usedChannels.add(idea.channel);
+  }
+
+  // If we still do not meet the minimum, allow format variants from viable sources
+  // to preserve report usefulness while keeping source quality gates.
+  if (out.length < minimum) {
+    for (const candidate of secondaryFirst) {
+      if (out.length >= minimum) break;
+      const channelOverride =
+        candidate.channel && !usedChannels.has(candidate.channel)
+          ? candidate.channel
+          : preferredChannels.find((ch) => !usedChannels.has(ch));
+      const idea = toIdea(
+        candidate,
+        state,
+        normalizeTargetSegment(candidate.segment),
+        channelOverride,
+      );
+      const titleKey = normalizeIdeaTitleKey(idea.title);
+      if (usedTitleKeys.has(titleKey)) continue;
+      out.push(idea);
+      usedTitleKeys.add(titleKey);
+      usedChannels.add(idea.channel);
+    }
+  }
+
+  return out.slice(0, targetCount);
+}
+
 export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): ContentIdeasOutput {
   const ideas = payload.ideas
     .map((idea) => {
@@ -1129,14 +1503,21 @@ export async function generateContentIdeas(options: {
   const numIdeas = periodDays > 14 ? Math.min(5, Math.max(3, requested)) : requested;
   const debugLog = options.debug ? new AgentScoringDebugger("content_ideas", periodDays) : null;
 
-  const docs = await retrieveForAgent("content_ideas", {
+  // Seed ideas from curated intel pools (market brief + competitor intel), not the generic content pool.
+  // This keeps ideation grounded in high-signal GTM and competitive evidence.
+  const marketDocs = await retrieveForAgent("market_brief", {
+    periodDays,
+    query: options.focus ?? null,
+    maxEnrich: 0,
+  });
+  const competitorDocs = await retrieveForAgent("competitor_intel", {
     periodDays,
     query: options.focus ?? null,
     maxEnrich: 0,
   });
 
-  // If market brief summary was passed (e.g. when run after market brief), inject it so findings inform ideas
-  const docsWithBrief =
+  // If market brief summary was passed (e.g. when run after market brief), inject it as a synthetic context doc.
+  const docsWithBriefContext =
     options.marketBriefSummary?.trim()
       ? [
           {
@@ -1149,47 +1530,32 @@ export async function generateContentIdeas(options: {
             publishedAt: new Date(),
             metadata: { primarySource: "market_brief" },
           },
-          ...docs,
+          ...marketDocs,
+          ...competitorDocs,
         ]
-      : docs;
+      : [...marketDocs, ...competitorDocs];
 
-  // Broaden the research pool: include sources used for market brief and competitor intel
-  // so content ideas can synthesize from the same landscape and competitive evidence.
-  const marketDocs = await retrieveForAgent("market_brief", {
-    periodDays,
-    maxEnrich: 0,
-  });
-  const competitorDocs = await retrieveForAgent("competitor_intel", {
-    periodDays,
-    maxEnrich: 0,
-  });
-
-  const existingIds = new Set(
-    docsWithBrief.map((d) => d.id).filter((id): id is string => !!id),
-  );
-  const existingUrls = new Set(
-    docsWithBrief.map((d) => canonicalizeUrl(d.url)).filter((u) => !!u),
-  );
-
-  const extraDocsRaw = [...marketDocs, ...competitorDocs];
-  const extraDocs = extraDocsRaw.filter((d) => {
-    if (d.id && existingIds.has(d.id)) return false;
+  const seenIds = new Set<string>();
+  const seenUrls = new Set<string>();
+  const allDocs = docsWithBriefContext.filter((d) => {
+    if (d.id === MARKET_BRIEF_CONTEXT_ID) return true;
+    if (d.id && seenIds.has(d.id)) return false;
     const url = canonicalizeUrl(d.url);
     if (!url) return false;
-    if (existingUrls.has(url)) return false;
-    existingUrls.add(url);
+    if (seenUrls.has(url)) return false;
+    if (d.id) seenIds.add(d.id);
+    seenUrls.add(url);
     return true;
   });
-
-  const allDocs = [...docsWithBrief, ...extraDocs];
 
   const ranked = await rankForAgent("content_ideas", allDocs);
 
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
   const cutoffMs = Date.now() - windowMs;
 
-  const candidates = ranked
-    .map((doc) => scoreCandidate(doc, state))
+  const scoredCandidates = ranked.map((doc) => scoreCandidate(doc, state));
+
+  const candidates = scoredCandidates
     .filter((c) => {
       if (c.doc.id === MARKET_BRIEF_CONTEXT_ID) return true;
       const text = textOf(c.doc);
@@ -1201,6 +1567,8 @@ export async function generateContentIdeas(options: {
       if (!hasMinimumContentIdeasRelevance(c.doc)) return false;
       if (!canonicalUrl) return false;
       if (isNoisyDomain(domain)) return false;
+      if (isLowLeverageOperationalSource(c.doc, periodDays)) return false;
+      if (isResearchOnlySource(c.doc, periodDays)) return false;
       if (isGenericIdeaPage(canonicalUrl) && !/(benchmark|case study|customer|ga|release|pricing|security|compliance|enterprise)/.test(text)) {
         return false;
       }
@@ -1355,7 +1723,45 @@ export async function generateContentIdeas(options: {
   const corroboratedIdeas = periodDays > 14 ? ideas : addCorroboratingSources(ideas, selected);
   let evidenceQualifiedIdeas = enforceMonthlyEvidenceThreshold(corroboratedIdeas, periodDays);
   if (periodDays > 14) {
+    evidenceQualifiedIdeas = backfillMonthIdeasWithFormatDiversity(
+      evidenceQualifiedIdeas,
+      selected,
+      state,
+      numIdeas,
+    );
+    const minDistinctFrames = Math.min(3, Math.max(1, numIdeas));
+    evidenceQualifiedIdeas = enforceFrameDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
+      minDistinctFrames,
+      true,
+    );
     evidenceQualifiedIdeas = enforceChannelDiversity(evidenceQualifiedIdeas, numIdeas).slice(0, numIdeas);
+    const distinctFramesAvailable = new Set(
+      evidenceQualifiedIdeas.map((idea) => topicKeyFromIdeaTitle(idea.title)),
+    ).size;
+    const shouldEnforceStrictNoRepeats = distinctFramesAvailable >= minDistinctFrames;
+    evidenceQualifiedIdeas = enforceFrameDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
+      minDistinctFrames,
+      !shouldEnforceStrictNoRepeats,
+    ).slice(0, numIdeas);
+    evidenceQualifiedIdeas = backfillMonthWithSecondaryDistinctThemes(
+      evidenceQualifiedIdeas,
+      scoredCandidates,
+      state,
+      numIdeas,
+    );
+    const strictFramesAvailable = new Set(
+      evidenceQualifiedIdeas.map((idea) => topicKeyFromIdeaTitle(idea.title)),
+    ).size;
+    evidenceQualifiedIdeas = enforceFrameDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
+      minDistinctFrames,
+      strictFramesAvailable < minDistinctFrames,
+    ).slice(0, numIdeas);
   }
   const achievedBucketCounts = {
     beachhead: evidenceQualifiedIdeas.filter((i) => toSegmentBucket(i.target_segment, state) === "beachhead").length,

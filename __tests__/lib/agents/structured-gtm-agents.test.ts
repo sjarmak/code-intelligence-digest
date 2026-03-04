@@ -228,6 +228,16 @@ describe("structured gtm agents", () => {
     expect(out.ideas[0].why_now).not.toContain("aligns with active playbook priorities");
   });
 
+  it("builds content ideas from market brief + competitor intel pools", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    await generateContentIdeas({ periodDays: 30, numIdeas: 3, focus: "mcp" });
+
+    const goalsQueried = vi.mocked(retrieveForAgent).mock.calls.map((c) => c[0]);
+    expect(goalsQueried).toContain("market_brief");
+    expect(goalsQueried).toContain("competitor_intel");
+    expect(goalsQueried).not.toContain("content_ideas");
+  });
+
   it("does not force event-talk channel from playbook defaults", async () => {
     vi.mocked(rankForAgent).mockResolvedValue(
       [
@@ -523,6 +533,417 @@ describe("structured gtm agents", () => {
     const out = await generateContentIdeas({ periodDays: 30, numIdeas: 3 });
     expect(out.ideas.length).toBeGreaterThan(0);
     expect(out.ideas.every((idea) => !idea.title.includes("Secure and Compliant AI Coding Workflows"))).toBe(true);
+  });
+
+  it("filters low-leverage github changelog network-config sources for month ideas", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://github.blog/changelog/2026-03-02-network-configuration-changes-for-copilot-coding-agent-now-in-effect",
+          title: "Network configuration changes for Copilot coding agent now in effect",
+          snippet: "Operational allowlist and routing updates for enterprise organizations",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.95,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.3,
+            icpMatch: 0.8,
+            recency: 0.95,
+            trendLandscape: 0.35,
+          },
+          publishedAt: new Date("2026-03-02"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/customer-case-study-mcp-enterprise",
+          title: "Customer case study: MCP context layer for enterprise code search",
+          snippet: "Benchmark, customer outcomes, and rollout patterns across large codebases",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.5,
+            icpMatch: 0.85,
+            recency: 0.9,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-01"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 3 });
+    const sourceTitles = out.ideas.flatMap((i) => i.sources.map((s) => s.title));
+    expect(sourceTitles).not.toContain(
+      "Network configuration changes for Copilot coding agent now in effect",
+    );
+  });
+
+  it("backfills month output to 3 ideas with format diversity when high-signal pool is narrow", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://augmentcode.com/blog/context-engine-mcp-now-live",
+          title: "Context Engine is now available for any AI coding agent",
+          snippet: "MCP context layer launch with enterprise retrieval and cross-repo context",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.94,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.5,
+            icpMatch: 0.9,
+            recency: 0.9,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-01"),
+        },
+        {
+          source: "web" as const,
+          url: "https://github.com/upstash/context7",
+          title: "Context7 MCP server for up-to-date code documentation",
+          snippet: "Open MCP project for retrieval context in coding workflows",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.92,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.4,
+            icpMatch: 0.88,
+            recency: 0.88,
+            trendLandscape: 0.35,
+          },
+          publishedAt: new Date("2026-02-23"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
+    expect(out.ideas.length).toBeGreaterThanOrEqual(3);
+    expect(out.ideas.length).toBeLessThanOrEqual(5);
+    const channels = new Set(out.ideas.map((i) => i.channel));
+    expect(channels.size).toBeGreaterThanOrEqual(3);
+    expect(channels.has("blog")).toBe(true);
+    expect(channels.has("webinar") || channels.has("long_video")).toBe(true);
+  });
+
+  it("prefers distinct topic frames in month output when candidates support it", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://example.com/mcp-context-enterprise",
+          title: "MCP context layer for enterprise codebases",
+          snippet: "Cross-repo context and agent retrieval for coding assistants",
+          metadata: {},
+          baseScore: 0.94,
+          goalScore: 0.94,
+          agentScore: 0.93,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.4,
+            icpMatch: 0.9,
+            recency: 0.9,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-01"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/batch-changes-remediation",
+          title: "Cross-repo remediation and migration with codemods",
+          snippet: "Batch changes and large-scale code migration in enterprise repos",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.65,
+            formatType: 0.45,
+            icpMatch: 0.88,
+            recency: 0.89,
+            trendLandscape: 0.38,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/onboarding-large-codebases",
+          title: "Developer onboarding in large multi-repo codebases",
+          snippet: "Knowledge transfer and onboarding workflows for complex monorepo platforms",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.55,
+            formatType: 0.4,
+            icpMatch: 0.86,
+            recency: 0.87,
+            trendLandscape: 0.35,
+          },
+          publishedAt: new Date("2026-02-27"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/secure-compliant-ai-coding",
+          title: "Secure and compliant AI coding workflows for enterprises",
+          snippet: "Security, audit controls, and governance for AI coding adoption",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.58,
+            formatType: 0.4,
+            icpMatch: 0.85,
+            recency: 0.86,
+            trendLandscape: 0.36,
+          },
+          publishedAt: new Date("2026-02-26"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
+    const topics = new Set(
+      out.ideas.map((idea) => idea.title.replace(/^[^:]+:\s*/, "").trim().toLowerCase()),
+    );
+    expect(out.ideas.length).toBeGreaterThanOrEqual(3);
+    expect(topics.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it("filters research-only month sources and prefers product-market evidence", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://arxiv.org/abs/2603.00729",
+          title: "Qwen3-Coder-Next Technical Report",
+          snippet: "A technical coding model paper with benchmark methodology details",
+          metadata: {},
+          baseScore: 0.97,
+          goalScore: 0.97,
+          agentScore: 0.96,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.3,
+            icpMatch: 0.8,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-03"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.augmentcode.com/blog/context-engine-mcp-now-live",
+          title: "Augment Context Engine now available for AI coding agents",
+          snippet: "Product launch and MCP workflow support for enterprise engineering teams",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.92,
+          agentScore: 0.91,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.4,
+            icpMatch: 0.88,
+            recency: 0.9,
+            trendLandscape: 0.36,
+          },
+          publishedAt: new Date("2026-02-06"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/customer-case-study-cross-repo-remediation",
+          title: "Customer case study: cross-repo remediation rollout in regulated enterprise",
+          snippet: "Enterprise security/compliance workflow with controlled batch changes",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.45,
+            icpMatch: 0.86,
+            recency: 0.88,
+            trendLandscape: 0.35,
+          },
+          publishedAt: new Date("2026-02-20"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
+    const sourceUrls = out.ideas.flatMap((i) => i.sources.map((s) => s.url));
+    expect(sourceUrls.some((u) => u.includes("arxiv.org"))).toBe(false);
+    expect(sourceUrls.some((u) => u.includes("augmentcode.com"))).toBe(true);
+  });
+
+  it("avoids repeated topic frames in month output when alternatives exist", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://example.com/codemod-cross-repo-a",
+          title: "Cross-repo remediation with codemods in enterprise codebases",
+          snippet: "Migration and remediation workflows across many repositories",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.94,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.4,
+            icpMatch: 0.9,
+            recency: 0.9,
+            trendLandscape: 0.38,
+          },
+          publishedAt: new Date("2026-03-02"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/codemod-cross-repo-b",
+          title: "Enterprise migration playbook for large-scale code remediation",
+          snippet: "Batch migration and codemod execution for security remediation",
+          metadata: {},
+          baseScore: 0.94,
+          goalScore: 0.94,
+          agentScore: 0.93,
+          features: {
+            competitorMatch: 0.68,
+            formatType: 0.4,
+            icpMatch: 0.88,
+            recency: 0.89,
+            trendLandscape: 0.37,
+          },
+          publishedAt: new Date("2026-03-01"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/mcp-context-enterprise",
+          title: "MCP context layer patterns for enterprise AI coding",
+          snippet: "Agent context and retrieval patterns for multi-repo codebases",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.62,
+            formatType: 0.42,
+            icpMatch: 0.85,
+            recency: 0.88,
+            trendLandscape: 0.36,
+          },
+          publishedAt: new Date("2026-02-28"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/onboarding-large-codebases",
+          title: "Developer onboarding in large multi-repo systems",
+          snippet: "Knowledge transfer and navigation for complex codebases",
+          metadata: {},
+          baseScore: 0.89,
+          goalScore: 0.89,
+          agentScore: 0.88,
+          features: {
+            competitorMatch: 0.58,
+            formatType: 0.4,
+            icpMatch: 0.84,
+            recency: 0.87,
+            trendLandscape: 0.35,
+          },
+          publishedAt: new Date("2026-02-27"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 4 });
+    const frameCounts = out.ideas.reduce<Record<string, number>>((acc, idea) => {
+      const topic = idea.title.replace(/^[^:]+:\s*/, "").trim().toLowerCase();
+      acc[topic] = (acc[topic] ?? 0) + 1;
+      return acc;
+    }, {});
+    const duplicateTopics = Object.values(frameCounts).filter((count) => count > 1);
+    expect(out.ideas.length).toBeGreaterThanOrEqual(3);
+    expect(duplicateTopics.length).toBe(0);
+  });
+
+  it("backfills to 3 distinct themes from secondary evidence when strict dedupe leaves too few", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://github.com/codemod/codemod",
+          title: "Codemod CLI for cross-repo remediation and migration",
+          snippet: "Batch remediation workflow for large enterprise repositories",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.94,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.4,
+            icpMatch: 0.9,
+            recency: 0.9,
+            trendLandscape: 0.38,
+          },
+          publishedAt: new Date("2026-02-26"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.augmentcode.com/blog/context-engine-mcp-now-live",
+          title: "Augment Context Engine MCP launch for coding agents",
+          snippet: "MCP context layer for enterprise AI coding workflows",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.68,
+            formatType: 0.4,
+            icpMatch: 0.88,
+            recency: 0.89,
+            trendLandscape: 0.37,
+          },
+          publishedAt: new Date("2026-02-06"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.org/enterprise-onboarding-large-codebases",
+          title: "Developer onboarding in large codebases with AI assistants",
+          snippet: "Platform teams need cross-repo context and knowledge transfer workflows for new engineers",
+          metadata: {},
+          baseScore: 0.72,
+          goalScore: 0.72,
+          agentScore: 0.71,
+          features: {
+            competitorMatch: 0.35,
+            formatType: 0.35,
+            icpMatch: 0.7,
+            recency: 0.88,
+            trendLandscape: 0.42,
+          },
+          publishedAt: new Date("2026-02-24"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
+    expect(out.ideas.length).toBeGreaterThanOrEqual(3);
   });
 
   it("returns 3-5 ideas with channel diversity for month window", async () => {
