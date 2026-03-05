@@ -300,27 +300,23 @@ select.custom-select-arrow {
   background: #fafafa;
 }
 
-/* Agent report: print-friendly PDF export */
+/* Agent report: print-friendly PDF export (only when .agent-report-view is present) */
 @media print {
-  /* Hide global chrome while printing agent reports */
-  body {
-    background: #ffffff;
+  .agent-report-view .agent-report-header {
+    display: none !important;
   }
 
-  body * {
-    visibility: hidden;
+  .agent-report-view main {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
   }
 
-  /* Only show the report content when printing */
-  .report-markdown,
-  .report-markdown * {
-    visibility: visible;
-  }
-
-  .report-markdown {
+  .agent-report-view .report-markdown {
     overflow: visible !important;
     max-height: none !important;
     box-shadow: none !important;
     border: none !important;
+    border-radius: 0 !important;
   }
 }

@@ -507,17 +507,19 @@ export function postProcessMarketBriefOutput(payload: MarketBriefOutput): Market
     const primaryUrl = evidence[0]?.url ?? "";
     if (isGenericMarketPage(primaryUrl) && delta.playbook_alignment === "unknown") return null;
 
+    const integrationPlay =
+      delta.sourcegraph_integration_play.length > 0
+        ? delta.sourcegraph_integration_play
+        : classifySourcegraphIntegrationOpportunity({
+            title: delta.title,
+            summary: delta.summary,
+            content: delta.why_it_matters,
+          }).sourcegraph_integration_play;
+
     return {
       ...delta,
       summary: stripBoilerplateNoise(delta.summary).slice(0, 320),
-      sourcegraph_integration_play:
-        delta.sourcegraph_integration_play.length > 0
-          ? delta.sourcegraph_integration_play
-          : classifySourcegraphIntegrationOpportunity({
-              title: delta.title,
-              summary: delta.summary,
-              content: delta.why_it_matters,
-            }).sourcegraph_integration_play,
+      sourcegraph_integration_play: integrationPlay,
       evidence,
     };
   };

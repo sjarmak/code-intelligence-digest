@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, Copy, Download, FileDown, Mail } from "lucide-react";
+import { ArrowLeft, Copy, Download, FileDown, Mail, MessageSquare } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -48,6 +48,12 @@ export default function AgentReportsPage() {
   const [deletingBulk, setDeletingBulk] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [sendEmailMessage, setSendEmailMessage] = useState<string | null>(null);
+  const [sendingSlack, setSendingSlack] = useState(false);
+  const [sendSlackMessage, setSendSlackMessage] = useState<string | null>(null);
+  const [cleaningSlack, setCleaningSlack] = useState(false);
+  const [cleanupSlackMessage, setCleanupSlackMessage] = useState<string | null>(null);
+  const [specificSlackRefs, setSpecificSlackRefs] = useState("");
+  const [showLocalSlackCleanup, setShowLocalSlackCleanup] = useState(false);
 
   const refetchReports = () => {
     return fetch("/api/agents/reports")
@@ -58,6 +64,16 @@ export default function AgentReportsPage() {
 
   useEffect(() => {
     refetchReports().finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const host = window.location.hostname.toLowerCase();
+    setShowLocalSlackCleanup(
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1"
+    );
   }, []);
 
   useEffect(() => {
@@ -268,6 +284,30 @@ export default function AgentReportsPage() {
     }
   };
 
+  const sendCurrentReportToSlack = async () => {
+    if (!viewing) return;
+    setSendSlackMessage(null);
+    setSendingSlack(true);
+    try {
+      const res = await fetch("/api/agents/reports/send-slack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportKeys: [`${viewing.goal}:${viewing.id}`] }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) {
+        setSendSlackMessage(data.error ?? "Failed to send to Slack");
+        return;
+      }
+      setSendSlackMessage(data.message ?? "Sent to Slack.");
+    } catch (e) {
+      setSendSlackMessage(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setSendingSlack(false);
+    }
+  };
+
   const sendSelectedReportsToEmail = async () => {
     if (selectedReportKeys.size === 0) return;
     setSendEmailMessage(null);
@@ -296,14 +336,95 @@ export default function AgentReportsPage() {
     }
   };
 
+  const sendSelectedReportsToSlack = async () => {
+    if (selectedReportKeys.size === 0) return;
+    setSendSlackMessage(null);
+    setSendingSlack(true);
+    try {
+      const res = await fetch("/api/agents/reports/send-slack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportKeys: Array.from(selectedReportKeys) }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) {
+        setSendSlackMessage(data.error ?? "Failed to send to Slack");
+        return;
+      }
+      setSendSlackMessage(data.message ?? "Sent to Slack.");
+    } catch (e) {
+      setSendSlackMessage(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setSendingSlack(false);
+    }
+  };
+
+  const cleanupSlackReports = async () => {
+    if (!confirm("Delete this bot's report messages from Slack for the last 30 days?")) return;
+    setCleanupSlackMessage(null);
+    setCleaningSlack(true);
+    try {
+      const res = await fetch("/api/agents/reports/cleanup-slack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days: 30, dryRun: false }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) {
+        setCleanupSlackMessage(data.error ?? "Failed to clean Slack posts");
+        return;
+      }
+      setCleanupSlackMessage(data.message ?? "Slack cleanup complete.");
+    } catch (e) {
+      setCleanupSlackMessage(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setCleaningSlack(false);
+    }
+  };
+
+  const cleanupSpecificSlackMessages = async () => {
+    const refs = specificSlackRefs
+      .split(/\r?\n|,/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (refs.length === 0) {
+      setCleanupSlackMessage("Provide at least one Slack message link or ts.");
+      return;
+    }
+    if (!confirm(`Delete ${refs.length} specific Slack message target(s)?`)) return;
+    setCleanupSlackMessage(null);
+    setCleaningSlack(true);
+    try {
+      const res = await fetch("/api/agents/reports/cleanup-slack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageRefs: refs, includeThread: true, dryRun: false }),
+        credentials: "include",
+      });
+      const data = (await res.json()) as { message?: string; error?: string };
+      if (!res.ok) {
+        setCleanupSlackMessage(data.error ?? "Failed to delete specific Slack messages");
+        return;
+      }
+      setCleanupSlackMessage(data.message ?? "Slack cleanup complete.");
+      setSpecificSlackRefs("");
+    } catch (e) {
+      setCleanupSlackMessage(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setCleaningSlack(false);
+    }
+  };
+
   if (viewing) {
     return (
-      <div className="min-h-screen bg-white text-black flex flex-col">
-        <header className="border-b border-gray-200 sticky top-0 z-10 bg-white shrink-0">
+      <div className="agent-report-view min-h-screen bg-white text-black flex flex-col">
+        <header className="agent-report-header border-b border-gray-200 sticky top-0 z-10 bg-white shrink-0">
           <div className="max-w-4xl mx-auto px-4 py-4">
             <button
               type="button"
-              onClick={() => { setViewing(null); setSendEmailMessage(null); }}
+              onClick={() => { setViewing(null); setSendEmailMessage(null); setSendSlackMessage(null); }}
               className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-black mb-2"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -349,10 +470,24 @@ export default function AgentReportsPage() {
                 <Mail className="w-4 h-4" />
                 {sendingEmail ? "Sending…" : "Send to email"}
               </button>
+              <button
+                type="button"
+                onClick={sendCurrentReportToSlack}
+                disabled={sendingSlack}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <MessageSquare className="w-4 h-4" />
+                {sendingSlack ? "Sending…" : "Send to Slack"}
+              </button>
             </div>
             {sendEmailMessage && (
               <p className={`mt-2 text-sm ${sendEmailMessage.startsWith("Sent") ? "text-green-700" : "text-amber-700"}`}>
                 {sendEmailMessage}
+              </p>
+            )}
+            {sendSlackMessage && (
+              <p className={`mt-2 text-sm ${sendSlackMessage.startsWith("Sent") ? "text-green-700" : "text-amber-700"}`}>
+                {sendSlackMessage}
               </p>
             )}
           </div>
@@ -586,15 +721,68 @@ export default function AgentReportsPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={sendSelectedReportsToSlack}
+                  disabled={selectedCount === 0 || sendingSlack}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  {sendingSlack ? "Sending…" : `Send selected to Slack (${selectedCount})`}
+                </button>
+                <button
+                  type="button"
                   onClick={handleDeleteSelected}
                   disabled={selectedCount === 0 || deletingBulk}
                   className="px-3 py-1.5 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {deletingBulk ? "Deleting…" : `Delete selected (${selectedCount})`}
                 </button>
+                {showLocalSlackCleanup && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={cleanupSlackReports}
+                      disabled={cleaningSlack}
+                      className="px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {cleaningSlack ? "Cleaning Slack…" : "Clean Slack bot posts (30d)"}
+                    </button>
+                    <div className="w-full mt-2">
+                      <label className="block text-xs text-gray-600 mb-1">
+                        Delete specific Slack messages (paste message links or ts, one per line)
+                      </label>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <textarea
+                          value={specificSlackRefs}
+                          onChange={(e) => setSpecificSlackRefs(e.target.value)}
+                          rows={3}
+                          placeholder="https://.../archives/C.../p1741207079116899"
+                          className="flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={cleanupSpecificSlackMessages}
+                          disabled={cleaningSlack}
+                          className="h-fit px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {cleaningSlack ? "Deleting…" : "Delete specific"}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
                 {sendEmailMessage && !viewing && (
                   <span className={`text-sm ${sendEmailMessage.startsWith("Sent") ? "text-green-700" : "text-amber-700"}`}>
                     {sendEmailMessage}
+                  </span>
+                )}
+                {sendSlackMessage && !viewing && (
+                  <span className={`text-sm ${sendSlackMessage.startsWith("Sent") ? "text-green-700" : "text-amber-700"}`}>
+                    {sendSlackMessage}
+                  </span>
+                )}
+                {cleanupSlackMessage && !viewing && (
+                  <span className={`text-sm ${cleanupSlackMessage.startsWith("Deleted") ? "text-green-700" : "text-amber-700"}`}>
+                    {cleanupSlackMessage}
                   </span>
                 )}
               </div>
@@ -635,6 +823,35 @@ export default function AgentReportsPage() {
                               className="px-3 py-1.5 rounded-md border border-red-300 text-red-700 text-sm font-medium hover:bg-red-50"
                             >
                               Delete
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setSendSlackMessage(null);
+                                setSendingSlack(true);
+                                try {
+                                  const res = await fetch("/api/agents/reports/send-slack", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ reportKeys: [`${r.goal}:${r.id}`] }),
+                                    credentials: "include",
+                                  });
+                                  const data = (await res.json()) as { message?: string; error?: string };
+                                  if (!res.ok) {
+                                    setSendSlackMessage(data.error ?? "Failed to send to Slack");
+                                    return;
+                                  }
+                                  setSendSlackMessage(data.message ?? "Sent to Slack.");
+                                } catch (e) {
+                                  setSendSlackMessage(e instanceof Error ? e.message : "Request failed");
+                                } finally {
+                                  setSendingSlack(false);
+                                }
+                              }}
+                              disabled={sendingSlack}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                              Slack
                             </button>
                           </div>
                         </li>
