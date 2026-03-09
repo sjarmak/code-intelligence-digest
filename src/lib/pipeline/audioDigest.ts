@@ -653,9 +653,21 @@ Generate only the transcript, no JSON.`,
       openaiOptions: llmOptions,
     });
 
-    const transcript = transcriptResult.content || generateFallbackTranscript(itemsWithHighlights, period).transcript;
+    let transcript = transcriptResult.content || generateFallbackTranscript(itemsWithHighlights, period).transcript;
 
-    // Parse segments
+    // If we have a target duration, clamp overly long transcripts to stay near target length
+    if (targetWordCount) {
+      const words = transcript.split(/\s+/);
+      const hardMaxWords = Math.floor(targetWordCount * 1.5); // absolute ceiling (150% of target)
+      const softMaxWords = Math.floor(targetWordCount * 1.2); // preferred max (~120% of target)
+
+      if (words.length > hardMaxWords) {
+        const trimmed = words.slice(0, softMaxWords > 0 ? softMaxWords : hardMaxWords);
+        transcript = trimmed.join(" ");
+      }
+    }
+
+    // Parse segments based on (possibly trimmed) transcript
     const segments = parseTranscriptSegments(transcript, itemsWithHighlights);
     const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
     const estimatedDuration = formatTime(totalDuration);

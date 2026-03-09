@@ -80,7 +80,7 @@ export function SynthesisForm({
   const [voiceStyle, setVoiceStyle] = useState<
     "conversational" | "technical" | "executive"
   >("conversational");
-  const [duration, setDuration] = useState(30); // Duration in minutes for audio-digest
+  const [duration, setDuration] = useState<string>("30"); // Duration in minutes for audio-digest and highlights
   const [podcastMode, setPodcastMode] = useState<
     "conversational" | "highlights"
   >("conversational"); // For podcast type
@@ -167,6 +167,17 @@ export function SynthesisForm({
         ? "audio-digest"
         : type;
 
+    // Parse and clamp duration (for audio-digest and podcast highlights)
+    let parsedDuration: number | undefined;
+    if (effectiveType === "audio-digest" || (type === "podcast" && podcastMode === "highlights")) {
+      const numeric = parseInt(duration, 10);
+      if (!Number.isFinite(numeric)) {
+        parsedDuration = 30;
+      } else {
+        parsedDuration = Math.max(15, Math.min(120, numeric));
+      }
+    }
+
     await onGenerate({
       type: effectiveType,
       sourceMode,
@@ -186,7 +197,9 @@ export function SynthesisForm({
             }),
       prompt: prompt || undefined,
       ...(effectiveType === "podcast" && { voiceStyle }),
-      ...(effectiveType === "audio-digest" && { duration }),
+      ...(effectiveType === "audio-digest" && parsedDuration !== undefined && {
+        duration: parsedDuration,
+      }),
     });
   };
 
@@ -591,15 +604,23 @@ export function SynthesisForm({
               </label>
               <input
                 id="duration"
-                type="number"
-                min="15"
-                max="120"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={duration}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setDuration(
-                    Math.max(15, Math.min(120, parseInt(e.target.value) || 30)),
-                  )
-                }
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const raw = e.target.value;
+                  // Allow empty string so the user can edit freely
+                  if (raw === "") {
+                    setDuration("");
+                    return;
+                  }
+                  // Only accept digits
+                  if (!/^\d+$/.test(raw)) {
+                    return;
+                  }
+                  setDuration(raw);
+                }}
                 disabled={isLoading}
                 className="block w-24 px-3 py-2 border border-surface-border rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black bg-surface text-black"
               />

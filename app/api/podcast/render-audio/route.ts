@@ -178,12 +178,6 @@ export async function POST(
 
     const req = validation.data!;
 
-    // Check request size limits (transcript length)
-    const sizeCheck = checkRequestSize('/api/podcast/render-audio', req.transcript.length);
-    if (!sizeCheck.allowed) {
-      return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
-    }
-
     // Check if transcript has multiple speakers for multi-voice
     const hasMultiple = hasMultipleSpeakers(req.transcript);
     const useMultiVoice = req.multiVoice && hasMultiple;
@@ -207,8 +201,14 @@ export async function POST(
       cohostVoice: voiceConfig?.cohostVoice,
     });
 
-    // Step 1: Sanitize transcript
+    // Step 1: Sanitize transcript (what will actually be sent to TTS)
     const sanitized = sanitizeTranscriptForTts(req.transcript);
+
+    // Step 1a: Check request size limits based on sanitized transcript length
+    const sizeCheck = checkRequestSize('/api/podcast/render-audio', sanitized.length);
+    if (!sizeCheck.allowed) {
+      return NextResponse.json({ error: sizeCheck.error || 'Request size too large' }, { status: 400 });
+    }
 
     if (sanitized.trim().length === 0) {
       return NextResponse.json(
