@@ -92,6 +92,29 @@ function stripHtml(html: string): string {
 }
 
 /**
+ * Truncate text to a maximum character length, preferring sentence boundaries
+ */
+function truncateText(text: string, maxChars: number): string {
+  if (!text || text.length <= maxChars) {
+    return text;
+  }
+
+  const hardLimit = Math.max(40, maxChars);
+  const slice = text.slice(0, hardLimit);
+
+  // Try to cut on sentence boundary within the slice
+  const boundaryMatch = slice.match(/(.{0,40}?[.!?])[^.!?]*$/);
+  if (boundaryMatch && boundaryMatch.index !== undefined && boundaryMatch[0].length > 20) {
+    const candidate = slice.slice(0, slice.lastIndexOf(boundaryMatch[0]) + boundaryMatch[0].length).trim();
+    if (candidate.length > 40) {
+      return candidate + " …";
+    }
+  }
+
+  return slice.trimEnd() + " …";
+}
+
+/**
  * Highlight extracted from article or paper
  */
 export interface AudioDigestHighlight {
@@ -178,6 +201,8 @@ export async function extractArticleHighlights(
 1. Be 1-3 sentences
 2. Include a specific excerpt (quoted text) from the actual content
 3. Be readable when spoken aloud
+4. Avoid marketing copy, sponsorship blurbs, unsubscribe/footer boilerplate, tracking text, and navigation chrome
+5. Focus on the most important ideas and concrete takeaways for software engineers, code-intel practitioners, or AI/agentic workflows
 
 Title: "${item.title}"
 Source: ${item.sourceTitle}
@@ -217,20 +242,26 @@ Return ONLY valid JSON, no markdown.`,
     const extracted = JSON.parse(content);
     const highlights = Array.isArray(extracted.highlights) ? extracted.highlights : [];
 
-    return highlights.map((h: { text: string; excerpt?: string }) => ({
-      text: h.text || "",
-      excerpt: h.excerpt,
-      sourceName: item.title,
-    })).filter((h: AudioDigestHighlight) => h.text.length > 0);
+    const MAX_HIGHLIGHT_TEXT_CHARS = 320;
+    const MAX_EXCERPT_CHARS = 400;
+
+    return highlights
+      .map((h: { text: string; excerpt?: string }) => ({
+        text: truncateText(h.text || "", MAX_HIGHLIGHT_TEXT_CHARS),
+        excerpt: h.excerpt ? truncateText(h.excerpt, MAX_EXCERPT_CHARS) : undefined,
+        sourceName: item.title,
+      }))
+      .filter((h: AudioDigestHighlight) => h.text.length > 0);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.warn(`Highlight extraction failed for "${item.title}"`, {
       error: errorMsg,
       itemId: item.id,
     });
-    // Fallback to summary
+    // Fallback to summary (trimmed for audio use)
+    const fallbackText = item.summary || item.contentSnippet || "No content available";
     return [{
-      text: item.summary || item.contentSnippet || "No content available",
+      text: truncateText(fallbackText, 600),
       sourceName: item.title,
     }];
   }
@@ -438,11 +469,16 @@ Return ONLY valid JSON, no markdown.`,
       ? `${item.title} (${authors.slice(0, 2).join(", ")}${authors.length > 2 ? " et al." : ""})`
       : item.title;
 
-    return highlights.map((h: { text: string; excerpt?: string }) => ({
-      text: h.text || "",
-      excerpt: h.excerpt,
-      sourceName,
-    })).filter((h: AudioDigestHighlight) => h.text.length > 0);
+    const MAX_HIGHLIGHT_TEXT_CHARS = 320;
+    const MAX_EXCERPT_CHARS = 400;
+
+    return highlights
+      .map((h: { text: string; excerpt?: string }) => ({
+        text: truncateText(h.text || "", MAX_HIGHLIGHT_TEXT_CHARS),
+        excerpt: h.excerpt ? truncateText(h.excerpt, MAX_EXCERPT_CHARS) : undefined,
+        sourceName,
+      }))
+      .filter((h: AudioDigestHighlight) => h.text.length > 0);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     logger.warn(`Paper highlight extraction failed for "${item.title}"`, {
@@ -461,13 +497,14 @@ Return ONLY valid JSON, no markdown.`,
       const paper = await getPaper(bibcode);
       if (paper?.abstract) {
         return [{
-          text: paper.abstract,
+          text: truncateText(paper.abstract, 600),
           sourceName: item.title,
         }];
       }
     }
+    const fallbackText = item.summary || item.contentSnippet || "No content available";
     return [{
-      text: item.summary || item.contentSnippet || "No content available",
+      text: truncateText(fallbackText, 600),
       sourceName: item.title,
     }];
   }
@@ -585,21 +622,19 @@ ${highlightsText}
   // Calculate target word count if duration is specified
   const targetWordCount = targetDurationMinutes ? targetDurationMinutes * 150 : undefined;
   const targetWordCountText = targetWordCount
-    ? `CRITICAL WORD COUNT REQUIREMENT: You MUST generate approximately ${targetWordCount} words (${targetDurationMinutes} minutes at 150 words/minute).
+    ? `TARGET LENGTH: Aim for approximately ${targetWordCount} words (${targetDurationMinutes} minutes at 150 words/minute).
 
-This is NOT a suggestion - it is a hard requirement. The transcript MUST be close to this length.
+Stay roughly within 0.8x–1.2x of this length. It is better to be slightly short and dense than long and repetitive. Do NOT go over 1.3x this length.
 
 To achieve this:
-- Read ALL highlights from ALL items provided
-- Include full excerpts when available
-- Add detailed transitions and context between items
-- Expand on key points with additional explanation
-- Do NOT summarize or condense - read the highlights in full
-- Include attribution and source information for each highlight
-- Add natural transitions that add length while maintaining flow
+- Use the highlights as your raw material, but DO NOT read everything verbatim
+- For each item, select only the 1–2 most important highlights
+- Paraphrase and synthesize; avoid repeating the same quote or idea multiple times
+- Skip timestamps, long bullet lists, navigation text, marketing copy, sponsorship blurbs, unsubscribe text, and boilerplate
+- Focus on the most important insights, findings, and implications
 
-If you generate less than ${Math.round(targetWordCount * 0.8)} words, the transcript will be too short. Aim for ${targetWordCount} words minimum.`
-    : "Target ~20-30 minutes of content (~3000-4500 words at 150 wpm).";
+If you generate less than ${Math.round(targetWordCount * 0.7)} words, the transcript will likely feel too thin. Aim for a clear, engaging middle ground.`
+    : "Target ~20-30 minutes of content (~3000-4500 words at 150 wpm). Focus on summarizing rather than reading everything verbatim.";
 
   // Adjust max tokens based on target duration
   // For longer transcripts, we need more tokens (roughly 1 token per word)
@@ -613,7 +648,7 @@ If you generate less than ${Math.round(targetWordCount * 0.8)} words, the transc
       messages: [
         {
           role: "user",
-          content: `Generate a ${periodLabel} audio digest transcript that reads out highlights from ${itemsWithHighlights.length} items across ${categoryLabels}. This should read like a comprehensive report or documentary, not a conversational podcast.
+          content: `Generate a ${periodLabel} audio digest transcript based on highlights from ${itemsWithHighlights.length} items across ${categoryLabels}. This should sound like a concise, well-produced podcast script: informative, friendly, and focused.
 
 User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
 
@@ -621,30 +656,28 @@ Items with highlights (use references like (ref: item-0)):
 ${highlightsContext}
 
 STYLE REQUIREMENTS:
-- This is a REPORT READING, not a conversation. Use a single narrator voice throughout.
-- Read like a news report, documentary, or audiobook - informative and direct
-- NO conversational elements like "Host:" or "Guest:" - just direct narration
-- NO banter, questions, or dialogue - just present the information clearly
-- Use transitions like "Moving on to..." or "In related news..." to connect topics
-- Present information authoritatively and clearly
+- Use a single narrator/host voice (you can occasionally prefix lines with "HOST:" but it's not required)
+- Aim for a conversational, confident tone: clear, direct, and respectful of the listener’s time
+- Avoid filler, repetition, and over-explaining obvious points
+- Use short intros like "Next up..." or "In related research..." to connect segments
 
 CONTENT REQUIREMENTS:
 - Start with [INTRO MUSIC]
 - Begin with a brief introduction: "This is the Code Intelligence Audio Digest for [period]. Today we'll cover [N] items across [categories]."
 - Group related items/themes together into logical segments
-- For each item, read ALL highlights directly with clear attribution
-- Use format: "From [Resource Name]: [read highlight text in full]. [Quote excerpt if available in full]."
-- Include ALL highlights from ALL items - this is a comprehensive reading, not a summary
-- Expand on each highlight with context and explanation to reach target length
-- Add detailed transitions between items that provide context
+- For each item, SELECT and SUMMARIZE only the most important highlights (typically 1–2 per item)
+- Paraphrase in your own words; quote only short, high-signal phrases when they really add value
+- Do NOT read full articles, newsletters, sponsor sections, unsubscribe notices, timestamps, or long lists of links
+- Avoid marketing copy and calls to action; focus on insights, takeaways, and what matters to practitioners
 - Divide into logical segments with "## SEGMENT: [Theme/Topic]" markers
-- Include [PAUSE] where natural breaks occur (between segments, after major points)
+- Use [PAUSE] where natural breaks occur (between segments, after major points)
 - End with [OUTRO MUSIC]
 - ${targetWordCountText}
 
-REMEMBER: Read highlights in FULL, include all excerpts, add context and transitions. Do NOT condense or summarize. The goal is a comprehensive reading that reaches the target word count.
-
-IMPORTANT: Read out the highlights directly. This is not a synthesis - it's a reading of the most important information from each source. Include all provided highlights to reach the target word count.
+REMEMBER:
+- You are synthesizing and curating the content, not reading every word.
+- Prefer punchy, insight-dense explanations over long verbatim passages.
+- It is fine to omit low-value or repetitive details so the digest stays close to the target duration.
 
 Generate only the transcript, no JSON.`,
         },
