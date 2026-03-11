@@ -90,6 +90,28 @@ function extractItemReferences(text: string): number[] {
 }
 
 /**
+ * Replace inline (ref: item-X) markers with human-readable resource names
+ * while preserving the ability to map back to items via the original transcript.
+ */
+function replaceItemRefsWithTitles(
+  text: string,
+  items: RankedItem[],
+): string {
+  return text.replace(/\(ref:\s*item-(\d+)\)/g, (_match, idxStr: string) => {
+    const idx = parseInt(idxStr, 10);
+    if (Number.isNaN(idx) || idx < 0 || idx >= items.length) {
+      return "";
+    }
+
+    const item = items[idx];
+    const title = item.title || "Unknown";
+    const source = item.sourceTitle || "";
+
+    return source ? `${title} (${source})` : title;
+  });
+}
+
+/**
  * Parse transcript into segments
  * Looks for segment markers like "## SEGMENT: Topic Name" or "[SEGMENT]"
  */
@@ -258,11 +280,14 @@ Generate only the transcript, no JSON.`,
   const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
   const estimatedDuration = formatTime(totalDuration);
 
+  // Produce a listener-friendly transcript by expanding (ref: item-X) markers
+  const displayTranscript = replaceItemRefsWithTitles(transcript, items);
+
   // Build show notes
   const showNotes = buildShowNotes(items, segments);
 
   return {
-    transcript,
+    transcript: displayTranscript,
     segments,
     showNotes,
     estimatedDuration,

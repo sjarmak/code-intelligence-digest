@@ -705,11 +705,17 @@ Generate only the transcript, no JSON.`,
     const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
     const estimatedDuration = formatTime(totalDuration);
 
+    // Make transcript listener-friendly by expanding (ref: item-X) markers
+    const displayTranscript = replaceItemRefsWithSourceNames(
+      transcript,
+      itemsWithHighlights,
+    );
+
     // Build show notes
     const showNotes = generateShowNotes(itemsWithHighlights, segments);
 
     return {
-      transcript,
+      transcript: displayTranscript,
       segments,
       showNotes,
       estimatedDuration,
@@ -785,6 +791,27 @@ function extractItemReferences(text: string): number[] {
     const match = m.match(/item-(\d+)/);
     return match ? parseInt(match[1], 10) : -1;
   }))].filter(i => i >= 0);
+}
+
+/**
+ * Replace inline (ref: item-X) markers with human-readable resource names
+ */
+function replaceItemRefsWithSourceNames(
+  text: string,
+  itemsWithHighlights: ItemWithHighlights[],
+): string {
+  return text.replace(/\(ref:\s*item-(\d+)\)/g, (_match, idxStr: string) => {
+    const idx = parseInt(idxStr, 10);
+    if (Number.isNaN(idx) || idx < 0 || idx >= itemsWithHighlights.length) {
+      return "";
+    }
+
+    const { item } = itemsWithHighlights[idx];
+    const title = item.title || "Unknown";
+    const source = item.sourceTitle || "";
+
+    return source ? `${title} (${source})` : title;
+  });
 }
 
 /**
