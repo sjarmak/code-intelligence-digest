@@ -66,7 +66,7 @@ function buildSynthesisContext(items: RankedItem[]): string {
   return items
     .map((item, idx) => {
       const text = truncateForLLM(item.fullText || item.summary || item.contentSnippet, 1500);
-      return `(ref: item-${idx})
+      return `Item ${idx + 1}
 Title: "${item.title}"
 Source: ${item.sourceTitle} by ${item.author || "Unknown"}
 URL: ${item.url}
@@ -90,25 +90,12 @@ function extractItemReferences(text: string): number[] {
 }
 
 /**
- * Replace inline (ref: item-X) markers with human-readable resource names
- * while preserving the ability to map back to items via the original transcript.
+ * Remove inline (ref: item-X) markers from spoken transcript output.
  */
-function replaceItemRefsWithTitles(
-  text: string,
-  items: RankedItem[],
-): string {
-  return text.replace(/\(ref:\s*item-(\d+)\)/g, (_match, idxStr: string) => {
-    const idx = parseInt(idxStr, 10);
-    if (Number.isNaN(idx) || idx < 0 || idx >= items.length) {
-      return "";
-    }
-
-    const item = items[idx];
-    const title = item.title || "Unknown";
-    const source = item.sourceTitle || "";
-
-    return source ? `${title} (${source})` : title;
-  });
+function stripItemRefMarkers(text: string): string {
+  return text
+    .replace(/\s*\(ref:\s*item-(\d+)\)/g, "")
+    .replace(/[ \t]{2,}/g, " ");
 }
 
 /**
@@ -245,14 +232,13 @@ Categories: ${categoryLabels}
 User Focus: Focus on content relevant to building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases to improve developer workflows.
 ${profile ? `Additional focus topics: ${profile.focusTopics.join(", ")}` : ""}
 
-Items (with references to use inline like (ref: item-0)):${synthesisContext}
+Items:${synthesisContext}
 
 Requirements:
 - Start with [INTRO MUSIC]
 - Include at least 2 speakers: Host: and Guest: or Host: and Co-host:
 - Use natural transitions between topics
 - Divide into logical segments with "## SEGMENT: [Topic]" markers
-- Reference items inline using (ref: item-0), (ref: item-1), etc.
 - Include [PAUSE] where natural breaks occur
 - End with [OUTRO MUSIC]
 - No fabricated quotes—paraphrase insights from provided content
@@ -280,8 +266,8 @@ Generate only the transcript, no JSON.`,
   const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
   const estimatedDuration = formatTime(totalDuration);
 
-  // Produce a listener-friendly transcript by expanding (ref: item-X) markers
-  const displayTranscript = replaceItemRefsWithTitles(transcript, items);
+  // Remove inline reference markers from transcript so spoken output is natural.
+  const displayTranscript = stripItemRefMarkers(transcript);
 
   // Build show notes
   const showNotes = buildShowNotes(items, segments);
@@ -310,16 +296,13 @@ function generatePodcastFallback(items: RankedItem[]): string {
     byCategory.get(item.category)!.push(item);
   }
 
-  let idx = 0;
   for (const [category, categoryItems] of byCategory) {
     podcast += `## SEGMENT: ${category.replace(/_/g, " ")}\n\n`;
     podcast += `Host: Let's dive into ${category.replace(/_/g, " ")}.\n\n`;
 
     for (const item of categoryItems.slice(0, 3)) {
-      const refIdx = idx;
-      podcast += `Host: First up (ref: item-${refIdx}): "${item.title}" from ${item.sourceTitle}. ${item.summary || item.contentSnippet || "A key article in this space."} `;
+      podcast += `Host: First up: "${item.title}" from ${item.sourceTitle}. ${item.summary || item.contentSnippet || "A key article in this space."} `;
       podcast += `This covers topics like ${item.llmScore.tags.slice(0, 2).join(" and ")}.\n\n`;
-      idx++;
     }
 
     podcast += "[PAUSE]\n\n";

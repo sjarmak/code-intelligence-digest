@@ -605,7 +605,7 @@ export async function generateAudioDigestTranscript(
         })
         .join("\n");
 
-      return `(ref: item-${idx})
+      return `Item ${idx + 1}
 Title: "${item.title}"
 Source: ${item.sourceTitle}${item.author ? ` by ${item.author}` : ""}
 URL: ${item.url}
@@ -652,7 +652,7 @@ If you generate less than ${Math.round(targetWordCount * 0.7)} words, the transc
 
 User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
 
-Items with highlights (use references like (ref: item-0)):
+Items with highlights:
 ${highlightsContext}
 
 STYLE REQUIREMENTS:
@@ -705,11 +705,8 @@ Generate only the transcript, no JSON.`,
     const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
     const estimatedDuration = formatTime(totalDuration);
 
-    // Make transcript listener-friendly by expanding (ref: item-X) markers
-    const displayTranscript = replaceItemRefsWithSourceNames(
-      transcript,
-      itemsWithHighlights,
-    );
+    // Remove inline reference markers so spoken output stays natural.
+    const displayTranscript = stripItemRefMarkers(transcript);
 
     // Build show notes
     const showNotes = generateShowNotes(itemsWithHighlights, segments);
@@ -794,24 +791,12 @@ function extractItemReferences(text: string): number[] {
 }
 
 /**
- * Replace inline (ref: item-X) markers with human-readable resource names
+ * Remove inline (ref: item-X) markers from spoken transcript output.
  */
-function replaceItemRefsWithSourceNames(
-  text: string,
-  itemsWithHighlights: ItemWithHighlights[],
-): string {
-  return text.replace(/\(ref:\s*item-(\d+)\)/g, (_match, idxStr: string) => {
-    const idx = parseInt(idxStr, 10);
-    if (Number.isNaN(idx) || idx < 0 || idx >= itemsWithHighlights.length) {
-      return "";
-    }
-
-    const { item } = itemsWithHighlights[idx];
-    const title = item.title || "Unknown";
-    const source = item.sourceTitle || "";
-
-    return source ? `${title} (${source})` : title;
-  });
+function stripItemRefMarkers(text: string): string {
+  return text
+    .replace(/\s*\(ref:\s*item-(\d+)\)/g, "")
+    .replace(/[ \t]{2,}/g, " ");
 }
 
 /**
