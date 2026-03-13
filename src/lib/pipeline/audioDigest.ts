@@ -591,7 +591,7 @@ export async function generateAudioDigestTranscript(
     return generateFallbackTranscript(itemsWithHighlights, period);
   }
 
-  // Build context from highlights
+  // Build context from highlights. Title/source/URL are for reference only; we instruct the model not to read them aloud.
   const highlightsContext = itemsWithHighlights
     .map((itemWithHighlights, idx) => {
       const { item, highlights } = itemWithHighlights;
@@ -605,11 +605,7 @@ export async function generateAudioDigestTranscript(
         })
         .join("\n");
 
-      return `Item ${idx + 1}
-Title: "${item.title}"
-Source: ${item.sourceTitle}${item.author ? ` by ${item.author}` : ""}
-URL: ${item.url}
-Category: ${item.category}
+      return `[Item ${idx + 1}] (metadata — do not read aloud: title="${item.title}", source=${item.sourceTitle})
 Highlights:
 ${highlightsText}
 `;
@@ -617,7 +613,6 @@ ${highlightsText}
     .join("\n---\n");
 
   const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all time" : "custom";
-  const categoryLabels = categories.join(", ");
 
   // Calculate target word count if duration is specified
   const targetWordCount = targetDurationMinutes ? targetDurationMinutes * 150 : undefined;
@@ -648,28 +643,33 @@ If you generate less than ${Math.round(targetWordCount * 0.7)} words, the transc
       messages: [
         {
           role: "user",
-          content: `Generate a ${periodLabel} audio digest transcript based on highlights from ${itemsWithHighlights.length} items across ${categoryLabels}. This should sound like a concise, well-produced podcast script: informative, friendly, and focused.
+          content: `Generate a ${periodLabel} audio digest transcript based on highlights from ${itemsWithHighlights.length} items. This should sound like a concise, well-produced podcast script: informative, friendly, and focused.
 
 User Focus: ${userPrompt || "Building benchmarks to evaluate the value of augmenting coding agents with code search and codebase understanding tools in enterprise codebases"}
 
-Items with highlights:
+Items with highlights (metadata in parentheses is for your reference only — do not read it aloud):
 ${highlightsContext}
 
 STYLE REQUIREMENTS:
 - Use a single narrator/host voice (you can occasionally prefix lines with "HOST:" but it's not required)
-- Aim for a conversational, confident tone: clear, direct, and respectful of the listener’s time
+- Aim for a conversational, confident tone: clear, direct, and respectful of the listener's time
 - Avoid filler, repetition, and over-explaining obvious points
 - Use short intros like "Next up..." or "In related research..." to connect segments
 
+DO NOT SPEAK ALOUD (critical):
+- Do NOT read or list source names, publication names, feed names, or category labels (e.g. do not say "Code Understanding", "DevEx", "TLDR", newsletter names, or category names as spoken labels)
+- Do NOT read titles, URLs, or any metadata verbatim
+- Attribution should be minimal and natural when needed (e.g. "one report noted...", "according to a recent piece...") — never "From [Source Name]:" or "From [Category]:"
+
 CONTENT REQUIREMENTS:
 - Start with [INTRO MUSIC]
-- Begin with a brief introduction: "This is the Code Intelligence Audio Digest for [period]. Today we'll cover [N] items across [categories]."
-- Group related items/themes together into logical segments
+- Begin with a brief introduction: "This is the Code Intelligence Audio Digest for [period]. Today we'll cover [N] items." Do not list categories or source names in the intro.
+- Group related items/themes into logical segments by topic, not by source or category name
 - For each item, SELECT and SUMMARIZE only the most important highlights (typically 1–2 per item)
 - Paraphrase in your own words; quote only short, high-signal phrases when they really add value
 - Do NOT read full articles, newsletters, sponsor sections, unsubscribe notices, timestamps, or long lists of links
 - Avoid marketing copy and calls to action; focus on insights, takeaways, and what matters to practitioners
-- Divide into logical segments with "## SEGMENT: [Theme/Topic]" markers
+- Divide into logical segments with "## SEGMENT: [Theme/Topic]" markers (use a short topic or theme, e.g. "agent tooling", not a source or category label)
 - Use [PAUSE] where natural breaks occur (between segments, after major points)
 - End with [OUTRO MUSIC]
 - ${targetWordCountText}
@@ -677,7 +677,7 @@ CONTENT REQUIREMENTS:
 REMEMBER:
 - You are synthesizing and curating the content, not reading every word.
 - Prefer punchy, insight-dense explanations over long verbatim passages.
-- It is fine to omit low-value or repetitive details so the digest stays close to the target duration.
+- Never recite source names, category names, or metadata as spoken labels.
 
 Generate only the transcript, no JSON.`,
         },
@@ -700,13 +700,16 @@ Generate only the transcript, no JSON.`,
       }
     }
 
-    // Parse segments based on (possibly trimmed) transcript
+    // Remove source names, category labels, and attribution metadata so they never appear in the transcript
+    transcript = stripMetadataFromTranscript(transcript, itemsWithHighlights);
+    transcript = stripItemRefMarkers(transcript);
+
+    // Parse segments based on (possibly trimmed and stripped) transcript
     const segments = parseTranscriptSegments(transcript, itemsWithHighlights);
     const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
     const estimatedDuration = formatTime(totalDuration);
 
-    // Remove inline reference markers so spoken output stays natural.
-    const displayTranscript = stripItemRefMarkers(transcript);
+    const displayTranscript = transcript;
 
     // Build show notes
     const showNotes = generateShowNotes(itemsWithHighlights, segments);
@@ -788,6 +791,51 @@ function extractItemReferences(text: string): number[] {
     const match = m.match(/item-(\d+)/);
     return match ? parseInt(match[1], 10) : -1;
   }))].filter(i => i >= 0);
+}
+
+/**
+ * Remove source names, category labels, and attribution metadata from transcript
+ * so they do not appear in the final script at all.
+ */
+function stripMetadataFromTranscript(
+  transcript: string,
+  itemsWithHighlights: ItemWithHighlights[]
+): string {
+  const meta = new Set<string>();
+  for (const { item } of itemsWithHighlights) {
+    if (item.sourceTitle?.trim()) meta.add(item.sourceTitle.trim());
+    if (item.category?.trim()) meta.add(item.category.trim());
+  }
+  const metaList = [...meta].filter((s) => s.length > 1);
+  if (metaList.length === 0) return transcript;
+
+  const escapeForRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const metaPattern = metaList.map(escapeForRegex).join("|");
+  const fromMetaAtEnd = new RegExp(`\\s+from\\s+(${metaPattern})\\s*[.,;:]?\\s*$`, "gi");
+  const segmentMetaRegex = new RegExp(
+    `^(##\\s*SEGMENT:\\s*)(${metaPattern})\\s*$`,
+    "gim"
+  );
+  const fromSourceLine = new RegExp(`^From\\s+(${metaPattern})\\s*:?\\s*$`, "i");
+  const hostFromMeta = new RegExp(`^HOST:\\s*.+\\s+from\\s+(${metaPattern})\\s*[.:]?\\s*$`, "i");
+
+  const lines = transcript.split("\n");
+  const out: string[] = [];
+
+  for (let line of lines) {
+    let trimmed = line.trim();
+    if (!trimmed) continue;
+    if (fromSourceLine.test(trimmed)) continue;
+    if (metaList.some((m) => trimmed === m || trimmed === `HOST: ${m}.` || trimmed === `HOST: ${m}`)) continue;
+    if (hostFromMeta.test(trimmed)) continue;
+
+    line = line.replace(fromMetaAtEnd, "").trimEnd();
+    if (line) out.push(line);
+  }
+
+  let result = out.join("\n");
+  result = result.replace(segmentMetaRegex, "$1highlights");
+  return result.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
@@ -882,13 +930,12 @@ function generateFallbackTranscript(
   transcript += `HOST: Welcome to the Audio Digest for ${period}. Today we'll cover ${itemsWithHighlights.length} items.\n\n`;
 
   for (const { item, highlights } of itemsWithHighlights) {
-    transcript += `## SEGMENT: ${item.category}\n\n`;
-    transcript += `HOST: ${item.title} from ${item.sourceTitle}.\n\n`;
+    transcript += `## SEGMENT: digest\n\n`;
 
     for (const highlight of highlights.slice(0, 3)) {
       transcript += `${highlight.text}\n\n`;
       if (highlight.excerpt) {
-        transcript += `As ${item.title} explains: "${highlight.excerpt}"\n\n`;
+        transcript += `One takeaway: "${highlight.excerpt}"\n\n`;
       }
     }
 
