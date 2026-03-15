@@ -173,8 +173,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
         },
       }));
 
-      // Load library status for papers
-      await loadLibraryStatusForPapers(allItems);
+      // Status lookups are non-critical; load them after papers render.
+      warmLibraryStatusForPapers(allItems);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -301,6 +301,12 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       return next;
     });
   }, [findItemIdForPaper]);
+
+  const warmLibraryStatusForPapers = useCallback((papers: LibraryItemMetadata[]) => {
+    void loadLibraryStatusForPapers(papers).catch((err) => {
+      console.error('Failed to load library status for papers:', err);
+    });
+  }, [loadLibraryStatusForPapers]);
 
   // Get all visible papers in the currently expanded library
   const getVisiblePapers = useCallback(() => {
@@ -639,16 +645,13 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           },
         };
 
-        // Load library status for bookmarked papers
-        await loadLibraryStatusForPapers(papers);
-
         return result;
       }
     } catch (err) {
       console.error('Failed to fetch bookmarked papers:', err);
     }
     return null;
-  }, [loadLibraryStatusForPapers]);
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -662,8 +665,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
             ...prev,
             'Bookmarked': bookmarked,
           }));
-          // Load library status for bookmarked papers
-          await loadLibraryStatusForPapers(bookmarked.items);
+          // Load library status for bookmarked papers without blocking initial render.
+          warmLibraryStatusForPapers(bookmarked.items);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
@@ -672,7 +675,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       }
     };
     init();
-  }, [fetchBookmarkedPapers, loadLibraryStatusForPapers]);
+  }, [fetchBookmarkedPapers, warmLibraryStatusForPapers]);
 
   if (loading) {
     return (
