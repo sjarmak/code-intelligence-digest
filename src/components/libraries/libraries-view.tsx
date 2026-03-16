@@ -129,52 +129,43 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
 
     try {
       const rowsPerPage = 50;
-      let allItems: LibraryItemMetadata[] = [];
-      let currentOffset = offset;
-      let hasMore = true;
-      let libraryInfo: Library | null = null;
-
-      // Fetch all pages until we have all items
-      while (hasMore) {
-        const response = await fetch(
-          `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${currentOffset}&rows=${rowsPerPage}&metadata=true`,
-        );
-        if (!response.ok) {
-          const errorData = (await response.json()) as LibrariesError;
-          throw new Error(errorData.error || 'Failed to fetch library');
-        }
-        const result = (await response.json()) as LibrariesResponse;
-
-        // Store library info from first page
-        if (!libraryInfo) {
-          libraryInfo = result.library;
-        }
-
-        // Accumulate items
-        allItems = [...allItems, ...result.items];
-
-        // Check if there are more pages
-        hasMore = result.pagination.hasMore;
-        currentOffset = result.pagination.start + result.pagination.rows;
+      const response = await fetch(
+        `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${offset}&rows=${rowsPerPage}&metadata=true`,
+      );
+      if (!response.ok) {
+        const errorData = (await response.json()) as LibrariesError;
+        throw new Error(errorData.error || 'Failed to fetch library');
       }
 
-      // Update state with all items
-      setLibraryData((prev) => ({
-        ...prev,
-        [libraryName]: {
-          library: libraryInfo!,
-          items: allItems,
-          pagination: {
-            start: 0,
-            rows: allItems.length,
-            total: allItems.length,
-            hasMore: false,
-          },
-        },
-      }));
+      const firstPage = (await response.json()) as LibrariesResponse;
+      appendLibraryItems(libraryName, firstPage);
+      warmLibraryStatusForPapers(firstPage.items);
 
-      // Status lookups are non-critical; load them after papers render.
-      warmLibraryStatusForPapers(allItems);
+      if (firstPage.pagination.hasMore) {
+        void (async () => {
+          let currentOffset = firstPage.pagination.start + firstPage.pagination.rows;
+          let hasMore = firstPage.pagination.hasMore;
+
+          while (hasMore) {
+            const pageResponse = await fetch(
+              `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${currentOffset}&rows=${rowsPerPage}&metadata=true`,
+            );
+            if (!pageResponse.ok) {
+              const errorData = (await pageResponse.json()) as LibrariesError;
+              throw new Error(errorData.error || 'Failed to fetch additional library papers');
+            }
+
+            const nextPage = (await pageResponse.json()) as LibrariesResponse;
+            appendLibraryItems(libraryName, nextPage);
+            warmLibraryStatusForPapers(nextPage.items);
+
+            hasMore = nextPage.pagination.hasMore;
+            currentOffset = nextPage.pagination.start + nextPage.pagination.rows;
+          }
+        })().catch((err) => {
+          console.error(`Failed to finish loading library ${libraryName}:`, err);
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -307,6 +298,32 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       console.error('Failed to load library status for papers:', err);
     });
   }, [loadLibraryStatusForPapers]);
+
+  const appendLibraryItems = useCallback((libraryName: string, result: LibrariesResponse) => {
+    setLibraryData((prev) => {
+      const existing = prev[libraryName];
+      const existingItems = existing?.items ?? [];
+      const existingBibcodes = new Set(existingItems.map((item) => item.bibcode));
+      const nextItems = [
+        ...existingItems,
+        ...result.items.filter((item) => !existingBibcodes.has(item.bibcode)),
+      ];
+
+      return {
+        ...prev,
+        [libraryName]: {
+          library: result.library,
+          items: nextItems,
+          pagination: {
+            start: 0,
+            rows: nextItems.length,
+            total: result.pagination.total,
+            hasMore: result.pagination.hasMore,
+          },
+        },
+      };
+    });
+  }, []);
 
   // Get all visible papers in the currently expanded library
   const getVisiblePapers = useCallback(() => {
