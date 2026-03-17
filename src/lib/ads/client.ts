@@ -157,6 +157,7 @@ export async function getLibraryItems(
 export async function getBibcodeMetadata(
   bibcodes: string[],
   token: string,
+  options?: { includeBody?: boolean },
 ): Promise<Record<string, ADSBibcode>> {
   if (bibcodes.length === 0) {
     return {};
@@ -165,8 +166,10 @@ export async function getBibcodeMetadata(
   try {
     // Build query: search for all bibcodes at once
     const query = bibcodes.map((b) => `bibcode:"${b}"`).join(' OR ');
-    // Include 'body' field to fetch full text content
-    const fields = 'bibcode,title,author,pubdate,abstract,body';
+    const includeBody = options?.includeBody ?? true;
+    const fields = includeBody
+      ? 'bibcode,title,author,pubdate,abstract,body'
+      : 'bibcode,title,author,pubdate,abstract';
 
     // Use GET with URL-encoded parameters
     const params = new URLSearchParams({
@@ -223,7 +226,7 @@ export async function getBibcodeMetadata(
           authors: doc.author,
           pubdate: doc.pubdate,
           abstract: doc.abstract,
-          body, // Full text content (may be undefined)
+          body: includeBody ? body : undefined,
         };
       }
     }

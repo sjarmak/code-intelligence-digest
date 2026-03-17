@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
     }));
 
     if (includeMetadata && bibcodes.length > 0) {
-      const metadata = await getBibcodeMetadata(bibcodes, token);
+      const metadata = await getBibcodeMetadata(bibcodes, token, { includeBody: false });
 
       // Initialize ADS tables if needed
       try {
