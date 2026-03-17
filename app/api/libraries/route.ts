@@ -13,6 +13,8 @@ import {
   storePapersBatch,
   linkPapersToLibraryBatch,
   initializeADSTables,
+  getCachedLibraryPaperCount,
+  searchLibraryPapers,
 } from '@/src/lib/db/ads-papers';
 import type { FeedItem } from '@/src/lib/model';
 import { saveItems } from '@/src/lib/db/items';
@@ -34,20 +36,52 @@ async function fetchMetadataForBibcodes(
   return Object.assign({}, ...metadataEntries);
 }
 
-function matchesLibraryQuery(
-  query: string,
-  entry: { bibcode: string; title?: string; authors?: string[]; pubdate?: string; abstract?: string },
+async function hydrateLibraryCache(
+  libraryId: string,
+  expectedCount: number,
+  token: string,
 ) {
-  const normalizedQuery = query.toLowerCase();
-  const haystacks = [
-    entry.bibcode,
-    entry.title,
-    entry.pubdate,
-    entry.abstract,
-    entry.authors?.join(' '),
-  ].filter(Boolean) as string[];
+  const cachedCount = await getCachedLibraryPaperCount(libraryId);
+  if (cachedCount >= expectedCount) {
+    return;
+  }
 
-  return haystacks.some((value) => value.toLowerCase().includes(normalizedQuery));
+  const pageSize = 200;
+  let allBibcodes: string[] = [];
+  let currentOffset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const pageBibcodes = await getLibraryItems(libraryId, token, {
+      start: currentOffset,
+      rows: pageSize,
+    });
+    allBibcodes = allBibcodes.concat(pageBibcodes);
+    currentOffset += pageBibcodes.length;
+    hasMore = pageBibcodes.length === pageSize && currentOffset < expectedCount;
+  }
+
+  if (allBibcodes.length === 0) {
+    return;
+  }
+
+  const metadata = await fetchMetadataForBibcodes(allBibcodes, token);
+  const papersToStore = allBibcodes
+    .map((bibcode) => ({
+      bibcode,
+      title: metadata[bibcode]?.title,
+      authors: metadata[bibcode]?.authors ? JSON.stringify(metadata[bibcode].authors) : undefined,
+      pubdate: metadata[bibcode]?.pubdate,
+      abstract: metadata[bibcode]?.abstract,
+      adsUrl: getADSUrl(bibcode),
+      arxivUrl: getArxivUrl(bibcode),
+    }))
+    .filter((paper) => paper.title || paper.authors || paper.pubdate || paper.abstract);
+
+  if (papersToStore.length > 0) {
+    await storePapersBatch(papersToStore);
+  }
+  await linkPapersToLibraryBatch(libraryId, allBibcodes);
 }
 
 export async function GET(request: NextRequest) {
@@ -94,34 +128,24 @@ export async function GET(request: NextRequest) {
     let totalCount = library.num_documents;
 
     if (query) {
-      const searchPageSize = 200;
-      let allBibcodes: string[] = [];
-      let currentOffset = 0;
-      let hasMore = true;
+      await initializeADSTables();
+      await hydrateLibraryCache(library.id, library.num_documents, token);
 
-      while (hasMore) {
-        const pageBibcodes = await getLibraryItems(library.id, token, {
-          start: currentOffset,
-          rows: searchPageSize,
-        });
-        allBibcodes = allBibcodes.concat(pageBibcodes);
-        currentOffset += pageBibcodes.length;
-        hasMore = pageBibcodes.length === searchPageSize && currentOffset < library.num_documents;
-      }
-
-      metadata = await fetchMetadataForBibcodes(allBibcodes, token);
-      const matchedBibcodes = allBibcodes.filter((bibcode) =>
-        matchesLibraryQuery(query, {
-          bibcode,
-          title: metadata[bibcode]?.title,
-          authors: metadata[bibcode]?.authors,
-          pubdate: metadata[bibcode]?.pubdate,
-          abstract: metadata[bibcode]?.abstract,
-        }),
+      const cachedResults = await searchLibraryPapers(library.id, query, rows, start);
+      totalCount = cachedResults.total;
+      bibcodes = cachedResults.papers.map((paper) => paper.bibcode);
+      metadata = Object.fromEntries(
+        cachedResults.papers.map((paper) => [
+          paper.bibcode,
+          {
+            bibcode: paper.bibcode,
+            title: paper.title,
+            authors: paper.authors ? JSON.parse(paper.authors) as string[] : undefined,
+            pubdate: paper.pubdate,
+            abstract: paper.abstract,
+          },
+        ]),
       );
-
-      totalCount = matchedBibcodes.length;
-      bibcodes = matchedBibcodes.slice(start, start + rows);
     } else {
       bibcodes = await getLibraryItems(library.id, token, {
         start,

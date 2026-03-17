@@ -21,6 +21,11 @@ export interface ADSPaperRecord {
   fulltextSource?: string; // Where full text came from (e.g., "ads_api")
 }
 
+export interface ADSPaperSearchResult {
+  papers: ADSPaperRecord[];
+  total: number;
+}
+
 /**
  * Initialize ADS tables in database
  * Works for both SQLite and PostgreSQL
@@ -90,6 +95,9 @@ export async function initializeADSTables() {
         CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
         CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
         CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_search
+          ON ads_papers
+          USING GIN (to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, '') || ' ' || COALESCE(authors, '')));
       `);
 
       logger.info('ADS database tables initialized (PostgreSQL)');
@@ -690,6 +698,123 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
       stack: error instanceof Error ? error.stack : undefined,
     });
     return [];
+  }
+}
+
+export async function getCachedLibraryPaperCount(libraryId: string): Promise<number> {
+  const driver = detectDriver();
+
+  try {
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const result = await client.query(
+        `SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = $1`,
+        [libraryId],
+      );
+      return parseInt(String(result.rows[0]?.count ?? '0'), 10);
+    }
+
+    const db = getSqlite();
+    const stmt = db.prepare(`SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = ?`);
+    const row = stmt.get(libraryId) as { count: number } | undefined;
+    return row?.count ?? 0;
+  } catch (error) {
+    logger.error('Failed to count cached library papers', {
+      libraryId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 0;
+  }
+}
+
+export async function searchLibraryPapers(
+  libraryId: string,
+  query: string,
+  limit = 50,
+  offset = 0,
+): Promise<ADSPaperSearchResult> {
+  const driver = detectDriver();
+
+  try {
+    if (driver === 'postgres') {
+      const client = await getDbClient();
+      const countResult = await client.query(
+        `SELECT COUNT(*) as count
+         FROM ads_papers p
+         JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+         WHERE lp.library_id = $1
+           AND to_tsvector('english', COALESCE(p.title, '') || ' ' || COALESCE(p.abstract, '') || ' ' || COALESCE(p.authors, ''))
+               @@ plainto_tsquery('english', $2)`,
+        [libraryId, query],
+      );
+
+      const total = parseInt(String(countResult.rows[0]?.count ?? '0'), 10);
+      const result = await client.query(
+        `SELECT p.*
+         FROM ads_papers p
+         JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+         WHERE lp.library_id = $1
+           AND to_tsvector('english', COALESCE(p.title, '') || ' ' || COALESCE(p.abstract, '') || ' ' || COALESCE(p.authors, ''))
+               @@ plainto_tsquery('english', $2)
+         ORDER BY ts_rank(
+           to_tsvector('english', COALESCE(p.title, '') || ' ' || COALESCE(p.abstract, '') || ' ' || COALESCE(p.authors, '')),
+           plainto_tsquery('english', $2)
+         ) DESC,
+         COALESCE(p.fetched_at, p.created_at, 0) DESC
+         LIMIT $3 OFFSET $4`,
+        [libraryId, query, limit, offset],
+      );
+
+      return {
+        total,
+        papers: result.rows.map((row: Record<string, unknown>) => ({
+          bibcode: row.bibcode as string,
+          title: (row.title as string | null) || undefined,
+          authors: (row.authors as string | null) || undefined,
+          pubdate: (row.pubdate as string | null) || undefined,
+          abstract: (row.abstract as string | null) || undefined,
+          body: (row.body as string | null) || undefined,
+          year: (row.year as number | null) || undefined,
+          journal: (row.journal as string | null) || undefined,
+          adsUrl: (row.ads_url as string | null) || undefined,
+          arxivUrl: (row.arxiv_url as string | null) || undefined,
+          fulltextSource: (row.fulltext_source as string | null) || undefined,
+        })),
+      };
+    }
+
+    const db = getSqlite();
+    const searchTerm = `%${query}%`;
+    const countStmt = db.prepare(`
+      SELECT COUNT(*) as count
+      FROM ads_papers p
+      JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+      WHERE lp.library_id = ?
+        AND (p.title LIKE ? OR p.abstract LIKE ? OR p.authors LIKE ? OR p.bibcode LIKE ?)
+    `);
+    const totalRow = countStmt.get(libraryId, searchTerm, searchTerm, searchTerm, searchTerm) as { count: number } | undefined;
+
+    const stmt = db.prepare(`
+      SELECT p.*
+      FROM ads_papers p
+      JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
+      WHERE lp.library_id = ?
+        AND (p.title LIKE ? OR p.abstract LIKE ? OR p.authors LIKE ? OR p.bibcode LIKE ?)
+      ORDER BY COALESCE(p.fetched_at, p.created_at, lp.added_at, 0) DESC
+      LIMIT ? OFFSET ?
+    `);
+
+    return {
+      total: totalRow?.count ?? 0,
+      papers: stmt.all(libraryId, searchTerm, searchTerm, searchTerm, searchTerm, limit, offset) as ADSPaperRecord[],
+    };
+  } catch (error) {
+    logger.error('Failed to search library papers', {
+      libraryId,
+      query,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { papers: [], total: 0 };
   }
 }
 
