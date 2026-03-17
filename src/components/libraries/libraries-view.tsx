@@ -1090,6 +1090,21 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                             >
                               Search
                             </button>
+                            {data.query && (
+                              <button
+                                onClick={() => {
+                                  setLibrarySearchQueries((prev) => ({
+                                    ...prev,
+                                    [lib.name]: '',
+                                  }));
+                                  void fetchLibraryItems(lib.name, 0, '');
+                                }}
+                                disabled={loadingLibraries.has(lib.name)}
+                                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Clear
+                              </button>
+                            )}
                           </div>
                           <p className="text-xs text-muted">
                             Showing {items.length} of {data.pagination.total}

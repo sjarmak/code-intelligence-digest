@@ -214,7 +214,7 @@ export function PaperReaderModal({
     setError(null);
 
     try {
-      const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/content`);
+      const response = await fetch(`/api/papers/${encodeURIComponent(bibcode)}/content?fast=true`);
       if (!response.ok) {
         const data = await response.json();
         throw new Error(data.error || 'Failed to fetch paper content');

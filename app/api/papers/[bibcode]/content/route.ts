@@ -39,6 +39,7 @@ export async function GET(
     // Check for force refresh parameter
     const searchParams = request.nextUrl.searchParams;
     const forceRefresh = searchParams.get('refresh') === 'true';
+    const fastMode = searchParams.get('fast') === 'true';
     // Handle URL encoding - decodeURIComponent handles %2F and other encoded characters
     // If decoding fails, try using the raw value (might already be decoded by Next.js)
     let bibcode: string;
@@ -288,7 +289,7 @@ export async function GET(
       });
 
       try {
-        const metadata = await getBibcodeMetadata([bibcode], adsToken);
+        const metadata = await getBibcodeMetadata([bibcode], adsToken, { includeBody: !fastMode });
         const paperData = metadata[bibcode];
 
         if (!paperData) {
@@ -359,6 +360,56 @@ export async function GET(
         { error: `Paper ${bibcode} not found` },
         { status: 404 }
       );
+    }
+
+    if (fastMode) {
+      let authors: string[] | undefined;
+      if (paper.authors) {
+        try {
+          authors = JSON.parse(paper.authors) as string[];
+        } catch {
+          authors = undefined;
+        }
+      }
+      if (paper.body && paper.body.length > 100) {
+        const { adsBodyToHtml } = await import('@/src/lib/ar5iv');
+        return NextResponse.json({
+          source: 'ads',
+          html: adsBodyToHtml(paper.body, paper.abstract).html,
+          title: paper.title,
+          authors,
+          abstract: paper.abstract,
+          sections: [],
+          figures: [],
+          tables: [],
+          tableOfContents: [],
+          sectionSummaries: [],
+          bibcode,
+          arxivId: extractArxivId(bibcode),
+          adsUrl: getADSUrl(bibcode),
+          arxivUrl: getArxivUrl(bibcode),
+        });
+      }
+
+      if (paper.abstract) {
+        const { abstractToHtml } = await import('@/src/lib/ar5iv');
+        return NextResponse.json({
+          source: 'abstract',
+          html: abstractToHtml(paper.abstract, paper.title).html,
+          title: paper.title,
+          authors,
+          abstract: paper.abstract,
+          sections: [],
+          figures: [],
+          tables: [],
+          tableOfContents: [],
+          sectionSummaries: [],
+          bibcode,
+          arxivId: extractArxivId(bibcode),
+          adsUrl: getADSUrl(bibcode),
+          arxivUrl: getArxivUrl(bibcode),
+        });
+      }
     }
 
     // Fetch content (ar5iv with fallbacks)
