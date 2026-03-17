@@ -53,6 +53,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const [expandedLibrary, setExpandedLibrary] = useState<string | null>(null);
   const [libraryData, setLibraryData] = useState<Record<string, LibrariesResponse>>({});
   const [loadingLibraries, setLoadingLibraries] = useState<Set<string>>(new Set());
+  const [librarySearchQueries, setLibrarySearchQueries] = useState<Record<string, string>>({});
   const [processingBibcode, setProcessingBibcode] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [refreshingBibcode, setRefreshingBibcode] = useState<string | null>(null);
@@ -122,7 +123,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
     }
   };
 
-  // Fetch papers for a specific library (with pagination to load all items)
+  // Fetch one page of papers for a specific library
   const fetchLibraryItems = async (libraryName: string, offset = 0) => {
     // Mark library as loading
     setLoadingLibraries((prev) => new Set(prev).add(libraryName));
@@ -140,32 +141,6 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       const firstPage = (await response.json()) as LibrariesResponse;
       appendLibraryItems(libraryName, firstPage);
       warmLibraryStatusForPapers(firstPage.items);
-
-      if (firstPage.pagination.hasMore) {
-        void (async () => {
-          let currentOffset = firstPage.pagination.start + firstPage.pagination.rows;
-          let hasMore = firstPage.pagination.hasMore;
-
-          while (hasMore) {
-            const pageResponse = await fetch(
-              `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${currentOffset}&rows=${rowsPerPage}&metadata=true`,
-            );
-            if (!pageResponse.ok) {
-              const errorData = (await pageResponse.json()) as LibrariesError;
-              throw new Error(errorData.error || 'Failed to fetch additional library papers');
-            }
-
-            const nextPage = (await pageResponse.json()) as LibrariesResponse;
-            appendLibraryItems(libraryName, nextPage);
-            warmLibraryStatusForPapers(nextPage.items);
-
-            hasMore = nextPage.pagination.hasMore;
-            currentOffset = nextPage.pagination.start + nextPage.pagination.rows;
-          }
-        })().catch((err) => {
-          console.error(`Failed to finish loading library ${libraryName}:`, err);
-        });
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
@@ -324,6 +299,25 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       };
     });
   }, []);
+
+  const getFilteredItems = useCallback((libraryName: string, items: LibraryItemMetadata[]) => {
+    const query = librarySearchQueries[libraryName]?.trim().toLowerCase();
+    if (!query) {
+      return items;
+    }
+
+    return items.filter((item) => {
+      const haystacks = [
+        item.title,
+        item.bibcode,
+        item.abstract,
+        item.pubdate,
+        item.authors?.join(' '),
+      ].filter(Boolean) as string[];
+
+      return haystacks.some((value) => value.toLowerCase().includes(query));
+    });
+  }, [librarySearchQueries]);
 
   // Get all visible papers in the currently expanded library
   const getVisiblePapers = useCallback(() => {
@@ -1027,6 +1021,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           const isExpanded = expandedLibrary === lib.name;
           const data = libraryData[lib.name];
           const items = data?.items || [];
+          const filteredItems = getFilteredItems(lib.name, items);
+          const searchQuery = librarySearchQueries[lib.name] || '';
           const cleanName = lib.name.replace(/^My ADS library\s*/i, '');
           const cleanDescription = lib.description?.replace(/^My ADS library\s*/i, '');
 
@@ -1068,16 +1064,38 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
               {/* Papers List */}
               {isExpanded && (
                 <div className="border-t border-surface-border/50 p-4 space-y-3 bg-surface-border/5">
-                  {loadingLibraries.has(lib.name) ? (
-                    <div className="flex justify-center py-4">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
-                      <span className="ml-2 text-sm text-muted">Loading papers...</span>
-                    </div>
-                  ) : data ? (
+                  {data ? (
                     <>
+                      <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <input
+                            type="search"
+                            value={searchQuery}
+                            onChange={(e) => {
+                              const nextValue = e.target.value;
+                              setLibrarySearchQueries((prev) => ({
+                                ...prev,
+                                [lib.name]: nextValue,
+                              }));
+                            }}
+                            placeholder="Search loaded papers"
+                            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors placeholder:text-gray-400 focus:border-gray-500 md:max-w-sm"
+                          />
+                          <p className="text-xs text-muted">
+                            Showing {filteredItems.length} of {items.length} loaded papers
+                            {data.pagination.total > items.length ? ` • ${data.pagination.total} total in library` : ''}
+                          </p>
+                        </div>
+                        {searchQuery && data.pagination.hasMore && (
+                          <p className="text-xs text-muted">
+                            Search currently filters loaded papers. Load more to search deeper in this library.
+                          </p>
+                        )}
+                      </div>
+
                       {/* Bulk action toolbar */}
-                      <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
-                        <div className="flex items-center gap-2">
+                      <div className="mb-4 flex flex-col gap-3 border-b border-gray-200 pb-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="flex flex-wrap items-center gap-2">
                           <button
                             onClick={handleToggleSelectMode}
                             disabled={bulkAdding}
@@ -1130,7 +1148,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                           )}
                         </div>
                         {!selectMode && (
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <button
                               onClick={handleAddAllToDigest}
                               disabled={bulkAdding || items.length === 0}
@@ -1152,18 +1170,20 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                           </div>
                         )}
                       </div>
-                      {items.length > 0 ? (
-                        items.map((item) => {
+
+                      {filteredItems.length > 0 ? (
+                        filteredItems.map((item) => {
                           const isSelected = selectedBibcodes.has(item.bibcode);
+                          const itemId = itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`;
+                          const status = libraryStatus.get(itemId);
                           return (
                           <div
                             key={item.bibcode}
-                            className={`border rounded-lg overflow-hidden bg-surface transition-colors ${
+                            className={`rounded-xl border bg-white p-4 transition-colors ${
                               isSelected ? 'border-blue-400 bg-blue-50/30' : 'border-surface-border hover:border-gray-400/50'
                             }`}
                           >
-                            <div className="p-4 pb-3">
-                              <div className="flex items-start justify-between gap-4">
+                              <div className="flex items-start gap-3">
                                 {selectMode && (
                                   <button
                                     onClick={() => handleToggleSelection(item.bibcode)}
@@ -1177,30 +1197,45 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                   </button>
                                 )}
                                 <div className="flex-1 min-w-0">
-                                  {item.title ? (
-                                    <a
-                                      href={item.arxivUrl || item.adsUrl || '#'}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-base font-semibold line-clamp-2 text-black hover:text-gray-700 transition-colors"
-                                    >
-                                      {item.title}
-                                    </a>
-                                  ) : (
-                                    <a
-                                      href={item.arxivUrl || item.adsUrl || '#'}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-base font-semibold line-clamp-2 text-black hover:text-gray-700 transition-colors font-mono"
-                                    >
-                                      {item.bibcode}
-                                    </a>
-                                  )}
-                                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                    <p className="text-xs text-muted font-mono">
-                                      {item.bibcode}
-                                    </p>
-                                    <div className="flex gap-1">
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="min-w-0 flex-1">
+                                      {item.title ? (
+                                        <a
+                                          href={item.arxivUrl || item.adsUrl || '#'}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="block text-base font-semibold leading-tight text-black transition-colors hover:text-gray-700 sm:text-lg"
+                                        >
+                                          {item.title}
+                                        </a>
+                                      ) : (
+                                        <a
+                                          href={item.arxivUrl || item.adsUrl || '#'}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="block font-mono text-base font-semibold leading-tight text-black transition-colors hover:text-gray-700 sm:text-lg"
+                                        >
+                                          {item.bibcode}
+                                        </a>
+                                      )}
+                                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                                        {item.authors && item.authors.length > 0 && (
+                                          <span className="min-w-0 max-w-full truncate">
+                                            {item.authors.slice(0, 3).join(', ')}
+                                            {item.authors.length > 3 && ' et al.'}
+                                          </span>
+                                        )}
+                                        {item.pubdate && (
+                                          <span className="rounded-full border border-gray-200 px-2 py-0.5 text-xs">
+                                            {item.pubdate.substring(0, 4)}
+                                          </span>
+                                        )}
+                                        <span className="font-mono text-[11px] text-gray-500">
+                                          {item.bibcode}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-1">
                                       {item.arxivUrl && (
                                         <a
                                           href={item.arxivUrl}
@@ -1225,44 +1260,48 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                       )}
                                     </div>
                                   </div>
-                                </div>
-                                <div className="flex flex-col items-end gap-2">
-                                  {item.pubdate && (
-                                    <span className="border border-surface-border px-2 py-1 rounded text-xs whitespace-nowrap bg-surface-border/30">
-                                      {item.pubdate.substring(0, 4)}
-                                    </span>
+                                  {item.abstract && (
+                                    <p className="mt-3 text-sm leading-6 text-gray-600 line-clamp-2 sm:line-clamp-3">
+                                      {item.abstract}
+                                    </p>
                                   )}
-                                  <div className="flex gap-2">
-                                    {/* Saved items library button - always show for research papers */}
+
+                                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                                    <button
+                                      onClick={() => openReader(item.bibcode, item.title)}
+                                      title="Open in reader"
+                                      className="flex items-center gap-1 rounded-md bg-blue-50 px-2.5 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100"
+                                    >
+                                      <FileText className="w-3 h-3" />
+                                      Read
+                                    </button>
                                     <button
                                       onClick={() => handleToggleSavedItems(item.bibcode)}
-                                      disabled={libraryLoading.has(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)}
-                                      className={`p-1.5 rounded transition-colors ${
-                                        libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inSavedItems
-                                          ? 'text-yellow-600 bg-yellow-50'
-                                          : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                                      disabled={libraryLoading.has(itemId)}
+                                      className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                        status?.inSavedItems
+                                          ? 'bg-yellow-50 text-yellow-700'
+                                          : 'bg-gray-100 text-gray-700 hover:bg-yellow-50 hover:text-yellow-700'
                                       } disabled:opacity-50 disabled:cursor-not-allowed`}
-                                      title={libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inSavedItems ? 'Remove from saved items' : 'Add to saved items'}
+                                      title={status?.inSavedItems ? 'Remove from saved items' : 'Add to saved items'}
                                     >
-                                      <FolderHeart className="w-4 h-4" />
+                                      Save
                                     </button>
-                                    {/* Digest items library button - always show for research papers */}
                                     <button
                                       onClick={() => handleToggleDigestItems(item.bibcode)}
-                                      disabled={libraryLoading.has(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)}
-                                      className={`p-1.5 rounded transition-colors ${
-                                        libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inDigestItems
-                                          ? 'text-yellow-600 bg-yellow-50'
-                                          : 'text-gray-400 hover:text-yellow-600 hover:bg-yellow-50'
+                                      disabled={libraryLoading.has(itemId)}
+                                      className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                        status?.inDigestItems
+                                          ? 'bg-purple-50 text-purple-700'
+                                          : 'bg-gray-100 text-gray-700 hover:bg-purple-50 hover:text-purple-700'
                                       } disabled:opacity-50 disabled:cursor-not-allowed`}
-                                      title={libraryStatus.get(itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`)?.inDigestItems ? 'Remove from digest items' : 'Add to digest items'}
+                                      title={status?.inDigestItems ? 'Remove from digest items' : 'Add to digest items'}
                                     >
-                                      <FileHeart className="w-4 h-4" />
+                                      Digest
                                     </button>
                                     <button
                                       onClick={async () => {
                                         try {
-                                          // Check if already favorited
                                           const checkResponse = await fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/favorite`);
                                           const isFavorite = checkResponse.ok ? (await checkResponse.json()).isFavorite : false;
 
@@ -1272,14 +1311,11 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                             body: JSON.stringify({ bibcode: item.bibcode, favorite: !isFavorite }),
                                           });
                                           if (response.ok) {
-                                            // Trigger section processing if favoriting (not unfavoriting)
                                             if (!isFavorite) {
-                                              // Process sections in background
                                               fetch(`/api/papers/${encodeURIComponent(item.bibcode)}/process-sections`, {
                                                 method: 'POST',
                                               }).catch(err => console.error('Failed to trigger section processing:', err));
                                             }
-                                            // Refresh bookmarked papers
                                             const updated = await fetchBookmarkedPapers();
                                             if (updated) {
                                               setLibraryData(prev => ({
@@ -1293,79 +1329,73 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                                         }
                                       }}
                                       title="Bookmark paper"
-                                      className="p-1.5 text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 rounded transition-colors"
+                                      className="rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-yellow-50 hover:text-yellow-700"
                                     >
-                                      <Bookmark className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => openReader(item.bibcode, item.title)}
-                                      title="Open in reader"
-                                      className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors whitespace-nowrap flex items-center gap-1"
-                                    >
-                                      <FileText className="w-3 h-3" />
-                                      Read
+                                      <span className="inline-flex items-center gap-1">
+                                        <Bookmark className="w-3 h-3" />
+                                        Bookmark
+                                      </span>
                                     </button>
                                     {onAddPaperToQA && (
                                       <button
                                         onClick={() => onAddPaperToQA?.({ bibcode: item.bibcode, title: item.title })}
                                         title="Add to Q&A context"
-                                        className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-gray-100 transition-colors whitespace-nowrap"
+                                        className="rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200"
                                       >
-                                        <Plus className="w-3 h-3 inline mr-1" />
-                                        Add
+                                        <span className="inline-flex items-center gap-1">
+                                          <Plus className="w-3 h-3" />
+                                          Add to Q&A
+                                        </span>
                                       </button>
                                     )}
                                     <button
                                       onClick={() => generateSummary(item.bibcode)}
                                       disabled={processingBibcode === item.bibcode}
-                                      className="text-xs px-2 py-1 rounded bg-gray-50 text-gray-700 hover:bg-purple-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                                      className="rounded-md bg-gray-100 px-2.5 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-purple-50 hover:text-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                       {processingBibcode === item.bibcode ? 'Summarizing...' : 'Summarize'}
                                     </button>
                                   </div>
                                 </div>
                               </div>
-                            </div>
 
                             {/* Summary Section */}
                             {summaries[item.bibcode] && (
-                              <div className="px-4 py-3 bg-purple-900/10 border-t border-surface-border/50">
+                              <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50/60 px-4 py-3">
                                 <p className="font-medium text-xs text-muted mb-2">Summary</p>
                                 <p className="text-sm text-muted leading-relaxed">
                                   {summaries[item.bibcode]}
                                 </p>
                               </div>
                             )}
-
-                            {/* Paper Details */}
-                            {(item.authors || item.abstract) && (
-                              <div className="space-y-2 text-sm px-4 py-3 border-t border-surface-border/50">
-                                {item.authors && item.authors.length > 0 && (
-                                  <div>
-                                    <p className="font-medium text-xs text-muted">Authors</p>
-                                    <p className="text-muted line-clamp-2">
-                                      {item.authors.slice(0, 3).join('; ')}
-                                      {item.authors.length > 3 && ' et al.'}
-                                    </p>
-                                  </div>
-                                )}
-                                {item.abstract && (
-                                  <div>
-                                    <p className="font-medium text-xs text-muted">Abstract</p>
-                                    <p className="text-muted line-clamp-3">
-                                      {item.abstract}
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                            )}
                           </div>
                         );
                         })
                       ) : (
-                        <div className="text-center text-muted py-4">No papers in this library</div>
+                        <div className="text-center text-muted py-4">
+                          {searchQuery ? 'No loaded papers match this search yet' : 'No papers in this library'}
+                        </div>
+                      )}
+
+                      {data.pagination.hasMore && (
+                        <div className="flex justify-center pt-2">
+                          <button
+                            onClick={() => fetchLibraryItems(lib.name, data.pagination.rows)}
+                            disabled={loadingLibraries.has(lib.name)}
+                            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {loadingLibraries.has(lib.name)
+                              ? 'Loading more...'
+                              : `Load more (${Math.max(data.pagination.total - data.pagination.rows, 0)} remaining)`}
+                          </button>
+                        </div>
                       )}
                     </>
+                  ) : loadingLibraries.has(lib.name) ? (
+                    <div className="flex justify-center py-4">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
+                      <span className="ml-2 text-sm text-muted">Loading papers...</span>
+                    </div>
                   ) : (
                     <div className="flex justify-center py-4">
                       <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400" />
