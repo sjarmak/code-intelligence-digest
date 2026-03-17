@@ -19,6 +19,37 @@ import { saveItems } from '@/src/lib/db/items';
 
 export const dynamic = 'force-dynamic';
 
+async function fetchMetadataForBibcodes(
+  bibcodes: string[],
+  token: string,
+) {
+  const chunkSize = 50;
+  const metadataEntries = await Promise.all(
+    Array.from({ length: Math.ceil(bibcodes.length / chunkSize) }, (_, index) => {
+      const chunk = bibcodes.slice(index * chunkSize, (index + 1) * chunkSize);
+      return getBibcodeMetadata(chunk, token, { includeBody: false });
+    }),
+  );
+
+  return Object.assign({}, ...metadataEntries);
+}
+
+function matchesLibraryQuery(
+  query: string,
+  entry: { bibcode: string; title?: string; authors?: string[]; pubdate?: string; abstract?: string },
+) {
+  const normalizedQuery = query.toLowerCase();
+  const haystacks = [
+    entry.bibcode,
+    entry.title,
+    entry.pubdate,
+    entry.abstract,
+    entry.authors?.join(' '),
+  ].filter(Boolean) as string[];
+
+  return haystacks.some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
 export async function GET(request: NextRequest) {
   try {
     const token = process.env.ADS_API_TOKEN;
@@ -37,8 +68,9 @@ export async function GET(request: NextRequest) {
     const rows = parseInt(searchParams.get('rows') || '20', 10);
     const start = parseInt(searchParams.get('start') || '0', 10);
     const includeMetadata = searchParams.get('metadata') === 'true';
+    const query = searchParams.get('q')?.trim() || '';
 
-    logger.info('Fetching library items', { libraryName, rows, start });
+    logger.info('Fetching library items', { libraryName, rows, start, hasQuery: Boolean(query) });
 
     // Reject blocked libraries (SciX, etc.)
     if (libraryName.toLowerCase().includes('scix') || libraryName.toLowerCase().includes('2024 bibliography')) {
@@ -57,11 +89,45 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Fetch items (bibcodes)
-    const bibcodes = await getLibraryItems(library.id, token, {
-      start,
-      rows,
-    });
+    let bibcodes: string[] = [];
+    let metadata: Record<string, Awaited<ReturnType<typeof getBibcodeMetadata>>[string]> = {};
+    let totalCount = library.num_documents;
+
+    if (query) {
+      const searchPageSize = 200;
+      let allBibcodes: string[] = [];
+      let currentOffset = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const pageBibcodes = await getLibraryItems(library.id, token, {
+          start: currentOffset,
+          rows: searchPageSize,
+        });
+        allBibcodes = allBibcodes.concat(pageBibcodes);
+        currentOffset += pageBibcodes.length;
+        hasMore = pageBibcodes.length === searchPageSize && currentOffset < library.num_documents;
+      }
+
+      metadata = await fetchMetadataForBibcodes(allBibcodes, token);
+      const matchedBibcodes = allBibcodes.filter((bibcode) =>
+        matchesLibraryQuery(query, {
+          bibcode,
+          title: metadata[bibcode]?.title,
+          authors: metadata[bibcode]?.authors,
+          pubdate: metadata[bibcode]?.pubdate,
+          abstract: metadata[bibcode]?.abstract,
+        }),
+      );
+
+      totalCount = matchedBibcodes.length;
+      bibcodes = matchedBibcodes.slice(start, start + rows);
+    } else {
+      bibcodes = await getLibraryItems(library.id, token, {
+        start,
+        rows,
+      });
+    }
 
     // Optionally fetch detailed metadata
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,7 +137,9 @@ export async function GET(request: NextRequest) {
     }));
 
     if (includeMetadata && bibcodes.length > 0) {
-      const metadata = await getBibcodeMetadata(bibcodes, token, { includeBody: false });
+      if (Object.keys(metadata).length === 0) {
+        metadata = await fetchMetadataForBibcodes(bibcodes, token);
+      }
 
       // Initialize ADS tables if needed
       try {
@@ -201,9 +269,9 @@ export async function GET(request: NextRequest) {
       items,
       pagination: {
         start,
-        rows,
-        total: library.num_documents,
-        hasMore: start + rows < library.num_documents,
+        rows: items.length,
+        total: totalCount,
+        hasMore: start + rows < totalCount,
       },
     });
   } catch (error) {

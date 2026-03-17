@@ -31,6 +31,7 @@ interface LibrariesResponse {
     total: number;
     hasMore: boolean;
   };
+  query?: string;
 }
 
 interface AllLibrariesResponse {
@@ -124,14 +125,15 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   };
 
   // Fetch one page of papers for a specific library
-  const fetchLibraryItems = async (libraryName: string, offset = 0) => {
+  const fetchLibraryItems = async (libraryName: string, offset = 0, query?: string) => {
     // Mark library as loading
     setLoadingLibraries((prev) => new Set(prev).add(libraryName));
 
     try {
       const rowsPerPage = 50;
+      const normalizedQuery = query?.trim() || '';
       const response = await fetch(
-        `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${offset}&rows=${rowsPerPage}&metadata=true`,
+        `/api/libraries?library=${encodeURIComponent(libraryName)}&start=${offset}&rows=${rowsPerPage}&metadata=true${normalizedQuery ? `&q=${encodeURIComponent(normalizedQuery)}` : ''}`,
       );
       if (!response.ok) {
         const errorData = (await response.json()) as LibrariesError;
@@ -139,7 +141,10 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       }
 
       const firstPage = (await response.json()) as LibrariesResponse;
-      appendLibraryItems(libraryName, firstPage);
+      appendLibraryItems(libraryName, {
+        ...firstPage,
+        query: normalizedQuery,
+      }, offset === 0);
       warmLibraryStatusForPapers(firstPage.items);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -185,7 +190,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
       setExpandedLibrary(libraryName);
       // Fetch papers if not already cached
       if (!libraryData[libraryName]) {
-        await fetchLibraryItems(libraryName);
+        await fetchLibraryItems(libraryName, 0, librarySearchQueries[libraryName]);
       }
     }
   };
@@ -274,10 +279,10 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
     });
   }, [loadLibraryStatusForPapers]);
 
-  const appendLibraryItems = useCallback((libraryName: string, result: LibrariesResponse) => {
+  const appendLibraryItems = useCallback((libraryName: string, result: LibrariesResponse, replace = false) => {
     setLibraryData((prev) => {
       const existing = prev[libraryName];
-      const existingItems = existing?.items ?? [];
+      const existingItems = replace || existing?.query !== result.query ? [] : (existing?.items ?? []);
       const existingBibcodes = new Set(existingItems.map((item) => item.bibcode));
       const nextItems = [
         ...existingItems,
@@ -295,29 +300,17 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
             total: result.pagination.total,
             hasMore: result.pagination.hasMore,
           },
+          query: result.query,
         },
       };
     });
   }, []);
 
-  const getFilteredItems = useCallback((libraryName: string, items: LibraryItemMetadata[]) => {
-    const query = librarySearchQueries[libraryName]?.trim().toLowerCase();
-    if (!query) {
-      return items;
-    }
-
-    return items.filter((item) => {
-      const haystacks = [
-        item.title,
-        item.bibcode,
-        item.abstract,
-        item.pubdate,
-        item.authors?.join(' '),
-      ].filter(Boolean) as string[];
-
-      return haystacks.some((value) => value.toLowerCase().includes(query));
-    });
-  }, [librarySearchQueries]);
+  const handleLibrarySearch = async (libraryName: string) => {
+    setSelectedBibcodes(new Set());
+    setSelectMode(false);
+    await fetchLibraryItems(libraryName, 0, librarySearchQueries[libraryName]);
+  };
 
   // Get all visible papers in the currently expanded library
   const getVisiblePapers = useCallback(() => {
@@ -1021,7 +1014,6 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
           const isExpanded = expandedLibrary === lib.name;
           const data = libraryData[lib.name];
           const items = data?.items || [];
-          const filteredItems = getFilteredItems(lib.name, items);
           const searchQuery = librarySearchQueries[lib.name] || '';
           const cleanName = lib.name.replace(/^My ADS library\s*/i, '');
           const cleanDescription = lib.description?.replace(/^My ADS library\s*/i, '');
@@ -1068,27 +1060,41 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                     <>
                       <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white p-3">
                         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                          <input
-                            type="search"
-                            value={searchQuery}
-                            onChange={(e) => {
-                              const nextValue = e.target.value;
-                              setLibrarySearchQueries((prev) => ({
-                                ...prev,
-                                [lib.name]: nextValue,
-                              }));
-                            }}
-                            placeholder="Search loaded papers"
-                            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors placeholder:text-gray-400 focus:border-gray-500 md:max-w-sm"
-                          />
+                          <div className="flex w-full gap-2 md:max-w-md">
+                            <input
+                              type="search"
+                              value={searchQuery}
+                              onChange={(e) => {
+                                const nextValue = e.target.value;
+                                setLibrarySearchQueries((prev) => ({
+                                  ...prev,
+                                  [lib.name]: nextValue,
+                                }));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  void handleLibrarySearch(lib.name);
+                                }
+                              }}
+                              placeholder="Search this library"
+                              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none transition-colors placeholder:text-gray-400 focus:border-gray-500"
+                            />
+                            <button
+                              onClick={() => handleLibrarySearch(lib.name)}
+                              disabled={loadingLibraries.has(lib.name)}
+                              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Search
+                            </button>
+                          </div>
                           <p className="text-xs text-muted">
-                            Showing {filteredItems.length} of {items.length} loaded papers
-                            {data.pagination.total > items.length ? ` • ${data.pagination.total} total in library` : ''}
+                            Showing {items.length} of {data.pagination.total}
+                            {data.query ? ' matching papers' : ' loaded papers'}
                           </p>
                         </div>
-                        {searchQuery && data.pagination.hasMore && (
+                        {data.query && (
                           <p className="text-xs text-muted">
-                            Search currently filters loaded papers. Load more to search deeper in this library.
+                            Search results for &quot;{data.query}&quot;
                           </p>
                         )}
                       </div>
@@ -1171,8 +1177,8 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                         )}
                       </div>
 
-                      {filteredItems.length > 0 ? (
-                        filteredItems.map((item) => {
+                      {items.length > 0 ? (
+                        items.map((item) => {
                           const isSelected = selectedBibcodes.has(item.bibcode);
                           const itemId = itemIdMap.get(item.bibcode) || `ads:${item.bibcode}`;
                           const status = libraryStatus.get(itemId);
@@ -1373,7 +1379,7 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
                         })
                       ) : (
                         <div className="text-center text-muted py-4">
-                          {searchQuery ? 'No loaded papers match this search yet' : 'No papers in this library'}
+                          {data.query ? 'No papers matched this search' : 'No papers in this library'}
                         </div>
                       )}
 
