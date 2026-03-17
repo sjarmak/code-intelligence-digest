@@ -116,11 +116,15 @@ export function LibrariesView({ onAddPaperToQA, onSelectLibraryForQA }: Librarie
   const fetchAllLibraries = async () => {
     try {
       const response = await fetch('/api/libraries', { method: 'POST' });
-      if (!response.ok) throw new Error('Failed to fetch libraries');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to fetch libraries' }));
+        throw new Error(errorData.error || 'Failed to fetch libraries');
+      }
       const result = (await response.json()) as AllLibrariesResponse;
       setAllLibraries(result.libraries);
     } catch (err) {
       console.error('Failed to fetch libraries:', err);
+      throw err;
     }
   };
 
