@@ -84,6 +84,101 @@ async function hydrateLibraryCache(
   await linkPapersToLibraryBatch(libraryId, allBibcodes);
 }
 
+function cacheLibraryPageInBackground(
+  libraryId: string,
+  bibcodes: string[],
+  metadata: Record<string, Awaited<ReturnType<typeof getBibcodeMetadata>>[string]>,
+) {
+  if (bibcodes.length === 0) {
+    return;
+  }
+
+  void (async () => {
+    try {
+      await initializeADSTables();
+
+      const papersToStore = bibcodes
+        .map((bibcode) => ({
+          bibcode,
+          title: metadata[bibcode]?.title,
+          authors: metadata[bibcode]?.authors
+            ? JSON.stringify(metadata[bibcode].authors)
+            : undefined,
+          pubdate: metadata[bibcode]?.pubdate,
+          abstract: metadata[bibcode]?.abstract,
+          body: metadata[bibcode]?.body,
+          adsUrl: getADSUrl(bibcode),
+          arxivUrl: getArxivUrl(bibcode),
+          fulltextSource: metadata[bibcode]?.body ? 'ads_api' : undefined,
+        }))
+        .filter((p) => p.title || p.authors || p.pubdate || p.abstract || p.body);
+
+      if (papersToStore.length > 0) {
+        await storePapersBatch(papersToStore);
+        await linkPapersToLibraryBatch(libraryId, bibcodes);
+
+        const itemsToSave: FeedItem[] = papersToStore
+          .filter((p) => p.title || p.body)
+          .map((paper) => {
+            let author: string | undefined;
+            if (paper.authors) {
+              try {
+                const authorsArray = JSON.parse(paper.authors);
+                author = Array.isArray(authorsArray) ? authorsArray.join(', ') : authorsArray;
+              } catch {
+                author = paper.authors;
+              }
+            }
+
+            let publishedAt: Date;
+            if (paper.pubdate) {
+              publishedAt = new Date(paper.pubdate);
+              if (isNaN(publishedAt.getTime())) {
+                publishedAt = new Date();
+              }
+            } else {
+              publishedAt = new Date();
+            }
+
+            const itemId = `ads:${paper.bibcode}`;
+            const url = paper.arxivUrl || paper.adsUrl || getADSUrl(paper.bibcode);
+
+            return {
+              id: itemId,
+              streamId: `ads:research:${paper.bibcode}`,
+              sourceTitle: 'ADS Research',
+              title: paper.title || 'Untitled',
+              url,
+              author,
+              publishedAt,
+              createdAt: publishedAt,
+              summary: paper.abstract || undefined,
+              contentSnippet: paper.abstract || undefined,
+              fullText: paper.body || undefined,
+              categories: ['research'],
+              category: 'research' as const,
+              raw: {
+                bibcode: paper.bibcode,
+                adsUrl: paper.adsUrl || getADSUrl(paper.bibcode),
+                arxivUrl: paper.arxivUrl || getArxivUrl(paper.bibcode),
+              },
+            };
+          });
+
+        if (itemsToSave.length > 0) {
+          await saveItems(itemsToSave);
+          logger.info(`[LIBRARIES] Saved ${itemsToSave.length} items to items table`);
+        }
+      }
+    } catch (dbError) {
+      logger.error('Failed to cache ADS library items locally', {
+        libraryId,
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+      });
+    }
+  })();
+}
+
 export async function GET(request: NextRequest) {
   try {
     const token = process.env.ADS_API_TOKEN;
@@ -129,7 +224,15 @@ export async function GET(request: NextRequest) {
 
     if (query) {
       await initializeADSTables();
-      await hydrateLibraryCache(library.id, library.num_documents, token);
+      const cachedCount = await getCachedLibraryPaperCount(library.id);
+      if (cachedCount < library.num_documents) {
+        void hydrateLibraryCache(library.id, library.num_documents, token).catch((error) => {
+          logger.error('Background library cache hydration failed', {
+            libraryId: library.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
 
       const cachedResults = await searchLibraryPapers(library.id, query, rows, start);
       totalCount = cachedResults.total;
@@ -164,107 +267,7 @@ export async function GET(request: NextRequest) {
       if (Object.keys(metadata).length === 0) {
         metadata = await fetchMetadataForBibcodes(bibcodes, token);
       }
-
-      // Initialize ADS tables if needed
-      try {
-        await initializeADSTables();
-      } catch {
-        // Tables may already exist, safe to ignore
-      }
-
-      // Prepare papers for storage
-      const papersToStore = bibcodes
-        .map((bibcode) => ({
-          bibcode,
-          title: metadata[bibcode]?.title,
-          authors: metadata[bibcode]?.authors
-            ? JSON.stringify(metadata[bibcode].authors)
-            : undefined,
-          pubdate: metadata[bibcode]?.pubdate,
-          abstract: metadata[bibcode]?.abstract,
-          body: metadata[bibcode]?.body, // Full text from ADS API
-          adsUrl: getADSUrl(bibcode),
-          arxivUrl: getArxivUrl(bibcode),
-          fulltextSource: metadata[bibcode]?.body ? 'ads_api' : undefined,
-        }))
-        .filter(
-          (p) =>
-            p.title ||
-            p.authors ||
-            p.pubdate ||
-            p.abstract ||
-            p.body,
-        );
-
-      // Store papers in database
-      if (papersToStore.length > 0) {
-        try {
-          await storePapersBatch(papersToStore);
-          await linkPapersToLibraryBatch(library.id, bibcodes);
-
-          // Also save to items table for consistency
-          // Convert papers to FeedItems and save
-          const itemsToSave: FeedItem[] = papersToStore
-            .filter(p => p.title || p.body) // Only save if we have title or body
-            .map(paper => {
-              // Parse authors
-              let author: string | undefined;
-              if (paper.authors) {
-                try {
-                  const authorsArray = JSON.parse(paper.authors);
-                  author = Array.isArray(authorsArray) ? authorsArray.join(', ') : authorsArray;
-                } catch {
-                  author = paper.authors;
-                }
-              }
-
-              // Parse pubdate
-              let publishedAt: Date;
-              if (paper.pubdate) {
-                publishedAt = new Date(paper.pubdate);
-                if (isNaN(publishedAt.getTime())) {
-                  publishedAt = new Date();
-                }
-              } else {
-                publishedAt = new Date();
-              }
-
-              const itemId = `ads:${paper.bibcode}`;
-              const url = paper.arxivUrl || paper.adsUrl || getADSUrl(paper.bibcode);
-
-              return {
-                id: itemId,
-                streamId: `ads:research:${paper.bibcode}`,
-                sourceTitle: 'ADS Research',
-                title: paper.title || 'Untitled',
-                url,
-                author,
-                publishedAt,
-                createdAt: publishedAt,
-                summary: paper.abstract || undefined,
-                contentSnippet: paper.abstract || undefined,
-                fullText: paper.body || undefined,
-                categories: ['research'],
-                category: 'research' as const,
-                raw: {
-                  bibcode: paper.bibcode,
-                  adsUrl: paper.adsUrl || getADSUrl(paper.bibcode),
-                  arxivUrl: paper.arxivUrl || getArxivUrl(paper.bibcode),
-                },
-              };
-            });
-
-          if (itemsToSave.length > 0) {
-            await saveItems(itemsToSave);
-            logger.info(`[LIBRARIES] Saved ${itemsToSave.length} items to items table`);
-          }
-        } catch (dbError) {
-          logger.error('Failed to cache ADS library items locally', {
-            libraryId: library.id,
-            error: dbError instanceof Error ? dbError.message : String(dbError),
-          });
-        }
-      }
+      cacheLibraryPageInBackground(library.id, bibcodes, metadata);
 
       items = bibcodes.map((bibcode) => ({
         bibcode,
