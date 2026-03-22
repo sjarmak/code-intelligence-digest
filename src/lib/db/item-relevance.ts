@@ -2,8 +2,8 @@
  * Item relevance and admin settings database operations
  */
 
-import { getSqlite } from './index';
 import { logger } from '../logger';
+import { getDbClient } from './driver';
 
 /**
  * Save item relevance rating
@@ -14,15 +14,21 @@ export async function saveItemRelevance(
   notes?: string
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
+    const now = Math.floor(Date.now() / 1000);
 
-    // Use item_id as the unique identifier for replacement
-    // This ensures updates actually replace existing records
-    sqlite.prepare(`
-      INSERT OR REPLACE INTO item_relevance
-      (id, item_id, relevance_rating, notes, rated_at, updated_at)
-      VALUES (?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
-    `).run(itemId, itemId, rating, notes || null);
+    await client.run(
+      `
+      INSERT INTO item_relevance (id, item_id, relevance_rating, notes, rated_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $5)
+      ON CONFLICT (item_id) DO UPDATE SET
+        relevance_rating = EXCLUDED.relevance_rating,
+        notes = EXCLUDED.notes,
+        rated_at = EXCLUDED.rated_at,
+        updated_at = EXCLUDED.updated_at
+    `,
+      [itemId, itemId, rating, notes ?? null, now]
+    );
 
     logger.debug(`Saved relevance rating for item ${itemId}: ${rating}`);
   } catch (error) {
@@ -40,15 +46,19 @@ export async function getItemRelevance(itemId: string): Promise<{
   ratedAt: number | null;
 } | null> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const row = sqlite
-      .prepare(`SELECT relevance_rating, notes, rated_at FROM item_relevance WHERE item_id = ?`)
-      .get(itemId) as {
-        relevance_rating: number | null;
-        notes: string | null;
-        rated_at: number | null;
-      } | undefined;
+    const result = await client.query(
+      `SELECT relevance_rating, notes, rated_at FROM item_relevance WHERE item_id = $1`,
+      [itemId]
+    );
+    const row = result.rows[0] as
+      | {
+          relevance_rating: number | null;
+          notes: string | null;
+          rated_at: number | null;
+        }
+      | undefined;
 
     if (!row) {
       return null;
@@ -68,13 +78,12 @@ export async function getItemRelevance(itemId: string): Promise<{
 /**
  * Get admin setting
  */
-export function getAdminSetting(key: string): string | null {
+export async function getAdminSetting(key: string): Promise<string | null> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const row = sqlite
-      .prepare(`SELECT value FROM admin_settings WHERE key = ?`)
-      .get(key) as { value: string } | undefined;
+    const result = await client.query(`SELECT value FROM admin_settings WHERE key = $1`, [key]);
+    const row = result.rows[0] as { value: string } | undefined;
 
     return row?.value || null;
   } catch (error) {
@@ -86,14 +95,21 @@ export function getAdminSetting(key: string): string | null {
 /**
  * Set admin setting
  */
-export function setAdminSetting(key: string, value: string): void {
+export async function setAdminSetting(key: string, value: string): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
+    const now = Math.floor(Date.now() / 1000);
 
-    sqlite.prepare(`
-      INSERT OR REPLACE INTO admin_settings (key, value, updated_at)
-      VALUES (?, ?, strftime('%s', 'now'))
-    `).run(key, value);
+    await client.run(
+      `
+      INSERT INTO admin_settings (key, value, updated_at)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (key) DO UPDATE SET
+        value = EXCLUDED.value,
+        updated_at = EXCLUDED.updated_at
+    `,
+      [key, value, now]
+    );
 
     logger.info(`Updated admin setting ${key} = ${value}`);
   } catch (error) {
@@ -104,16 +120,16 @@ export function setAdminSetting(key: string, value: string): void {
 /**
  * Check if item relevance tuning is enabled
  */
-export function isItemRelevanceTuningEnabled(): boolean {
-  const setting = getAdminSetting('enable_item_relevance_tuning');
+export async function isItemRelevanceTuningEnabled(): Promise<boolean> {
+  const setting = await getAdminSetting('enable_item_relevance_tuning');
   return setting === 'true';
 }
 
 /**
  * Enable/disable item relevance tuning
  */
-export function setItemRelevanceTuningEnabled(enabled: boolean): void {
-  setAdminSetting('enable_item_relevance_tuning', enabled ? 'true' : 'false');
+export async function setItemRelevanceTuningEnabled(enabled: boolean): Promise<void> {
+  await setAdminSetting('enable_item_relevance_tuning', enabled ? 'true' : 'false');
 }
 
 /**
@@ -121,27 +137,28 @@ export function setItemRelevanceTuningEnabled(enabled: boolean): void {
  */
 export async function starItem(itemId: string, starred: boolean = true): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
+    const now = Math.floor(Date.now() / 1000);
 
     if (starred) {
-      // Insert into starred_items table
-      sqlite.prepare(`
-        INSERT OR IGNORE INTO starred_items
-        (id, item_id, inoreader_item_id, starred_at, created_at, updated_at)
-        VALUES (?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'), strftime('%s', 'now'))
-      `).run(itemId, itemId, itemId);
+      await client.run(
+        `
+        INSERT INTO starred_items (
+          id, item_id, inoreader_item_id, starred_at, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $4, $4)
+        ON CONFLICT (item_id) DO NOTHING
+      `,
+        [`starred-${itemId}`, itemId, itemId, now]
+      );
 
       logger.debug(`Starred item ${itemId}`);
     } else {
-      // Remove from starred_items table
-      sqlite.prepare(`
-        DELETE FROM starred_items WHERE item_id = ?
-      `).run(itemId);
+      await client.run(`DELETE FROM starred_items WHERE item_id = $1`, [itemId]);
 
       logger.debug(`Unstarred item ${itemId}`);
     }
   } catch (error) {
-    logger.error(`Failed to update starred status for item ${itemId}`, error);
+    logger.error(`Failed to update starred status for ${itemId}`, error);
     throw error;
   }
 }
@@ -151,13 +168,14 @@ export async function starItem(itemId: string, starred: boolean = true): Promise
  */
 export async function isItemStarred(itemId: string): Promise<boolean> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const row = sqlite
-      .prepare(`SELECT id FROM starred_items WHERE item_id = ? LIMIT 1`)
-      .get(itemId) as { id: string } | undefined;
+    const result = await client.query(
+      `SELECT id FROM starred_items WHERE item_id = $1 LIMIT 1`,
+      [itemId]
+    );
 
-    return !!row;
+    return result.rows.length > 0;
   } catch (error) {
     logger.error(`Failed to check if item is starred ${itemId}`, error);
     return false;

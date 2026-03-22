@@ -16,7 +16,7 @@ export async function GET() {
   try {
     await initializeDatabase();
     
-    const budget = getGlobalApiBudget();
+    const budget = await getGlobalApiBudget();
     const today = new Date().toISOString().split('T')[0];
     
     return NextResponse.json({

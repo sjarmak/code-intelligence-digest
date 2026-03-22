@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
       } else {
         // Fall back to search all cached papers
         logger.info('Searching all papers', { question });
-        papers = searchPapers(question, limit);
+        papers = await searchPapers(question, limit);
       }
 
       if (papers.length === 0) {

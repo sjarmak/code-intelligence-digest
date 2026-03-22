@@ -12,6 +12,11 @@ import type { FeedItem } from "../model";
 import { fetchFullText } from "./fulltext";
 import { logger } from "../logger";
 import { searchWeb } from "../retrieval/webSearch";
+import {
+  captureGoalConfigSnapshot,
+  CURATOR_TRACE_SCHEMA_VERSION,
+  type GoalConfigSnapshot,
+} from "../retrieval/curator-trace";
 
 export type RetrievalSource = "postgres_items" | "postgres_papers" | "web";
 
@@ -31,7 +36,71 @@ export interface RetrieveForAgentOptions {
   query?: string | null;
   /** Enrich Postgres docs that lack full text by fetching from URL (max N to avoid slowdown) */
   maxEnrich?: number;
+  /**
+   * When set, populate this object with step-by-step retrieval diagnostics (queries, counts, merges).
+   * Intended for debugging/tuning pipelines; keep off in normal user-facing flows.
+   */
+  trace?: AgentRetrievalTrace | null;
 }
+
+export interface AgentRetrievalTrace {
+  /** Aligns with `CURATOR_TRACE_SCHEMA_VERSION` in `curator-trace.ts`. */
+  schemaVersion?: number;
+  /** Goal config at run time (categories, caps, weights) — for cross-run comparison. */
+  configSnapshot?: GoalConfigSnapshot;
+  goal: AgentGoal;
+  periodDays: number;
+  effectiveQuery?: string;
+  postgres: {
+    categories: Array<{ category: string; itemsLoaded: number; perCategoryCap: number }>;
+    fts?: { query: string; period: "day" | "week" | "month" | "all"; limit: number; hits: number };
+  };
+  web: {
+    timeRange?: "day" | "week" | "month" | "year";
+    competitorDomains?: number;
+    queries: Array<{
+      query: string;
+      topic: "news" | "general";
+      numResults: number;
+      domains?: number;
+      hits: number;
+      kind: "primary" | "include_domains";
+    }>;
+  };
+  merge: {
+    postgresIn: number;
+    webIn: number;
+    mergedUnique: number;
+    /**
+     * @deprecated Same as `caps.maxPostgresDocs` — kept for backward compatibility with saved JSON.
+     * Was misread as “count capped to”; it is the configured cap.
+     */
+    postgresCappedTo: number;
+    /**
+     * @deprecated Same as `caps.maxWebDocs`.
+     */
+    webCappedTo: number;
+    /** Configured per-source ceilings (from `retrievalStrategies`). */
+    caps?: { maxPostgresDocs: number; maxWebDocs: number };
+    /** Docs that survived merge into the dedupe map (by primary source). */
+    countsMerged?: { postgres: number; web: number };
+    /** Dropped by blockedDomains / excludeSelfDomains before merge. */
+    blockedDropped: { postgres: number; web: number };
+    dedupedByIdOrUrl: number;
+  };
+  date: {
+    cutoffIso: string;
+    requirePublishedDate: boolean;
+    beforeFilter: number;
+    afterHydrate: number;
+    afterFilter: number;
+    droppedMissingDate?: number;
+    droppedTooOld?: number;
+    inferredDatesApplied?: number;
+  };
+}
+
+export type { GoalConfigSnapshot } from "../retrieval/curator-trace";
 
 /** Map periodDays to FTS period. Use "month" for 8–90 days so we never pass "all" when user requested a time window. */
 function periodDaysToFtsPeriod(periodDays: number): "day" | "week" | "month" | "all" {
@@ -68,11 +137,22 @@ async function retrieveFromPostgres(
     options.query?.trim() ||
     config.postgresQueryTerms.slice(0, 8).join(" ");
 
+  const trace = options.trace ?? null;
+  if (trace) {
+    trace.effectiveQuery = effectiveQuery;
+    trace.postgres.categories = [];
+  }
+
   const byId = new Map<string, RetrievedDoc>();
 
   for (const category of config.primaryCategories) {
     const items = await loadItemsByCategory(category, periodDays);
     const ordered = items.slice(0, perCategory);
+    trace?.postgres.categories.push({
+      category,
+      itemsLoaded: ordered.length,
+      perCategoryCap: perCategory,
+    });
     for (const item of ordered) {
       if (byId.has(item.id)) continue;
       byId.set(item.id, feedItemToRetrievedDoc(item));
@@ -81,10 +161,14 @@ async function retrieveFromPostgres(
 
   if (effectiveQuery) {
     const period = periodDaysToFtsPeriod(periodDays);
+    const ftsLimit = Math.ceil(maxDocs / 2);
     const searchResults = await dbFullTextSearch(effectiveQuery, {
       period,
-      limit: Math.ceil(maxDocs / 2),
+      limit: ftsLimit,
     });
+    if (trace) {
+      trace.postgres.fts = { query: effectiveQuery, period, limit: ftsLimit, hits: searchResults.length };
+    }
     for (const r of searchResults) {
       if (byId.has(r.id)) continue;
       byId.set(r.id, {
@@ -156,6 +240,12 @@ async function retrieveFromWeb(
 
   const effectivePeriodDays = options.periodDays ?? config.timeHorizonDays;
   const timeRange = periodDaysToWebTimeRange(effectivePeriodDays);
+  const trace = options.trace ?? null;
+  if (trace) {
+    trace.web.timeRange = timeRange;
+    trace.web.competitorDomains = domains?.length;
+    trace.web.queries = [];
+  }
 
   for (const q of queries) {
     if (byUrl.size >= maxWeb) break;
@@ -164,6 +254,14 @@ async function retrieveFromWeb(
       domains: domains?.slice(0, 100),
       topic: goal === "market_brief" ? "news" : "general",
       timeRange,
+    });
+    trace?.web.queries.push({
+      query: q,
+      topic: goal === "market_brief" ? "news" : "general",
+      numResults: numPerQuery,
+      domains: domains ? Math.min(100, domains.length) : undefined,
+      hits: results.length,
+      kind: "primary",
     });
     for (const r of results) {
       const key = normalizeUrl(r.url);
@@ -197,6 +295,14 @@ async function retrieveFromWeb(
         domains: includeDomains.slice(0, 20),
         topic: "general",
         timeRange,
+      });
+      trace?.web.queries.push({
+        query: q,
+        topic: "general",
+        numResults: numPerInclude,
+        domains: Math.min(20, includeDomains.length),
+        hits: results.length,
+        kind: "include_domains",
       });
       for (const r of results) {
         const key = normalizeUrl(r.url);
@@ -242,7 +348,9 @@ function parseDateLike(raw: string | undefined): Date | undefined {
 }
 
 function inferDateFromDocText(doc: RetrievedDoc): Date | undefined {
-  const text = `${doc.url ?? ""} ${doc.title} ${doc.snippet ?? ""} ${doc.content ?? ""}`;
+  // Keep inference conservative: URL/title/snippet often contain publication dates,
+  // while full content frequently mentions historical dates that should not age out a fresh post.
+  const text = `${doc.url ?? ""} ${doc.title} ${doc.snippet ?? ""}`;
   const patterns = [
     /\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b/,
     /\b(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])\b/,
@@ -257,6 +365,19 @@ function inferDateFromDocText(doc: RetrievedDoc): Date | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Choose a conservative effective date for filtering:
+ * - Use provider date when it's the only signal.
+ * - If text/URL contains an explicit date and it is older than provider date,
+ *   prefer the older date to avoid "freshened" evergreen pages leaking into short windows.
+ */
+export function effectivePublishedAtForFiltering(doc: RetrievedDoc): Date | undefined {
+  const inferred = inferDateFromDocText(doc);
+  if (!doc.publishedAt) return inferred;
+  if (!inferred) return doc.publishedAt;
+  return inferred.getTime() < doc.publishedAt.getTime() ? inferred : doc.publishedAt;
 }
 
 /** Return true if url's host equals or ends with any of the given domains (e.g. instagram.com matches www.instagram.com). */
@@ -292,7 +413,8 @@ function filterDocsByDomain(
 export function mergeRetrievedDocs(
   postgresDocs: RetrievedDoc[],
   webDocs: RetrievedDoc[],
-  goal: AgentGoal
+  goal: AgentGoal,
+  trace?: AgentRetrievalTrace | null
 ): RetrievedDoc[] {
   const config = getAgentGoalConfig(goal);
   const maxPostgres = config.retrievalStrategies.maxPostgresDocs;
@@ -300,25 +422,54 @@ export function mergeRetrievedDocs(
 
   const filteredPostgres = filterDocsByDomain(postgresDocs, goal);
   const filteredWeb = filterDocsByDomain(webDocs, goal);
+  const postgresBlockedDropped = postgresDocs.length - filteredPostgres.length;
+  const webBlockedDropped = webDocs.length - filteredWeb.length;
 
   const byKey = new Map<string, RetrievedDoc>();
   const seenUrls = new Set<string>();
+  let deduped = 0;
+
+  let postgresMergedCount = 0;
+  let webMergedCount = 0;
 
   for (const doc of filteredPostgres.slice(0, maxPostgres)) {
     const key = doc.id ?? `url:${doc.url ? normalizeUrl(doc.url) : doc.title}`;
-    if (byKey.has(key)) continue;
+    if (byKey.has(key)) {
+      deduped++;
+      continue;
+    }
     const urlKey = doc.url ? normalizeUrl(doc.url) : "";
-    if (urlKey && seenUrls.has(urlKey)) continue;
+    if (urlKey && seenUrls.has(urlKey)) {
+      deduped++;
+      continue;
+    }
     if (urlKey) seenUrls.add(urlKey);
     byKey.set(key, { ...doc, metadata: { ...doc.metadata, primarySource: "postgres" } });
+    postgresMergedCount++;
   }
 
   for (const doc of filteredWeb.slice(0, maxWeb)) {
     const urlKey = doc.url ? normalizeUrl(doc.url) : "";
     const key = urlKey || `web:${doc.title}`;
-    if (byKey.has(key) || (urlKey && seenUrls.has(urlKey))) continue;
+    if (byKey.has(key) || (urlKey && seenUrls.has(urlKey))) {
+      deduped++;
+      continue;
+    }
     if (urlKey) seenUrls.add(urlKey);
     byKey.set(key, { ...doc, metadata: { ...doc.metadata, primarySource: "web" } });
+    webMergedCount++;
+  }
+
+  if (trace) {
+    trace.merge.postgresIn = postgresDocs.length;
+    trace.merge.webIn = webDocs.length;
+    trace.merge.postgresCappedTo = maxPostgres;
+    trace.merge.webCappedTo = maxWeb;
+    trace.merge.caps = { maxPostgresDocs: maxPostgres, maxWebDocs: maxWeb };
+    trace.merge.countsMerged = { postgres: postgresMergedCount, web: webMergedCount };
+    trace.merge.mergedUnique = byKey.size;
+    trace.merge.blockedDropped = { postgres: postgresBlockedDropped, web: webBlockedDropped };
+    trace.merge.dedupedByIdOrUrl = deduped;
   }
 
   return Array.from(byKey.values());
@@ -383,34 +534,55 @@ export async function enrichWithFullText(
  */
 function filterRetrievedDocsByDate(
   docs: RetrievedDoc[],
-  periodDays: number
+  periodDays: number,
+  trace?: AgentRetrievalTrace | null
 ): RetrievedDoc[] {
   const cutoffMs = Date.now() - periodDays * 24 * 60 * 60 * 1000;
   const requireDate = periodDays <= 31;
-  return docs.filter((doc) => {
-    if (!doc.publishedAt) return !requireDate;
-    return doc.publishedAt.getTime() >= cutoffMs;
+  let droppedMissingDate = 0;
+  let droppedTooOld = 0;
+  const filtered = docs.filter((doc) => {
+    const effectiveDate = effectivePublishedAtForFiltering(doc);
+    if (!effectiveDate) {
+      if (requireDate) droppedMissingDate++;
+      return !requireDate;
+    }
+    const ok = effectiveDate.getTime() >= cutoffMs;
+    if (!ok) droppedTooOld++;
+    return ok;
   });
+  if (trace) {
+    trace.date.droppedMissingDate = droppedMissingDate;
+    trace.date.droppedTooOld = droppedTooOld;
+  }
+  return filtered;
 }
 
 function hydrateMissingDates(
   docs: RetrievedDoc[],
   periodDays: number,
+  trace?: AgentRetrievalTrace | null
 ): RetrievedDoc[] {
   // Date filtering is strict for month-or-shorter windows. Infer dates from URL/title/snippet
   // so relevant web/blog results aren't discarded solely because provider metadata is sparse.
   if (periodDays > 31) return docs;
 
-  return docs.map((doc) => {
+  let inferredCount = 0;
+  const out = docs.map((doc) => {
     if (doc.publishedAt) return doc;
     const inferred = inferDateFromDocText(doc);
     if (!inferred) return doc;
+    inferredCount++;
     return {
       ...doc,
       publishedAt: inferred,
       metadata: { ...doc.metadata, dateInferred: true },
     };
   });
+  if (trace) {
+    trace.date.inferredDatesApplied = inferredCount;
+  }
+  return out;
 }
 
 /**
@@ -423,15 +595,48 @@ export async function retrieveForAgent(
 ): Promise<RetrievedDoc[]> {
   const config = getAgentGoalConfig(goal);
   const periodDays = options.periodDays ?? config.timeHorizonDays;
+  const trace = options.trace;
+  if (trace) {
+    trace.schemaVersion = CURATOR_TRACE_SCHEMA_VERSION;
+    trace.configSnapshot = captureGoalConfigSnapshot(goal);
+    trace.goal = goal;
+    trace.periodDays = periodDays;
+    trace.postgres = trace.postgres ?? { categories: [] };
+    trace.web = trace.web ?? { queries: [] };
+    trace.merge = trace.merge ?? {
+      postgresIn: 0,
+      webIn: 0,
+      mergedUnique: 0,
+      postgresCappedTo: 0,
+      webCappedTo: 0,
+      blockedDropped: { postgres: 0, web: 0 },
+      dedupedByIdOrUrl: 0,
+    };
+    const cutoffMs = Date.now() - periodDays * 24 * 60 * 60 * 1000;
+    trace.date = trace.date ?? {
+      cutoffIso: new Date(cutoffMs).toISOString(),
+      requirePublishedDate: periodDays <= 31,
+      beforeFilter: 0,
+      afterHydrate: 0,
+      afterFilter: 0,
+    };
+  }
 
   const [postgresDocs, webDocs] = await Promise.all([
     retrieveFromPostgres(goal, options),
     retrieveFromWeb(goal, options),
   ]);
 
-  const merged = mergeRetrievedDocs(postgresDocs, webDocs, goal);
-  const hydrated = hydrateMissingDates(merged, periodDays);
-  const dateFiltered = filterRetrievedDocsByDate(hydrated, periodDays);
+  const merged = mergeRetrievedDocs(postgresDocs, webDocs, goal, trace);
+  const hydrated = hydrateMissingDates(merged, periodDays, trace);
+  if (trace) {
+    trace.date.beforeFilter = merged.length;
+    trace.date.afterHydrate = hydrated.length;
+  }
+  const dateFiltered = filterRetrievedDocsByDate(hydrated, periodDays, trace);
+  if (trace) {
+    trace.date.afterFilter = dateFiltered.length;
+  }
 
   const maxEnrich = options.maxEnrich ?? 0;
   if (maxEnrich > 0) {

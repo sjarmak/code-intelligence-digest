@@ -11,7 +11,7 @@ import fs from "fs";
 import path from "path";
 import { auth } from "@/src/auth";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { getReport, useReportDb } from "@/src/lib/agents/report-storage";
+import { getReport, isAgentReportsDbEnabled } from "@/src/lib/agents/report-storage";
 import {
   extractTakeawaysAndLinks,
   postSlackMessage,
@@ -243,7 +243,7 @@ async function fetchReportContent(
 ): Promise<{ goal: string; id: string; content: string; generatedAt: string } | null> {
   if (!VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return null;
 
-  if (useReportDb()) {
+  if (isAgentReportsDbEnabled()) {
     await initializeDatabase();
     const row = await getReport(goal, id, userId);
     return row;

@@ -67,7 +67,12 @@ export async function buildAgentShortlist(
     return [];
   }
   if (!hasLLMConfigured()) {
-    throw new Error("LLM required for agent shortlist. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (and optionally DIGEST_QUALITY_MODEL).");
+    const sorted = [...docs].sort((a, b) => (b.agentScore ?? 0) - (a.agentScore ?? 0));
+    return sorted.slice(0, limit).map((doc, idx) => ({
+      doc,
+      rank: idx + 1,
+      selected: true,
+    }));
   }
 
   const candidateList = docs.slice(0, 40).map((d, i) => {

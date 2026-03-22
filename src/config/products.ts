@@ -478,6 +478,21 @@ export const PRODUCTS: readonly Product[] = [
     isCompetitor: true,
     vendor: "Kilo",
   },
+  {
+    id: "moderne",
+    name: "Moderne",
+    aliases: [
+      "moderne",
+      "moderne ai",
+      "moderne platform",
+      "openrewrite",
+      "open rewrite",
+    ],
+    category: "code_search",
+    isOwnProduct: false,
+    isCompetitor: true,
+    vendor: "Moderne",
+  },
 
   // ============================================
   // CODE REVIEW (Competitors)
@@ -715,6 +730,7 @@ const PRODUCT_PRIORITY: Record<string, ProductPriority> = {
   // Major competitors / own products in coding workflows & context management
   cursor: "tier1",
   "augment-code": "tier1",
+  moderne: "tier1",
   sourcebot: "tier1",
   "claude-code": "tier1",
   "gemini-cli": "tier1",
@@ -731,7 +747,12 @@ export function getProductPriority(id: string): ProductPriority {
 }
 
 // Tools that provide deep code/context capabilities
-const TOOL_PRODUCTS = new Set<string>(["cursor", "sourcebot", "augment-code"]);
+const TOOL_PRODUCTS = new Set<string>([
+  "cursor",
+  "sourcebot",
+  "augment-code",
+  "moderne",
+]);
 
 // Agents/clients that use tools (CLI agents, assistants, etc.)
 const AGENT_PRODUCTS = new Set<string>([
@@ -825,4 +846,3 @@ export function computeProductBoost(
     tags: detectedProductIds,
   };
 }
-

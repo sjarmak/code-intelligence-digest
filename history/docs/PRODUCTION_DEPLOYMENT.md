@@ -4,14 +4,12 @@
 
 ### Database Storage
 
-The app uses a **shared database** approach:
+The app uses **PostgreSQL everywhere** (development + production).
 
-- **Development**: Uses SQLite (stored in `.data/digest.db`)
-- **Production (Render)**: Uses PostgreSQL (via `DATABASE_URL` environment variable)
+- **Local development**: set `LOCAL_DATABASE_URL` (see `docker-compose.yml` / `npm run db:start`)
+- **Production (Render)**: set `DATABASE_URL`
 
-The database driver is automatically detected based on the presence of `DATABASE_URL`:
-- If `DATABASE_URL` is set → PostgreSQL (production)
-- Otherwise → SQLite (development)
+There is **no SQLite fallback** in the application database layer.
 
 ### Saved Items & Digest Items
 
@@ -48,7 +46,7 @@ The app uses **NextAuth v5** with **Google OAuth** (`src/auth.ts`). When enabled
 ### Local vs Production
 
 **Local Development:**
-- SQLite database in `.data/digest.db`
+- PostgreSQL (typically Docker) via `LOCAL_DATABASE_URL`
 - Data is local to your machine
 - Each developer has their own database
 

@@ -15,7 +15,7 @@
  * @deprecated This module is deprecated. Use `daily-sync.ts` instead, which provides:
  * - State management with resume capability (survives restarts)
  * - Better error handling and rate limiting
- * - Database driver abstraction for PostgreSQL/SQLite compatibility
+ * - PostgreSQL-backed persistence
  * - Incremental sync with continuation tokens
  * - Shared state management via sync-state.ts
  *

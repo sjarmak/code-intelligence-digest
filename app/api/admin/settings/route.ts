@@ -20,7 +20,8 @@ export async function GET(): Promise<NextResponse> {
   if (blocked) return blocked;
 
   try {
-    const enableItemRelevanceTuning = getAdminSetting('enable_item_relevance_tuning') === 'true';
+    const enableItemRelevanceTuning =
+      (await getAdminSetting('enable_item_relevance_tuning')) === 'true';
 
     const settings: SettingsResponse = {
       enableItemRelevanceTuning,
@@ -50,12 +51,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Update enableItemRelevanceTuning
     if ('enableItemRelevanceTuning' in body) {
       const enabled = body.enableItemRelevanceTuning === true;
-      setAdminSetting('enable_item_relevance_tuning', enabled ? 'true' : 'false');
+      await setAdminSetting('enable_item_relevance_tuning', enabled ? 'true' : 'false');
       logger.info(`Updated enableItemRelevanceTuning: ${enabled}`);
     }
 
     // Return updated settings
-    const enableItemRelevanceTuning = getAdminSetting('enable_item_relevance_tuning') === 'true';
+    const enableItemRelevanceTuning =
+      (await getAdminSetting('enable_item_relevance_tuning')) === 'true';
 
     const settings: SettingsResponse = {
       enableItemRelevanceTuning,

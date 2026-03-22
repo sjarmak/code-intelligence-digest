@@ -5,8 +5,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from './logger';
-import { getSqlite } from './db/index';
-import { detectDriver, getDbClient } from './db/driver';
+import { getDbClient } from './db/driver';
+
+/**
+ * Vitest runs without a configured Postgres URL for many unit tests.
+ * In that environment, persist quotas in-memory so request validation tests
+ * don't depend on DB connectivity.
+ */
+const USE_MEMORY_QUOTA = process.env.VITEST === 'true';
+const memoryQuotaUsed = new Map<string, number>();
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -81,7 +88,6 @@ async function getUsageRecord(
   clientIP: string,
   window: 'hour' | 'day'
 ): Promise<UsageQuota> {
-  const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
 
   // Calculate window start time
@@ -91,70 +97,49 @@ async function getUsageRecord(
 
   const key = `${endpoint}:${clientIP}:${window}:${windowStart}`;
 
-  if (driver === 'postgres') {
-    const client = await getDbClient();
-    const result = await client.query(
-      `SELECT used FROM usage_quota WHERE key = $1`,
-      [key]
-    );
+  const limit = RATE_LIMITS[endpoint]?.[window === 'hour' ? 'hourly' : 'daily'] || 100;
 
-    if (result.rows.length > 0) {
-      return {
-        endpoint,
-        window,
-        limit: RATE_LIMITS[endpoint]?.[window === 'hour' ? 'hourly' : 'daily'] || 100,
-        used: result.rows[0].used as number,
-        resetAt,
-      };
-    }
-
-    // Initialize new record
-    await client.run(
-      `INSERT INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at)
-       VALUES ($1, $2, $3, $4, 0, $5, $6)
-       ON CONFLICT (key) DO NOTHING`,
-      [key, endpoint, clientIP, window, resetAt, now]
-    );
-
+  if (USE_MEMORY_QUOTA) {
     return {
       endpoint,
       window,
-      limit: RATE_LIMITS[endpoint]?.[window === 'hour' ? 'hourly' : 'daily'] || 100,
-      used: 0,
-      resetAt,
-    };
-  } else {
-    // SQLite
-    const sqlite = getSqlite();
-    const row = sqlite
-      .prepare('SELECT used FROM usage_quota WHERE key = ?')
-      .get(key) as { used: number } | undefined;
-
-    if (row) {
-      return {
-        endpoint,
-        window,
-        limit: RATE_LIMITS[endpoint]?.[window === 'hour' ? 'hourly' : 'daily'] || 100,
-        used: row.used,
-        resetAt,
-      };
-    }
-
-    // Initialize new record
-    sqlite
-      .prepare(
-        'INSERT OR IGNORE INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at) VALUES (?, ?, ?, ?, 0, ?, ?)'
-      )
-      .run(key, endpoint, clientIP, window, resetAt, now);
-
-    return {
-      endpoint,
-      window,
-      limit: RATE_LIMITS[endpoint]?.[window === 'hour' ? 'hourly' : 'daily'] || 100,
-      used: 0,
+      limit,
+      used: memoryQuotaUsed.get(key) ?? 0,
       resetAt,
     };
   }
+
+  const client = await getDbClient();
+  const result = await client.query(
+    `SELECT used FROM usage_quota WHERE key = $1`,
+    [key]
+  );
+
+  if (result.rows.length > 0) {
+    return {
+      endpoint,
+      window,
+      limit,
+      used: result.rows[0].used as number,
+      resetAt,
+    };
+  }
+
+  // Initialize new record
+  await client.run(
+    `INSERT INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at)
+     VALUES ($1, $2, $3, $4, 0, $5, $6)
+     ON CONFLICT (key) DO NOTHING`,
+    [key, endpoint, clientIP, window, resetAt, now]
+  );
+
+  return {
+    endpoint,
+    window,
+    limit,
+    used: 0,
+    resetAt,
+  };
 }
 
 /**
@@ -165,7 +150,6 @@ async function incrementUsage(
   clientIP: string,
   window: 'hour' | 'day'
 ): Promise<UsageQuota> {
-  const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
 
   const windowMs = window === 'hour' ? 3600 * 1000 : 24 * 3600 * 1000;
@@ -174,25 +158,22 @@ async function incrementUsage(
 
   const key = `${endpoint}:${clientIP}:${window}:${windowStart}`;
 
-  if (driver === 'postgres') {
-    const client = await getDbClient();
-    await client.run(
-      `INSERT INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at)
-       VALUES ($1, $2, $3, $4, 1, $5, $6)
-       ON CONFLICT (key) DO UPDATE SET used = usage_quota.used + 1`,
-      [key, endpoint, clientIP, window, resetAt, now]
-    );
-  } else {
-    const sqlite = getSqlite();
-    sqlite
-      .prepare(
-        'INSERT INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at) VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT(key) DO UPDATE SET used = used + 1'
-      )
-      .run(key, endpoint, clientIP, window, resetAt, now);
+  if (USE_MEMORY_QUOTA) {
+    const prev = memoryQuotaUsed.get(key) ?? 0;
+    memoryQuotaUsed.set(key, prev + 1);
+    const quota = await getUsageRecord(endpoint, clientIP, window);
+    return { ...quota, used: quota.used };
   }
 
-  const quota = await getUsageRecord(endpoint, clientIP, window);
-  return { ...quota, used: quota.used + 1 };
+  const client = await getDbClient();
+  await client.run(
+    `INSERT INTO usage_quota (key, endpoint, client_ip, window_type, used, reset_at, created_at)
+     VALUES ($1, $2, $3, $4, 1, $5, $6)
+     ON CONFLICT (key) DO UPDATE SET used = usage_quota.used + 1`,
+    [key, endpoint, clientIP, window, resetAt, now]
+  );
+
+  return getUsageRecord(endpoint, clientIP, window);
 }
 
 /**

@@ -3,8 +3,8 @@
  * Allows tuning how much each source/feed contributes to scoring
  */
 
-import { getSqlite } from "./index";
 import { logger } from "../logger";
+import { getDbClient } from "./driver";
 
 export type SourceRelevance = 0 | 1 | 2 | 3;
 
@@ -23,14 +23,13 @@ export async function setSourceRelevance(
   relevance: SourceRelevance
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
     const now = Math.floor(Date.now() / 1000);
 
-    sqlite
-      .prepare(
-        `UPDATE feeds SET source_relevance = ?, updated_at = ? WHERE stream_id = ?`
-      )
-      .run(relevance, now, streamId);
+    await client.run(
+      `UPDATE feeds SET source_relevance = $1, updated_at = $2 WHERE stream_id = $3`,
+      [relevance, now, streamId]
+    );
 
     logger.info(`Set source relevance`, {
       streamId,
@@ -46,14 +45,13 @@ export async function setSourceRelevance(
 /**
  * Get relevance rating for a source
  */
-export async function getSourceRelevance(
-  streamId: string
-): Promise<SourceRelevance> {
+export async function getSourceRelevance(streamId: string): Promise<SourceRelevance> {
   try {
-    const sqlite = getSqlite();
-    const feed = sqlite
-      .prepare(`SELECT source_relevance FROM feeds WHERE stream_id = ?`)
-      .get(streamId) as { source_relevance: number } | undefined;
+    const client = await getDbClient();
+    const result = await client.query(`SELECT source_relevance FROM feeds WHERE stream_id = $1`, [
+      streamId,
+    ]);
+    const feed = result.rows[0] as { source_relevance: number } | undefined;
 
     return (feed?.source_relevance ?? 1) as SourceRelevance;
   } catch (error) {
@@ -70,13 +68,13 @@ export async function getSourceRelevance(
  */
 export async function getAllSourcesWithRelevance() {
   try {
-    const sqlite = getSqlite();
-    const sources = sqlite
-      .prepare(
-        `SELECT stream_id, canonical_name, source_relevance, default_category 
-         FROM feeds ORDER BY canonical_name ASC`
-      )
-      .all() as Array<{
+    const client = await getDbClient();
+    const result = await client.query(
+      `SELECT stream_id, canonical_name, source_relevance, default_category 
+       FROM feeds ORDER BY canonical_name ASC`
+    );
+
+    const sources = result.rows as Array<{
       stream_id: string;
       canonical_name: string;
       source_relevance: number;

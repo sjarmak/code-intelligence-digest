@@ -102,7 +102,31 @@ Rules:
 - Keep variety across domains when the input already contains domain-diverse ideas.
 - Output valid markdown with this exact section header: ## Prioritized Ideas.
 - For each idea use: ### N. Title, then bullet lines for Segment/persona, Stage, Thesis, Why now, Core claim, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Primary format, Recommended venue, Channel strategy, Setup plan (bullets), Key insights (bullets), Content outline (bullets), Sources (links).
+- Do NOT include a "Dropped ideas" section or prose about excluded ideas in the final report; keep exclusions in internal/debug metadata only.
 - Do not invent sources or URLs; use only those provided. Preserve links from the context when possible.`;
+
+function stripDroppedIdeasSection(markdown: string): string {
+  if (!markdown) return markdown;
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of lines) {
+    const isDroppedHeader =
+      /^\s*(#{1,6}\s*)?dropped ideas\b/i.test(line) ||
+      /^\s*dropped ideas\s*:/i.test(line);
+    if (isDroppedHeader) {
+      skipping = true;
+      continue;
+    }
+    const startsNewIdea = /^\s*###\s+\d+\./.test(line);
+    const startsMajorSection = /^\s*##\s+/.test(line);
+    if (skipping && (startsNewIdea || startsMajorSection)) {
+      skipping = false;
+    }
+    if (!skipping) out.push(line);
+  }
+  return out.join("\n").trim();
+}
 
 function buildCompetitorIntelContext(items: RankedCompetitorIntelItem[], periodDays: number): string {
   const list = items.slice(0, MAX_COMPETITOR_ITEMS).map((d, i) => ({
@@ -165,7 +189,7 @@ Then write ## Executive Delta, ## Watch Items, and if applicable ## Invalidation
     });
     const raw = (res.content ?? "").trim();
     if (!raw) return null;
-    return raw;
+    return stripDroppedIdeasSection(raw);
   } catch (e) {
     logger.warn("LLM market brief synthesis failed, will use template fallback", {
       error: e instanceof Error ? e.message : String(e),

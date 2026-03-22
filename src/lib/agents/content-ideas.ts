@@ -1,5 +1,14 @@
-import { retrieveForAgent } from "../pipeline/agentRetrieval";
+import { retrieveForAgent, type AgentRetrievalTrace, type RetrievedDoc } from "../pipeline/agentRetrieval";
+import type { AgentGoal } from "../../config/agents";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
+import {
+  CURATOR_TRACE_SCHEMA_VERSION,
+  createEmptyRankingTrace,
+  rankingTraceToSteps,
+  retrievalTraceToSteps,
+  type AgentRankingTrace,
+  type CuratorTraceStep,
+} from "../retrieval/curator-trace";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
 import { classifySourceTypeByDomain, getDomainFromUrl as getDomainFromUrlCompetitor } from "../../config/competitor-intel";
 import {
@@ -7,6 +16,7 @@ import {
   type IntegrationOpportunityLevel,
 } from "./sourcegraph-integration-opportunity";
 import { AgentScoringDebugger } from "./agent-scoring-debug";
+import { withLangSmithTraceable } from "../langsmith";
 
 /**
  * Content ideas: when LLM is configured, "Generate reports" uses retrieve → rank → shortlist (LLM)
@@ -63,6 +73,11 @@ export interface ContentIdeasOutput {
   /** When set, rendered as "Period: last N days" in the report body. */
   periodDays?: number;
   playbook_confidence_flags?: Record<string, "high" | "medium" | "low">;
+  /**
+   * End-to-end pipeline diagnostics: Postgres + web retrieval, merge/date gates, ranking pool, and ideation filters.
+   * Only populated when `generateContentIdeas({ pipelineTrace: true })` or `GET /api/agents/content-ideas?trace=1`.
+   */
+  pipeline_trace?: ContentIdeasPipelineTrace;
   selection_debug?: {
     target_mix: {
       beachhead: number;
@@ -81,8 +96,65 @@ export interface ContentIdeasOutput {
       total: number;
     };
     achieved_segment_counts: Record<string, number>;
+    dropped_candidates?: string[];
   };
   ideas: ContentIdea[];
+}
+
+export interface ContentIdeasPipelineTrace {
+  /** Aligns with `CURATOR_TRACE_SCHEMA_VERSION`. */
+  schemaVersion?: number;
+  focus?: string | null;
+  retrieval: {
+    market_brief: AgentRetrievalTrace;
+    competitor_intel: AgentRetrievalTrace;
+  };
+  /** Top-N ranked docs with scores (content_ideas goal). */
+  ranking: AgentRankingTrace;
+  pool: {
+    after_dedupe_urls: number;
+    ranked_count: number;
+  };
+  candidate_gates: Array<{
+    name: string;
+    passed: number;
+    dropped: number;
+  }>;
+  selection: {
+    min_score_threshold: number;
+    selection_pool_size: number;
+    selected_top_urls: string[];
+  };
+  /** Counts after ranking → gates → ideation → final (for tuning downstream filters). */
+  refinement_stages?: Array<{ stage: string; count: number }>;
+  /** Ordered steps: retrieval (×2) → ranking sample → refinement — for UI / logs. */
+  interpretable_steps?: CuratorTraceStep[];
+}
+
+function createEmptyAgentRetrievalTrace(goal: AgentGoal, periodDays: number): AgentRetrievalTrace {
+  const cutoffMs = Date.now() - periodDays * 24 * 60 * 60 * 1000;
+  return {
+    goal,
+    periodDays,
+    postgres: { categories: [] },
+    web: { queries: [] },
+    merge: {
+      postgresIn: 0,
+      webIn: 0,
+      mergedUnique: 0,
+      postgresCappedTo: 0,
+      webCappedTo: 0,
+      blockedDropped: { postgres: 0, web: 0 },
+      dedupedByIdOrUrl: 0,
+    },
+    date: {
+      cutoffIso: new Date(cutoffMs).toISOString(),
+      requirePublishedDate: periodDays <= 31,
+      beforeFilter: 0,
+      afterHydrate: 0,
+      afterFilter: 0,
+    },
+  };
 }
 
 export type ContentSeedType = "case_study" | "blog_post" | "newsletter_feature" | "webinar" | "research_report" | "benchmark" | "other";
@@ -129,8 +201,11 @@ const SOURCEGRAPH_PRODUCT_SUITE_SIGNALS = [
  * enterprise dev, competitors, or control plane. Excludes web-search noise that has no real
  * relevance to our positioning or product.
  */
-function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
+export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
   const text = textOf(doc);
+  const title = (doc.title ?? "").toLowerCase();
+  const snippet = text.slice(0, 1200);
+
   const competitive =
     /(github|copilot|cursor|gitlab|augment|moderne|context engine|repo context)/.test(text);
   const enterprise =
@@ -147,7 +222,59 @@ function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
     /(launch|release|\bga\b|pricing|customer|case study|benchmark|coding assistant|developer platform)/.test(
       text,
     );
-  return competitive || enterprise || messageImpact || controlPlane || evidenceStyle;
+  const devWorkflow =
+    /(developer platform|platform engineering|internal developer|idp|devops|sre|monorepo|multi-repo|large codebase|codebase health|engineering velocity)/.test(
+      text,
+    );
+
+  const strongMatch =
+    competitive || enterprise || messageImpact || controlPlane || devWorkflow;
+
+  const baseMatch = strongMatch || evidenceStyle;
+
+  if (!baseMatch) return false;
+
+  if (strongMatch) return true;
+
+  // evidenceStyle only: drop pure vendor model-release churn with no enterprise/dev workflow hook.
+  const vendorModelChurn =
+    /^(announcing|introducing|meet|say hello to|we('re| are) launching)\b/.test(title.trim()) ||
+    /\b(anthropic|claude(\s+\d|\b)|openai|gpt-\d|gemini|deepseek)\b.*\b(model|release|available|now)\b/.test(
+      title,
+    );
+  const hasWorkflowHook =
+    /(enterprise|compliance|security|benchmark|case study|mcp|code search|deep search|batch changes|cursor|copilot|gitlab|github enterprise|self-hosted|byok|api pricing|customer|developer platform|coding assistant|cross-repo)/.test(
+      `${title} ${snippet}`,
+    );
+  if (vendorModelChurn && !hasWorkflowHook) return false;
+
+  return true;
+}
+
+function hasBroadSourcegraphNarrativeFit(doc: AgentRankedDoc): boolean {
+  const text = textOf(doc);
+  const title = (doc.title ?? "").toLowerCase();
+  const durableNarrative =
+    /(compliance|security|audit|byok|self-hosted|self hosted|rbac|governance|policy|mcp|model context protocol|context layer|repo context|cross-repo|code search|deep search|batch changes|migration|remediation|verification|regression|impact analysis|onboarding|knowledge transfer|monorepo|multi-repo|large codebase|platform engineering|developer platform|engineering velocity|software lifecycle)/.test(
+      text,
+    );
+
+  if (durableNarrative) return true;
+
+  const genericVendorUpdate =
+    /(launch|release|update|available|now live|broader access|affordable access|general availability|\bga\b|v\d+\b|march 20\d{2} update|modernizing)/.test(
+      `${title} ${text}`,
+    );
+  const weakOperationalTheme =
+    /(cli|command line|terminal|runtime|platform update|release notes|changelog|version upgrade|tooling refresh)/.test(
+      `${title} ${text}`,
+    );
+
+  if (genericVendorUpdate || weakOperationalTheme) return false;
+
+  return /(developer productivity|engineering effectiveness|judgment bottleneck|precision retrieval|context overload)/.test(
+    text,
+  );
 }
 
 const NOISY_DOMAINS = new Set([
@@ -157,6 +284,44 @@ const NOISY_DOMAINS = new Set([
   "click.kit-mail3.com",
   "click.kit-mail.com",
   "link.mail.beehiiv.com",
+  "tech-insider.org",
+]);
+
+const TRUSTED_SECONDARY_DOMAINS = new Set([
+  "infoq.com",
+  "thenewstack.io",
+  "thoughtworks.com",
+  "martinfowler.com",
+  "cncf.io",
+  "cio.com",
+  "techzine.eu",
+  "infoworld.com",
+  "computerworld.com",
+  "theregister.com",
+]);
+
+const PREFERRED_SHORT_WINDOW_TECHNICAL_DOMAINS = new Set([
+  "infoq.com",
+  "thenewstack.io",
+  "thoughtworks.com",
+  "martinfowler.com",
+  "cncf.io",
+  "sourcegraph.com",
+  "github.blog",
+  "blog.cloudflare.com",
+  "cio.com",
+  "infoworld.com",
+  "computerworld.com",
+]);
+
+const WEAK_SHORT_WINDOW_SECONDARY_DOMAINS = new Set([
+  "fastcompany.com",
+  "gitkraken.com",
+  "forbes.com",
+  "venturebeat.com",
+  "entrepreneur.com",
+  "inc.com",
+  "businessinsider.com",
 ]);
 
 /** Domains whose content is often appsec/fuzzing/tooling rather than AI coding workflows; downgrade when doc doesn't mention AI coding. */
@@ -215,6 +380,23 @@ const TITLE_SIMILARITY_STOPWORDS = new Set([
 function sourceFromUrl(url: string | undefined): string {
   const domain = getDomainFromUrlCompetitor(url);
   return domain || "unknown";
+}
+
+function baseDomainFromHost(host: string): string {
+  const clean = host.toLowerCase().replace(/^www\./, "");
+  const parts = clean.split(".").filter(Boolean);
+  if (parts.length <= 2) return clean;
+  return `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
+}
+
+function sourceBaseDomain(url: string | undefined): string {
+  const host = sourceFromUrl(url);
+  return baseDomainFromHost(host);
+}
+
+function isGitHubFamilySource(url: string | undefined): boolean {
+  const base = sourceBaseDomain(url);
+  return base === "github.com" || base === "github.blog";
 }
 
 function canonicalizeUrl(url: string | undefined): string {
@@ -277,22 +459,68 @@ function normalizeTargetSegment(
 }
 
 function detectTopicFrame(text: string): string {
-  if (/(batch changes|codemod|migration|remediation)/.test(text)) {
+  if (hasComplianceControlSignal(text)) {
+    return "Governance, Compliance, and Verification for AI Code Changes";
+  }
+  if (
+    /(privacy|de-anonymization|data exposure|sensitive context|governance risk|agent security|verification)/.test(text) &&
+    /(compliance|audit|policy|security|byok|self-hosted|self hosted)/.test(text)
+  ) {
+    return "Governance, Compliance, and Verification for AI Code Changes";
+  }
+  if (/(deep search|code search|semantic search|cross-repo search)/.test(text)) {
+    return "Code Search, Deep Search, and Repository Context";
+  }
+  if (/(batch changes|codemod|migration|remediation|rollout|upgrade)/.test(text)) {
     return "Cross-Repo Remediation and Migration";
   }
-  if (/(mcp|model context protocol|context layer|repo context)/.test(text)) {
-    return "MCP Context Layer for Enterprise Codebases";
-  }
-  if (hasComplianceControlSignal(text)) {
-    return "Secure and Compliant AI Coding Workflows";
+  if (/(mcp|model context protocol|context layer|repo context|retrieval precision|repository context)/.test(text)) {
+    return "Repository Context and Retrieval Precision for Coding Agents";
   }
   if (/(onboarding|knowledge transfer|legacy|complex codebase|monorepo|multi-repo)/.test(text)) {
     return "Developer Onboarding in Large Codebases";
   }
-  if (/(deep search|code search|semantic search|cross-repo search)/.test(text)) {
-    return "Cross-Repo Code Search and Deep Code Understanding";
+  if (/(governance|compliance|audit|policy|control layer|enterprise controls)/.test(text)) {
+    return "Governance and Auditability for Enterprise Coding Workflows";
   }
-  return "Enterprise Code Intelligence for Modern Development Teams";
+  return "Enterprise Code Intelligence and Governed Development Workflows";
+}
+
+function buildNarrativeTopic(frame: string, text: string): string {
+  switch (frame) {
+    case "Governance, Compliance, and Verification for AI Code Changes":
+      if (/(audit|policy|byok|self-hosted|self hosted|soc ?2|fedramp|iso ?27001)/.test(text)) {
+        return "Audit-Ready AI Code Change Workflows";
+      }
+      return "Governing AI Code Changes Across Large Codebases";
+    case "Code Search, Deep Search, and Repository Context":
+      if (/(developer platform|platform engineering)/.test(text)) {
+        return "Repository Context for Developer Platforms";
+      }
+      if (/(agent|retrieval|mcp|context layer|repository context)/.test(text)) {
+        return "Repository Context as the Control Layer for Coding Agents";
+      }
+      return "Retrieval Precision for Enterprise Codebases";
+    case "Repository Context and Retrieval Precision for Coding Agents":
+      if (/(developer platform|platform engineering)/.test(text)) {
+        return "Why Developer Platforms Need a Repository Context Layer";
+      }
+      return "Repository Context as the Control Layer for Coding Agents";
+    case "Cross-Repo Remediation and Migration":
+      if (/(security|cve|patch|remediation)/.test(text)) {
+        return "Cross-Repo Remediation Workflows with Verification";
+      }
+      if (/(migration|upgrade|deprecation|modernization)/.test(text)) {
+        return "Cross-Repo Upgrade and Migration Workflows";
+      }
+      return "Cross-Repo Change Rollouts Without Regression Blind Spots";
+    case "Developer Onboarding in Large Codebases":
+      return "Onboarding and Knowledge Transfer in Large Codebases";
+    case "Governance and Auditability for Enterprise Coding Workflows":
+      return "Governance and Auditability for Enterprise Coding Workflows";
+    default:
+      return "Enterprise Code Intelligence for Governed Development Workflows";
+  }
 }
 
 function ideaFrameKey(idea: Pick<ContentIdea, "title" | "thesis" | "core_claim">): string {
@@ -302,14 +530,16 @@ function ideaFrameKey(idea: Pick<ContentIdea, "title" | "thesis" | "core_claim">
 function docSupportsFrame(doc: AgentRankedDoc, frame: string): boolean {
   const text = textOf(doc);
   switch (frame) {
-    case "Secure and Compliant AI Coding Workflows":
+    case "Governance, Compliance, and Verification for AI Code Changes":
       return hasComplianceControlSignal(text);
-    case "MCP Context Layer for Enterprise Codebases":
+    case "Repository Context and Retrieval Precision for Coding Agents":
       return /(mcp|model context protocol|context layer|repo context|agent context)/.test(text);
     case "Cross-Repo Remediation and Migration":
       return /(batch changes|codemod|migration|remediation|large-scale code change)/.test(text);
-    case "Cross-Repo Code Search and Deep Code Understanding":
+    case "Code Search, Deep Search, and Repository Context":
       return /(deep search|code search|semantic search|cross-repo search|symbol search)/.test(text);
+    case "Governance and Auditability for Enterprise Coding Workflows":
+      return /(governance|compliance|audit|policy|enterprise controls|verification)/.test(text);
     case "Developer Onboarding in Large Codebases":
       return /(onboarding|knowledge transfer|legacy|complex codebase|monorepo|multi-repo)/.test(text);
     default:
@@ -350,8 +580,31 @@ function topicKeyFromIdeaTitle(title: string): string {
   return topic.replace(/\s+/g, " ").trim();
 }
 
+function thesisSimilarityKey(thesis: string): string {
+  return thesis
+    .toLowerCase()
+    .replace(/sourcegraph/g, "")
+    .replace(/coding assistants?/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(for|the|and|with|while|to|of|in|at|across|around)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+}
+
+function stableHash(input: string): number {
+  let h = 0;
+  for (let i = 0; i < input.length; i++) {
+    h = (h * 31 + input.charCodeAt(i)) >>> 0;
+  }
+  return h;
+}
+
 function topicFromSourceTitle(title: string): string | null {
   const cleaned = title
+    .replace(/^\s*github\s*-\s*/i, "")
+    .replace(/^\s*gitlab\s*-\s*/i, "")
+    .replace(/^\s*sourcegraph\s*-\s*/i, "")
     .replace(/^\s*(webinar|guide|blog|case study|talk track|brief|playbook)\s*:\s*/i, "")
     .replace(/\s*[-|:]\s*(github|sourcegraph|arxiv|hacker news|hn)\b.*$/i, "")
     .replace(/\s+/g, " ")
@@ -361,18 +614,84 @@ function topicFromSourceTitle(title: string): string | null {
   return cleaned.slice(0, 90);
 }
 
+function shouldPreferBroadThemeTopic(
+  text: string,
+  sourceTitle?: string,
+  sourceUrl?: string,
+): boolean {
+  const domain = sourceFromUrl(sourceUrl);
+  if (isAuthoritativeResearchOrStandardsDomain(domain)) return true;
+
+  const researchHeavyTitle =
+    /(zero-shot|sim2real|ontology|diffusion|multimodal|benchmarking|de-anonymization|inference-driven|representation learning)/i.test(
+      sourceTitle ?? "",
+    );
+  const directWorkflowSignal =
+    /(code|coding|repository|repo|codebase|developer platform|platform engineering|software lifecycle|coding assistant|agentic ai|cross-repo|mcp|batch changes|deep search|code search|compliance|governance)/.test(
+      `${sourceTitle ?? ""} ${text}`,
+    );
+  const genericVendorOrProductTitle =
+    /(\[ai ?news\]|announcing|introducing|launch|launches|release|update|now available|now live|broader access|affordable access|modernizing|march 20\d{2} update|v\d+\b|shifts to coding|pulls ahead|runs large models|growing pains)/i.test(
+      sourceTitle ?? "",
+    );
+  return (researchHeavyTitle && !directWorkflowSignal) || genericVendorOrProductTitle;
+}
+
+function extractIdeaTopic(text: string, sourceTitle?: string, sourceUrl?: string): string {
+  const frame = detectTopicFrame(text);
+  if (shouldPreferBroadThemeTopic(text, sourceTitle, sourceUrl)) {
+    return buildNarrativeTopic(frame, text);
+  }
+  const derivedTopic = sourceTitle ? topicFromSourceTitle(sourceTitle) : null;
+  const productLedDerivedTopic =
+    !!derivedTopic &&
+    /(code search|deep search|repository context|retrieval precision|governance|compliance|batch changes|sourcegraph|gitlab|github|workers ai)/i.test(
+      derivedTopic,
+    );
+  if (derivedTopic && derivedTopic.length >= 18 && !productLedDerivedTopic) return derivedTopic;
+  return buildNarrativeTopic(frame, text);
+}
+
+function toTitleCase(input: string): string {
+  const acronyms = new Set(["ai", "llm", "mcp", "idp", "byok", "rbac", "sdlc"]);
+  const stopwords = new Set(["and", "or", "for", "the", "to", "of", "in", "on", "at", "with"]);
+  return input
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word, index) => {
+      const normalized = word.toLowerCase();
+      if (acronyms.has(normalized)) return normalized.toUpperCase();
+      if (index > 0 && stopwords.has(normalized)) return normalized;
+      if (word.length <= 2) return word.toLowerCase();
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+function polishIdeaTopic(rawTopic: string): string {
+  let topic = rawTopic
+    .replace(/\bcodemod\/codemod\b/gi, "Codemod CLI")
+    .replace(/\bgithub\s*-\s*/gi, "")
+    .replace(/\bgitlab\s*-\s*/gi, "")
+    .replace(/\bsourcegraph\s*-\s*/gi, "")
+    .replace(/\s+[—-]\s+The CLI for Codemods.*$/i, " Codemod Workflows at Scale")
+    .replace(/\s+[—-]\s+/g, ": ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (topic.length > 88) {
+    topic = topic.slice(0, 88).replace(/\s+\S*$/, "");
+  }
+  return toTitleCase(topic);
+}
+
 function buildSourcegraphIdeaTitle(
   _segment: ContentIdea["target_segment"],
   channel: ContentIdea["channel"],
   text: string,
   sourceTitle?: string,
+  sourceUrl?: string,
 ): string {
-  const frame = detectTopicFrame(text);
-  const derivedTopic = sourceTitle ? topicFromSourceTitle(sourceTitle) : null;
-  const safeTopic =
-    derivedTopic && sourceTitle && titleOverlapRatio(derivedTopic, sourceTitle) >= 0.85
-      ? frame
-      : derivedTopic ?? frame;
+  const safeTopic = polishIdeaTopic(extractIdeaTopic(text, sourceTitle, sourceUrl));
 
   const channelVerb: Record<ContentIdea["channel"], string> = {
     whitepaper: "Guide",
@@ -395,24 +714,50 @@ function buildSourcegraphThesis(
   segment: ContentIdea["target_segment"],
   persona: ContentIdea["target_persona"],
   text: string,
+  sourceTitle?: string,
+  sourceUrl?: string,
 ): string {
+  const topic = polishIdeaTopic(extractIdeaTopic(text, sourceTitle, sourceUrl)).toLowerCase();
   const frame = detectTopicFrame(text);
   const segmentContext =
     segment === "Other"
       ? "platform and engineering teams"
       : `${segment} and adjacent regulated-industry teams`;
-  return `Show ${segmentContext} ${persona} buyers how Sourcegraph strengthens ${frame.toLowerCase()} while complementing existing coding assistants.`;
+  const variants =
+    frame === "Cross-Repo Remediation and Migration"
+      ? [
+          `${segmentContext} ${persona} buyers need a repeatable way to execute cross-repo remediation and migration with verification, review, and rollback built in; position Sourcegraph as the governed execution layer around existing assistants.`,
+          `Use ${topic} to show ${segmentContext} ${persona} buyers that assistant suggestions are not enough for large migrations; Sourcegraph adds the search, rollout, and verification workflow needed to ship safely at scale.`,
+        ]
+      : frame === "Repository Context and Retrieval Precision for Coding Agents" ||
+          frame === "Code Search, Deep Search, and Repository Context"
+        ? [
+            `${segmentContext} ${persona} buyers evaluating coding agents need precise repository context before generation; position Sourcegraph as the retrieval and grounding layer that makes assistant workflows reliable in large codebases.`,
+            `Anchor ${topic} on the shift from generic prompts to repository-aware workflows: Sourcegraph gives ${segmentContext} ${persona} buyers the codebase context and verification path that assistant-only tools lack.`,
+          ]
+        : /Governance/.test(frame)
+          ? [
+              `${segmentContext} ${persona} buyers need a way to govern AI-generated code changes with audit-ready controls, policy enforcement, and codebase-wide verification; frame Sourcegraph as the enterprise control layer around existing assistants.`,
+              `Use ${topic} to show ${segmentContext} ${persona} buyers that the real enterprise gap is not generation quality but governed execution, auditability, and verification across the codebase.`,
+            ]
+          : [
+              `For ${segmentContext} ${persona} buyers, position Sourcegraph around ${topic} to execute cross-repo change safely at scale while complementing existing coding assistants.`,
+              `${segmentContext} ${persona} buyers evaluating ${topic} need an approach that connects codebase context, verification, and rollout instead of another assistant surface.`,
+            ];
+  return variants[stableHash(`${topic}|${segment}|${persona}`) % variants.length];
 }
 
 function buildKeyInsights(
   segment: ContentIdea["target_segment"],
   persona: ContentIdea["target_persona"],
   text: string,
+  sourceTitle?: string,
+  sourceUrl?: string,
 ): string[] {
-  const frame = detectTopicFrame(text);
+  const topic = extractIdeaTopic(text, sourceTitle, sourceUrl).toLowerCase();
   return [
     `${segment === "Other" ? "Enterprise platform teams" : segment} ${persona} buyers need reliable cross-repo context, not another assistant surface.`,
-    `Sourcegraph’s differentiation in ${frame.toLowerCase()} should be framed as complementary to Cursor/Copilot/Claude Code.`,
+    `Sourcegraph’s differentiation in ${topic} should be framed as complementary to Cursor/Copilot/Claude Code.`,
     "GTM motion should emphasize enterprise controls (compliance, BYOK/self-hosted, auditability) with concrete operational examples.",
   ];
 }
@@ -422,8 +767,10 @@ function buildContentOutline(
   persona: ContentIdea["target_persona"],
   channel: ContentIdea["channel"],
   text: string,
+  sourceTitle?: string,
+  sourceUrl?: string,
 ): string[] {
-  const frame = detectTopicFrame(text);
+  const topic = extractIdeaTopic(text, sourceTitle, sourceUrl).toLowerCase();
   const channelLabelMap: Record<ContentIdea["channel"], string> = {
     event_talk: "talk",
     webinar: "webinar",
@@ -439,7 +786,7 @@ function buildContentOutline(
   };
   const channelLabel = channelLabelMap[channel];
   return [
-    `Context: why ${segment === "Other" ? "platform teams" : segment} teams care about ${frame.toLowerCase()} now`,
+    `Context: why ${segment === "Other" ? "platform teams" : segment} teams care about ${topic} now`,
     `Problem framing for ${persona}: limits of assistant-only workflows in large, complex codebases`,
     "Sourcegraph POV: use Code Search + Deep Search for accurate context, then Batch Changes for safe large-scale execution.",
     "Proof section: product evidence + customer signal + external market trigger",
@@ -598,9 +945,30 @@ function detectSegment(text: string): ContentIdea["target_segment"] {
 }
 
 function detectPersona(text: string): ContentIdea["target_persona"] {
-  if (/(security|compliance|audit|byok|self-hosted|self hosted)/.test(text)) return "Security/Compliance";
-  if (/(platform team|developer platform|platform engineering)/.test(text)) return "Head of Developer Platform";
-  if (/(vp engineering|cto|engineering leader)/.test(text)) return "VP Engineering";
+  const explicitSecurityBuyer =
+    /(security\/compliance|security and compliance|ciso|security leader|compliance leader|appsec|security buyer|compliance buyer)/.test(
+      text,
+    );
+  const governanceSignal = /(security|compliance|audit|byok|self-hosted|self hosted|policy|rbac)/.test(
+    text,
+  );
+  const platformSignal =
+    /(platform team|developer platform|platform engineering|internal developer platform|idp|devex|developer experience)/.test(
+      text,
+    );
+  const handsOnTechnicalWorkflow =
+    /(repository context|repo context|code search|deep search|mcp|model context protocol|cross-repo|migration|remediation|verification|rollout|batch changes|developer workflow|coding agent)/.test(
+      text,
+    );
+  const explicitExecutiveSignal =
+    /(vp engineering|engineering vp|cto|chief technology officer|executive buyer|board-level|budget owner|roi|tco|procurement)/.test(
+      text,
+    );
+  if (explicitSecurityBuyer) return "Security/Compliance";
+  if (platformSignal) return "Head of Developer Platform";
+  if (handsOnTechnicalWorkflow && !explicitExecutiveSignal) return "Staff Engineer";
+  if (explicitExecutiveSignal || /(engineering leader)/.test(text)) return "VP Engineering";
+  if (governanceSignal) return "Security/Compliance";
   return "Staff Engineer";
 }
 
@@ -627,7 +995,7 @@ function detectGuardrailViolation(text: string): boolean {
 }
 
 function hasConcreteEvidence(text: string): boolean {
-  return /(launch|release|\bga\b|pricing|customer|case study|benchmark|docs|documentation|security|compliance|audit|byok|self-hosted|report)/.test(
+  return /(launch|release|\bga\b|general availability|pricing|customer|case study|benchmark|docs|documentation|security|compliance|audit|byok|self-hosted|self hosted|report|availability|available|credits|supports|integration|policy|verification)/.test(
     text,
   );
 }
@@ -717,15 +1085,18 @@ function hasCommercialProductMarketSignal(text: string): boolean {
 }
 
 function isResearchOnlySource(doc: AgentRankedDoc, periodDays: number): boolean {
-  if (periodDays <= 14) return false;
   const domain = sourceFromUrl(doc.url);
   if (!isAcademicResearchDomain(domain)) return false;
   const text = textOf(doc);
   const directWorkflowSignal =
-    /(mcp|context layer|code search|deep search|cross-repo|batch changes|migration|remediation|onboarding|compliance|governance)/.test(
+    /(\bmcp\b|context layer|code search|deep search|cross-repo|batch changes|migration|remediation|onboarding|compliance|governance|developer platform|platform engineering|coding assistant|ai coding|software lifecycle|\brepository\b|\brepo\b|codebase|code intelligence)/.test(
       text,
     );
   const commercialSignal = hasCommercialProductMarketSignal(text);
+  if (periodDays <= 14) {
+    // For short windows, academic papers need a direct coding-workflow hook.
+    return !directWorkflowSignal;
+  }
   // For month-window content ideation, avoid academic-only sources unless they clearly tie
   // to live market/product signals and GTM-relevant workflows.
   return !(commercialSignal && directWorkflowSignal);
@@ -796,7 +1167,8 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
     seedType === "case_study" ? 1.0 :
     seedType === "blog_post" ? 0.85 :
     seedType === "webinar" ? 0.9 :
-    seedType === "research_report" ? 0.95 :
+    // Research is useful context, but it should not outrank concrete GTM/source material by default.
+    seedType === "research_report" ? 0.72 :
     seedType === "benchmark" ? 0.92 :
     seedType === "newsletter_feature" ? 0.7 :
     0.4;
@@ -878,10 +1250,29 @@ function toIdea(
 
   const targetSegment = targetSegmentOverride ?? candidate.segment;
   const channel = channelOverride ?? candidate.channel;
-  const title = buildSourcegraphIdeaTitle(targetSegment, channel, text, candidate.doc.title);
-  const thesis = buildSourcegraphThesis(targetSegment, candidate.persona, text);
-  const keyInsights = buildKeyInsights(targetSegment, candidate.persona, text);
-  const contentOutline = buildContentOutline(targetSegment, candidate.persona, channel, text);
+  const title = buildSourcegraphIdeaTitle(targetSegment, channel, text, candidate.doc.title, candidate.doc.url);
+  const thesis = buildSourcegraphThesis(
+    targetSegment,
+    candidate.persona,
+    text,
+    candidate.doc.title,
+    candidate.doc.url,
+  );
+  const keyInsights = buildKeyInsights(
+    targetSegment,
+    candidate.persona,
+    text,
+    candidate.doc.title,
+    candidate.doc.url,
+  );
+  const contentOutline = buildContentOutline(
+    targetSegment,
+    candidate.persona,
+    channel,
+    text,
+    candidate.doc.title,
+    candidate.doc.url,
+  );
   const distributionPlan = buildDistributionPlan(channel, text);
   const suiteAnchors = buildSourcegraphPositioningAnchors(text);
   const sourcegraphIntegrationPlay =
@@ -992,7 +1383,8 @@ function isStrongSourceCandidate(doc: AgentRankedDoc, frame: string, periodDays:
   if (!entry) return false;
   if (isIndexOrRoundupSource(entry.url, doc.title, doc.snippet)) return false;
 
-  const sourceType = classifySourceTypeByDomain(sourceFromUrl(entry.url));
+  const domain = sourceFromUrl(entry.url);
+  const sourceType = classifySourceTypeByDomain(domain);
   const text = textOf(doc);
   if (sourceType === "community") return false;
   if (!hasConcreteEvidence(text)) return false;
@@ -1001,7 +1393,6 @@ function isStrongSourceCandidate(doc: AgentRankedDoc, frame: string, periodDays:
   }
   // Month windows are source-quality sensitive: prioritize primary or authoritative sources.
   if (periodDays > 14) {
-    const domain = sourceFromUrl(entry.url);
     const authoritative = isAuthoritativeResearchOrStandardsDomain(domain);
     if (sourceType === "secondary" && !authoritative) {
       // Allow secondary only when supported by hard, frame-specific proof.
@@ -1015,6 +1406,13 @@ function isStrongSourceCandidate(doc: AgentRankedDoc, frame: string, periodDays:
         if (!hardEvidence) return false;
       }
     }
+  }
+  if (
+    periodDays <= 14 &&
+    sourceType === "secondary" &&
+    WEAK_SHORT_WINDOW_SECONDARY_DOMAINS.has(domain)
+  ) {
+    return false;
   }
   return true;
 }
@@ -1058,10 +1456,22 @@ function buildSourceDrivenIdeasFromCandidates(
     .sort((a, b) => b.items[0].candidate.score - a.items[0].candidate.score);
 
   const ideas: ContentIdea[] = [];
+  const usedLeadDomains = new Set<string>();
   for (const cluster of clusters) {
-    const lead = cluster.items[0].candidate;
+    const leadEntry =
+      periodDays <= 14
+        ? cluster.items.find((item) => {
+            const domain = sourceBaseDomain(item.source.url) || sourceFromUrl(item.source.url);
+            return domain ? !usedLeadDomains.has(domain) : true;
+          }) ?? cluster.items[0]
+        : cluster.items[0];
+    const lead = leadEntry.candidate;
     const base = toIdea(lead, state, normalizeTargetSegment(lead.segment));
-    const clusterSources = cluster.items.slice(0, 3).map((x) => x.source);
+    const leadDomain = sourceBaseDomain(leadEntry.source.url) || sourceFromUrl(leadEntry.source.url);
+    if (leadDomain) usedLeadDomains.add(leadDomain);
+    const clusterSources = [leadEntry, ...cluster.items.filter((item) => item !== leadEntry)]
+      .slice(0, 3)
+      .map((x) => x.source);
     ideas.push({
       ...base,
       sources: clusterSources,
@@ -1082,48 +1492,85 @@ function addCorroboratingSources(
   ideas: ContentIdea[],
   candidates: ScoredIdeaCandidate[],
 ): ContentIdea[] {
-  const byFrame = new Map<string, AgentRankedDoc[]>();
-  for (const c of candidates) {
-    if (!hasMinimumContentIdeasRelevance(c.doc)) continue;
-    const frame = detectTopicFrame(textOf(c.doc));
-    const list = byFrame.get(frame) ?? [];
-    list.push(c.doc);
-    byFrame.set(frame, list);
-  }
-
   return ideas.map((idea) => {
     const frame = ideaFrameKey(idea);
-    const frameDocs = byFrame.get(frame) ?? [];
-    const urlSeen = new Set(idea.sources.map((s) => canonicalizeUrl(s.url)));
-    const domainSeen = new Set(idea.sources.map((s) => sourceFromUrl(s.url)));
-    const extra: ContentIdea["sources"] = [];
-
-    for (const doc of frameDocs) {
-      if (!docSupportsFrame(doc, frame)) continue;
-      const sourceType = classifySourceTypeByDomain(sourceFromUrl(doc.url));
-      const text = textOf(doc);
-      if (sourceType === "community") continue;
-      if (!hasConcreteEvidence(text)) continue;
-      if (isIndexOrRoundupSource(doc.url ?? "", doc.title, doc.snippet)) {
-        continue;
-      }
-      const entry = sourceEntryFromDoc(doc);
-      if (!entry) continue;
-      const canonical = canonicalizeUrl(entry.url);
-      if (!canonical || urlSeen.has(canonical)) continue;
-      const domain = sourceFromUrl(entry.url);
-      if (domain && domainSeen.has(domain)) continue;
-      urlSeen.add(canonical);
-      if (domain) domainSeen.add(domain);
-      extra.push(entry);
-      if (extra.length >= 2) break;
-    }
+    const urlSeen = new Set(
+      idea.sources
+        .map((s) => canonicalizeUrl(s.url))
+        .filter((url): url is string => !!url),
+    );
+    const domainSeen = new Set(
+      idea.sources
+        .map((s) => sourceBaseDomain(s.url) || sourceFromUrl(s.url))
+        .filter((domain): domain is string => !!domain),
+    );
+    const extra = collectCorroboratingSourcesForFrame(frame, candidates, urlSeen, domainSeen, 3);
 
     return {
       ...idea,
       sources: [...idea.sources, ...extra],
     };
   });
+}
+
+function tryAddCorroboratingSource(
+  entry: ContentIdea["sources"][number],
+  urlSeen: Set<string>,
+  domainSeen: Set<string>,
+  extra: ContentIdea["sources"],
+): boolean {
+  const canonical = canonicalizeUrl(entry.url);
+  if (!canonical || urlSeen.has(canonical)) return false;
+  const domain = sourceBaseDomain(entry.url) || sourceFromUrl(entry.url);
+  if (domain && domainSeen.has(domain)) return false;
+  urlSeen.add(canonical);
+  if (domain) domainSeen.add(domain);
+  extra.push(entry);
+  return true;
+}
+
+function isAcceptableCorroborationDoc(
+  doc: AgentRankedDoc,
+  entry: ContentIdea["sources"][number],
+): boolean {
+  const domain = sourceFromUrl(entry.url);
+  const sourceType = classifySourceTypeByDomain(domain);
+  const text = textOf(doc);
+  if (sourceType === "community") return false;
+  if (!hasMinimumContentIdeasRelevance(doc)) return false;
+  if (!(hasConcreteEvidence(text) || hasBroadSourcegraphNarrativeFit(doc))) return false;
+  if (isIndexOrRoundupSource(entry.url, doc.title, doc.snippet)) return false;
+  if (isWeakFinalIdeaSource(entry)) return false;
+  if (
+    sourceType === "secondary" &&
+    !isAuthoritativeResearchOrStandardsDomain(domain) &&
+    !TRUSTED_SECONDARY_DOMAINS.has(domain)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function narrativeKeywordsForFrame(frame: string): string[] {
+  switch (frame) {
+    case "Repository Context and Retrieval Precision for Coding Agents":
+      return ["mcp", "context", "retrieval", "repository", "code search", "deep search"];
+    case "Governance, Compliance, and Verification for AI Code Changes":
+    case "Governance and Auditability for Enterprise Coding Workflows":
+      return ["governance", "compliance", "verification", "audit", "security", "policy"];
+    case "Cross-Repo Remediation and Migration":
+      return ["cross-repo", "migration", "remediation", "rollout", "batch changes"];
+    case "Code Search, Deep Search, and Repository Context":
+      return ["code search", "deep search", "repository", "context", "search"];
+    case "Developer Onboarding in Large Codebases":
+      return ["onboarding", "knowledge transfer", "large codebase", "monorepo", "multi-repo"];
+    default:
+      return ["code intelligence", "developer platform", "enterprise codebase", "context"];
+  }
+}
+
+function docMatchesNarrativeKeywords(text: string, keywords: string[]): boolean {
+  return keywords.some((keyword) => text.includes(keyword));
 }
 
 function enforceMonthlyEvidenceThreshold(ideas: ContentIdea[], periodDays: number): ContentIdea[] {
@@ -1452,16 +1899,542 @@ function backfillMonthWithSecondaryDistinctThemes(
   return out.slice(0, targetCount);
 }
 
+function backfillShortWindowDistinctThemes(
+  ideas: ContentIdea[],
+  candidates: ScoredIdeaCandidate[],
+  state: PlaybookState,
+  targetCount: number,
+): ContentIdea[] {
+  const minimum = Math.min(Math.max(3, targetCount), 6);
+  if (ideas.length >= minimum) return ideas.slice(0, targetCount);
+
+  const out = [...ideas];
+  const usedTitleKeys = new Set(out.map((i) => normalizeIdeaTitleKey(i.title)));
+  const usedTopicKeys = new Set(out.map((i) => topicKeyFromIdeaTitle(i.title)));
+  const usedBaseDomains = new Set(out.flatMap((i) => i.sources.map((s) => sourceBaseDomain(s.url))));
+  let githubFamilyCount = out.filter((i) => i.sources.some((s) => isGitHubFamilySource(s.url))).length;
+
+  const viable = candidates
+    .filter((c) => {
+      if (c.doc.id === MARKET_BRIEF_CONTEXT_ID) return false;
+      if (!hasMinimumContentIdeasRelevance(c.doc)) return false;
+      const canonical = canonicalizeUrl(c.doc.url);
+      if (!canonical) return false;
+      const sourceType = classifySourceTypeByDomain(sourceFromUrl(c.doc.url));
+      const text = textOf(c.doc);
+      if (sourceType === "community") return false;
+      if (!hasConcreteEvidence(text)) return false;
+      if (isNoisyDomain(sourceFromUrl(c.doc.url))) return false;
+      return c.score >= 0.32;
+    })
+    .sort((a, b) => b.score - a.score);
+
+  // Pass 1: strongly prefer new domain + new topic; keep at most one GitHub-family idea.
+  for (const candidate of viable) {
+    if (out.length >= minimum) break;
+    const idea = toIdea(candidate, state, normalizeTargetSegment(candidate.segment));
+    const titleKey = normalizeIdeaTitleKey(idea.title);
+    const topicKey = topicKeyFromIdeaTitle(idea.title);
+    const baseDomains = new Set(idea.sources.map((s) => sourceBaseDomain(s.url)));
+    const hasNewDomain = Array.from(baseDomains).some((d) => !usedBaseDomains.has(d));
+    const isGithub = idea.sources.some((s) => isGitHubFamilySource(s.url));
+    if (isGithub && githubFamilyCount >= 1) continue;
+    if (!hasNewDomain) continue;
+    if (usedTitleKeys.has(titleKey) || usedTopicKeys.has(topicKey)) continue;
+    out.push(idea);
+    usedTitleKeys.add(titleKey);
+    usedTopicKeys.add(topicKey);
+    for (const d of baseDomains) usedBaseDomains.add(d);
+    if (isGithub) githubFamilyCount++;
+  }
+
+  // Pass 2: allow existing domains, still avoid duplicate topic and extra GitHub-family ideas.
+  for (const candidate of viable) {
+    if (out.length >= minimum) break;
+    const idea = toIdea(candidate, state, normalizeTargetSegment(candidate.segment));
+    const titleKey = normalizeIdeaTitleKey(idea.title);
+    const topicKey = topicKeyFromIdeaTitle(idea.title);
+    const isGithub = idea.sources.some((s) => isGitHubFamilySource(s.url));
+    if (isGithub && githubFamilyCount >= 1) continue;
+    if (usedTitleKeys.has(titleKey) || usedTopicKeys.has(topicKey)) continue;
+    out.push(idea);
+    usedTitleKeys.add(titleKey);
+    usedTopicKeys.add(topicKey);
+    for (const d of idea.sources.map((s) => sourceBaseDomain(s.url))) usedBaseDomains.add(d);
+    if (isGithub) githubFamilyCount++;
+  }
+
+  return out.slice(0, targetCount);
+}
+
+function buildSelectionPool(
+  candidates: ScoredIdeaCandidate[],
+  poolSize: number,
+  periodDays: number,
+): ScoredIdeaCandidate[] {
+  if (periodDays > 14) {
+    return candidates.slice(0, poolSize);
+  }
+
+  const selected: ScoredIdeaCandidate[] = [];
+  const domainCounts = new Map<string, number>();
+  const maxPerDomain = 2;
+
+  for (const candidate of candidates) {
+    if (selected.length >= poolSize) break;
+    const domain = sourceBaseDomain(candidate.doc.url) || sourceFromUrl(candidate.doc.url) || "unknown";
+    const count = domainCounts.get(domain) ?? 0;
+    if (count >= maxPerDomain) continue;
+    selected.push(candidate);
+    domainCounts.set(domain, count + 1);
+  }
+
+  if (selected.length < poolSize) {
+    const usedUrls = new Set(selected.map((candidate) => canonicalizeUrl(candidate.doc.url)).filter(Boolean));
+    for (const candidate of candidates) {
+      if (selected.length >= poolSize) break;
+      const canonical = canonicalizeUrl(candidate.doc.url);
+      if (!canonical || usedUrls.has(canonical)) continue;
+      selected.push(candidate);
+      usedUrls.add(canonical);
+    }
+  }
+
+  return selected;
+}
+
+function applyShortWindowDomainConcentrationPenalty(
+  candidates: ScoredIdeaCandidate[],
+  periodDays: number,
+): ScoredIdeaCandidate[] {
+  if (periodDays > 14) return candidates;
+
+  const topWindow = candidates.slice(0, 20);
+  const totalCounts = new Map<string, number>();
+  for (const candidate of topWindow) {
+    const domain = sourceBaseDomain(candidate.doc.url) || sourceFromUrl(candidate.doc.url) || "unknown";
+    totalCounts.set(domain, (totalCounts.get(domain) ?? 0) + 1);
+  }
+
+  const seenCounts = new Map<string, number>();
+  return candidates.map((candidate) => {
+    const domain = sourceBaseDomain(candidate.doc.url) || sourceFromUrl(candidate.doc.url) || "unknown";
+    const priorSeen = seenCounts.get(domain) ?? 0;
+    seenCounts.set(domain, priorSeen + 1);
+
+    const totalInTopWindow = totalCounts.get(domain) ?? 1;
+    const repetitionPenalty = priorSeen * 0.07;
+    const concentrationPenalty = Math.max(0, totalInTopWindow - 2) * 0.03;
+    const sourceType = classifySourceTypeByDomain(sourceFromUrl(candidate.doc.url));
+    const qualityAdjustment =
+      sourceType === "secondary" && WEAK_SHORT_WINDOW_SECONDARY_DOMAINS.has(domain)
+        ? -0.14
+        : PREFERRED_SHORT_WINDOW_TECHNICAL_DOMAINS.has(domain)
+          ? 0.05
+          : 0;
+
+    return {
+      ...candidate,
+      score: candidate.score - repetitionPenalty - concentrationPenalty + qualityAdjustment,
+    };
+  });
+}
+
+function enforceThesisAndDifferentiatorDiversity(
+  ideas: ContentIdea[],
+  targetCount: number,
+): ContentIdea[] {
+  const selected: ContentIdea[] = [];
+  const thesisKeys = new Set<string>();
+  const differentiatorUsed = new Set<string>();
+  const sorted = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
+
+  for (const idea of sorted) {
+    if (selected.length >= targetCount) break;
+    const frame = ideaFrameKey(idea);
+    const tKey = `${frame}|${thesisSimilarityKey(idea.thesis)}`;
+    if (thesisKeys.has(tKey)) continue;
+
+    const differentiator =
+      idea.sourcegraph_integration_play.find((p) =>
+        /(batch changes|rollback|ownership|code graph|impact analysis|verification|audit)/i.test(p),
+      ) ?? idea.core_claim;
+    const dKey = `${frame}|${differentiator
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 80)}`;
+    if (differentiatorUsed.has(dKey)) continue;
+
+    selected.push(idea);
+    thesisKeys.add(tKey);
+    differentiatorUsed.add(dKey);
+  }
+
+  if (selected.length < Math.min(targetCount, ideas.length)) {
+    for (const idea of sorted) {
+      if (selected.length >= targetCount) break;
+      if (selected.some((s) => normalizeIdeaTitleKey(s.title) === normalizeIdeaTitleKey(idea.title))) continue;
+      selected.push(idea);
+    }
+  }
+  return selected.slice(0, targetCount);
+}
+
+function narrativeClusterKey(idea: ContentIdea): string {
+  const text = `${idea.title} ${idea.thesis} ${idea.core_claim}`.toLowerCase();
+  if (/(codemod|batch changes|migration|remediation|rollout|upgrade)/.test(text)) {
+    return "cross_repo_change_workflows";
+  }
+  if (/(governance|governed|compliance|policy|audit|byok|self-hosted|self hosted)/.test(text)) {
+    return "governance_controls";
+  }
+  if (/(dora|mttr|lead time|change failure|metrics|engineering effectiveness)/.test(text)) {
+    return "engineering_metrics";
+  }
+  if (/(onboarding|mentorship|new engineer|knowledge transfer)/.test(text)) {
+    return "onboarding_mentorship";
+  }
+  if (/(regression|test-driven|impact analysis|code graph|verification)/.test(text)) {
+    return "reliability_verification";
+  }
+  if (/(search|retrieval|deep search|code navigation|context layer|mcp)/.test(text)) {
+    return "retrieval_and_context";
+  }
+  return "other";
+}
+
+function enforceNarrativeClusterCap(
+  ideas: ContentIdea[],
+  targetCount: number,
+): ContentIdea[] {
+  const sorted = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
+  const clusterCounts = new Map<string, number>();
+  const selected: ContentIdea[] = [];
+  for (const idea of sorted) {
+    if (selected.length >= targetCount) break;
+    const cluster = narrativeClusterKey(idea);
+    const cap = cluster === "governance_controls" ? 1 : 2;
+    const current = clusterCounts.get(cluster) ?? 0;
+    if (current >= cap) continue;
+    selected.push(idea);
+    clusterCounts.set(cluster, current + 1);
+  }
+  if (selected.length < Math.min(targetCount, ideas.length)) {
+    for (const idea of sorted) {
+      if (selected.length >= targetCount) break;
+      if (selected.some((s) => normalizeIdeaTitleKey(s.title) === normalizeIdeaTitleKey(idea.title))) continue;
+      selected.push(idea);
+    }
+  }
+  return selected.slice(0, targetCount);
+}
+
+function primarySourceDomain(idea: ContentIdea): string {
+  return sourceBaseDomain(idea.sources[0]?.url) || sourceFromUrl(idea.sources[0]?.url) || "unknown";
+}
+
+function ideaSourceDomainSet(idea: ContentIdea): Set<string> {
+  return new Set(
+    idea.sources
+      .map((source) => sourceBaseDomain(source.url) || sourceFromUrl(source.url))
+      .filter(Boolean),
+  );
+}
+
+function sourceDomainOverlapCount(a: ContentIdea, b: ContentIdea): number {
+  const aDomains = ideaSourceDomainSet(a);
+  const bDomains = ideaSourceDomainSet(b);
+  let overlap = 0;
+  for (const domain of aDomains) {
+    if (bDomains.has(domain)) overlap++;
+  }
+  return overlap;
+}
+
+function enforcePrimarySourceDiversity(
+  ideas: ContentIdea[],
+  targetCount: number,
+): ContentIdea[] {
+  const sorted = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
+  const selected: ContentIdea[] = [];
+  const primaryDomainCounts = new Map<string, number>();
+
+  for (const idea of sorted) {
+    if (selected.length >= targetCount) break;
+    const domain = primarySourceDomain(idea);
+    if ((primaryDomainCounts.get(domain) ?? 0) >= 1) continue;
+    if (selected.some((picked) => sourceDomainOverlapCount(picked, idea) >= 2)) continue;
+    selected.push(idea);
+    primaryDomainCounts.set(domain, (primaryDomainCounts.get(domain) ?? 0) + 1);
+  }
+
+  if (selected.length < Math.min(targetCount, ideas.length)) {
+    for (const idea of sorted) {
+      if (selected.length >= targetCount) break;
+      if (selected.some((picked) => normalizeIdeaTitleKey(picked.title) === normalizeIdeaTitleKey(idea.title))) continue;
+      selected.push(idea);
+    }
+  }
+
+  return selected.slice(0, targetCount);
+}
+
+function diversifyShortWindowPrimaryHooks(
+  ideas: ContentIdea[],
+  candidates: ScoredIdeaCandidate[],
+  state: PlaybookState,
+  targetCount: number,
+): ContentIdea[] {
+  const usedDomains = new Set<string>();
+  const usedTitles = new Set<string>();
+  const out: ContentIdea[] = [];
+
+  const sortedIdeas = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
+  const viableCandidates = [...candidates].sort((a, b) => b.score - a.score);
+
+  for (const idea of sortedIdeas) {
+    const currentDomain = primarySourceDomain(idea);
+    const currentTitleKey = normalizeIdeaTitleKey(idea.title);
+    if (!usedDomains.has(currentDomain) && !usedTitles.has(currentTitleKey)) {
+      out.push(idea);
+      usedDomains.add(currentDomain);
+      usedTitles.add(currentTitleKey);
+      continue;
+    }
+
+    const ideaFrame = ideaFrameKey(idea);
+    let replacement: ContentIdea | null = null;
+    for (const candidate of viableCandidates) {
+      if (candidate.doc.id === MARKET_BRIEF_CONTEXT_ID) continue;
+      const domain = sourceBaseDomain(candidate.doc.url) || sourceFromUrl(candidate.doc.url);
+      if (!domain || usedDomains.has(domain)) continue;
+      const frame = detectTopicFrame(textOf(candidate.doc));
+      if (frame !== ideaFrame) continue;
+      const altIdea = toIdea(candidate, state, normalizeTargetSegment(candidate.segment));
+      const altTitleKey = normalizeIdeaTitleKey(altIdea.title);
+      if (usedTitles.has(altTitleKey)) continue;
+      replacement = altIdea;
+      break;
+    }
+
+    if (!replacement) {
+      for (const candidate of viableCandidates) {
+        if (candidate.doc.id === MARKET_BRIEF_CONTEXT_ID) continue;
+        const domain = sourceBaseDomain(candidate.doc.url) || sourceFromUrl(candidate.doc.url);
+        if (!domain || usedDomains.has(domain)) continue;
+        const altIdea = toIdea(candidate, state, normalizeTargetSegment(candidate.segment));
+        const altTitleKey = normalizeIdeaTitleKey(altIdea.title);
+        if (usedTitles.has(altTitleKey)) continue;
+        replacement = altIdea;
+        break;
+      }
+    }
+
+    const picked = replacement ?? idea;
+    out.push(picked);
+    usedDomains.add(primarySourceDomain(picked));
+    usedTitles.add(normalizeIdeaTitleKey(picked.title));
+  }
+
+  return out.slice(0, targetCount);
+}
+
+function rebalanceCorroboratingSourcesAcrossIdeas(
+  ideas: ContentIdea[],
+  candidates: ScoredIdeaCandidate[],
+): ContentIdea[] {
+  const globalDomainCounts = new Map<string, number>();
+  const sorted = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
+
+  const rebalanced = sorted.map((idea) => {
+    const primary = idea.sources[0] ? [idea.sources[0]] : [];
+    const primaryDomains = primary
+      .map((source) => sourceBaseDomain(source.url) || sourceFromUrl(source.url))
+      .filter((domain): domain is string => !!domain);
+    for (const domain of primaryDomains) {
+      globalDomainCounts.set(domain, (globalDomainCounts.get(domain) ?? 0) + 1);
+    }
+
+    const urlSeen = new Set(
+      primary
+        .map((source) => canonicalizeUrl(source.url))
+        .filter((url): url is string => !!url),
+    );
+    const domainSeen = new Set(primaryDomains);
+
+    const retainedExtra: ContentIdea["sources"] = [];
+    for (const source of idea.sources.slice(1)) {
+      const canonical = canonicalizeUrl(source.url);
+      const domain = sourceBaseDomain(source.url) || sourceFromUrl(source.url);
+      if (!canonical || !domain) continue;
+      if (urlSeen.has(canonical) || domainSeen.has(domain)) continue;
+      if ((globalDomainCounts.get(domain) ?? 0) >= 1) continue;
+      urlSeen.add(canonical);
+      domainSeen.add(domain);
+      globalDomainCounts.set(domain, (globalDomainCounts.get(domain) ?? 0) + 1);
+      retainedExtra.push(source);
+      if (retainedExtra.length >= 2) break;
+    }
+
+    if (retainedExtra.length < 2) {
+      const refill = collectCorroboratingSourcesForFrame(
+        ideaFrameKey(idea),
+        candidates,
+        urlSeen,
+        domainSeen,
+        2 - retainedExtra.length,
+        globalDomainCounts,
+      );
+      for (const source of refill) {
+        const domain = sourceBaseDomain(source.url) || sourceFromUrl(source.url);
+        if (!domain) continue;
+        globalDomainCounts.set(domain, (globalDomainCounts.get(domain) ?? 0) + 1);
+      }
+      retainedExtra.push(...refill);
+    }
+
+    return {
+      ...idea,
+      sources: [...primary, ...retainedExtra],
+    };
+  });
+
+  return ideas.map(
+    (idea) =>
+      rebalanced.find((candidate) => normalizeIdeaTitleKey(candidate.title) === normalizeIdeaTitleKey(idea.title)) ??
+      idea,
+  );
+}
+
+function extractIdeaTitlePrefix(title: string): string {
+  const match = title.match(/^([^:]+):\s*/);
+  return match?.[1]?.trim() || "Guide";
+}
+
+function buildBroadThemeTitle(prefix: string, idea: ContentIdea): string {
+  const topic = polishIdeaTopic(
+    detectTopicFrame(
+      `${idea.title} ${idea.thesis} ${idea.core_claim} ${idea.sources.map((s) => s.title).join(" ")}`
+        .toLowerCase(),
+    ),
+  );
+  return `${prefix}: ${topic}`.slice(0, 120);
+}
+
+function maybeRewriteLiteralIdeaTitle(idea: ContentIdea): string {
+  const currentTitle = stripBoilerplateNoise(idea.title);
+  const sourceTitles = idea.sources.map((s) => s.title).filter(Boolean);
+  const maxOverlap = sourceTitles.reduce(
+    (max, sourceTitle) => Math.max(max, titleOverlapRatio(currentTitle, sourceTitle)),
+    0,
+  );
+  const longMirroredHeadline = sourceTitles.some((sourceTitle) => {
+    const overlap = titleOverlapRatio(currentTitle, sourceTitle);
+    return (
+      overlap >= 0.6 &&
+      (sourceTitle.length >= 70 ||
+        sourceTitle.includes(",") ||
+        /software privacy and governance trends|how ai is changing|landscape|future research directions/i.test(
+          sourceTitle,
+        ))
+    );
+  });
+  const weakOrLiteralTitle =
+    maxOverlap >= 0.75 ||
+    longMirroredHeadline ||
+    /\[ai ?news\]|release notes|changelog|talks to help you navigate the schedule|runs large models|growing pains|shifts to coding|pulls ahead|software privacy and governance trends|how ai is changing analytics experiences/i.test(
+      currentTitle,
+    );
+  if (!weakOrLiteralTitle) return currentTitle;
+  return buildBroadThemeTitle(extractIdeaTitlePrefix(currentTitle), idea);
+}
+
+function isWeakFinalIdeaSource(source: ContentIdea["sources"][number]): boolean {
+  const canonicalUrl = canonicalizeUrl(source.url);
+  const title = source.title ?? "";
+  if (!canonicalUrl) return true;
+  if (isGenericIdeaPage(canonicalUrl)) return true;
+  if (isNoisyDomain(sourceFromUrl(canonicalUrl))) return true;
+  if (isIndexOrRoundupSource(canonicalUrl, title)) return true;
+  if (
+    /(release notes|changelog|talks to help you navigate the schedule|\[ai ?news\]|weekly digest|roundup|march 20\d{2} update|platform update)/i.test(
+      title,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function scoreCorroborationCandidate(
+  candidate: ScoredIdeaCandidate,
+  globalDomainCounts?: Map<string, number>,
+): number {
+  const domain = sourceFromUrl(candidate.doc.url);
+  const sourceType = classifySourceTypeByDomain(domain);
+  const typeBoost = sourceType === "primary" ? 0.15 : sourceType === "secondary" ? 0.08 : 0;
+  const globalBoost = globalDomainCounts ? Math.max(0, 0.12 - 0.06 * (globalDomainCounts.get(domain) ?? 0)) : 0;
+  return candidate.score + typeBoost + globalBoost;
+}
+
+function collectCorroboratingSourcesForFrame(
+  frame: string,
+  candidates: ScoredIdeaCandidate[],
+  urlSeen: Set<string>,
+  domainSeen: Set<string>,
+  desiredExtra: number,
+  globalDomainCounts?: Map<string, number>,
+): ContentIdea["sources"] {
+  const extra: ContentIdea["sources"] = [];
+  const keywords = narrativeKeywordsForFrame(frame);
+
+  const rankedFrameCandidates = candidates
+    .filter((candidate) => {
+      const entry = sourceEntryFromDoc(candidate.doc);
+      if (!entry || !isAcceptableCorroborationDoc(candidate.doc, entry)) return false;
+      return docSupportsFrame(candidate.doc, frame);
+    })
+    .sort((a, b) => scoreCorroborationCandidate(b, globalDomainCounts) - scoreCorroborationCandidate(a, globalDomainCounts));
+
+  for (const candidate of rankedFrameCandidates) {
+    const entry = sourceEntryFromDoc(candidate.doc);
+    if (!entry) continue;
+    if (!tryAddCorroboratingSource(entry, urlSeen, domainSeen, extra)) continue;
+    if (extra.length >= desiredExtra) return extra;
+  }
+
+  const rankedFallbackCandidates = candidates
+    .filter((candidate) => {
+      const entry = sourceEntryFromDoc(candidate.doc);
+      if (!entry || !isAcceptableCorroborationDoc(candidate.doc, entry)) return false;
+      const text = textOf(candidate.doc);
+      return docMatchesNarrativeKeywords(text, keywords);
+    })
+    .sort((a, b) => scoreCorroborationCandidate(b, globalDomainCounts) - scoreCorroborationCandidate(a, globalDomainCounts));
+
+  for (const candidate of rankedFallbackCandidates) {
+    const entry = sourceEntryFromDoc(candidate.doc);
+    if (!entry) continue;
+    if (!tryAddCorroboratingSource(entry, urlSeen, domainSeen, extra)) continue;
+    if (extra.length >= desiredExtra) break;
+  }
+
+  return extra;
+}
+
 export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): ContentIdeasOutput {
   const ideas = payload.ideas
     .map((idea) => {
       const sources = idea.sources
         .map((s) => ({ ...s, url: canonicalizeUrl(s.url) }))
-        .filter((s) => !!s.url && !isGenericIdeaPage(s.url) && !isNoisyDomain(sourceFromUrl(s.url)));
+        .filter((s) => !!s.url && !isWeakFinalIdeaSource(s));
       if (sources.length === 0) return null;
+      const rewrittenTitle = maybeRewriteLiteralIdeaTitle({ ...idea, sources });
       return {
         ...idea,
-        title: stripBoilerplateNoise(idea.title),
+        title: stripBoilerplateNoise(rewrittenTitle),
         thesis: stripBoilerplateNoise(idea.thesis),
         key_insights: idea.key_insights.map((x) => stripBoilerplateNoise(x)),
         content_outline: idea.content_outline.map((x) => stripBoilerplateNoise(x)),
@@ -1478,22 +2451,178 @@ export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): Cont
     })
     .filter((i): i is ContentIdea => i !== null);
 
+  const dedupedByTopic = (() => {
+    const byTopic = new Map<string, ContentIdea>();
+    for (const idea of ideas) {
+      const key = topicKeyFromIdeaTitle(idea.title);
+      const existing = byTopic.get(key);
+      if (!existing || idea.priority_score > existing.priority_score) {
+        byTopic.set(key, idea);
+      }
+    }
+    return Array.from(byTopic.values()).sort((a, b) => b.priority_score - a.priority_score);
+  })();
+
+  const finalIdeas =
+    (payload.periodDays ?? 30) <= 14
+      ? dedupedByTopic.length >= Math.min(3, ideas.length)
+        ? dedupedByTopic
+        : ideas
+      : dedupedByTopic.length >= 3
+        ? dedupedByTopic
+        : ideas;
+
   return {
     ...payload,
-    ideas,
+    ideas: finalIdeas,
   };
 }
 
 /** Synthetic doc ID for injected market brief context (not a real URL). */
 const MARKET_BRIEF_CONTEXT_ID = "internal://market-brief-highlights";
 
-export async function generateContentIdeas(options: {
+type ContentIdeasCandidateGate = {
+  name: string;
+  keep: (c: ScoredIdeaCandidate, ctx: { periodDays: number; minScore: number }) => boolean;
+};
+
+function buildContentIdeasCandidateGates(ctx: {
+  periodDays: number;
+  minScore: number;
+}): ContentIdeasCandidateGate[] {
+  const { periodDays } = ctx;
+  const isLongWindow = periodDays > 14;
+  return [
+    {
+      name: "internal_market_brief_context",
+      // Always passes; this gate exists only to make the trace explicit that the synthetic
+      // market-brief context doc is injected (not retrieved).
+      keep: () => true,
+    },
+    {
+      name: "not_guardrail_violation",
+      keep: (c) => !c.guardrailViolation,
+    },
+    {
+      name: "minimum_content_ideas_relevance",
+      keep: (c) => hasMinimumContentIdeasRelevance(c.doc),
+    },
+    {
+      name: "broad_sourcegraph_narrative_fit",
+      keep: (c) => hasBroadSourcegraphNarrativeFit(c.doc),
+    },
+    {
+      name: "has_canonical_url",
+      keep: (c) => !!canonicalizeUrl(c.doc.url),
+    },
+    {
+      name: "not_noisy_domain",
+      keep: (c) => !isNoisyDomain(sourceFromUrl(c.doc.url)),
+    },
+    {
+      name: "not_low_leverage_operational",
+      keep: (c, ctx) => !isLowLeverageOperationalSource(c.doc, ctx.periodDays),
+    },
+    {
+      name: "not_research_only_source",
+      keep: (c, ctx) => !isResearchOnlySource(c.doc, ctx.periodDays),
+    },
+    {
+      name: "not_generic_idea_landing_without_signals",
+      keep: (c) => {
+        const text = textOf(c.doc);
+        const canonicalUrl = canonicalizeUrl(c.doc.url);
+        if (!canonicalUrl) return false;
+        if (
+          isGenericIdeaPage(canonicalUrl) &&
+          !/(benchmark|case study|customer|ga|release|pricing|security|compliance|enterprise)/.test(text)
+        ) {
+          return false;
+        }
+        return true;
+      },
+    },
+    {
+      name: "community_short_window_requires_concrete_signals",
+      keep: (c) => {
+        if (isLongWindow) return true;
+        const text = textOf(c.doc);
+        const domain = sourceFromUrl(c.doc.url);
+        const sourceType = classifySourceTypeByDomain(domain);
+        if (sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) {
+          return false;
+        }
+        return true;
+      },
+    },
+    {
+      name: "secondary_community_short_window_requires_concrete_evidence",
+      keep: (c) => {
+        if (isLongWindow) return true;
+        const text = textOf(c.doc);
+        const domain = sourceFromUrl(c.doc.url);
+        const sourceType = classifySourceTypeByDomain(domain);
+        if (
+          (sourceType === "secondary" || sourceType === "community") &&
+          !hasConcreteEvidence(text)
+        ) {
+          return false;
+        }
+        return true;
+      },
+    },
+    {
+      name: "min_content_seed_score",
+      keep: (c, ctx) => c.score >= ctx.minScore,
+    },
+  ];
+}
+
+function filterAndTraceContentIdeasCandidates(
+  scored: ScoredIdeaCandidate[],
+  ctx: { periodDays: number; minScore: number; pipelineTrace: boolean }
+): { candidates: ScoredIdeaCandidate[]; gateStats?: ContentIdeasPipelineTrace["candidate_gates"] } {
+  const gates = buildContentIdeasCandidateGates({ periodDays: ctx.periodDays, minScore: ctx.minScore });
+  const gateCtx = { periodDays: ctx.periodDays, minScore: ctx.minScore };
+
+  if (!ctx.pipelineTrace) {
+    const candidates = scored.filter((c) => {
+      if (c.doc.id === MARKET_BRIEF_CONTEXT_ID) return true;
+      return gates.slice(1).every((g) => g.keep(c, gateCtx));
+    });
+    return { candidates };
+  }
+
+  let survivors = scored;
+  const gateStats: ContentIdeasPipelineTrace["candidate_gates"] = [];
+
+  for (const gate of gates) {
+    const before = survivors.length;
+    const next = survivors.filter((c) =>
+      c.doc.id === MARKET_BRIEF_CONTEXT_ID ? true : gate.keep(c, gateCtx),
+    );
+    const after = next.length;
+    gateStats.push({ name: gate.name, passed: after, dropped: before - after });
+    survivors = next;
+  }
+
+  return { candidates: survivors, gateStats };
+}
+
+async function generateContentIdeasImpl(options: {
   periodDays?: number;
   focus?: string | null;
   numIdeas?: number;
   /** When provided, market brief findings are injected as context so content ideas are informed by the same research. */
   marketBriefSummary?: string | null;
+  /** Test/eval hook: bypass live retrieval and use a fixed doc corpus. */
+  retrievalOverride?: {
+    marketBriefDocs?: RetrievedDoc[];
+    competitorDocs?: RetrievedDoc[];
+  };
   debug?: boolean;
+  /** When true, include `pipeline_trace` with Postgres/web retrieval + filtering diagnostics (JSON/debug only). */
+  pipelineTrace?: boolean;
 } = {}): Promise<ContentIdeasOutput> {
   const state = loadPlaybookState();
   const periodDays = options.periodDays ?? 30;
@@ -1502,19 +2631,32 @@ export async function generateContentIdeas(options: {
   const requested = options.numIdeas ?? defaultNumIdeas;
   const numIdeas = periodDays > 14 ? Math.min(5, Math.max(3, requested)) : requested;
   const debugLog = options.debug ? new AgentScoringDebugger("content_ideas", periodDays) : null;
+  const pipelineTraceEnabled = options.pipelineTrace === true;
+  const marketRetrievalTrace = pipelineTraceEnabled
+    ? createEmptyAgentRetrievalTrace("market_brief", periodDays)
+    : null;
+  const competitorRetrievalTrace = pipelineTraceEnabled
+    ? createEmptyAgentRetrievalTrace("competitor_intel", periodDays)
+    : null;
 
   // Seed ideas from curated intel pools (market brief + competitor intel), not the generic content pool.
   // This keeps ideation grounded in high-signal GTM and competitive evidence.
-  const marketDocs = await retrieveForAgent("market_brief", {
-    periodDays,
-    query: options.focus ?? null,
-    maxEnrich: 0,
-  });
-  const competitorDocs = await retrieveForAgent("competitor_intel", {
-    periodDays,
-    query: options.focus ?? null,
-    maxEnrich: 0,
-  });
+  const marketDocs =
+    options.retrievalOverride?.marketBriefDocs ??
+    await retrieveForAgent("market_brief", {
+      periodDays,
+      query: options.focus ?? null,
+      maxEnrich: 0,
+      trace: marketRetrievalTrace,
+    });
+  const competitorDocs =
+    options.retrievalOverride?.competitorDocs ??
+    await retrieveForAgent("competitor_intel", {
+      periodDays,
+      query: options.focus ?? null,
+      maxEnrich: 0,
+      trace: competitorRetrievalTrace,
+    });
 
   // If market brief summary was passed (e.g. when run after market brief), inject it as a synthetic context doc.
   const docsWithBriefContext =
@@ -1548,43 +2690,30 @@ export async function generateContentIdeas(options: {
     return true;
   });
 
-  const ranked = await rankForAgent("content_ideas", allDocs);
+  const rankingTrace: AgentRankingTrace | null = pipelineTraceEnabled
+    ? createEmptyRankingTrace("content_ideas", 25)
+    : null;
+  const ranked = await rankForAgent(
+    "content_ideas",
+    allDocs,
+    rankingTrace ? { rankingTrace, rankingSampleSize: 25 } : undefined,
+  );
 
   const windowMs = periodDays * 24 * 60 * 60 * 1000;
   const cutoffMs = Date.now() - windowMs;
 
-  const scoredCandidates = ranked.map((doc) => scoreCandidate(doc, state));
+  const scoredCandidates = applyShortWindowDomainConcentrationPenalty(
+    ranked.map((doc) => scoreCandidate(doc, state)),
+    periodDays,
+  );
 
-  const candidates = scoredCandidates
-    .filter((c) => {
-      if (c.doc.id === MARKET_BRIEF_CONTEXT_ID) return true;
-      const text = textOf(c.doc);
-      const domain = sourceFromUrl(c.doc.url);
-      const sourceType = classifySourceTypeByDomain(domain);
-      const canonicalUrl = canonicalizeUrl(c.doc.url);
-      const isLongWindow = periodDays > 14;
-      if (c.guardrailViolation) return false;
-      if (!hasMinimumContentIdeasRelevance(c.doc)) return false;
-      if (!canonicalUrl) return false;
-      if (isNoisyDomain(domain)) return false;
-      if (isLowLeverageOperationalSource(c.doc, periodDays)) return false;
-      if (isResearchOnlySource(c.doc, periodDays)) return false;
-      if (isGenericIdeaPage(canonicalUrl) && !/(benchmark|case study|customer|ga|release|pricing|security|compliance|enterprise)/.test(text)) {
-        return false;
-      }
-      // For short windows, keep community sources only when they point to concrete GTM/content signals
-      if (!isLongWindow && sourceType === "community" && !/(benchmark|case study|customer|ga|release notes)/.test(text)) {
-        return false;
-      }
-      // For short windows, require strong concrete evidence for secondary/community sources.
-      if (!isLongWindow && (sourceType === "secondary" || sourceType === "community") && !hasConcreteEvidence(text)) {
-        return false;
-      }
-      // For longer windows (e.g. month), allow a slightly broader set of sources while upstream
-      // gates continue to block off-topic or obviously low-signal docs.
-      const minScore = periodDays > 14 ? 0.35 : 0.42;
-      return c.score >= minScore;
-    })
+  const minScoreThreshold = periodDays > 14 ? 0.35 : 0.42;
+  const { candidates: gatedCandidates, gateStats } = filterAndTraceContentIdeasCandidates(
+    scoredCandidates,
+    { periodDays, minScore: minScoreThreshold, pipelineTrace: pipelineTraceEnabled },
+  );
+
+  const candidates = gatedCandidates
     .map((c) => {
       // Boost recency for short windows so "day"/"week" reports favor truly recent items.
       const inWindow = c.doc.publishedAt && c.doc.publishedAt.getTime() >= cutoffMs;
@@ -1619,37 +2748,39 @@ export async function generateContentIdeas(options: {
   // For diversity, pre-select more candidates than we'll output, so domain-diversity filters
   // have enough material to work with. For month windows, we may filter down to 4-6.
   // Increased multiplier from 2.5x to 4x to ensure strong domain diversity when candidates cluster.
-  const selectionPoolSize = Math.ceil(numIdeas * (periodDays > 14 ? 4.0 : 1.5));
-  const selected = candidates.slice(0, selectionPoolSize);
+  const selectionPoolSize = Math.ceil(numIdeas * (periodDays > 14 ? 4.0 : 2.5));
+  const selected = buildSelectionPool(candidates, selectionPoolSize, periodDays);
 
-  const rawIdeas =
-    (() => {
-      const fallback = selected
-        .map((candidate) => ({
-          candidate,
-          idea: toIdea(candidate, state, normalizeTargetSegment(candidate.segment)),
-        }))
-        .filter(({ candidate, idea }) => {
-          const overlap = titleOverlapRatio(idea.title, candidate.doc.title);
-          // Similarity guard: reject near-duplicate copy, but allow topical carryover from
-          // source titles so generated ideas can stay specific instead of generic templates.
-          return overlap < 0.9;
-        })
-        .map(({ idea }) => idea);
-
-      if (periodDays <= 14) return fallback;
-      const sourceDriven = buildSourceDrivenIdeasFromCandidates(selected, state, numIdeas, periodDays);
-      if (sourceDriven.length === 0) return fallback;
-      const merged = [...sourceDriven];
-      const seen = new Set(sourceDriven.map((idea) => normalizeIdeaTitleKey(idea.title)));
-      for (const idea of fallback) {
-        const key = normalizeIdeaTitleKey(idea.title);
-        if (seen.has(key)) continue;
-        merged.push(idea);
-        seen.add(key);
-      }
-      return merged;
-    })();
+  const fallbackIdeas = selected
+    .map((candidate) => ({
+      candidate,
+      idea: toIdea(candidate, state, normalizeTargetSegment(candidate.segment)),
+    }))
+    // Keep fallback broad; downstream title/core-claim/domain/channel dedupe handles quality control.
+    .filter(({ idea }) => Boolean(idea.title?.trim()))
+    .map(({ idea }) => idea);
+  const sourceDrivenIdeas = buildSourceDrivenIdeasFromCandidates(selected, state, numIdeas, periodDays);
+  const rawIdeas = (() => {
+    if (sourceDrivenIdeas.length === 0) return fallbackIdeas;
+    const merged = [...sourceDrivenIdeas];
+    const seen = new Set(sourceDrivenIdeas.map((idea) => normalizeIdeaTitleKey(idea.title)));
+    for (const idea of fallbackIdeas) {
+      const key = normalizeIdeaTitleKey(idea.title);
+      if (seen.has(key)) continue;
+      merged.push(idea);
+      seen.add(key);
+    }
+    return merged;
+  })();
+  const ideaPipelineStats = {
+    fallback_ideas: fallbackIdeas.length,
+    source_driven_ideas: sourceDrivenIdeas.length,
+    raw_ideas: rawIdeas.length,
+    after_title_dedupe: 0,
+    after_core_claim_dedupe: 0,
+    after_domain_diversity: 0,
+    after_channel_diversity: 0,
+  };
   const ideas = (() => {
     const byTitle = new Map<string, ContentIdea>();
     for (const idea of rawIdeas) {
@@ -1660,22 +2791,29 @@ export async function generateContentIdeas(options: {
       }
     }
     const afterTitle = Array.from(byTitle.values());
-    // Dedupe by core_claim so we don't surface multiple ideas with the same "Core claim" line.
-    const byCoreClaim = new Map<string, ContentIdea>();
-    for (const idea of afterTitle) {
-      const key = `${idea.channel}|${(idea.core_claim ?? "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120)}`;
-      if (!key) {
-        byCoreClaim.set(`title:${normalizeIdeaTitleKey(idea.title)}`, idea);
-        continue;
-      }
-      const existing = byCoreClaim.get(key);
-      if (!existing || idea.priority_score > existing.priority_score) {
-        byCoreClaim.set(key, idea);
-      }
-    }
-    const deduped = Array.from(byCoreClaim.values()).sort(
-      (a, b) => b.priority_score - a.priority_score,
-    );
+    ideaPipelineStats.after_title_dedupe = afterTitle.length;
+    // Month windows should collapse repeated core claims more aggressively.
+    const deduped =
+      periodDays > 14
+        ? (() => {
+            const byCoreClaim = new Map<string, ContentIdea>();
+            for (const idea of afterTitle) {
+              const key = `${idea.channel}|${(idea.core_claim ?? "").toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120)}`;
+              if (!key) {
+                byCoreClaim.set(`title:${normalizeIdeaTitleKey(idea.title)}`, idea);
+                continue;
+              }
+              const existing = byCoreClaim.get(key);
+              if (!existing || idea.priority_score > existing.priority_score) {
+                byCoreClaim.set(key, idea);
+              }
+            }
+            return Array.from(byCoreClaim.values()).sort(
+              (a, b) => b.priority_score - a.priority_score,
+            );
+          })()
+        : afterTitle.sort((a, b) => b.priority_score - a.priority_score);
+    ideaPipelineStats.after_core_claim_dedupe = deduped.length;
 
     // Diversity: avoid over-indexing on a single domain (e.g. github.blog) when there are many sources.
     // For month windows, enforce multiple distinct domains (min 3 when available)
@@ -1718,7 +2856,10 @@ export async function generateContentIdeas(options: {
       }
     }
 
-    return periodDays > 14 ? enforceChannelDiversity(diversified, numIdeas) : diversified;
+    ideaPipelineStats.after_domain_diversity = diversified.length;
+    const channelDiversified = periodDays > 14 ? enforceChannelDiversity(diversified, numIdeas) : diversified;
+    ideaPipelineStats.after_channel_diversity = channelDiversified.length;
+    return channelDiversified;
   })();
   const corroboratedIdeas = periodDays > 14 ? ideas : addCorroboratingSources(ideas, selected);
   let evidenceQualifiedIdeas = enforceMonthlyEvidenceThreshold(corroboratedIdeas, periodDays);
@@ -1749,7 +2890,7 @@ export async function generateContentIdeas(options: {
     ).slice(0, numIdeas);
     evidenceQualifiedIdeas = backfillMonthWithSecondaryDistinctThemes(
       evidenceQualifiedIdeas,
-      scoredCandidates,
+      gatedCandidates,
       state,
       numIdeas,
     );
@@ -1762,7 +2903,51 @@ export async function generateContentIdeas(options: {
       minDistinctFrames,
       strictFramesAvailable < minDistinctFrames,
     ).slice(0, numIdeas);
+  } else {
+    evidenceQualifiedIdeas = backfillShortWindowDistinctThemes(
+      evidenceQualifiedIdeas,
+      gatedCandidates,
+      state,
+      numIdeas,
+    );
+    const shortWindowDistinctFrames = Math.min(4, Math.max(2, numIdeas));
+    evidenceQualifiedIdeas = enforceFrameDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
+      shortWindowDistinctFrames,
+      false,
+    ).slice(0, numIdeas);
+    evidenceQualifiedIdeas = enforceThesisAndDifferentiatorDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
+    );
+    evidenceQualifiedIdeas = enforceNarrativeClusterCap(
+      evidenceQualifiedIdeas,
+      numIdeas,
+    );
+    evidenceQualifiedIdeas = diversifyShortWindowPrimaryHooks(
+      evidenceQualifiedIdeas,
+      gatedCandidates,
+      state,
+      numIdeas,
+    );
+    evidenceQualifiedIdeas = enforcePrimarySourceDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
+    );
+    evidenceQualifiedIdeas = rebalanceCorroboratingSourcesAcrossIdeas(
+      evidenceQualifiedIdeas,
+      gatedCandidates,
+    );
   }
+  const droppedCandidates = rawIdeas
+    .map((i) => i.title)
+    .filter((title) =>
+      !evidenceQualifiedIdeas.some(
+        (picked) => normalizeIdeaTitleKey(picked.title) === normalizeIdeaTitleKey(title),
+      ),
+    )
+    .slice(0, 12);
   const achievedBucketCounts = {
     beachhead: evidenceQualifiedIdeas.filter((i) => toSegmentBucket(i.target_segment, state) === "beachhead").length,
     adjacent: evidenceQualifiedIdeas.filter((i) => toSegmentBucket(i.target_segment, state) === "adjacent").length,
@@ -1804,17 +2989,112 @@ export async function generateContentIdeas(options: {
     debugLog.flush();
   }
 
+  let pipelineTracePayload: ContentIdeasPipelineTrace | undefined;
+  if (
+    pipelineTraceEnabled &&
+    marketRetrievalTrace &&
+    competitorRetrievalTrace &&
+    gateStats &&
+    rankingTrace
+  ) {
+    const refinement_stages = [
+      { stage: "ranked_pool", count: ranked.length },
+      { stage: "after_candidate_gates", count: gatedCandidates.length },
+      { stage: "selection_pool", count: selected.length },
+      { stage: "fallback_ideas", count: ideaPipelineStats.fallback_ideas },
+      { stage: "source_driven_ideas", count: ideaPipelineStats.source_driven_ideas },
+      { stage: "raw_ideas", count: rawIdeas.length },
+      { stage: "after_title_dedupe", count: ideaPipelineStats.after_title_dedupe },
+      { stage: "after_core_claim_dedupe", count: ideaPipelineStats.after_core_claim_dedupe },
+      { stage: "after_domain_diversity", count: ideaPipelineStats.after_domain_diversity },
+      { stage: "after_channel_diversity", count: ideaPipelineStats.after_channel_diversity },
+      { stage: "final_ideas", count: evidenceQualifiedIdeas.length },
+    ];
+    const interpretable_steps: CuratorTraceStep[] = [
+      ...retrievalTraceToSteps(marketRetrievalTrace),
+      ...retrievalTraceToSteps(competitorRetrievalTrace),
+      ...rankingTraceToSteps(rankingTrace),
+      ...refinement_stages.map((s) => ({
+        id: `refinement_${s.stage}`,
+        label: s.stage.replace(/_/g, " "),
+        detail: `${s.count} items`,
+        metrics: { count: s.count },
+      })),
+    ];
+    pipelineTracePayload = {
+      schemaVersion: CURATOR_TRACE_SCHEMA_VERSION,
+      focus: options.focus ?? null,
+      retrieval: {
+        market_brief: marketRetrievalTrace,
+        competitor_intel: competitorRetrievalTrace,
+      },
+      ranking: rankingTrace,
+      pool: {
+        after_dedupe_urls: allDocs.length,
+        ranked_count: ranked.length,
+      },
+      candidate_gates: gateStats,
+      selection: {
+        min_score_threshold: minScoreThreshold,
+        selection_pool_size: selectionPoolSize,
+        selected_top_urls: selected
+          .map((c) => canonicalizeUrl(c.doc.url))
+          .filter((u): u is string => !!u)
+          .slice(0, 25),
+      },
+      refinement_stages,
+      interpretable_steps,
+    };
+  }
+
   return postProcessContentIdeasOutput({
     generated_at: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
     periodDays,
     playbook_confidence_flags: state.confidence_flags,
+    ...(pipelineTracePayload ? { pipeline_trace: pipelineTracePayload } : {}),
     selection_debug: {
       target_mix: { beachhead: 0, adjacent: 0, broader: 0 },
       achieved_mix: achievedMix,
       achieved_counts: achievedBucketCounts,
       achieved_segment_counts: achievedSegmentCounts,
+      dropped_candidates: droppedCandidates,
     },
     ideas: evidenceQualifiedIdeas,
   });
 }
+
+export const generateContentIdeas = withLangSmithTraceable(generateContentIdeasImpl, {
+  name: "generate_content_ideas",
+  run_type: "chain",
+  defaultProjectName: "code-intel-digest-agents",
+  processInputs: (inputs) => {
+    const [options] = "args" in inputs ? inputs.args : [undefined];
+    return {
+      periodDays: options?.periodDays ?? null,
+      focus: options?.focus ?? null,
+      numIdeas: options?.numIdeas ?? null,
+      pipelineTrace: options?.pipelineTrace === true,
+      hasMarketBriefSummary: Boolean(options?.marketBriefSummary),
+      debug: options?.debug === true,
+    };
+  },
+  processOutputs: (outputs) => ({
+    generated_at:
+      outputs && typeof outputs === "object" && "generated_at" in outputs
+        ? outputs.generated_at
+        : null,
+    ideaCount:
+      outputs && typeof outputs === "object" && "ideas" in outputs && Array.isArray(outputs.ideas)
+        ? outputs.ideas.length
+        : 0,
+    periodDays:
+      outputs && typeof outputs === "object" && "periodDays" in outputs
+        ? outputs.periodDays ?? null
+        : null,
+    pipelineTrace:
+      outputs && typeof outputs === "object" && "pipeline_trace" in outputs
+        ? Boolean(outputs.pipeline_trace)
+        : false,
+  }),
+});

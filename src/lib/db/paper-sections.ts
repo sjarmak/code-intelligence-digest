@@ -3,8 +3,7 @@
  * Stores section-level summaries and embeddings for intelligent retrieval
  */
 
-import { getSqlite } from './index';
-import { getDbClient, detectDriver } from './driver';
+import { getDbClient } from "./driver";
 import { logger } from '../logger';
 import { generateEmbedding } from '../embeddings/generate';
 
@@ -25,55 +24,10 @@ export interface PaperSectionSummary {
 
 /**
  * Initialize paper_sections table
- * Works with both SQLite (dev) and PostgreSQL (prod)
+ * PostgreSQL schema is defined in `schema-postgres.ts` and applied by `initializeDatabase()`.
  */
 export function initializePaperSectionsTable() {
-  const driver = detectDriver();
-
-  // Check if we're using Postgres
-  if (driver === 'postgres') {
-    // Postgres schema is handled by schema-postgres.ts
-    // Just ensure the table exists (it will be created by schema initialization)
-    logger.info('Paper sections table will be initialized via Postgres schema');
-    return;
-  }
-
-  // SQLite initialization
-  const db = getSqlite();
-
-  try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS paper_sections (
-        id TEXT PRIMARY KEY,
-        bibcode TEXT NOT NULL,
-        section_id TEXT NOT NULL,
-        section_title TEXT NOT NULL,
-        level INTEGER NOT NULL,
-        summary TEXT NOT NULL,
-        full_text TEXT NOT NULL,
-        char_start INTEGER NOT NULL,
-        char_end INTEGER NOT NULL,
-        embedding BLOB, -- JSON array of floats
-        created_at INTEGER DEFAULT (strftime('%s', 'now')),
-        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
-        FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE,
-        UNIQUE(bibcode, section_id)
-      );
-    `);
-
-    // Index for fast lookups
-    db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode
-      ON paper_sections(bibcode);
-    `);
-
-    logger.info('Paper sections table initialized (SQLite)');
-  } catch (error) {
-    logger.error('Failed to initialize paper sections table', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
+  logger.info("Paper sections table is managed via PostgreSQL schema initialization");
 }
 
 /**
@@ -91,10 +45,10 @@ export async function storeSectionSummaries(
     charEnd: number;
   }>
 ): Promise<void> {
-  const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
 
-  if (driver === 'postgres') {
+  
+
     const client = await getDbClient();
     for (const section of sections) {
       const id = `${bibcode}:${section.sectionId}`;
@@ -126,40 +80,8 @@ export async function storeSectionSummaries(
         ]
       );
     }
-  } else {
-    const db = getSqlite();
-    const stmt = db.prepare(`
-      INSERT INTO paper_sections (
-        id, bibcode, section_id, section_title, level, summary,
-        full_text, char_start, char_end, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(bibcode, section_id) DO UPDATE SET
-        section_title = excluded.section_title,
-        level = excluded.level,
-        summary = excluded.summary,
-        full_text = excluded.full_text,
-        char_start = excluded.char_start,
-        char_end = excluded.char_end,
-        updated_at = excluded.updated_at
-    `);
+  
 
-    for (const section of sections) {
-      const id = `${bibcode}:${section.sectionId}`;
-      stmt.run(
-        id,
-        bibcode,
-        section.sectionId,
-        section.sectionTitle,
-        section.level,
-        section.summary,
-        section.fullText,
-        section.charStart,
-        section.charEnd,
-        now,
-        now
-      );
-    }
-  }
 
   logger.info('Stored section summaries', {
     bibcode,
@@ -172,7 +94,6 @@ export async function storeSectionSummaries(
  */
 export async function generateAndStoreSectionEmbeddings(bibcode: string): Promise<void> {
   const sections = await getSectionSummaries(bibcode);
-  const driver = detectDriver();
 
   if (sections.length === 0) {
     logger.warn('No sections found for embedding generation', { bibcode });
@@ -186,7 +107,8 @@ export async function generateAndStoreSectionEmbeddings(bibcode: string): Promis
 
   const now = Math.floor(Date.now() / 1000);
 
-  if (driver === 'postgres') {
+  
+
     const client = await getDbClient();
     for (const section of sections) {
       try {
@@ -214,34 +136,8 @@ export async function generateAndStoreSectionEmbeddings(bibcode: string): Promis
         });
       }
     }
-  } else {
-    const db = getSqlite();
-    const updateStmt = db.prepare(`
-      UPDATE paper_sections
-      SET embedding = ?, updated_at = ?
-      WHERE id = ?
-    `);
+  
 
-    for (const section of sections) {
-      try {
-        // Generate embedding from summary (or full text if summary is short)
-        const textToEmbed = section.summary.length > 100
-          ? section.summary
-          : `${section.sectionTitle}: ${section.summary}`;
-
-        const embedding = await generateEmbedding(textToEmbed);
-        const embeddingJson = JSON.stringify(embedding);
-
-        updateStmt.run(embeddingJson, now, section.id);
-      } catch (error) {
-        logger.error('Failed to generate embedding for section', {
-          bibcode,
-          sectionId: section.sectionId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
 
   logger.info('Generated and stored section embeddings', {
     bibcode,
@@ -253,9 +149,9 @@ export async function generateAndStoreSectionEmbeddings(bibcode: string): Promis
  * Get all section summaries for a paper
  */
 export async function getSectionSummaries(bibcode: string): Promise<PaperSectionSummary[]> {
-  const driver = detectDriver();
 
-  if (driver === 'postgres') {
+  
+
     const client = await getDbClient();
     const result = await client.query(
       `SELECT
@@ -298,47 +194,8 @@ export async function getSectionSummaries(bibcode: string): Promise<PaperSection
         updatedAt: row.updated_at as number,
       };
     });
-  } else {
-    const db = getSqlite();
-    const stmt = db.prepare(`
-      SELECT
-        id, bibcode, section_id, section_title, level, summary,
-        full_text, char_start, char_end, embedding, created_at, updated_at
-      FROM paper_sections
-      WHERE bibcode = ?
-      ORDER BY char_start ASC
-    `);
+  
 
-    const rows = stmt.all(bibcode) as Array<{
-      id: string;
-      bibcode: string;
-      section_id: string;
-      section_title: string;
-      level: number;
-      summary: string;
-      full_text: string;
-      char_start: number;
-      char_end: number;
-      embedding: string | null;
-      created_at: number;
-      updated_at: number;
-    }>;
-
-    return rows.map((row) => ({
-      id: row.id,
-      bibcode: row.bibcode,
-      sectionId: row.section_id,
-      sectionTitle: row.section_title,
-      level: row.level,
-      summary: row.summary,
-      fullText: row.full_text,
-      charStart: row.char_start,
-      charEnd: row.char_end,
-      embedding: row.embedding ? JSON.parse(row.embedding) : undefined,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }));
-  }
 }
 
 /**
@@ -412,16 +269,13 @@ function cosineSimilarity(a: number[], b: number[]): number {
  * Clear all section summaries for a paper (useful for regeneration)
  */
 export async function clearSectionSummaries(bibcode: string): Promise<void> {
-  const driver = detectDriver();
 
-  if (driver === 'postgres') {
+  
+
     const client = await getDbClient();
     await client.run('DELETE FROM paper_sections WHERE bibcode = $1', [bibcode]);
-  } else {
-    const db = getSqlite();
-    const stmt = db.prepare('DELETE FROM paper_sections WHERE bibcode = ?');
-    stmt.run(bibcode);
-  }
+  
+
 
   logger.info('Cleared section summaries', { bibcode });
 }

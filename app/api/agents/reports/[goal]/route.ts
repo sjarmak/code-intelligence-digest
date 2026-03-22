@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { getReport, useReportDb } from "@/src/lib/agents/report-storage";
+import { getReport, isAgentReportsDbEnabled } from "@/src/lib/agents/report-storage";
 import { auth } from "@/src/auth";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
@@ -30,7 +30,7 @@ export async function GET(
 
   const id = req.nextUrl.searchParams.get("id") ?? undefined;
 
-  if (useReportDb()) {
+  if (isAgentReportsDbEnabled()) {
     await initializeDatabase();
     const row = await getReport(goal, id ?? undefined, session.user.id);
     if (row) return NextResponse.json(row);

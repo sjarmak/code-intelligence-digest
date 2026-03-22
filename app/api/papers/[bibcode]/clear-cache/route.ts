@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDbClient, detectDriver } from '@/src/lib/db/driver';
-import { getSqlite } from '@/src/lib/db/index';
+import { getDbClient } from "@/src/lib/db/driver";
 import { logger } from '@/src/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -22,25 +21,13 @@ export async function POST(
       bibcode = encodedBibcode;
       logger.warn('Bibcode decoding failed in clear-cache', { encodedBibcode });
     }
-
-    const driver = detectDriver();
     const now = Math.floor(Date.now() / 1000);
-
-    if (driver === 'postgres') {
       const client = await getDbClient();
       await client.run(`
         UPDATE ads_papers
         SET html_content = NULL, html_fetched_at = NULL, html_sections = NULL, html_figures = NULL, updated_at = $1
         WHERE bibcode = $2
       `, [now, bibcode]);
-    } else {
-      const db = getSqlite();
-      db.prepare(`
-        UPDATE ads_papers
-        SET html_content = NULL, html_fetched_at = NULL, html_sections = NULL, html_figures = NULL, updated_at = ?
-        WHERE bibcode = ?
-      `).run(now, bibcode);
-    }
 
     logger.info('Cleared HTML cache for paper', { bibcode });
 

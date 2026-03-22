@@ -37,11 +37,12 @@ The Docker Compose setup provides:
 
 ### Environment Variables
 
-The app uses the following priority for database selection:
+The app requires PostgreSQL and uses the following priority for selecting which connection string to use:
 
-1. **`LOCAL_DATABASE_URL`** - Used for local development (default)
-2. **`DATABASE_URL`** - Used if `LOCAL_DATABASE_URL` is not set (production)
-3. **SQLite** - Fallback if neither PostgreSQL URL is set (legacy, not recommended)
+1. **`LOCAL_DATABASE_URL`** - Preferred for local development (Docker Compose)
+2. **`DATABASE_URL`** - Used when `LOCAL_DATABASE_URL` is not set
+
+If neither is set, the app will throw at startup (there is no embedded database fallback).
 
 ### Using Local Database for Batch Scripts
 
@@ -119,7 +120,7 @@ If you see "relation does not exist" errors:
 npx tsx scripts/init-local-postgres.ts
 ```
 
-### Still Using SQLite
+### Database URL not picked up
 
 Check that `LOCAL_DATABASE_URL` is set correctly in `.env.local`:
 ```bash

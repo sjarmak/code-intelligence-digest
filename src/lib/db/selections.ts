@@ -3,8 +3,8 @@
  * Track which items were selected for final digests and why
  */
 
-import { getSqlite } from "./index";
 import { logger } from "../logger";
+import { getDbClient } from "./driver";
 
 export interface DigestSelection {
   id: string;
@@ -29,40 +29,26 @@ export async function saveDigestSelections(
   }>
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
-
-    const stmt = sqlite.prepare(`
-      INSERT INTO digest_selections 
-      (id, item_id, category, period, rank, diversity_reason)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    const insertMany = sqlite.transaction(
-      (
-        items: Array<{
-          itemId: string;
-          category: string;
-          period: string;
-          rank: number;
-          diversityReason?: string;
-        }>
-      ) => {
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          const id = `${item.category}_${item.period}_${item.rank}_${Date.now()}_${i}`;
-          stmt.run(
-            id,
-            item.itemId,
-            item.category,
-            item.period,
-            item.rank,
-            item.diversityReason || null
-          );
-        }
-      }
-    );
-
-    insertMany(selections);
+    const client = await getDbClient();
+    for (let i = 0; i < selections.length; i++) {
+      const item = selections[i];
+      const id = `${item.category}_${item.period}_${item.rank}_${Date.now()}_${i}`;
+      await client.run(
+        `
+        INSERT INTO digest_selections
+        (id, item_id, category, period, rank, diversity_reason)
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+        [
+          id,
+          item.itemId,
+          item.category,
+          item.period,
+          item.rank,
+          item.diversityReason || null,
+        ],
+      );
+    }
     logger.info(`Saved ${selections.length} digest selections to database`);
   } catch (error) {
     logger.error("Failed to save digest selections", error);
@@ -78,17 +64,17 @@ export async function getDigestSelections(
   period: string
 ): Promise<DigestSelection[]> {
   try {
-    const sqlite = getSqlite();
-
-    const rows = sqlite
-      .prepare(
-        `
-      SELECT * FROM digest_selections 
-      WHERE category = ? AND period = ?
+    const client = await getDbClient();
+    const result = await client.query(
+      `
+      SELECT * FROM digest_selections
+      WHERE category = $1 AND period = $2
       ORDER BY rank ASC
-    `
-      )
-      .all(category, period) as Array<{
+    `,
+      [category, period],
+    );
+
+    const rows = result.rows as Array<{
       id: string;
       item_id: string;
       category: string;
@@ -124,22 +110,24 @@ export async function getSelectionStats(period: string): Promise<{
   byCategory: Record<string, number>;
 }> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    const totalRow = sqlite
-      .prepare(`SELECT COUNT(*) as count FROM digest_selections WHERE period = ?`)
-      .get(period) as { count: number } | undefined;
+    const totalRes = await client.query(
+      `SELECT COUNT(*)::int as count FROM digest_selections WHERE period = $1`,
+      [period],
+    );
+    const totalRow = totalRes.rows[0] as { count: number } | undefined;
 
-    const byCategory = sqlite
-      .prepare(
-        `
-      SELECT category, COUNT(*) as count 
-      FROM digest_selections 
-      WHERE period = ? 
+    const byCategoryRes = await client.query(
+      `
+      SELECT category, COUNT(*)::int as count
+      FROM digest_selections
+      WHERE period = $1
       GROUP BY category
-    `
-      )
-      .all(period) as Array<{ category: string; count: number }>;
+    `,
+      [period],
+    );
+    const byCategory = byCategoryRes.rows as Array<{ category: string; count: number }>;
 
     return {
       totalSelected: totalRow?.count ?? 0,

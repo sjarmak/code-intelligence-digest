@@ -50,6 +50,100 @@ interface StructuredIntelPayload {
   items: StructuredIntelItem[];
 }
 
+/** Subset of `ContentIdeasOutput.pipeline_trace` for display (avoid coupling to full agent module). */
+interface ContentIdeasPipelineTraceView {
+  schemaVersion?: number;
+  focus?: string | null;
+  retrieval: {
+    market_brief: AgentRetrievalTraceView;
+    competitor_intel: AgentRetrievalTraceView;
+  };
+  ranking?: {
+    goal: string;
+    totalRanked: number;
+    sampleSize: number;
+    documents: Array<{
+      rank: number;
+      title: string;
+      url?: string;
+      source: string;
+      baseScore: number;
+      goalScore: number;
+      agentScore: number;
+    }>;
+  };
+  pool: { after_dedupe_urls: number; ranked_count: number };
+  candidate_gates: Array<{ name: string; passed: number; dropped: number }>;
+  selection: {
+    min_score_threshold: number;
+    selection_pool_size: number;
+    selected_top_urls: string[];
+  };
+  refinement_stages?: Array<{ stage: string; count: number }>;
+  interpretable_steps?: Array<{ id: string; label: string; detail: string; metrics?: Record<string, number | string> }>;
+}
+
+interface AgentRetrievalTraceView {
+  goal: string;
+  periodDays: number;
+  effectiveQuery?: string;
+  postgres: {
+    categories: Array<{ category: string; itemsLoaded: number; perCategoryCap: number }>;
+    fts?: { query: string; period: string; limit: number; hits: number };
+  };
+  web: {
+    timeRange?: string;
+    competitorDomains?: number;
+    queries: Array<{
+      query: string;
+      topic: string;
+      numResults: number;
+      domains?: number;
+      hits: number;
+      kind: string;
+    }>;
+  };
+  merge: {
+    postgresIn: number;
+    webIn: number;
+    mergedUnique: number;
+    postgresCappedTo: number;
+    webCappedTo: number;
+    caps?: { maxPostgresDocs: number; maxWebDocs: number };
+    countsMerged?: { postgres: number; web: number };
+    blockedDropped: { postgres: number; web: number };
+    dedupedByIdOrUrl: number;
+  };
+  configSnapshot?: {
+    goal: string;
+    primaryCategories: string[];
+    timeHorizonDays: number;
+    maxPostgresDocs: number;
+    maxWebDocs: number;
+  };
+  date: {
+    cutoffIso: string;
+    requirePublishedDate: boolean;
+    beforeFilter: number;
+    afterHydrate: number;
+    afterFilter: number;
+    droppedMissingDate?: number;
+    droppedTooOld?: number;
+    inferredDatesApplied?: number;
+  };
+}
+
+function getContentIdeasPipelineTrace(
+  meta: Record<string, unknown> | null
+): ContentIdeasPipelineTraceView | null {
+  if (!meta) return null;
+  const sp = meta.structuredPayload;
+  if (!sp || typeof sp !== 'object') return null;
+  const pt = (sp as Record<string, unknown>).pipeline_trace;
+  if (!pt || typeof pt !== 'object') return null;
+  return pt as ContentIdeasPipelineTraceView;
+}
+
 export const dynamic = 'force-dynamic';
 
 export default function ReportViewPage() {
@@ -110,6 +204,8 @@ export default function ReportViewPage() {
   }
 
   const structuredIntel = parseStructuredIntel(report);
+  const pipelineTrace =
+    report.agentId === 'gtm_content' ? getContentIdeasPipelineTrace(report.outputMetadata) : null;
 
   return (
     <div className="min-h-screen bg-white text-black">
@@ -138,7 +234,8 @@ export default function ReportViewPage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {pipelineTrace && <RetrievalTracePanel trace={pipelineTrace} />}
         {structuredIntel ? (
           <StructuredCompetitorIntel payload={structuredIntel} />
         ) : (
@@ -155,6 +252,182 @@ export default function ReportViewPage() {
         )}
       </main>
     </div>
+  );
+}
+
+function RetrievalTracePanel({ trace }: { trace: ContentIdeasPipelineTraceView }) {
+  const goalBlock = (label: string, t: AgentRetrievalTraceView) => (
+    <div key={label} className="rounded-lg border border-surface-border bg-gray-50 p-4 space-y-2">
+      <h3 className="text-sm font-semibold text-foreground">{label}</h3>
+      <p className="text-xs text-muted">
+        goal={t.goal} · periodDays={t.periodDays}
+        {t.effectiveQuery ? ` · query: ${t.effectiveQuery}` : ''}
+      </p>
+      <div className="text-xs space-y-1">
+        <p>
+          <strong>Postgres:</strong>{' '}
+          {t.postgres.categories.map((c) => `${c.category}: ${c.itemsLoaded}/${c.perCategoryCap}`).join(' · ') ||
+            '—'}
+        </p>
+        {t.postgres.fts && (
+          <p>
+            <strong>FTS:</strong> {t.postgres.fts.hits} hits · period {t.postgres.fts.period} · limit{' '}
+            {t.postgres.fts.limit} · &quot;{t.postgres.fts.query.slice(0, 120)}
+            {t.postgres.fts.query.length > 120 ? '…' : ''}&quot;
+          </p>
+        )}
+        <p>
+          <strong>Web:</strong> {t.web.queries.length} queries
+          {t.web.timeRange ? ` · timeRange=${t.web.timeRange}` : ''}
+          {t.web.competitorDomains != null ? ` · competitorDomains=${t.web.competitorDomains}` : ''}
+        </p>
+        <ul className="list-disc list-inside pl-1 space-y-0.5 max-h-32 overflow-y-auto">
+          {t.web.queries.map((q, i) => (
+            <li key={i}>
+              [{q.kind}/{q.topic}] {q.hits}/{q.numResults} — {q.query.slice(0, 100)}
+              {q.query.length > 100 ? '…' : ''}
+            </li>
+          ))}
+        </ul>
+        {t.configSnapshot && (
+          <p>
+            <strong>Config snapshot:</strong> {t.configSnapshot.primaryCategories.length} categories · caps pg{' '}
+            {t.configSnapshot.maxPostgresDocs} / web {t.configSnapshot.maxWebDocs} · horizon {t.configSnapshot.timeHorizonDays}d
+          </p>
+        )}
+        <p>
+          <strong>Merge:</strong> pg in {t.merge.postgresIn} · web in {t.merge.webIn} · caps{' '}
+          {t.merge.caps
+            ? `${t.merge.caps.maxPostgresDocs} / ${t.merge.caps.maxWebDocs}`
+            : `${t.merge.postgresCappedTo} / ${t.merge.webCappedTo}`}
+          {t.merge.countsMerged
+            ? ` · merged from pg ${t.merge.countsMerged.postgres} · web ${t.merge.countsMerged.web}`
+            : ''}
+          {' · unique '}
+          {t.merge.mergedUnique} · dedup skips {t.merge.dedupedByIdOrUrl} · domain-blocked pg{' '}
+          {t.merge.blockedDropped.postgres}/web {t.merge.blockedDropped.web}
+        </p>
+        <p>
+          <strong>Date filter:</strong> cutoff {t.date.cutoffIso} · requireDate={String(t.date.requirePublishedDate)}{' '}
+          · {t.date.beforeFilter} → hydrate → {t.date.afterHydrate} → {t.date.afterFilter} after filter
+          {t.date.droppedMissingDate != null ? ` · dropped missing date: ${t.date.droppedMissingDate}` : ''}
+          {t.date.droppedTooOld != null ? ` · dropped too old: ${t.date.droppedTooOld}` : ''}
+        </p>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="rounded-lg border border-amber-200 bg-amber-50/50 p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-lg font-semibold">Content agent · retrieval trace</h2>
+        {trace.schemaVersion != null && (
+          <span className="text-xs font-mono px-2 py-0.5 rounded border border-amber-300 bg-white">
+            schema v{trace.schemaVersion}
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-muted">
+        Versioned trace: goal config → retrieval → merge → dates → ranking sample → gates → refinement.{' '}
+        <span className="text-muted">
+          (Disable storage: <code className="text-xs bg-white px-1 rounded border">CONTENT_IDEAS_PIPELINE_TRACE=0</code>.)
+        </span>
+      </p>
+      {trace.focus != null && trace.focus !== '' && (
+        <p className="text-sm">
+          <strong>Focus:</strong> {trace.focus}
+        </p>
+      )}
+      <div className="grid gap-3 md:grid-cols-2">
+        {goalBlock('Market brief pool', trace.retrieval.market_brief)}
+        {goalBlock('Competitor intel pool', trace.retrieval.competitor_intel)}
+      </div>
+      <div className="rounded-lg border border-surface-border bg-white p-3 text-sm space-y-1">
+        <p>
+          <strong>Combined pool:</strong> {trace.pool.after_dedupe_urls} URLs after dedupe · {trace.pool.ranked_count}{' '}
+          ranked for shortlist
+        </p>
+        <p>
+          <strong>Selection:</strong> min score {trace.selection.min_score_threshold} · pool size{' '}
+          {trace.selection.selection_pool_size} · top URLs {trace.selection.selected_top_urls.length}
+        </p>
+        <ul className="list-disc list-inside text-xs max-h-24 overflow-y-auto">
+          {trace.candidate_gates.map((g) => (
+            <li key={g.name}>
+              {g.name}: passed {g.passed}, dropped {g.dropped}
+            </li>
+          ))}
+        </ul>
+      </div>
+      {trace.refinement_stages && trace.refinement_stages.length > 0 && (
+        <div className="rounded-lg border border-surface-border bg-white p-3">
+          <h3 className="text-sm font-semibold mb-2">Refinement pipeline</h3>
+          <div className="flex flex-wrap gap-2 text-xs">
+            {trace.refinement_stages.map((s) => (
+              <span key={s.stage} className="px-2 py-1 rounded border border-gray-200 bg-gray-50">
+                {s.stage.replace(/_/g, ' ')}: <strong>{s.count}</strong>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {trace.ranking && trace.ranking.documents.length > 0 && (
+        <div className="rounded-lg border border-surface-border bg-white p-3 overflow-x-auto">
+          <h3 className="text-sm font-semibold mb-2">
+            Ranking sample (goal {trace.ranking.goal}, {trace.ranking.totalRanked} ranked, top {trace.ranking.sampleSize})
+          </h3>
+          <p className="mb-2 text-xs text-muted">
+            Compare <strong className="text-foreground">base</strong> vs <strong className="text-foreground">goal</strong> vs{" "}
+            <strong className="text-foreground">agent</strong> to see whether ICP / format / competitor weighting is moving items beyond raw digest score.
+          </p>
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b text-left text-muted">
+                <th className="py-1 pr-2">#</th>
+                <th className="py-1 pr-2">goal</th>
+                <th className="py-1 pr-2">agent</th>
+                <th className="py-1 pr-2">base</th>
+                <th className="py-1">title / source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trace.ranking.documents.map((d) => (
+                <tr key={d.rank} className="border-b border-gray-100">
+                  <td className="py-1 pr-2 font-mono">{d.rank}</td>
+                  <td className="py-1 pr-2">{d.goalScore.toFixed(3)}</td>
+                  <td className="py-1 pr-2">{d.agentScore.toFixed(3)}</td>
+                  <td className="py-1 pr-2">{d.baseScore.toFixed(3)}</td>
+                  <td className="py-1">
+                    {d.title.slice(0, 72)}
+                    {d.title.length > 72 ? '…' : ''}{' '}
+                    <span className="text-muted">({d.source})</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {trace.interpretable_steps && trace.interpretable_steps.length > 0 && (
+        <details className="text-sm rounded-lg border border-surface-border bg-white p-3" open>
+          <summary className="cursor-pointer font-medium text-foreground">Interpretable steps (ordered)</summary>
+          <ol className="mt-2 space-y-2 list-decimal list-inside text-xs">
+            {trace.interpretable_steps.map((step) => (
+              <li key={step.id}>
+                <strong className="text-foreground">{step.label}</strong>
+                <span className="text-muted"> — {step.detail}</span>
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+      <details className="text-sm">
+        <summary className="cursor-pointer font-medium text-foreground">Raw trace JSON</summary>
+        <pre className="mt-2 max-h-96 overflow-auto rounded border border-surface-border bg-gray-50 p-3 text-xs">
+          {JSON.stringify(trace, null, 2)}
+        </pre>
+      </details>
+    </section>
   );
 }
 

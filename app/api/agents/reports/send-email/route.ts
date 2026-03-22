@@ -12,7 +12,7 @@ import { Resend } from "resend";
 import { marked } from "marked";
 import { auth } from "@/src/auth";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { getReport, useReportDb } from "@/src/lib/agents/report-storage";
+import { getReport, isAgentReportsDbEnabled } from "@/src/lib/agents/report-storage";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
 const VALID_GOALS = ["content_ideas", "market_brief", "competitor_intel"] as const;
@@ -29,7 +29,7 @@ async function fetchReportContent(
 ): Promise<{ goal: string; id: string; content: string; generatedAt: string } | null> {
   if (!VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return null;
 
-  if (useReportDb()) {
+  if (isAgentReportsDbEnabled()) {
     await initializeDatabase();
     const row = await getReport(goal, id, userId);
     return row;

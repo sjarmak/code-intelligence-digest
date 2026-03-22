@@ -3,8 +3,8 @@
  * Handle cache invalidation, TTL checks, and stale fallback
  */
 
-import { getSqlite } from "./index";
 import { logger } from "../logger";
+import { getDbClient } from "./driver";
 
 export interface CacheMetadata {
   key: string;
@@ -18,11 +18,11 @@ export interface CacheMetadata {
  */
 export async function isCacheExpired(key: string): Promise<boolean> {
   try {
-    const sqlite = getSqlite();
-
-    const row = sqlite
-      .prepare(`SELECT expires_at FROM cache_metadata WHERE key = ?`)
-      .get(key) as { expires_at: number | null } | undefined;
+    const client = await getDbClient();
+    const result = await client.query(`SELECT expires_at FROM cache_metadata WHERE key = $1`, [
+      key,
+    ]);
+    const row = result.rows[0] as { expires_at: number | null } | undefined;
 
     if (!row || !row.expires_at) {
       return true; // No metadata = expired
@@ -41,17 +41,15 @@ export async function isCacheExpired(key: string): Promise<boolean> {
  */
 export async function invalidateCacheKey(key: string): Promise<void> {
   try {
-    const sqlite = getSqlite();
-
-    sqlite
-      .prepare(
-        `
-      UPDATE cache_metadata 
-      SET expires_at = 0 
-      WHERE key = ?
-    `
-      )
-      .run(key);
+    const client = await getDbClient();
+    await client.run(
+      `
+      UPDATE cache_metadata
+      SET expires_at = 0
+      WHERE key = $1
+    `,
+      [key],
+    );
 
     logger.info(`Invalidated cache key: ${key}`);
   } catch (error) {
@@ -96,13 +94,26 @@ export async function invalidateFeeds(): Promise<void> {
  */
 export async function getCacheMetadata(key: string): Promise<CacheMetadata | null> {
   try {
-    const sqlite = getSqlite();
-
-    const row = sqlite
-      .prepare(`SELECT key, last_refresh_at, count, expires_at FROM cache_metadata WHERE key = ?`)
-      .get(key) as CacheMetadata | undefined;
-
-    return row || null;
+    const client = await getDbClient();
+    const result = await client.query(
+      `SELECT key, last_refresh_at, count, expires_at FROM cache_metadata WHERE key = $1`,
+      [key],
+    );
+    const row = result.rows[0] as
+      | {
+          key: string;
+          last_refresh_at: number | null;
+          count: number;
+          expires_at: number | null;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      key: row.key,
+      lastRefreshAt: row.last_refresh_at,
+      count: row.count,
+      expiresAt: row.expires_at,
+    };
   } catch (error) {
     logger.error(`Failed to get cache metadata for ${key}`, error);
     return null;
@@ -114,13 +125,22 @@ export async function getCacheMetadata(key: string): Promise<CacheMetadata | nul
  */
 export async function getAllCacheMetadata(): Promise<CacheMetadata[]> {
   try {
-    const sqlite = getSqlite();
-
-    const rows = sqlite
-      .prepare(`SELECT key, last_refresh_at, count, expires_at FROM cache_metadata ORDER BY expires_at DESC`)
-      .all() as CacheMetadata[];
-
-    return rows;
+    const client = await getDbClient();
+    const result = await client.query(
+      `SELECT key, last_refresh_at, count, expires_at FROM cache_metadata ORDER BY expires_at DESC`,
+    );
+    const rows = result.rows as Array<{
+      key: string;
+      last_refresh_at: number | null;
+      count: number;
+      expires_at: number | null;
+    }>;
+    return rows.map((r) => ({
+      key: r.key,
+      lastRefreshAt: r.last_refresh_at,
+      count: r.count,
+      expiresAt: r.expires_at,
+    }));
   } catch (error) {
     logger.error("Failed to get all cache metadata", error);
     return [];
@@ -132,12 +152,13 @@ export async function getAllCacheMetadata(): Promise<CacheMetadata[]> {
  */
 export async function extendCacheTTL(key: string, extensionSeconds: number): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
     const newExpiresAt = Math.floor(Date.now() / 1000) + extensionSeconds;
-    sqlite
-      .prepare(`UPDATE cache_metadata SET expires_at = ? WHERE key = ?`)
-      .run(newExpiresAt, key);
+    await client.run(`UPDATE cache_metadata SET expires_at = $1 WHERE key = $2`, [
+      newExpiresAt,
+      key,
+    ]);
 
     logger.info(
       `Extended cache TTL for ${key} by ${extensionSeconds}s (expires at ${newExpiresAt})`
@@ -157,20 +178,22 @@ export async function setCacheMetadata(
   ttlSeconds: number
 ): Promise<void> {
   try {
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
     const now = Math.floor(Date.now() / 1000);
     const expiresAt = now + ttlSeconds;
 
-    sqlite
-      .prepare(
-        `
-      INSERT OR REPLACE INTO cache_metadata 
-      (key, last_refresh_at, count, expires_at)
-      VALUES (?, ?, ?, ?)
-    `
-      )
-      .run(key, now, count, expiresAt);
+    await client.run(
+      `
+      INSERT INTO cache_metadata (key, last_refresh_at, count, expires_at)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (key) DO UPDATE SET
+        last_refresh_at = EXCLUDED.last_refresh_at,
+        count = EXCLUDED.count,
+        expires_at = EXCLUDED.expires_at
+    `,
+      [key, now, count, expiresAt],
+    );
 
     logger.info(`Set cache metadata: ${key}, count=${count}, expires_at=${expiresAt}`);
   } catch (error) {

@@ -2,11 +2,11 @@
  * GET /api/items/[id]/fulltext
  * Check if an item has full text available and optionally return it
  *
- * Uses PostgreSQL when DATABASE_URL is configured, otherwise falls back to SQLite
+ * Uses PostgreSQL via `getDbClient()`
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getDbClient, detectDriver } from "@/src/lib/db/driver";
+import { getDbClient } from "@/src/lib/db/driver";
 import { looksLikeHtml, stripHtmlFromText } from "@/src/lib/pipeline/fulltext";
 
 /**
@@ -77,7 +77,7 @@ async function loadFullTextFromDb(itemId: string): Promise<{
     const db = await getDbClient();
 
     const result = await db.query(
-      `SELECT full_text, full_text_source, summary FROM items WHERE id = ?`,
+      `SELECT full_text, full_text_source, summary FROM items WHERE id = $1`,
       [itemId]
     );
 
@@ -121,7 +121,7 @@ export async function GET(
   try {
     const { id } = await params;
     const itemId = decodeURIComponent(id);
-    const driver = detectDriver();
+    const driver = "postgres" as const;
 
     // Check if full text exists (or summary as fallback)
     const fullText = await loadFullTextFromDb(itemId);

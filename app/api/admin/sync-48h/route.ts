@@ -24,7 +24,6 @@ import { createInoreaderClient } from "@/src/lib/inoreader/client";
 import { normalizeItems } from "@/src/lib/pipeline/normalize";
 import { categorizeItems } from "@/src/lib/pipeline/categorize";
 import { saveItems } from "@/src/lib/db/items";
-import { getSqlite } from "@/src/lib/db/index";
 import { Category } from "@/src/lib/model";
 import { blockInProduction } from "@/src/lib/auth/guards";
 

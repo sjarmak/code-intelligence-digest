@@ -23,6 +23,7 @@
 import { NextResponse } from 'next/server';
 import { logger } from '@/src/lib/logger';
 import { initializeDatabase } from '@/src/lib/db/index';
+import { getDbClient } from '@/src/lib/db/driver';
 import { runDailySync } from '@/src/lib/sync/daily-sync';
 import { blockInProduction } from '@/src/lib/auth/guards';
 
@@ -75,11 +76,9 @@ export async function GET() {
   try {
     await initializeDatabase();
 
-    // Check sync state
-    const sqlite = (await import('@/src/lib/db/index')).getSqlite();
-    const state = sqlite
-      .prepare('SELECT * FROM sync_state WHERE id = ?')
-      .get('daily-sync') as Record<string, unknown> | undefined;
+    const client = await getDbClient();
+    const res = await client.query('SELECT * FROM sync_state WHERE id = $1', ['daily-sync']);
+    const state = res.rows[0] as Record<string, unknown> | undefined;
 
     if (!state) {
       return NextResponse.json({

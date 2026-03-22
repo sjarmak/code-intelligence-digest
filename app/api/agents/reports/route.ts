@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { listReports, useReportDb } from "@/src/lib/agents/report-storage";
+import { isAgentReportsDbEnabled, listReports } from "@/src/lib/agents/report-storage";
 import { auth } from "@/src/auth";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
@@ -20,7 +20,7 @@ export async function GET() {
       return NextResponse.json({ error: "Sign in required." }, { status: 401 });
     }
 
-    if (useReportDb()) {
+    if (isAgentReportsDbEnabled()) {
       await initializeDatabase();
       const reports = await listReports(session.user.id);
       return NextResponse.json({ reports });

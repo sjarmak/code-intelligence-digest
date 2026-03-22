@@ -159,8 +159,11 @@ function validateRequest(body: unknown): {
 
   const req = body as Record<string, unknown>;
 
-  // Validate sourceMode
-  const sourceMode = req.sourceMode as string;
+  // Validate sourceMode (infer legacy "categories" requests that omit sourceMode)
+  let sourceMode = req.sourceMode as string;
+  if (!sourceMode && Array.isArray(req.categories)) {
+    sourceMode = "categories";
+  }
   if (!sourceMode || !["auto", "manual", "categories"].includes(sourceMode)) {
     return {
       valid: false,

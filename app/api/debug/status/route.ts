@@ -4,7 +4,7 @@
 
 import { NextResponse } from "next/server";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { getSqlite } from "@/src/lib/db/index";
+import { getDbClient } from "@/src/lib/db/driver";
 import { logger } from "@/src/lib/logger";
 import { blockInProduction } from "@/src/lib/auth/guards";
 
@@ -15,36 +15,29 @@ export async function GET() {
 
   try {
     await initializeDatabase();
-    const sqlite = getSqlite();
+    const client = await getDbClient();
 
-    // Get item counts by category
-    const categoryCounts = sqlite
-      .prepare(
-        `
-      SELECT category, COUNT(*) as count
+    const categoryCountsResult = await client.query(`
+      SELECT category, COUNT(*)::bigint AS count
       FROM items
       GROUP BY category
       ORDER BY count DESC
-    `
-      )
-      .all() as Array<{ category: string; count: number }>;
+    `);
+    const categoryCounts = (categoryCountsResult.rows as Array<{ category: string; count: string }>).map((r) => ({
+      category: r.category,
+      count: Number(r.count),
+    }));
 
-    // Get total embeddings
-    const embeddingsCount = sqlite
-      .prepare("SELECT COUNT(*) as count FROM item_embeddings")
-      .get() as { count: number } | undefined;
+    const embeddingsCountResult = await client.query("SELECT COUNT(*)::bigint AS count FROM item_embeddings");
+    const embeddingsCount = embeddingsCountResult.rows[0] as { count: string } | undefined;
 
-    // Get recent items
-    const recentItems = sqlite
-      .prepare(
-        `
+    const recentItemsResult = await client.query(`
       SELECT id, title, category, published_at
       FROM items
       ORDER BY published_at DESC
       LIMIT 10
-    `
-      )
-      .all() as Array<{
+    `);
+    const recentItems = recentItemsResult.rows as Array<{
       id: string;
       title: string;
       category: string;
@@ -54,7 +47,7 @@ export async function GET() {
     return NextResponse.json({
       status: "ok",
       itemsByCategory: categoryCounts,
-      totalEmbeddings: embeddingsCount?.count ?? 0,
+      totalEmbeddings: embeddingsCount ? Number(embeddingsCount.count) : 0,
       recentItems: recentItems.map((item) => ({
         ...item,
         published_at: new Date(item.published_at * 1000).toISOString(),

@@ -383,14 +383,14 @@ async function fetchFromArxiv(url: string): Promise<string> {
 async function getFullTextFromADS(url: string): Promise<string | null> {
   try {
     const { detectDriver, getDbClient } = await import("../db/driver");
-    const driver = detectDriver();
 
     // Extract bibcode from URL (works for ADS URLs)
     const bibcode = extractBibcodeFromUrl(url);
 
     if (bibcode) {
       // Try to get by bibcode
-      if (driver === 'postgres') {
+      
+
         const client = await getDbClient();
         const result = await client.query(
           'SELECT body FROM ads_papers WHERE bibcode = $1 AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1',
@@ -403,17 +403,8 @@ async function getFullTextFromADS(url: string): Promise<string | null> {
             return body;
           }
         }
-      } else {
-        const { getSqlite } = await import("../db/index");
-        const sqlite = getSqlite();
-        const row = sqlite.prepare(
-          'SELECT body FROM ads_papers WHERE bibcode = ? AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1'
-        ).get(bibcode) as { body: string } | undefined;
-        if (row?.body) {
-          logger.debug(`Found ADS body for bibcode ${bibcode} (${row.body.length} chars)`);
-          return row.body;
-        }
-      }
+      
+
     }
 
     // If URL is arXiv, try to find by arxiv_url
@@ -423,7 +414,8 @@ async function getFullTextFromADS(url: string): Promise<string | null> {
         const arxivId = arxivMatch[1];
         const arxivUrl = `https://arxiv.org/abs/${arxivId}`;
 
-        if (driver === 'postgres') {
+        
+
           const client = await getDbClient();
           const result = await client.query(
             'SELECT body FROM ads_papers WHERE arxiv_url = $1 AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1',
@@ -436,17 +428,8 @@ async function getFullTextFromADS(url: string): Promise<string | null> {
               return body;
             }
           }
-        } else {
-          const { getSqlite } = await import("../db/index");
-          const sqlite = getSqlite();
-          const row = sqlite.prepare(
-            'SELECT body FROM ads_papers WHERE arxiv_url = ? AND body IS NOT NULL AND LENGTH(body) >= 100 LIMIT 1'
-          ).get(arxivUrl) as { body: string } | undefined;
-          if (row?.body) {
-            logger.debug(`Found ADS body for arXiv ${arxivId} (${row.body.length} chars)`);
-            return row.body;
-          }
-        }
+        
+
       }
     }
 

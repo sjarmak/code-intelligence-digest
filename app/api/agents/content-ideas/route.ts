@@ -13,11 +13,14 @@ export async function GET(req: NextRequest) {
     const periodDays = Math.min(Math.max(1, parseInt(searchParams.get("periodDays") || "30", 10)), 90);
     const numIdeas = Math.min(Math.max(1, parseInt(searchParams.get("numIdeas") || "10", 10)), 25);
     const focus = searchParams.get("focus") ?? undefined;
+    const traceRaw = (searchParams.get("trace") ?? "").toLowerCase();
+    const pipelineTrace = traceRaw === "1" || traceRaw === "true" || traceRaw === "yes";
 
     const ideas = await generateContentIdeas({
       periodDays,
       numIdeas,
       focus: focus ?? null,
+      pipelineTrace,
     });
     logger.info("Content ideas agent completed", {
       periodDays,

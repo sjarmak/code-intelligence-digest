@@ -9,6 +9,10 @@ import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
 import type { RetrievedDoc } from "./agentRetrieval";
 import { computeGoalFeatures, type GoalFeatures } from "./goalFeatures";
+import {
+  CURATOR_TRACE_SCHEMA_VERSION,
+  type AgentRankingTrace,
+} from "../retrieval/curator-trace";
 
 export interface AgentRankedDoc extends RetrievedDoc {
   baseScore: number;
@@ -38,13 +42,20 @@ function heuristicBaseScore(doc: RetrievedDoc, goal: AgentGoal): number {
   return Math.min(1, raw * 0.7 + recency * 0.3);
 }
 
+export interface RankForAgentOptions {
+  /** When set, populated with a top-N score sample for curator audit traces. */
+  rankingTrace?: AgentRankingTrace;
+  rankingSampleSize?: number;
+}
+
 /**
  * Rank retrieved docs for an agent goal using base scores (from DB or heuristic)
  * and goal-aware feature weights.
  */
 export async function rankForAgent(
   goal: AgentGoal,
-  docs: RetrievedDoc[]
+  docs: RetrievedDoc[],
+  options?: RankForAgentOptions
 ): Promise<AgentRankedDoc[]> {
   if (docs.length === 0) return [];
 
@@ -82,6 +93,25 @@ export async function rankForAgent(
   });
 
   ranked.sort((a, b) => b.agentScore - a.agentScore);
+
+  if (options?.rankingTrace) {
+    const n = Math.min(options.rankingSampleSize ?? 25, ranked.length);
+    const rt = options.rankingTrace;
+    rt.schemaVersion = CURATOR_TRACE_SCHEMA_VERSION;
+    rt.goal = goal;
+    rt.totalRanked = ranked.length;
+    rt.sampleSize = n;
+    rt.documents = ranked.slice(0, n).map((doc, i) => ({
+      rank: i + 1,
+      id: doc.id,
+      url: doc.url,
+      title: doc.title,
+      source: doc.source,
+      baseScore: doc.baseScore,
+      goalScore: doc.goalScore,
+      agentScore: doc.agentScore,
+    }));
+  }
 
   logger.info("Agent ranking complete", {
     goal,

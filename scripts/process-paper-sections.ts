@@ -3,7 +3,8 @@
  * Run this to build the section-based retrieval index for papers
  */
 
-import { getSqlite } from '../src/lib/db/index';
+import { initializeDatabase } from '../src/lib/db/index';
+import { getDbClient } from '../src/lib/db/driver';
 import { processPaperSections } from '../src/lib/pipeline/section-summarization';
 import { initializePaperSectionsTable } from '../src/lib/db/paper-sections';
 import { logger } from '../src/lib/logger';
@@ -11,7 +12,6 @@ import { logger } from '../src/lib/logger';
 async function main() {
   console.log('=== Processing Paper Sections ===\n');
 
-  // Check for OpenAI API key
   if (!process.env.OPENAI_API_KEY) {
     console.error('❌ ERROR: OPENAI_API_KEY environment variable is not set');
     console.error('   Section summarization requires OpenAI API access.');
@@ -19,18 +19,19 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize tables
+  await initializeDatabase();
   initializePaperSectionsTable();
 
-  const db = getSqlite();
+  const client = await getDbClient();
 
-  // Get all papers with body text
-  const papers = db.prepare(`
+  const result = await client.query(`
     SELECT bibcode, title, LENGTH(body) as body_length
     FROM ads_papers
     WHERE body IS NOT NULL AND LENGTH(body) >= 100
     ORDER BY bibcode
-  `).all() as Array<{ bibcode: string; title: string | null; body_length: number }>;
+  `);
+
+  const papers = result.rows as Array<{ bibcode: string; title: string | null; body_length: number }>;
 
   console.log(`Found ${papers.length} papers with body text\n`);
 
@@ -60,5 +61,8 @@ async function main() {
   console.log(`Failed: ${failed}`);
 }
 
-main().catch(console.error);
-
+main().catch((error) => {
+  logger.error('process-paper-sections failed', error);
+  console.error(error);
+  process.exit(1);
+});

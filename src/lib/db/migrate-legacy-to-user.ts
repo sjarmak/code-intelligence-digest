@@ -4,7 +4,7 @@
  * they fetch as that user we copy legacy → user so items are retained.
  */
 
-import { getDbClient, detectDriver } from "./driver";
+import { getDbClient } from "./driver";
 import { LEGACY_USER_ID } from "./constants";
 import { getDigestItems, getDigestItemsCount, addToDigestItems, removeMultipleFromDigestItems } from "./digestItems";
 import { getSavedItems, getSavedItemsCount, addToSavedItems, removeMultipleFromSavedItems } from "./savedItems";
@@ -17,37 +17,20 @@ function migrationCacheKey(userId: string): string {
 }
 
 async function hasMigrated(userId: string): Promise<boolean> {
-  const driver = detectDriver();
   const key = migrationCacheKey(userId);
-  if (driver === "postgres") {
-    const client = await getDbClient();
-    const result = await client.query(
-      "SELECT 1 FROM user_cache WHERE key = ? LIMIT 1",
-      [key]
-    );
-    return result.rows.length > 0;
-  }
-  const { getSqlite } = await import("./index");
-  const row = getSqlite().prepare("SELECT 1 FROM user_cache WHERE key = ? LIMIT 1").get(key);
-  return !!row;
+  const client = await getDbClient();
+  const result = await client.query("SELECT 1 FROM user_cache WHERE key = $1 LIMIT 1", [key]);
+  return result.rows.length > 0;
 }
 
 async function setMigrated(userId: string): Promise<void> {
-  const driver = detectDriver();
   const key = migrationCacheKey(userId);
   const now = Math.floor(Date.now() / 1000);
-  if (driver === "postgres") {
-    const client = await getDbClient();
-    await client.run(
-      "INSERT INTO user_cache (key, user_id, cached_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET user_id = EXCLUDED.user_id, cached_at = EXCLUDED.cached_at",
-      [key, userId, now]
-    );
-  } else {
-    const { getSqlite } = await import("./index");
-    getSqlite()
-      .prepare("INSERT OR REPLACE INTO user_cache (key, user_id, cached_at) VALUES (?, ?, ?)")
-      .run(key, userId, now);
-  }
+  const client = await getDbClient();
+  await client.run(
+    "INSERT INTO user_cache (key, user_id, cached_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET user_id = EXCLUDED.user_id, cached_at = EXCLUDED.cached_at",
+    [key, userId, now],
+  );
 }
 
 /**

@@ -3,7 +3,7 @@
  *
  * Features:
  * - Unified state interface for all sync types
- * - Database driver abstraction (SQLite dev, PostgreSQL prod)
+ * - PostgreSQL-backed persistent state
  * - Resumable sync support with continuation tokens
  * - Progress tracking for rate limit management
  */
@@ -90,7 +90,7 @@ export async function loadSyncState(syncId: string): Promise<SyncState | null> {
   try {
     const db = await getDbClient();
     const result = await db.query(
-      'SELECT * FROM sync_state WHERE id = ?',
+      'SELECT * FROM sync_state WHERE id = $1',
       [syncId]
     );
     const row = result.rows[0] as unknown as SyncStateRow | undefined;
@@ -125,45 +125,29 @@ export async function saveSyncState(syncId: string, data: SyncStateInput): Promi
     const db = await getDbClient();
     const now = Math.floor(Date.now() / 1000);
 
-    // Use driver-compatible upsert syntax
-    if (db.driver === 'postgres') {
-      await db.run(`
-        INSERT INTO sync_state
+    await db.run(
+      `
+      INSERT INTO sync_state
         (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (id) DO UPDATE SET
-          continuation_token = EXCLUDED.continuation_token,
-          items_processed = EXCLUDED.items_processed,
-          calls_used = EXCLUDED.calls_used,
-          last_updated_at = EXCLUDED.last_updated_at,
-          status = EXCLUDED.status,
-          error = EXCLUDED.error
-      `, [
+      VALUES ($1, $2, $3, $4, $5, EXTRACT(EPOCH FROM NOW())::INTEGER, $6, $7)
+      ON CONFLICT (id) DO UPDATE SET
+        continuation_token = EXCLUDED.continuation_token,
+        items_processed = EXCLUDED.items_processed,
+        calls_used = EXCLUDED.calls_used,
+        last_updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
+        status = EXCLUDED.status,
+        error = EXCLUDED.error
+    `,
+      [
         syncId,
         data.continuationToken ?? null,
         data.itemsProcessed,
         data.callsUsed,
         now,
-        now,
         data.status,
-        data.error ?? null
-      ]);
-    } else {
-      await db.run(`
-        INSERT OR REPLACE INTO sync_state
-        (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        syncId,
-        data.continuationToken ?? null,
-        data.itemsProcessed,
-        data.callsUsed,
-        now,
-        now,
-        data.status,
-        data.error ?? null
-      ]);
-    }
+        data.error ?? null,
+      ]
+    );
 
     logger.debug(`[SYNC-STATE] Saved sync state for ${syncId}`, {
       ...data,
@@ -186,7 +170,7 @@ export async function saveSyncState(syncId: string, data: SyncStateInput): Promi
 export async function clearSyncState(syncId: string): Promise<void> {
   try {
     const db = await getDbClient();
-    await db.run('DELETE FROM sync_state WHERE id = ?', [syncId]);
+    await db.run('DELETE FROM sync_state WHERE id = $1', [syncId]);
     logger.info(`[SYNC-STATE] Cleared sync state for ${syncId} (sync complete)`);
   } catch (error) {
     logger.warn(`[SYNC-STATE] Could not clear sync state for ${syncId}`, error as Record<string, unknown>);

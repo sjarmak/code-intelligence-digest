@@ -14,7 +14,7 @@ export async function saveItemScores(items: RankedItem[], category: Category): P
   try {
     const client = await getDbClient();
 
-    // Use parameterized queries for both SQLite and Postgres
+    // Parameterized insert (placeholders normalized by Postgres client)
     // Note: Primary key is (item_id, scored_at), so we insert new rows for score history
     const sql = `
       INSERT INTO item_scores

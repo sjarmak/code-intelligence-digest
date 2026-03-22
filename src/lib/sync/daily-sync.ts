@@ -25,7 +25,7 @@ import { saveItems, getNewestItemTimestamp } from "../db/items";
 import { computeAndSaveScoresForItems } from "../pipeline/compute-scores";
 import { logger } from "../logger";
 import { Category, FeedItem } from "../model";
-import { getDbClient, detectDriver, nowTimestamp } from "../db/driver";
+import { getDbClient } from "../db/driver";
 import { getCachedUserId, setCachedUserId } from "../db/index";
 import { incrementApiCalls } from "../db/api-budget";
 import { syncResearchFromADS } from "./ads-research-sync";
@@ -65,8 +65,7 @@ const STREAM_PAGE_SIZE = 1000;
 export async function loadSyncState(): Promise<SyncStateRow | null> {
   try {
     const client = await getDbClient();
-    // Use SQLite-style ? placeholder - Postgres client will convert it
-    const result = await client.query("SELECT * FROM sync_state WHERE id = ?", [
+    const result = await client.query("SELECT * FROM sync_state WHERE id = $1", [
       SYNC_ID,
     ]);
 
@@ -94,26 +93,19 @@ async function saveSyncState(data: {
 }): Promise<void> {
   try {
     const client = await getDbClient();
-    const driver = detectDriver();
     const now = Math.floor(Date.now() / 1000);
 
-    // Build SQL with driver-specific timestamp expression
-    const timestampExpr = nowTimestamp(driver);
-
-    // Use ON CONFLICT syntax that works for both SQLite and Postgres
-    // Use SQLite-style ? placeholders - the Postgres client will convert them to $1, $2, etc.
-    // Note: last_updated_at uses driver-specific SQL expression (not a parameter)
     const sql = `
       INSERT INTO sync_state
       (id, continuation_token, items_processed, calls_used, started_at, last_updated_at, status, error)
-      VALUES (?, ?, ?, ?, ?, ${timestampExpr}, ?, ?)
+      VALUES ($1, $2, $3, $4, $5, EXTRACT(EPOCH FROM NOW())::INTEGER, $6, $7)
       ON CONFLICT (id) DO UPDATE SET
-        continuation_token = excluded.continuation_token,
-        items_processed = excluded.items_processed,
-        calls_used = excluded.calls_used,
-        last_updated_at = ${timestampExpr},
-        status = excluded.status,
-        error = excluded.error
+        continuation_token = EXCLUDED.continuation_token,
+        items_processed = EXCLUDED.items_processed,
+        calls_used = EXCLUDED.calls_used,
+        last_updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER,
+        status = EXCLUDED.status,
+        error = EXCLUDED.error
     `;
 
     await client.run(sql, [
@@ -138,11 +130,7 @@ async function saveSyncState(data: {
 export async function clearSyncState(): Promise<void> {
   try {
     const client = await getDbClient();
-    const driver = detectDriver();
-    const sql =
-      driver === "postgres"
-        ? "DELETE FROM sync_state WHERE id = $1"
-        : "DELETE FROM sync_state WHERE id = ?";
+    const sql = "DELETE FROM sync_state WHERE id = $1";
     await client.run(sql, [SYNC_ID]);
     logger.info("[DAILY-SYNC] Cleared sync state (sync complete)");
   } catch (error) {

@@ -6,7 +6,8 @@
 import { getPaper } from '../src/lib/db/ads-papers';
 import { getSectionSummaries } from '../src/lib/db/paper-sections';
 import { processPaperSections } from '../src/lib/pipeline/section-summarization';
-import { detectDriver, getDbClient } from '../src/lib/db/driver';
+import { getDbClient } from '../src/lib/db/driver';
+import { initializeDatabase } from '../src/lib/db/index';
 import { logger } from '../src/lib/logger';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
@@ -24,39 +25,20 @@ process.env.USE_LOCAL_DB = 'true';
 // Now import modules that might use env vars
 
 async function backfillPaperSections() {
-  const driver = detectDriver();
-  logger.info('Starting section processing backfill', { driver });
+  await initializeDatabase();
+  logger.info('Starting section processing backfill', { driver: 'postgres' });
 
-  // Get all papers
-  let papers: Array<{ bibcode: string; body?: string }>;
-
-  if (driver === 'postgres') {
-    const client = await getDbClient();
-    const result = await client.query(`
-      SELECT bibcode, body
-      FROM ads_papers
-      WHERE body IS NOT NULL AND LENGTH(body) >= 100
-      ORDER BY created_at DESC
-    `);
-    papers = result.rows.map((row: Record<string, unknown>) => ({
-      bibcode: row.bibcode as string,
-      body: (row.body as string | null) || undefined,
-    }));
-  } else {
-    const { getSqlite } = await import('../src/lib/db/index');
-    const db = getSqlite();
-    const stmt = db.prepare(`
-      SELECT bibcode, body
-      FROM ads_papers
-      WHERE body IS NOT NULL AND LENGTH(body) >= 100
-      ORDER BY created_at DESC
-    `);
-    const rawPapers = stmt.all() as Array<Record<string, unknown>>;
-    papers = rawPapers.map(p => ({
-      bibcode: p.bibcode as string,
-      body: (p.body as string | null) || undefined,
-    }));
-  }
+  const client = await getDbClient();
+  const result = await client.query(`
+    SELECT bibcode, body
+    FROM ads_papers
+    WHERE body IS NOT NULL AND LENGTH(body) >= 100
+    ORDER BY created_at DESC
+  `);
+  const papers: Array<{ bibcode: string; body?: string }> = result.rows.map((row: Record<string, unknown>) => ({
+    bibcode: row.bibcode as string,
+    body: (row.body as string | null) || undefined,
+  }));
 
   logger.info('Found papers to process', { count: papers.length });
 

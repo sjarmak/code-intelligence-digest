@@ -8,7 +8,8 @@ import { getDbClient, getDatabaseUrl } from "../db/driver";
 const VALID_GOALS = ["content_ideas", "market_brief", "competitor_intel"] as const;
 let agentReportsUserIdEnsured = false;
 
-export function useReportDb(): boolean {
+/** True when Postgres is configured and agent reports should be stored in the DB. */
+export function isAgentReportsDbEnabled(): boolean {
   return !!getDatabaseUrl()?.startsWith("postgres");
 }
 
@@ -21,7 +22,7 @@ export interface ReportRow {
 const LEGACY_USER_ID = "legacy";
 
 async function ensureAgentReportsUserIdColumn(): Promise<void> {
-  if (!useReportDb() || agentReportsUserIdEnsured) return;
+  if (!isAgentReportsDbEnabled() || agentReportsUserIdEnsured) return;
   const client = await getDbClient();
   try {
     await client.run(`ALTER TABLE agent_reports ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT 'legacy'`);
@@ -49,7 +50,7 @@ export async function saveReport(
   generatedAt: string,
   userId: string = LEGACY_USER_ID,
 ): Promise<void> {
-  if (!useReportDb() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return;
+  if (!isAgentReportsDbEnabled() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return;
   await ensureAgentReportsUserIdColumn();
   const client = await getDbClient();
   const generatedAtEpoch = Math.floor(new Date(generatedAt).getTime() / 1000);
@@ -69,7 +70,7 @@ export async function saveReport(
 
 /** List all reports from DB, sorted by generated_at desc. */
 export async function listReports(userId: string = LEGACY_USER_ID): Promise<ReportRow[]> {
-  if (!useReportDb()) return [];
+  if (!isAgentReportsDbEnabled()) return [];
   await ensureAgentReportsUserIdColumn();
   const client = await getDbClient();
   let result;
@@ -97,7 +98,7 @@ export async function getReport(
   id?: string,
   userId: string = LEGACY_USER_ID,
 ): Promise<{ goal: string; id: string; generatedAt: string; content: string } | null> {
-  if (!useReportDb() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return null;
+  if (!isAgentReportsDbEnabled() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return null;
   await ensureAgentReportsUserIdColumn();
   const client = await getDbClient();
   let row: Record<string, unknown> | undefined;
@@ -147,7 +148,7 @@ export async function deleteReport(
   id: string,
   userId: string = LEGACY_USER_ID,
 ): Promise<boolean> {
-  if (!useReportDb() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return false;
+  if (!isAgentReportsDbEnabled() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return false;
   if (!id || id === "latest") return false;
   await ensureAgentReportsUserIdColumn();
   const client = await getDbClient();

@@ -63,11 +63,12 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
       maxWebDocs: 50,
     },
     rankingProfile: {
-      baseScoreWeight: 0.3,
-      competitorMatchWeight: 0.1,
-      icpMatchWeight: 0.25,
-      formatTypeWeight: 0.25,
-      recencyWeight: 0.1,
+      // Favor goal features (ICP, format, competitor) over raw digest baseScore so generic ai_news does not dominate seeds.
+      baseScoreWeight: 0.2,
+      competitorMatchWeight: 0.15,
+      icpMatchWeight: 0.3,
+      formatTypeWeight: 0.3,
+      recencyWeight: 0.05,
     },
     postgresQueryTerms: [
       "webinar",

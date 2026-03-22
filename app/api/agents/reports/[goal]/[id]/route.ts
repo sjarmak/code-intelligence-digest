@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { initializeDatabase } from "@/src/lib/db/index";
-import { deleteReport, useReportDb } from "@/src/lib/agents/report-storage";
+import { deleteReport, isAgentReportsDbEnabled } from "@/src/lib/agents/report-storage";
 import { auth } from "@/src/auth";
 
 const REPORT_DIR = path.join(process.cwd(), ".data", "agent-reports");
@@ -33,7 +33,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Cannot delete by id 'latest'" }, { status: 400 });
   }
 
-  if (useReportDb()) {
+  if (isAgentReportsDbEnabled()) {
     await initializeDatabase();
     const deleted = await deleteReport(goal, id, session.user.id);
     if (!deleted) {

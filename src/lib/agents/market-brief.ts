@@ -7,6 +7,7 @@ import {
   type IntegrationOpportunityLevel,
 } from "./sourcegraph-integration-opportunity";
 import { AgentScoringDebugger } from "./agent-scoring-debug";
+import { withLangSmithTraceable } from "../langsmith";
 
 export interface MarketBriefEvidence {
   source: string;
@@ -531,7 +532,7 @@ export function postProcessMarketBriefOutput(payload: MarketBriefOutput): Market
   };
 }
 
-export async function generateMarketBrief(options: {
+async function generateMarketBriefImpl(options: {
   periodDays?: number;
   focus?: string | null;
   maxItems?: number;
@@ -648,3 +649,30 @@ export async function generateMarketBrief(options: {
     noisy_items_suppressed: noisySuppressed,
   });
 }
+
+export const generateMarketBrief = withLangSmithTraceable(generateMarketBriefImpl, {
+  name: "generate_market_brief",
+  run_type: "chain",
+  defaultProjectName: "code-intel-digest-agents",
+  processInputs: (inputs) => {
+    const [options] = "args" in inputs ? inputs.args : [undefined];
+    return {
+      periodDays: options?.periodDays ?? null,
+      focus: options?.focus ?? null,
+      maxItems: options?.maxItems ?? null,
+      debug: options?.debug === true,
+    };
+  },
+  processOutputs: (outputs) => ({
+    brief_date:
+      outputs && typeof outputs === "object" && "brief_date" in outputs ? outputs.brief_date : null,
+    executiveDeltaCount:
+      outputs && typeof outputs === "object" && "executive_delta" in outputs && Array.isArray(outputs.executive_delta)
+        ? outputs.executive_delta.length
+        : 0,
+    watchCount:
+      outputs && typeof outputs === "object" && "watch_items" in outputs && Array.isArray(outputs.watch_items)
+        ? outputs.watch_items.length
+        : 0,
+  }),
+});

@@ -8,7 +8,7 @@
  * 4. Operation-aware: Know how many calls each operation needs
  */
 
-import { getDbClient, detectDriver } from './driver';
+import { getDbClient } from './driver';
 
 export interface ApiBudget {
   callsUsed: number;
@@ -32,16 +32,14 @@ export async function getApiBudget(): Promise<ApiBudget> {
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
   const result = await client.query(
-    'SELECT calls_used, quota_limit FROM global_api_budget WHERE date = ?',
+    'SELECT calls_used, quota_limit FROM global_api_budget WHERE date = $1',
     [today]
   );
 
   if (result.rows.length === 0) {
     // Initialize for today with default quota of 1000
-    const driver = detectDriver();
-    const insertSql = driver === 'postgres'
-      ? 'INSERT INTO global_api_budget (date, calls_used, quota_limit) VALUES ($1, 0, 1000) ON CONFLICT (date) DO NOTHING'
-      : 'INSERT OR IGNORE INTO global_api_budget (date, calls_used, quota_limit) VALUES (?, 0, 1000)';
+    const insertSql =
+      'INSERT INTO global_api_budget (date, calls_used, quota_limit) VALUES ($1, 0, 1000) ON CONFLICT (date) DO NOTHING';
     await client.run(insertSql, [today]);
     return {
       callsUsed: 0,
@@ -81,22 +79,14 @@ export async function hasBudgetFor(requiredCalls: number = 1): Promise<boolean> 
  */
 export async function incrementApiCalls(count: number): Promise<ApiBudget> {
   const client = await getDbClient();
-  const driver = detectDriver();
   const today = new Date().toISOString().split('T')[0];
 
   // Use atomic increment with capping: never exceed quota_limit
-  // SQLite uses MIN(), PostgreSQL uses LEAST()
-  const updateSql = driver === 'postgres'
-    ? `INSERT INTO global_api_budget (date, calls_used, last_updated_at, quota_limit)
+  const updateSql = `INSERT INTO global_api_budget (date, calls_used, last_updated_at, quota_limit)
        VALUES ($1, $2, EXTRACT(EPOCH FROM NOW())::INTEGER, 1000)
        ON CONFLICT(date) DO UPDATE SET
          calls_used = LEAST(global_api_budget.calls_used + $3, global_api_budget.quota_limit),
-         last_updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER`
-    : `INSERT INTO global_api_budget (date, calls_used, quota_limit)
-       VALUES (?, ?, 1000)
-       ON CONFLICT(date) DO UPDATE SET
-         calls_used = MIN(calls_used + ?, quota_limit),
-         last_updated_at = strftime('%s', 'now')`;
+         last_updated_at = EXTRACT(EPOCH FROM NOW())::INTEGER`;
 
   await client.run(updateSql, [today, count, count]);
 

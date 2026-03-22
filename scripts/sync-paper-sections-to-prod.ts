@@ -1,65 +1,91 @@
 #!/usr/bin/env npx tsx
 /**
- * Sync paper_sections from SQLite to PostgreSQL production database
- *
- * This script specifically syncs paper sections (with embeddings) to production.
+ * Sync paper_sections from local Postgres → production Postgres
  *
  * Usage:
- *   DATABASE_URL=postgres://... npx tsx scripts/sync-paper-sections-to-prod.ts
+ *   DATABASE_URL=postgres://... LOCAL_DATABASE_URL=postgres://... npx tsx scripts/sync-paper-sections-to-prod.ts
  */
 
-import Database from 'better-sqlite3';
 import { Pool } from 'pg';
-import * as path from 'path';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
-const SQLITE_PATH = path.join(DATA_DIR, 'digest.db');
+function requirePostgresUrl(envName: string): string {
+  const url = process.env[envName];
+  if (!url || !(url.startsWith('postgres://') || url.startsWith('postgresql://'))) {
+    throw new Error(`${envName} must be set to a postgres:// or postgresql:// connection string`);
+  }
+  return url;
+}
+
+function embeddingToVectorString(embedding: unknown): string | null {
+  if (embedding === null || embedding === undefined) return null;
+
+  // pgvector may come back as string '[..]' or a Buffer
+  if (typeof embedding === 'string') {
+    const trimmed = embedding.trim();
+    if (trimmed.startsWith('[')) {
+      return trimmed;
+    }
+    // JSON text from older stores
+    try {
+      const parsed = JSON.parse(trimmed) as number[];
+      return `[${parsed.join(',')}]`;
+    } catch {
+      return null;
+    }
+  }
+
+  if (Array.isArray(embedding)) {
+    return `[${(embedding as number[]).join(',')}]`;
+  }
+
+  if (Buffer.isBuffer(embedding)) {
+    const s = embedding.toString('utf8').trim();
+    if (s.startsWith('[')) return s;
+    try {
+      const parsed = JSON.parse(s) as number[];
+      return `[${parsed.join(',')}]`;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
 
 async function syncPaperSections() {
-  console.log('🔄 Syncing paper_sections to production...\n');
+  console.log('🔄 Syncing paper_sections (local Postgres → production Postgres)...\n');
 
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    console.error('❌ DATABASE_URL environment variable not set');
-    console.error('   Set it to your PostgreSQL connection string');
-    process.exit(1);
-  }
+  const prodUrl = requirePostgresUrl('DATABASE_URL');
+  const localUrl = requirePostgresUrl('LOCAL_DATABASE_URL');
 
-  if (!databaseUrl.startsWith('postgres')) {
-    console.error('❌ DATABASE_URL must be a PostgreSQL connection string');
-    process.exit(1);
-  }
+  const localPool = new Pool({
+    connectionString: localUrl,
+    ssl: localUrl.includes('render.com') ? { rejectUnauthorized: false } : undefined,
+  });
 
-  if (!require('fs').existsSync(SQLITE_PATH)) {
-    console.error(`❌ SQLite database not found at ${SQLITE_PATH}`);
-    process.exit(1);
-  }
-
-  const sqlite = new Database(SQLITE_PATH, { readonly: true });
-  const pool = new Pool({
-    connectionString: databaseUrl,
-    ssl: databaseUrl.includes('render.com') ? { rejectUnauthorized: false } : undefined,
+  const prodPool = new Pool({
+    connectionString: prodUrl,
+    ssl: prodUrl.includes('render.com') ? { rejectUnauthorized: false } : undefined,
   });
 
   try {
-    // Test connections
-    await pool.query('SELECT 1');
-    console.log('  ✅ Connected to PostgreSQL\n');
+    await localPool.query('SELECT 1');
+    await prodPool.query('SELECT 1');
+    console.log('  ✅ Connected to local + production PostgreSQL\n');
 
-    // Ensure paper_sections table exists
-    console.log('🔧 Ensuring paper_sections table exists...');
+    // Ensure paper_sections table exists in prod (mirrors prior script behavior)
+    console.log('🔧 Ensuring paper_sections table exists in production...');
 
-    // Check if ads_papers exists first (foreign key dependency)
-    const adsPapersCheck = await pool.query(`
+    const adsPapersCheck = await prodPool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables
-        WHERE table_name = 'ads_papers'
-      );
+        WHERE table_schema = 'public' AND table_name = 'ads_papers'
+      ) AS exists;
     `);
 
     if (!adsPapersCheck.rows[0].exists) {
       console.log('  ⚠️  ads_papers table does not exist, creating it first...');
-      await pool.query(`
+      await prodPool.query(`
         CREATE TABLE IF NOT EXISTS ads_papers (
           bibcode TEXT PRIMARY KEY,
           title TEXT,
@@ -79,8 +105,7 @@ async function syncPaperSections() {
       `);
     }
 
-    // Create paper_sections table (without foreign key constraint for now, in case ads_papers doesn't exist)
-    await pool.query(`
+    await prodPool.query(`
       CREATE TABLE IF NOT EXISTS paper_sections (
         id TEXT PRIMARY KEY,
         bibcode TEXT NOT NULL,
@@ -98,78 +123,73 @@ async function syncPaperSections() {
       );
     `);
 
-    // Add foreign key constraint if ads_papers exists and constraint doesn't exist
     try {
-      const fkCheck = await pool.query(`
+      const fkCheck = await prodPool.query(`
         SELECT constraint_name
         FROM information_schema.table_constraints
-        WHERE table_name = 'paper_sections'
-        AND constraint_type = 'FOREIGN KEY'
-        AND constraint_name LIKE '%bibcode%'
+        WHERE table_schema = 'public'
+          AND table_name = 'paper_sections'
+          AND constraint_type = 'FOREIGN KEY'
+          AND constraint_name LIKE '%bibcode%'
       `);
 
       if (fkCheck.rows.length === 0 && adsPapersCheck.rows[0].exists) {
-        await pool.query(`
+        await prodPool.query(`
           ALTER TABLE paper_sections
           ADD CONSTRAINT paper_sections_bibcode_fkey
           FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE;
         `);
       }
-    } catch (err) {
-      // Foreign key may already exist or ads_papers doesn't exist - that's okay
+    } catch {
       console.log('  ℹ️  Foreign key constraint skipped (may already exist or ads_papers missing)');
     }
 
-    // Create index
-    await pool.query(`
+    await prodPool.query(`
       CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode
       ON paper_sections(bibcode);
     `);
 
-    // Create vector index if pgvector extension is available
     try {
-      await pool.query(`
+      await prodPool.query(`
         CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding
         ON paper_sections USING hnsw (embedding vector_cosine_ops);
       `);
       console.log('  ✅ Vector index created\n');
-    } catch (err) {
+    } catch {
       console.log('  ⚠️  Vector index creation skipped (pgvector may not be enabled)\n');
     }
 
     console.log('  ✅ Table schema ready\n');
 
-    // Get all paper sections from SQLite
-    const sections = sqlite
-      .prepare(`
-        SELECT id, bibcode, section_id, section_title, level, summary,
-               full_text, char_start, char_end, embedding, created_at, updated_at
-        FROM paper_sections
-        ORDER BY bibcode, char_start
-      `)
-      .all() as Array<{
-        id: string;
-        bibcode: string;
-        section_id: string;
-        section_title: string;
-        level: number;
-        summary: string;
-        full_text: string;
-        char_start: number;
-        char_end: number;
-        embedding: string | null;
-        created_at: number;
-        updated_at: number;
-      }>;
+    const sectionsResult = await localPool.query(`
+      SELECT id, bibcode, section_id, section_title, level, summary,
+             full_text, char_start, char_end, embedding, created_at, updated_at
+      FROM paper_sections
+      ORDER BY bibcode, char_start
+    `);
 
-    console.log(`📊 Found ${sections.length} sections in SQLite\n`);
+    const sections = sectionsResult.rows as Array<{
+      id: string;
+      bibcode: string;
+      section_id: string;
+      section_title: string;
+      level: number;
+      summary: string;
+      full_text: string;
+      char_start: number;
+      char_end: number;
+      embedding: unknown;
+      created_at: number;
+      updated_at: number;
+    }>;
+
+    console.log(`📊 Found ${sections.length} sections in local Postgres\n`);
 
     if (sections.length === 0) {
       console.log('  ℹ️  No sections to sync');
       return;
     }
 
-    // Prepare insert statement
     const sql = `
       INSERT INTO paper_sections (
         id, bibcode, section_id, section_title, level, summary,
@@ -191,34 +211,29 @@ async function syncPaperSections() {
     let updated = 0;
     let errors = 0;
 
-    // Process in batches
     const batchSize = 50;
     for (let i = 0; i < sections.length; i += batchSize) {
       const batch = sections.slice(i, i + batchSize);
 
       for (const row of batch) {
         try {
-          // Sanitize text fields: remove null bytes (PostgreSQL doesn't allow them)
           const sanitizeText = (text: string | null): string => {
             if (!text) return '';
-            return text.replace(/\0/g, ''); // Remove null bytes
+            return text.replace(/\0/g, '');
           };
 
           const sectionTitle = sanitizeText(row.section_title);
           const summary = sanitizeText(row.summary);
           const fullText = sanitizeText(row.full_text);
 
-          // Parse embedding from JSON string (SQLite stores as JSON text)
-          const embedding = row.embedding ? JSON.parse(row.embedding) as number[] : null;
-          const vectorStr = embedding ? `[${embedding.join(',')}]` : null;
+          const vectorStr = embeddingToVectorString(row.embedding);
 
-          // Check if it already exists
-          const existing = await pool.query(
+          const existing = await prodPool.query(
             'SELECT id FROM paper_sections WHERE bibcode = $1 AND section_id = $2',
             [row.bibcode, row.section_id]
           );
 
-          await pool.query(sql, [
+          await prodPool.query(sql, [
             row.id,
             row.bibcode,
             row.section_id,
@@ -246,7 +261,6 @@ async function syncPaperSections() {
         }
       }
 
-      // Progress indicator
       const progress = Math.min(i + batchSize, sections.length);
       process.stdout.write(`\r  Progress: ${progress}/${sections.length} sections processed...`);
     }
@@ -257,18 +271,15 @@ async function syncPaperSections() {
     console.log(`  ❌ Errors: ${errors}`);
     console.log(`  📦 Total: ${sections.length}`);
 
-    // Verify sync
-    const prodCount = await pool.query('SELECT COUNT(*) as count FROM paper_sections');
+    const prodCount = await prodPool.query('SELECT COUNT(*)::bigint AS count FROM paper_sections');
     console.log(`\n  📊 Sections in production: ${prodCount.rows[0].count}`);
-
   } catch (error) {
     console.error('\n❌ Sync failed:', error);
     process.exit(1);
   } finally {
-    sqlite.close();
-    await pool.end();
+    await localPool.end();
+    await prodPool.end();
   }
 }
 
 syncPaperSections().catch(console.error);
-

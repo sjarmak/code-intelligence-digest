@@ -10,6 +10,7 @@ import { createChatCompletion } from "../llm/completion";
 import { webSearchForAgentContext } from "../search/url-finder";
 import { saveAgentRun } from "../db/agent-runs";
 import { logger } from "../logger";
+import { withLangSmithTraceable } from "../langsmith";
 import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
@@ -82,7 +83,7 @@ async function loadItemsForScope(
  * Run one agent job and persist the result.
  * Returns the agent run id, or null if job config not found or LLM unavailable.
  */
-export async function runAgentJob(
+async function runAgentJobImpl(
   agentId: AgentId,
   jobId: JobId
 ): Promise<{ runId: string; title: string } | null> {
@@ -163,7 +164,16 @@ export async function runAgentJob(
 
   if (agentId === "gtm_content") {
     const periodDays = job.periodDays ?? 30;
-    const payload = await generateContentIdeas({ periodDays, numIdeas: job.maxItems ?? 10 });
+    // Include full retrieval/ranking trace in structuredPayload for audit (Postgres + web queries, merge, gates).
+    // Set CONTENT_IDEAS_PIPELINE_TRACE=0 or false to omit and shrink DB rows.
+    const pipelineTrace =
+      process.env.CONTENT_IDEAS_PIPELINE_TRACE !== "0" &&
+      process.env.CONTENT_IDEAS_PIPELINE_TRACE !== "false";
+    const payload = await generateContentIdeas({
+      periodDays,
+      numIdeas: job.maxItems ?? 10,
+      pipelineTrace,
+    });
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
     const llmMarkdown = await writeContentIdeasWithLLM(payload, title);
@@ -267,3 +277,20 @@ export async function runAgentJob(
     throw error;
   }
 }
+
+export const runAgentJob = withLangSmithTraceable(runAgentJobImpl, {
+  name: "run_agent_job",
+  run_type: "chain",
+  defaultProjectName: "code-intel-digest-agents",
+  processInputs: (inputs) => {
+    const [agentId, jobId] = "args" in inputs ? inputs.args : [undefined, undefined];
+    return { agentId, jobId };
+  },
+  processOutputs: (outputs) =>
+    outputs && typeof outputs === "object" && "runId" in outputs
+      ? {
+          runId: outputs.runId ?? null,
+          title: "title" in outputs ? outputs.title ?? null : null,
+        }
+      : { outputs },
+});

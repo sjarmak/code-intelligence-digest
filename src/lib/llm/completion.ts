@@ -9,6 +9,7 @@ import type { Message } from "@anthropic-ai/sdk/resources/messages/messages";
 import { getOpenAICompatibleClient } from "./client";
 import { getQualityModel, isClaudeModel, getAnthropicApiKey } from "./config";
 import { logger } from "../logger";
+import { isLangSmithLlmTracingEnabled, withLangSmithTraceable } from "../langsmith";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -120,7 +121,7 @@ async function completeWithOpenAI(
  * Create a chat completion using the quality model (or the given model).
  * Uses Anthropic for claude-* models when ANTHROPIC_API_KEY is set; otherwise OpenAI.
  */
-export async function createChatCompletion(
+async function createChatCompletionImpl(
   options: CreateChatCompletionOptions
 ): Promise<CreateChatCompletionResult> {
   const model = options.model ?? getQualityModel();
@@ -171,3 +172,33 @@ export async function createChatCompletion(
     options.response_format
   );
 }
+
+export const createChatCompletion = isLangSmithLlmTracingEnabled()
+  ? withLangSmithTraceable(createChatCompletionImpl, {
+      name: "quality_model_completion",
+      run_type: "llm",
+      defaultProjectName: "code-intel-digest-llm",
+      getInvocationParams: (options) => {
+        const model = options.model ?? getQualityModel();
+        return {
+          ls_provider: isClaudeModel(model) ? "anthropic" : "openai",
+          ls_model_name: isClaudeModel(model) && !getAnthropicApiKey() ? "gpt-4o-mini" : model,
+          ls_model_type: "chat",
+          ls_max_tokens: options.max_tokens ?? 2000,
+          ls_invocation_params: {
+            response_format: options.response_format?.type,
+          },
+        };
+      },
+      processInputs: (inputs) => {
+        if (!("messages" in inputs) || !Array.isArray(inputs.messages)) return inputs;
+        return {
+          ...inputs,
+          messages: inputs.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+        };
+      },
+    })
+  : createChatCompletionImpl;

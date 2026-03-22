@@ -3,7 +3,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mergeRetrievedDocs } from "../../../src/lib/pipeline/agentRetrieval";
+import {
+  mergeRetrievedDocs,
+  effectivePublishedAtForFiltering,
+} from "../../../src/lib/pipeline/agentRetrieval";
 import type { RetrievedDoc } from "../../../src/lib/pipeline/agentRetrieval";
 
 function doc(overrides: Partial<RetrievedDoc>): RetrievedDoc {
@@ -77,6 +80,42 @@ describe("agentRetrieval", () => {
       const merged = mergeRetrievedDocs(postgres, web, "competitor_intel");
       expect(merged.length).toBe(1);
       expect(merged[0].title).toBe("Augment");
+    });
+  });
+
+  describe("effectivePublishedAtForFiltering", () => {
+    it("prefers inferred older date over fresher provider date", () => {
+      const result = effectivePublishedAtForFiltering(
+        doc({
+          title: "GitHub - codemod/codemod",
+          snippet: "Published 2026-03-06",
+          publishedAt: new Date("2026-03-19T12:00:00.000Z"),
+        }),
+      );
+      expect(result?.toISOString().slice(0, 10)).toBe("2026-03-06");
+    });
+
+    it("keeps provider date when inferred date is newer", () => {
+      const result = effectivePublishedAtForFiltering(
+        doc({
+          title: "Update note",
+          snippet: "Updated 2026-03-19",
+          publishedAt: new Date("2026-03-12T00:00:00.000Z"),
+        }),
+      );
+      expect(result?.toISOString()).toBe("2026-03-12T00:00:00.000Z");
+    });
+
+    it("ignores older dates mentioned only in content body", () => {
+      const result = effectivePublishedAtForFiltering(
+        doc({
+          title: "Weekly product roundup",
+          snippet: "Fresh release notes and launch summary.",
+          content: "This post references the 2026-03-06 benchmark results for comparison.",
+          publishedAt: new Date("2026-03-19T00:00:00.000Z"),
+        }),
+      );
+      expect(result?.toISOString()).toBe("2026-03-19T00:00:00.000Z");
     });
   });
 });

@@ -414,10 +414,9 @@ export async function GET(request: NextRequest) {
     // Initialize database (creates tables if needed)
     await initializeDatabase();
 
-    // Force reset SQLite connection to avoid stale data in Next.js
-    // Next.js may cache module instances, causing stale database connections
-    const { resetSqliteConnection } = await import("@/src/lib/db/index");
-    resetSqliteConnection();
+    // Force reset Postgres pool to avoid stale singleton client in long-lived Next.js workers
+    const { resetDbClient } = await import("@/src/lib/db/index");
+    await resetDbClient();
 
     // Load items from database
     // Use direct database query to avoid Next.js module caching issues

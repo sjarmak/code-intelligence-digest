@@ -4,12 +4,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { initializeDatabase } from "@/src/lib/db/index";
+import { initializeDatabase, resetDbClient } from "@/src/lib/db/index";
 import { loadItemsByCategory } from "@/src/lib/db/items";
 import { rankCategory } from "@/src/lib/pipeline/rank";
 import { loadScoresForItems } from "@/src/lib/db/items";
 import { logger } from "@/src/lib/logger";
 import type { Category } from "@/src/lib/model";
+import { getDatabaseUrl, getDbClient } from "@/src/lib/db/driver";
 
 const PERIOD_DAYS: Record<string, number> = {
   day: 2,
@@ -28,9 +29,8 @@ export async function GET(request: NextRequest) {
 
     await initializeDatabase();
 
-    // Force reset SQLite connection to avoid stale data
-    const { resetSqliteConnection } = await import("@/src/lib/db/index");
-    resetSqliteConnection();
+    // Force reset Postgres pool to avoid stale singleton client
+    await resetDbClient();
 
     // Load items
     const items = await loadItemsByCategory(category, periodDays);
@@ -58,31 +58,45 @@ export async function GET(request: NextRequest) {
     const problematicId = 'tag:google.com,2005:reader/item/0000000b19763690-article-12';
     const problematicItem = ranked.find(i => i.id === problematicId);
 
-    // Check database path and connection info
-    const { getSqlite } = await import("@/src/lib/db/index");
-    const sqlite = getSqlite();
-    const dbInfo = sqlite.prepare("PRAGMA database_list").all() as Array<{ seq: number; name: string; file: string }>;
-    const dbPath = dbInfo[0]?.file || "unknown";
+    const client = await getDbClient();
+    const dbUrl = getDatabaseUrl();
+    const dbHost =
+      dbUrl && (() => {
+        try {
+          return new URL(dbUrl).host;
+        } catch {
+          return "unparsed";
+        }
+      })();
 
-    // Check total items in database
-    const totalItems = sqlite.prepare("SELECT COUNT(*) as count FROM items WHERE category = ?").get(category) as { count: number };
+    const totalItemsRow = await client.query(
+      "SELECT COUNT(*)::bigint AS count FROM items WHERE category = $1",
+      [category],
+    );
+    const totalItems = { count: Number((totalItemsRow.rows[0] as { count: string }).count) };
+
     const twoDaysAgo = Math.floor((Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000);
-    const recentInDb = sqlite.prepare("SELECT COUNT(*) as count FROM items WHERE category = ? AND created_at >= ?").get(category, twoDaysAgo) as { count: number };
+    const recentInDbRow = await client.query(
+      "SELECT COUNT(*)::bigint AS count FROM items WHERE category = $1 AND created_at >= $2",
+      [category, twoDaysAgo],
+    );
+    const recentInDb = { count: Number((recentInDbRow.rows[0] as { count: string }).count) };
 
     // DEBUG: Check what loadItemsByCategory is actually querying
     const { loadItemsByCategory: loadItems } = await import("@/src/lib/db/items");
 
-    // Get fresh SQLite connection
-    const { getSqlite: getFreshSqlite } = await import("@/src/lib/db/index");
-    const freshSqlite = getFreshSqlite();
-
     const testCutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-    const testQueryResult = freshSqlite.prepare("SELECT COUNT(*) as count FROM items WHERE category = ? AND created_at >= ?").get(category, testCutoffTime) as { count: number };
+    const testQueryResultRow = await client.query(
+      "SELECT COUNT(*)::bigint AS count FROM items WHERE category = $1 AND created_at >= $2",
+      [category, testCutoffTime],
+    );
+    const testQueryResult = { count: Number((testQueryResultRow.rows[0] as { count: string }).count) };
 
-    // Also test the exact query that loadItemsByCategory uses
-    const testRows = freshSqlite
-      .prepare(`SELECT * FROM items WHERE category = ? AND created_at >= ? ORDER BY created_at DESC`)
-      .all(category, testCutoffTime) as Array<Record<string, unknown>>;
+    const testRowsResult = await client.query(
+      `SELECT * FROM items WHERE category = $1 AND created_at >= $2 ORDER BY created_at DESC`,
+      [category, testCutoffTime],
+    );
+    const testRows = testRowsResult.rows as Array<Record<string, unknown>>;
 
     const testItems = await loadItems(category, periodDays);
 
@@ -108,7 +122,7 @@ export async function GET(request: NextRequest) {
       } : null,
       now: new Date(now).toISOString(),
       cutoffTime: new Date(now - windowMs).toISOString(),
-      dbPath,
+      dbHost,
       totalItemsInDb: totalItems.count,
       recentItemsInDb: recentInDb.count,
       processCwd: process.cwd(),

@@ -2,34 +2,47 @@
  * Integration tests for POST /api/podcast/render-audio endpoint
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { getSqlite, initializeDatabase } from "../../src/lib/db/index";
+import { describe, it, expect, beforeAll } from "vitest";
+import { initializeDatabase } from "../../src/lib/db/index";
+import { getDbClient } from "../../src/lib/db/driver";
 import { getPodcastAudioByHash, listRecentPodcastAudio } from "../../src/lib/db/podcast-audio";
+
+const hasPostgresUrl = () => {
+  const url = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
+  return !!(url && (url.startsWith("postgres://") || url.startsWith("postgresql://")));
+};
 
 describe("Podcast Audio Rendering", () => {
   beforeAll(async () => {
-    // Initialize database
+    if (!hasPostgresUrl()) {
+      return;
+    }
     await initializeDatabase();
   });
 
   describe("Database Persistence", () => {
-    it("creates generated_podcast_audio table", () => {
-      const sqlite = getSqlite();
-      const result = sqlite
-        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='generated_podcast_audio'`)
-        .get() as any;
-
-      expect(result).toBeDefined();
-      expect(result.name).toBe("generated_podcast_audio");
+    it.skipIf(!hasPostgresUrl())("creates generated_podcast_audio table", async () => {
+      const client = await getDbClient();
+      const result = await client.query(
+        `
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'generated_podcast_audio'
+      `
+      );
+      expect(result.rows.length).toBe(1);
     });
 
-    it("has correct columns", () => {
-      const sqlite = getSqlite();
-      const columns = sqlite
-        .prepare("PRAGMA table_info(generated_podcast_audio)")
-        .all() as any[];
-
-      const columnNames = columns.map((c) => c.name);
+    it.skipIf(!hasPostgresUrl())("has correct columns", async () => {
+      const client = await getDbClient();
+      const columns = await client.query(
+        `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'generated_podcast_audio'
+      `
+      );
+      const columnNames = (columns.rows as Array<{ column_name: string }>).map((c) => c.column_name);
 
       expect(columnNames).toContain("id");
       expect(columnNames).toContain("transcript_hash");
@@ -42,28 +55,40 @@ describe("Podcast Audio Rendering", () => {
       expect(columnNames).toContain("created_at");
     });
 
-    it("has unique constraint on transcript_hash", () => {
-      const sqlite = getSqlite();
-      const indexes = sqlite
-        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE '%transcript_hash%'")
-        .all() as any[];
-
-      // The UNIQUE constraint creates an implicit index or constraint
-      expect(indexes.length).toBeGreaterThanOrEqual(0); // May vary by SQLite version
+    it.skipIf(!hasPostgresUrl())("has unique constraint on transcript_hash", async () => {
+      const client = await getDbClient();
+      const constraints = await client.query(
+        `
+        SELECT conname
+        FROM pg_constraint c
+        JOIN pg_class rel ON rel.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = rel.relnamespace
+        WHERE n.nspname = 'public'
+          AND rel.relname = 'generated_podcast_audio'
+          AND c.contype = 'u'
+      `
+      );
+      const names = (constraints.rows as Array<{ conname: string }>).map((r) => r.conname);
+      expect(names.some((n) => n.toLowerCase().includes("transcript"))).toBe(true);
     });
 
-    it("has index on created_at", () => {
-      const sqlite = getSqlite();
-      const indexes = sqlite
-        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE '%created_at%'")
-        .all() as any[];
-
-      expect(indexes.length).toBeGreaterThan(0);
+    it.skipIf(!hasPostgresUrl())("has index on created_at", async () => {
+      const client = await getDbClient();
+      const indexes = await client.query(
+        `
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'generated_podcast_audio'
+          AND indexdef ILIKE '%created_at%'
+      `
+      );
+      expect(indexes.rows.length).toBeGreaterThan(0);
     });
   });
 
   describe("Audio CRUD Operations", () => {
-    it("saves audio metadata to database", async () => {
+    it.skipIf(!hasPostgresUrl())("saves audio metadata to database", async () => {
       const { savePodcastAudio } = await import("../../src/lib/db/podcast-audio");
       const testHash = "sha256:crud-save-" + Date.now();
       const testAudio = {
@@ -86,7 +111,7 @@ describe("Podcast Audio Rendering", () => {
       expect(retrieved?.provider).toBe("openai");
     });
 
-    it("retrieves audio by hash", async () => {
+    it.skipIf(!hasPostgresUrl())("retrieves audio by hash", async () => {
       const { savePodcastAudio } = await import("../../src/lib/db/podcast-audio");
       const testHash = "sha256:crud-retrieve-" + Date.now();
       const testAudio = {
@@ -109,7 +134,7 @@ describe("Podcast Audio Rendering", () => {
       expect(retrieved?.audioUrl).toBe("/public/audio/test2.mp3");
     });
 
-    it("lists recent audio records", async () => {
+    it.skipIf(!hasPostgresUrl())("lists recent audio records", async () => {
       const recent = await listRecentPodcastAudio(10);
 
       expect(Array.isArray(recent)).toBe(true);
@@ -119,7 +144,7 @@ describe("Podcast Audio Rendering", () => {
       }
     });
 
-    it("marks cache hits correctly", async () => {
+    it.skipIf(!hasPostgresUrl())("marks cache hits correctly", async () => {
       const { savePodcastAudio } = await import("../../src/lib/db/podcast-audio");
       const testHash = "sha256:crud-cache-" + Date.now();
       const testAudio = {
@@ -158,7 +183,7 @@ describe("Podcast Audio Rendering", () => {
   });
 
   describe("Type Safety", () => {
-    it("enforces transcript hash uniqueness", async () => {
+    it.skipIf(!hasPostgresUrl())("enforces transcript hash uniqueness", async () => {
       const { savePodcastAudio } = await import("../../src/lib/db/podcast-audio");
 
       // Try to insert duplicate (should fail or replace)

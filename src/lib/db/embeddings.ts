@@ -1,10 +1,9 @@
 /**
  * Embedding database operations
- * Store and retrieve embeddings from SQLite (dev) or PostgreSQL (prod)
+ * Store and retrieve embeddings from PostgreSQL (pgvector)
  */
 
-import { getSqlite } from "./index";
-import { detectDriver, getDbClient } from "./driver";
+import { getDbClient } from "./driver";
 import { encodeEmbedding, decodeEmbedding } from "../embeddings";
 import { logger } from "../logger";
 
@@ -22,9 +21,8 @@ export async function saveEmbeddingsBatch(
       return;
     }
 
-    const driver = detectDriver();
+    
 
-    if (driver === 'postgres') {
       // PostgreSQL: use vector type
       const client = await getDbClient();
 
@@ -56,26 +54,8 @@ export async function saveEmbeddingsBatch(
           [item.itemId, vectorStr]
         );
       }
-    } else {
-      // SQLite: use BLOB
-      const sqlite = getSqlite();
-      const stmt = sqlite.prepare(`
-        INSERT OR REPLACE INTO item_embeddings
-        (item_id, embedding, generated_at)
-        VALUES (?, ?, strftime('%s', 'now'))
-      `);
+    
 
-      const insertMany = sqlite.transaction(
-        (items: Array<{ itemId: string; embedding: number[] }>) => {
-          for (const item of items) {
-            const buffer = encodeEmbedding(item.embedding);
-            stmt.run(item.itemId, buffer);
-          }
-        }
-      );
-
-      insertMany(itemsToSave);
-    }
 
     logger.info(`Saved ${itemsToSave.length} embeddings to database`);
   } catch (error) {
@@ -92,11 +72,10 @@ export async function getEmbeddingsBatch(itemIds: string[]): Promise<Map<string,
     if (itemIds.length === 0) {
       return new Map();
     }
-
-    const driver = detectDriver();
     const embeddings = new Map<string, number[]>();
 
-    if (driver === 'postgres') {
+    
+
       // PostgreSQL: use vector type
       const client = await getDbClient();
       const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
@@ -118,27 +97,8 @@ export async function getEmbeddingsBatch(itemIds: string[]): Promise<Map<string,
           logger.warn(`Failed to parse embedding for item ${row.item_id}`, { error: errorMsg });
         }
       }
-    } else {
-      // SQLite: use BLOB
-      const sqlite = getSqlite();
-      const placeholders = itemIds.map(() => "?").join(",");
-      const rows = sqlite
-        .prepare(
-          `
-        SELECT item_id, embedding
-        FROM item_embeddings
-        WHERE item_id IN (${placeholders})
-      `
-        )
-        .all(...itemIds) as Array<{
-        item_id: string;
-        embedding: Buffer;
-      }>;
+    
 
-      for (const row of rows) {
-        embeddings.set(row.item_id, decodeEmbedding(row.embedding));
-      }
-    }
 
     logger.info(`Retrieved ${embeddings.size}/${itemIds.length} embeddings from database`);
     return embeddings;
@@ -160,9 +120,9 @@ export async function getEmbeddingsBatch(itemIds: string[]): Promise<Map<string,
  */
 export async function getEmbedding(itemId: string): Promise<number[] | null> {
   try {
-    const driver = detectDriver();
 
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
       const result = await client.query(
         'SELECT embedding::text FROM item_embeddings WHERE item_id = $1',
@@ -173,18 +133,8 @@ export async function getEmbedding(itemId: string): Promise<number[] | null> {
       }
       const vectorStr = result.rows[0].embedding as string;
       return JSON.parse(vectorStr) as number[];
-    } else {
-      const sqlite = getSqlite();
-      const row = sqlite
-        .prepare("SELECT embedding FROM item_embeddings WHERE item_id = ?")
-        .get(itemId) as { embedding: Buffer } | undefined;
+    
 
-      if (!row) {
-        return null;
-      }
-
-      return decodeEmbedding(row.embedding);
-    }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     if (errorMsg.includes('no such table') || errorMsg.includes('does not exist')) {
@@ -203,39 +153,21 @@ export async function hasEmbeddings(itemIds: string[]): Promise<Map<string, bool
     if (itemIds.length === 0) {
       return new Map();
     }
+    const client = await getDbClient();
+    const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
+    const result = await client.query(
+      `SELECT DISTINCT item_id FROM item_embeddings WHERE item_id IN (${placeholders})`,
+      itemIds
+    );
+    const existingIds = new Set(result.rows.map((r) => r.item_id as string));
 
-    const driver = detectDriver();
-    let existingIds: Set<string>;
 
-    if (driver === 'postgres') {
-      const client = await getDbClient();
-      const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(',');
-      const result = await client.query(
-        `SELECT DISTINCT item_id FROM item_embeddings WHERE item_id IN (${placeholders})`,
-        itemIds
-      );
-      existingIds = new Set(result.rows.map((r) => r.item_id as string));
-    } else {
-      const sqlite = getSqlite();
-      const placeholders = itemIds.map(() => "?").join(",");
-      const rows = sqlite
-        .prepare(
-          `
-        SELECT DISTINCT item_id
-        FROM item_embeddings
-        WHERE item_id IN (${placeholders})
-      `
-        )
-        .all(...itemIds) as Array<{ item_id: string }>;
-      existingIds = new Set(rows.map((r) => r.item_id));
-    }
-
-    const result = new Map<string, boolean>();
+    const out = new Map<string, boolean>();
     for (const itemId of itemIds) {
-      result.set(itemId, existingIds.has(itemId));
+      out.set(itemId, existingIds.has(itemId));
     }
 
-    return result;
+    return out;
   } catch (error) {
     // Return all false on error (assume no embeddings exist)
     const result = new Map<string, boolean>();
@@ -255,17 +187,9 @@ export async function deleteEmbeddings(itemIds: string[]): Promise<void> {
       return;
     }
 
-    const sqlite = getSqlite();
-
-    const placeholders = itemIds.map(() => "?").join(",");
-    sqlite
-      .prepare(
-        `
-      DELETE FROM item_embeddings
-      WHERE item_id IN (${placeholders})
-    `
-      )
-      .run(...itemIds);
+    const client = await getDbClient();
+    const placeholders = itemIds.map((_, i) => `$${i + 1}`).join(",");
+    await client.run(`DELETE FROM item_embeddings WHERE item_id IN (${placeholders})`, itemIds);
 
     logger.info(`Deleted embeddings for ${itemIds.length} items`);
   } catch (error) {
@@ -279,19 +203,14 @@ export async function deleteEmbeddings(itemIds: string[]): Promise<void> {
  */
 export async function getEmbeddingsCount(): Promise<number> {
   try {
-    const driver = detectDriver();
 
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
       const result = await client.query('SELECT COUNT(*) as count FROM item_embeddings');
       return parseInt(result.rows[0]?.count as string) || 0;
-    } else {
-      const sqlite = getSqlite();
-      const result = sqlite
-        .prepare("SELECT COUNT(*) as count FROM item_embeddings")
-        .get() as { count: number } | undefined;
-      return result?.count ?? 0;
-    }
+    
+
   } catch (error) {
     // Return 0 on error (table doesn't exist or query failed)
     return 0;

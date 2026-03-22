@@ -1,5 +1,5 @@
 /**
- * LLM-based scoring pipeline using OpenAI GPT-4o
+ * LLM-based scoring pipeline using the configured quality model
  * Evaluates relevance and usefulness of items
  */
 
@@ -7,12 +7,12 @@ import { FeedItem, LLMScoreResult, Category } from "../model";
 import { logger } from "../logger";
 import { getCompetitorProducts } from "../../config/products";
 import { createChatCompletion } from "../llm/completion";
-import { hasLLMConfigured } from "../llm/config";
+import { getQualityModel, hasLLMConfigured } from "../llm/config";
 import type { AgentGoal } from "../../config/agents";
 import { getAgentGoalConfig } from "../../config/agents";
 
 /**
- * Get category-specific system prompt for GPT-4o to evaluate item relevance.
+ * Get category-specific system prompt to evaluate item relevance.
  * When goal is provided, adds guidance so usefulness is evaluated for that agent goal.
  */
 function getSystemPrompt(category: Category, goal?: AgentGoal): string {
@@ -366,7 +366,7 @@ function parseGPTResponse(
 }
 
 /**
- * Score a batch of items using OpenAI GPT-4o
+ * Score a batch of items using the configured quality model.
  */
 async function scoreItemsBatch(
   items: FeedItem[],
@@ -380,12 +380,14 @@ async function scoreItemsBatch(
   try {
     const systemPrompt = getSystemPrompt(category, goal);
     const prompt = createBatchPrompt(items, category);
+    const configuredModel = getQualityModel();
 
     logger.info(
-      `Scoring ${items.length} items with GPT-4o for category ${category}`,
+      `Scoring ${items.length} items with configured quality model for category ${category}`,
       {
         batchSize: items.length,
         category,
+        configuredModel,
       },
     );
 
@@ -409,11 +411,15 @@ async function scoreItemsBatch(
 
     const responseText = result.content || "";
 
-    logger.info(`LLM responded for batch of ${items.length}`, { itemCount: items.length });
+    logger.info(`LLM responded for batch of ${items.length}`, {
+      itemCount: items.length,
+      configuredModel,
+      actualModel: result.model,
+    });
 
     return parseGPTResponse(responseText, items);
   } catch (error) {
-    logger.error("GPT-4o API error", { error, itemCount: items.length });
+    logger.error("LLM scoring API error", { error, itemCount: items.length });
 
     // Fallback: return neutral scores
     return items.reduce(
@@ -432,8 +438,8 @@ async function scoreItemsBatch(
 }
 
 /**
- * Score items using GPT-4o with batching for efficiency
- * Batches items to stay under token limits
+ * Score items using the configured quality model with batching for efficiency.
+ * Batches items to stay under token limits.
  * @param items Items to score
  * @param category Category for category-specific relevance evaluation
  * @param batchSize Number of items per batch

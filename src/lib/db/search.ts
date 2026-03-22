@@ -1,14 +1,14 @@
 /**
  * Database-level search operations
  * 
- * Provides search functions that work with both SQLite and PostgreSQL:
- * - SQLite: In-memory BM25-style matching (current approach)
- * - PostgreSQL: tsvector full-text search + pgvector similarity
+ * Provides search functions backed by PostgreSQL:
+ * - tsvector full-text search (+ optional ts_headline)
+ * - pgvector similarity search
  * 
  * This module abstracts the database-specific search implementation.
  */
 
-import { detectDriver, DatabaseDriver, getDbClient } from './driver';
+import { getDbClient } from './driver';
 import { logger } from '../logger';
 
 export interface DbSearchResult {
@@ -28,7 +28,6 @@ export interface DbSearchResult {
  * Full-text search using database-native capabilities
  * 
  * PostgreSQL: Uses tsvector with ts_rank and ts_headline
- * SQLite: Falls back to LIKE matching (semantic search handles the rest)
  */
 export async function dbFullTextSearch(
   query: string,
@@ -38,14 +37,8 @@ export async function dbFullTextSearch(
     limit?: number;
   } = {}
 ): Promise<DbSearchResult[]> {
-  const driver = detectDriver();
   const limit = options.limit ?? 50;
-
-  if (driver === 'postgres') {
-    return postgresFullTextSearch(query, options, limit);
-  } else {
-    return sqliteLikeSearch(query, options, limit);
-  }
+  return postgresFullTextSearch(query, options, limit);
 }
 
 /**
@@ -134,88 +127,7 @@ async function postgresFullTextSearch(
 }
 
 /**
- * SQLite fallback: simple LIKE matching
- * The actual ranking is done in-memory by the search pipeline
- */
-async function sqliteLikeSearch(
-  query: string,
-  options: { category?: string; period?: 'day' | 'week' | 'month' | 'all' },
-  limit: number
-): Promise<DbSearchResult[]> {
-  const client = await getDbClient();
-
-  // Build WHERE clause for filtering
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  // Add LIKE search condition
-  const searchTerms = query.split(/\s+/).filter(t => t.length > 0);
-  if (searchTerms.length > 0) {
-    const likeConditions = searchTerms.map((_, i) => {
-      params.push(`%${searchTerms[i]}%`);
-      return `(title LIKE ? OR summary LIKE ? OR content_snippet LIKE ?)`;
-    });
-    // Each LIKE needs its own parameter (SQLite doesn't reuse params)
-    const expandedParams: unknown[] = [];
-    for (const term of searchTerms) {
-      expandedParams.push(`%${term}%`, `%${term}%`, `%${term}%`);
-    }
-    params.length = 0; // Clear and replace
-    params.push(...expandedParams);
-    conditions.push(`(${likeConditions.join(' AND ')})`);
-  }
-
-  // Add category filter
-  if (options.category) {
-    conditions.push('category = ?');
-    params.push(options.category);
-  }
-
-  // Add period filter
-  if (options.period && options.period !== 'all') {
-    const now = Math.floor(Date.now() / 1000);
-    const periodSeconds = {
-      day: 86400,
-      week: 604800,
-      month: 2592000,
-    };
-    const cutoff = now - periodSeconds[options.period];
-    conditions.push('published_at >= ?');
-    params.push(cutoff);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  const sql = `
-    SELECT 
-      id,
-      title,
-      url,
-      source_title as sourceTitle,
-      published_at as publishedAt,
-      summary,
-      content_snippet as contentSnippet,
-      category,
-      1.0 as score
-    FROM items
-    ${whereClause}
-    ORDER BY published_at DESC
-    LIMIT ${limit}
-  `;
-
-  try {
-    const result = await client.query(sql, params);
-    logger.info(`SQLite LIKE search returned ${result.rows.length} results for: "${query}"`);
-    return result.rows as unknown as DbSearchResult[];
-  } catch (error) {
-    logger.error(`SQLite LIKE search failed for query: "${query}"`, error);
-    throw error;
-  }
-}
-
-/**
  * Vector similarity search using pgvector
- * Only works in PostgreSQL; returns empty in SQLite (semantic search handles it in-memory)
  */
 export async function dbVectorSearch(
   queryEmbedding: number[],
@@ -224,14 +136,6 @@ export async function dbVectorSearch(
     limit?: number;
   } = {}
 ): Promise<DbSearchResult[]> {
-  const driver = detectDriver();
-
-  if (driver !== 'postgres') {
-    // SQLite: return empty, semantic search will use in-memory cosine similarity
-    logger.info('Vector search not available in SQLite, using in-memory fallback');
-    return [];
-  }
-
   const client = await getDbClient();
   const limit = options.limit ?? 20;
 
@@ -284,8 +188,6 @@ export async function dbVectorSearch(
 
 /**
  * Hybrid search combining FTS and vector similarity
- * PostgreSQL: Uses database-level operations
- * SQLite: Falls back to in-memory search
  */
 export async function dbHybridSearch(
   query: string,
@@ -297,12 +199,10 @@ export async function dbHybridSearch(
     semanticWeight?: number; // 0-1, weight for vector similarity
   } = {}
 ): Promise<DbSearchResult[]> {
-  const driver = detectDriver();
   const limit = options.limit ?? 20;
   const semanticWeight = options.semanticWeight ?? 0.5;
 
-  if (driver !== 'postgres' || !queryEmbedding) {
-    // SQLite or no embedding: just use FTS
+  if (!queryEmbedding) {
     return dbFullTextSearch(query, options);
   }
 

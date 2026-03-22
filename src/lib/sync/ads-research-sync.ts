@@ -18,7 +18,7 @@ import { computeAndSaveScoresForItems } from '../pipeline/compute-scores';
 import { categorizeItems } from '../pipeline/categorize';
 import { storePapersBatch } from '../db/ads-papers';
 import { getArxivUrl, getADSUrl } from '../ads/client';
-import { getDbClient, detectDriver } from '../db/driver';
+import { getDbClient } from '../db/driver';
 
 interface ADSSearchResponse {
   response: {
@@ -267,24 +267,8 @@ export async function syncResearchFromADS(token: string): Promise<{
   // Check which papers we already have in the database to avoid reprocessing
   const itemIds = feedItems.map(item => item.id);
   const client = await getDbClient();
-  const driver = detectDriver();
 
-  // Build query that works for both PostgreSQL and SQLite
-  let existingItemsResult;
-  if (driver === 'postgres') {
-    // PostgreSQL: use ANY(array)
-    existingItemsResult = await client.query(
-      `SELECT id FROM items WHERE id = ANY($1)`,
-      [itemIds]
-    );
-  } else {
-    // SQLite: use IN (?, ?, ...)
-    const placeholders = itemIds.map(() => '?').join(',');
-    existingItemsResult = await client.query(
-      `SELECT id FROM items WHERE id IN (${placeholders})`,
-      itemIds
-    );
-  }
+  const existingItemsResult = await client.query(`SELECT id FROM items WHERE id = ANY($1)`, [itemIds]);
 
   const existingIds = new Set(
     (existingItemsResult.rows as Array<{ id: string }>).map(row => row.id)

@@ -3,8 +3,7 @@
  * Handles storing and retrieving paper metadata and full text from local database
  */
 
-import { getSqlite } from './index';
-import { detectDriver, getDbClient } from './driver';
+import { getDbClient } from "./driver";
 import { logger } from '../logger';
 
 export interface ADSPaperRecord {
@@ -27,14 +26,13 @@ export interface ADSPaperSearchResult {
 }
 
 /**
- * Initialize ADS tables in database
- * Works for both SQLite and PostgreSQL
+ * Initialize ADS tables in database (PostgreSQL)
  */
 export async function initializeADSTables() {
-  const driver = detectDriver();
 
   try {
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
 
       // Create ads_papers table
@@ -101,69 +99,10 @@ export async function initializeADSTables() {
       `);
 
       logger.info('ADS database tables initialized (PostgreSQL)');
-    } else {
-      const db = getSqlite();
+    
 
-      // Create ads_papers table
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS ads_papers (
-          bibcode TEXT PRIMARY KEY,
-          title TEXT,
-          authors TEXT,
-          pubdate TEXT,
-          abstract TEXT,
-          body TEXT,
-          year INTEGER,
-          journal TEXT,
-          ads_url TEXT,
-          arxiv_url TEXT,
-          fulltext_source TEXT,
-          is_favorite INTEGER DEFAULT 0,
-          favorited_at INTEGER,
-          fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
-          created_at INTEGER DEFAULT (strftime('%s', 'now')),
-          updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-        );
-      `);
-
-      // Create ads_library_papers junction table
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS ads_library_papers (
-          library_id TEXT NOT NULL,
-          bibcode TEXT NOT NULL,
-          added_at INTEGER DEFAULT (strftime('%s', 'now')),
-          PRIMARY KEY (library_id, bibcode),
-          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE
-        );
-      `);
-
-      // Create ads_libraries cache table
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS ads_libraries (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          description TEXT,
-          num_documents INTEGER NOT NULL DEFAULT 0,
-          is_public INTEGER NOT NULL DEFAULT 0,
-          fetched_at INTEGER DEFAULT (strftime('%s', 'now')),
-          created_at INTEGER DEFAULT (strftime('%s', 'now')),
-          updated_at INTEGER DEFAULT (strftime('%s', 'now'))
-        );
-      `);
-
-      // Create indexes
-      db.exec(`
-        CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
-        CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
-        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
-        CREATE INDEX IF NOT EXISTS idx_ads_library_papers_bibcode ON ads_library_papers(bibcode);
-      `);
-
-      logger.info('ADS database tables initialized (SQLite)');
-    }
   } catch (error) {
     logger.error('Failed to initialize ADS tables', {
-      driver,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -175,7 +114,6 @@ export async function initializeADSTables() {
  * Store or update a paper in the database
  */
 export async function storePaper(paper: ADSPaperRecord): Promise<void> {
-  const driver = detectDriver();
   const year = paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
 
   // Sanitize text fields to remove null bytes (required for PostgreSQL)
@@ -193,7 +131,8 @@ export async function storePaper(paper: ADSPaperRecord): Promise<void> {
   };
 
   try {
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
       const now = Math.floor(Date.now() / 1000);
       await client.run(
@@ -228,40 +167,8 @@ export async function storePaper(paper: ADSPaperRecord): Promise<void> {
           now,
         ]
       );
-    } else {
-      const db = getSqlite();
-      const stmt = db.prepare(`
-        INSERT INTO ads_papers (
-          bibcode, title, authors, pubdate, abstract, body,
-          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-        ON CONFLICT(bibcode) DO UPDATE SET
-          title = excluded.title,
-          authors = excluded.authors,
-          pubdate = excluded.pubdate,
-          abstract = excluded.abstract,
-          body = COALESCE(excluded.body, body),
-          year = COALESCE(excluded.year, year),
-          journal = excluded.journal,
-          ads_url = excluded.ads_url,
-          arxiv_url = excluded.arxiv_url,
-          fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
-          updated_at = strftime('%s', 'now')
-      `);
-      stmt.run(
-        paper.bibcode,
-        paper.title || null,
-        paper.authors || null,
-        paper.pubdate || null,
-        paper.abstract || null,
-        paper.body || null,
-        year || null,
-        paper.journal || null,
-        paper.adsUrl || null,
-        paper.arxivUrl || null,
-        paper.fulltextSource || null,
-      );
-    }
+    
+
 
     logger.info('Paper stored in database', { bibcode: paper.bibcode });
 
@@ -317,8 +224,6 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
   if (papers.length === 0) {
     return;
   }
-
-  const driver = detectDriver();
   const now = Math.floor(Date.now() / 1000);
 
   // Sanitize all text fields to remove null bytes (required for PostgreSQL)
@@ -336,7 +241,8 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
   }));
 
   try {
-    if (driver === 'postgres') {
+    
+
       // Process in smaller batches to avoid connection timeouts and query size limits
       // PostgreSQL can handle large queries, but with body text fields, we need smaller batches
       const BATCH_SIZE = 5; // Reduced from 10 to handle very large body text fields
@@ -441,49 +347,8 @@ export async function storePapersBatch(papers: ADSPaperRecord[]): Promise<void> 
           }
         }
       }
-    } else {
-      const db = getSqlite();
-      const stmt = db.prepare(`
-        INSERT INTO ads_papers (
-          bibcode, title, authors, pubdate, abstract, body,
-          year, journal, ads_url, arxiv_url, fulltext_source, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
-        ON CONFLICT(bibcode) DO UPDATE SET
-          title = excluded.title,
-          authors = excluded.authors,
-          pubdate = excluded.pubdate,
-          abstract = excluded.abstract,
-          body = COALESCE(excluded.body, body),
-          year = COALESCE(excluded.year, year),
-          journal = excluded.journal,
-          ads_url = excluded.ads_url,
-          arxiv_url = excluded.arxiv_url,
-          fulltext_source = COALESCE(excluded.fulltext_source, fulltext_source),
-          updated_at = strftime('%s', 'now')
-      `);
+    
 
-      const insertMany = db.transaction((prs: ADSPaperRecord[]) => {
-        for (const paper of prs) {
-          const year =
-            paper.year || (paper.pubdate ? parseInt(paper.pubdate.substring(0, 4), 10) : undefined);
-          stmt.run(
-            paper.bibcode,
-            paper.title || null,
-            paper.authors || null,
-            paper.pubdate || null,
-            paper.abstract || null,
-            paper.body || null,
-            year || null,
-            paper.journal || null,
-            paper.adsUrl || null,
-            paper.arxivUrl || null,
-            paper.fulltextSource || null,
-          );
-        }
-      });
-
-      insertMany(sanitizedPapers);
-    }
 
     logger.info('Papers batch stored in database', { count: sanitizedPapers.length });
 
@@ -538,10 +403,10 @@ async function processPapersSectionsAsync(bibcodes: string[]): Promise<void> {
  * Get a paper from the database
  */
 export async function getPaper(bibcode: string): Promise<ADSPaperRecord | null> {
-  const driver = detectDriver();
 
   try {
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
       const result = await client.query(
         `SELECT * FROM ads_papers WHERE bibcode = $1`,
@@ -576,13 +441,8 @@ export async function getPaper(bibcode: string): Promise<ADSPaperRecord | null> 
         arxivUrl: row.arxiv_url || undefined,
         fulltextSource: row.fulltext_source || undefined,
       };
-    } else {
-      const db = getSqlite();
-      const stmt = db.prepare(`
-        SELECT * FROM ads_papers WHERE bibcode = ?
-      `);
-      return stmt.get(bibcode) as ADSPaperRecord | undefined || null;
-    }
+    
+
   } catch (error) {
     logger.error('Failed to get paper', {
       bibcode,
@@ -596,10 +456,10 @@ export async function getPaper(bibcode: string): Promise<ADSPaperRecord | null> 
  * Get papers in a library
  */
 export async function getLibraryPapers(libraryId: string, limit = 100, offset = 0): Promise<ADSPaperRecord[]> {
-  const driver = detectDriver();
 
   try {
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
 
       // First check if the library has any linked papers
@@ -652,48 +512,11 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
         arxivUrl: (row.arxiv_url as string | null) || undefined,
         fulltextSource: (row.fulltext_source as string | null) || undefined,
       }));
-    } else {
-      const db = getSqlite();
+    
 
-      // Check count first
-      const countStmt = db.prepare(`SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = ?`);
-      const countResult = countStmt.get(libraryId) as { count: number } | undefined;
-      const linkCount = countResult?.count || 0;
-
-      logger.info('Getting library papers', {
-        libraryId,
-        linkedPapersCount: linkCount,
-        limit,
-        offset,
-      });
-
-      if (linkCount === 0) {
-        logger.warn('No papers linked to library', { libraryId });
-        return [];
-      }
-
-      const stmt = db.prepare(`
-        SELECT p.* FROM ads_papers p
-        JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
-        WHERE lp.library_id = ?
-        ORDER BY COALESCE(p.fetched_at, p.created_at, lp.added_at, 0) DESC
-        LIMIT ? OFFSET ?
-      `);
-
-      const results = stmt.all(libraryId, limit, offset) as ADSPaperRecord[];
-
-      logger.info('Retrieved library papers', {
-        libraryId,
-        requested: limit,
-        returned: results.length,
-      });
-
-      return results;
-    }
   } catch (error) {
     logger.error('Failed to get library papers', {
       libraryId,
-      driver,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -702,22 +525,14 @@ export async function getLibraryPapers(libraryId: string, limit = 100, offset = 
 }
 
 export async function getCachedLibraryPaperCount(libraryId: string): Promise<number> {
-  const driver = detectDriver();
 
   try {
-    if (driver === 'postgres') {
       const client = await getDbClient();
       const result = await client.query(
         `SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = $1`,
         [libraryId],
       );
       return parseInt(String(result.rows[0]?.count ?? '0'), 10);
-    }
-
-    const db = getSqlite();
-    const stmt = db.prepare(`SELECT COUNT(*) as count FROM ads_library_papers WHERE library_id = ?`);
-    const row = stmt.get(libraryId) as { count: number } | undefined;
-    return row?.count ?? 0;
   } catch (error) {
     logger.error('Failed to count cached library papers', {
       libraryId,
@@ -733,10 +548,10 @@ export async function searchLibraryPapers(
   limit = 50,
   offset = 0,
 ): Promise<ADSPaperSearchResult> {
-  const driver = detectDriver();
 
   try {
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
       const countResult = await client.query(
         `SELECT COUNT(*) as count
@@ -781,33 +596,6 @@ export async function searchLibraryPapers(
           fulltextSource: (row.fulltext_source as string | null) || undefined,
         })),
       };
-    }
-
-    const db = getSqlite();
-    const searchTerm = `%${query}%`;
-    const countStmt = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM ads_papers p
-      JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
-      WHERE lp.library_id = ?
-        AND (p.title LIKE ? OR p.abstract LIKE ? OR p.authors LIKE ? OR p.bibcode LIKE ?)
-    `);
-    const totalRow = countStmt.get(libraryId, searchTerm, searchTerm, searchTerm, searchTerm) as { count: number } | undefined;
-
-    const stmt = db.prepare(`
-      SELECT p.*
-      FROM ads_papers p
-      JOIN ads_library_papers lp ON p.bibcode = lp.bibcode
-      WHERE lp.library_id = ?
-        AND (p.title LIKE ? OR p.abstract LIKE ? OR p.authors LIKE ? OR p.bibcode LIKE ?)
-      ORDER BY COALESCE(p.fetched_at, p.created_at, lp.added_at, 0) DESC
-      LIMIT ? OFFSET ?
-    `);
-
-    return {
-      total: totalRow?.count ?? 0,
-      papers: stmt.all(libraryId, searchTerm, searchTerm, searchTerm, searchTerm, limit, offset) as ADSPaperRecord[],
-    };
   } catch (error) {
     logger.error('Failed to search library papers', {
       libraryId,
@@ -821,17 +609,17 @@ export async function searchLibraryPapers(
 /**
  * Link a paper to a library
  */
-export function linkPaperToLibrary(libraryId: string, bibcode: string): void {
-  const db = getSqlite();
-
+export async function linkPaperToLibrary(libraryId: string, bibcode: string): Promise<void> {
   try {
-    const stmt = db.prepare(`
+    const client = await getDbClient();
+    await client.run(
+      `
       INSERT INTO ads_library_papers (library_id, bibcode)
-      VALUES (?, ?)
+      VALUES ($1, $2)
       ON CONFLICT(library_id, bibcode) DO NOTHING
-    `);
-
-    stmt.run(libraryId, bibcode);
+    `,
+      [libraryId, bibcode],
+    );
   } catch (error) {
     logger.error('Failed to link paper to library', {
       libraryId,
@@ -849,10 +637,9 @@ export async function linkPapersToLibraryBatch(libraryId: string, bibcodes: stri
     return;
   }
 
-  const driver = detectDriver();
-
   try {
-    if (driver === 'postgres') {
+    
+
       const client = await getDbClient();
       // Use a single query with VALUES for batch insert
       const values: unknown[] = [];
@@ -876,33 +663,8 @@ export async function linkPapersToLibraryBatch(libraryId: string, bibcodes: stri
         bibcodesCount: bibcodes.length,
         inserted: result.changes,
       });
-    } else {
-      const db = getSqlite();
-      const stmt = db.prepare(`
-        INSERT INTO ads_library_papers (library_id, bibcode)
-        VALUES (?, ?)
-        ON CONFLICT(library_id, bibcode) DO NOTHING
-      `);
+    
 
-      const linkMany = db.transaction((codes: string[]) => {
-        let inserted = 0;
-        for (const bibcode of codes) {
-          const result = stmt.run(libraryId, bibcode);
-          if (result.changes > 0) {
-            inserted++;
-          }
-        }
-        return inserted;
-      });
-
-      const inserted = linkMany(bibcodes);
-
-      logger.info('Linked papers to library', {
-        libraryId,
-        bibcodesCount: bibcodes.length,
-        inserted,
-      });
-    }
   } catch (error) {
     logger.error('Failed to link papers to library', {
       libraryId,
@@ -915,16 +677,15 @@ export async function linkPapersToLibraryBatch(libraryId: string, bibcodes: stri
 /**
  * Check if a paper has full text cached
  */
-export function hasCachedFullText(bibcode: string): boolean {
-  const db = getSqlite();
-
+export async function hasCachedFullText(bibcode: string): Promise<boolean> {
   try {
-    const stmt = db.prepare(`
-      SELECT body FROM ads_papers WHERE bibcode = ? AND body IS NOT NULL LIMIT 1
-    `);
-
-    const result = stmt.get(bibcode) as { body: string } | undefined;
-    return !!result?.body;
+    const client = await getDbClient();
+    const result = await client.query(
+      `SELECT body FROM ads_papers WHERE bibcode = $1 AND body IS NOT NULL LIMIT 1`,
+      [bibcode],
+    );
+    const row = result.rows[0] as { body: string } | undefined;
+    return !!row?.body;
   } catch (error) {
     logger.error('Failed to check cached full text', {
       bibcode,
@@ -937,18 +698,19 @@ export function hasCachedFullText(bibcode: string): boolean {
 /**
  * Get papers missing full text
  */
-export function getPapersMissingFullText(limit = 50): ADSPaperRecord[] {
-  const db = getSqlite();
-
+export async function getPapersMissingFullText(limit = 50): Promise<ADSPaperRecord[]> {
   try {
-    const stmt = db.prepare(`
+    const client = await getDbClient();
+    const result = await client.query(
+      `
       SELECT * FROM ads_papers
       WHERE body IS NULL
       ORDER BY fetched_at ASC
-      LIMIT ?
-    `);
-
-    return stmt.all(limit) as ADSPaperRecord[];
+      LIMIT $1
+    `,
+      [limit],
+    );
+    return result.rows as unknown as ADSPaperRecord[];
   } catch (error) {
     logger.error('Failed to get papers missing full text', {
       error: error instanceof Error ? error.message : String(error),
@@ -979,19 +741,20 @@ export async function getFavoritePapers(userId: string, limit = 100): Promise<AD
 /**
  * Get search results from local cache
  */
-export function searchPapers(query: string, limit = 50): ADSPaperRecord[] {
-  const db = getSqlite();
-
+export async function searchPapers(query: string, limit = 50): Promise<ADSPaperRecord[]> {
   try {
+    const client = await getDbClient();
     const searchTerm = `%${query}%`;
-    const stmt = db.prepare(`
+    const result = await client.query(
+      `
       SELECT * FROM ads_papers
-      WHERE title LIKE ? OR abstract LIKE ? OR authors LIKE ?
+      WHERE title LIKE $1 OR abstract LIKE $2 OR authors LIKE $3
       ORDER BY fetched_at DESC
-      LIMIT ?
-    `);
-
-    return stmt.all(searchTerm, searchTerm, searchTerm, limit) as ADSPaperRecord[];
+      LIMIT $4
+    `,
+      [searchTerm, searchTerm, searchTerm, limit],
+    );
+    return result.rows as unknown as ADSPaperRecord[];
   } catch (error) {
     logger.error('Failed to search papers', {
       query,

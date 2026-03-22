@@ -702,14 +702,14 @@ Generate only the transcript, no JSON.`,
 
     // Remove source names, category labels, and attribution metadata so they never appear in the transcript
     transcript = stripMetadataFromTranscript(transcript, itemsWithHighlights);
-    transcript = stripItemRefMarkers(transcript);
 
-    // Parse segments based on (possibly trimmed and stripped) transcript
+    // Parse segments while (ref: item-X) markers are still present — they drive itemsReferenced mapping
     const segments = parseTranscriptSegments(transcript, itemsWithHighlights);
+
+    // Strip inline ref markers for the listener-facing transcript (same order as podcast.ts)
+    const displayTranscript = stripItemRefMarkers(transcript);
     const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
     const estimatedDuration = formatTime(totalDuration);
-
-    const displayTranscript = transcript;
 
     // Build show notes
     const showNotes = generateShowNotes(itemsWithHighlights, segments);
@@ -823,7 +823,7 @@ function stripMetadataFromTranscript(
   const out: string[] = [];
 
   for (let line of lines) {
-    let trimmed = line.trim();
+    const trimmed = line.trim();
     if (!trimmed) continue;
     if (fromSourceLine.test(trimmed)) continue;
     if (metaList.some((m) => trimmed === m || trimmed === `HOST: ${m}.` || trimmed === `HOST: ${m}`)) continue;
@@ -929,7 +929,7 @@ function generateFallbackTranscript(
   let transcript = "[INTRO MUSIC]\n\n";
   transcript += `HOST: Welcome to the Audio Digest for ${period}. Today we'll cover ${itemsWithHighlights.length} items.\n\n`;
 
-  for (const { item, highlights } of itemsWithHighlights) {
+  for (const { highlights } of itemsWithHighlights) {
     transcript += `## SEGMENT: digest\n\n`;
 
     for (const highlight of highlights.slice(0, 3)) {

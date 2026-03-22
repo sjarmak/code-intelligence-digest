@@ -11,6 +11,7 @@ import { buildAgentShortlist, type ShortlistEntry } from "../pipeline/agentShort
 import { getAgentGoalConfig } from "../../config/agents";
 import type { AgentGoal } from "../../config/agents";
 import { logger } from "../logger";
+import { withLangSmithTraceable } from "../langsmith";
 import { saveReport } from "./report-storage";
 import { gatherCompetitorIntel } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
@@ -93,7 +94,7 @@ export function reportRunId(): string {
 }
 
 /** Generate a single agent report; writes to .data/agent-reports/{goal}/{id}.md (never overwrites). */
-export async function runAgentReport(
+async function runAgentReportImpl(
   goal: AgentGoal,
   userId: string = "legacy",
   timeRange?: ReportTimeRange,
@@ -180,6 +181,22 @@ export async function runAgentReport(
     };
   }
 }
+
+export const runAgentReport = withLangSmithTraceable(runAgentReportImpl, {
+  name: "run_agent_report",
+  run_type: "chain",
+  defaultProjectName: "code-intel-digest-agents",
+  processInputs: (inputs) => {
+    const [goal, userId, timeRange, marketBriefSummary] =
+      "args" in inputs ? inputs.args : [undefined, undefined, undefined, undefined];
+    return {
+      goal,
+      userId,
+      timeRange: timeRange ?? null,
+      hasMarketBriefSummary: Boolean(marketBriefSummary),
+    };
+  },
+});
 
 /** Generate reports for the given goals. Call initializeDatabase() before this if needed. Never overwrites. */
 export async function runAgentReports(

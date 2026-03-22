@@ -5,7 +5,6 @@
  * - PostgreSQL is required for both development and production
  * - Local development uses LOCAL_DATABASE_URL (typically via Docker Compose)
  * - Production uses DATABASE_URL (from environment)
- * - Falls back to SQLite only if no PostgreSQL connection string is provided (legacy, not recommended)
  *
  * To use PostgreSQL locally:
  * 1. Start PostgreSQL: npm run db:start
@@ -15,7 +14,7 @@
 import { logger } from '../logger';
 import { ensurePostgresUserIdColumns } from './ensure-user-id';
 
-export type DatabaseDriver = 'sqlite' | 'postgres';
+export type DatabaseDriver = 'postgres';
 
 export interface DbResult {
   rows: Record<string, unknown>[];
@@ -40,7 +39,6 @@ let postgresPool: import('pg').Pool | null = null;
  * 1. If USE_LOCAL_DB=true, use LOCAL_DATABASE_URL (for batch scripts)
  * 2. Otherwise, check LOCAL_DATABASE_URL first (for local development)
  * 3. Then check DATABASE_URL (for production)
- * 4. Fall back to SQLite only if no PostgreSQL connection string is found
  */
 export function detectDriver(): DatabaseDriver {
   // Check if we should use local database (for batch operations)
@@ -55,14 +53,13 @@ export function detectDriver(): DatabaseDriver {
     dbUrl = process.env.LOCAL_DATABASE_URL || process.env.DATABASE_URL;
   }
 
-  // PostgreSQL connection string takes precedence
   if (dbUrl?.startsWith('postgres')) {
     return 'postgres';
   }
 
-  // Fall back to SQLite only if no PostgreSQL URL is configured (legacy, not recommended)
-  // PostgreSQL is required for both development and production
-  return 'sqlite';
+  throw new Error(
+    'PostgreSQL is required: set LOCAL_DATABASE_URL or DATABASE_URL to a postgres:// or postgresql:// connection string (optionally USE_LOCAL_DB=true to force LOCAL_DATABASE_URL).',
+  );
 }
 
 /**
@@ -86,64 +83,30 @@ export async function getDbClient(): Promise<DatabaseClient> {
     return clientInstance;
   }
 
-  const driver = detectDriver();
+  detectDriver();
+  clientInstance = await createPostgresClient();
+  await ensurePostgresUserIdColumns(clientInstance);
 
-  if (driver === 'postgres') {
-    clientInstance = await createPostgresClient();
-    await ensurePostgresUserIdColumns(clientInstance);
-  } else {
-    clientInstance = await createSqliteClient();
-  }
-
-  logger.info(`Database initialized with ${driver} driver`);
+  logger.info(`Database initialized with postgres driver`);
   return clientInstance;
 }
 
 /**
- * Create SQLite client (development)
+ * Close the shared Postgres pool and drop cached client state.
+ * Use sparingly (e.g. debug routes) to avoid reusing a stale singleton in long-lived servers.
  */
-async function createSqliteClient(): Promise<DatabaseClient> {
-  // Dynamic import to avoid bundling in production
-  const Database = (await import('better-sqlite3')).default;
-  const path = await import('path');
-  const fs = await import('fs');
-
-  const dataDir = path.join(process.cwd(), '.data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+export async function resetDbClient(): Promise<void> {
+  if (clientInstance) {
+    try {
+      await clientInstance.close();
+    } catch (e) {
+      logger.warn('resetDbClient: failed to close pool', {
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
-
-  const dbPath = path.join(dataDir, 'digest.db');
-  const sqlite = new Database(dbPath);
-  sqlite.pragma('foreign_keys = ON');
-
-  return {
-    driver: 'sqlite',
-
-    async query(sql: string, params?: unknown[]): Promise<DbResult> {
-      const stmt = sqlite.prepare(sql);
-      const rows = params ? stmt.all(...params) : stmt.all();
-      return {
-        rows: rows as Record<string, unknown>[],
-        rowCount: rows.length,
-      };
-    },
-
-    async run(sql: string, params?: unknown[]): Promise<{ changes: number }> {
-      const stmt = sqlite.prepare(sql);
-      const result = params ? stmt.run(...params) : stmt.run();
-      return { changes: result.changes };
-    },
-
-    async exec(sql: string): Promise<void> {
-      sqlite.exec(sql);
-    },
-
-    async close(): Promise<void> {
-      sqlite.close();
-      clientInstance = null;
-    },
-  };
+  clientInstance = null;
+  postgresPool = null;
 }
 
 /**
@@ -197,8 +160,7 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     driver: 'postgres',
 
     async query(sql: string, params?: unknown[]): Promise<DbResult> {
-      // Convert SQLite-style ? placeholders to Postgres $1, $2, etc
-      const pgSql = convertPlaceholders(sql);
+      const pgSql = normalizeSqlForPostgres(sql);
       const result = await pool.query(pgSql, params);
       return {
         rows: result.rows,
@@ -207,7 +169,7 @@ async function createPostgresClient(): Promise<DatabaseClient> {
     },
 
     async run(sql: string, params?: unknown[]): Promise<{ changes: number }> {
-      const pgSql = convertPlaceholders(sql);
+      const pgSql = normalizeSqlForPostgres(sql);
       const result = await pool.query(pgSql, params);
       return { changes: result.rowCount ?? 0 };
     },
@@ -249,9 +211,20 @@ export async function getFreshPostgresConnection(): Promise<import('pg').PoolCli
 }
 
 /**
- * Convert SQLite ? placeholders to PostgreSQL $1, $2, etc.
+ * Normalize SQL for node-postgres.
+ *
+ * Supports:
+ * - SQLite-style `?` placeholders → `$1`, `$2`, ...
+ * - Already-native Postgres `$1`, `$2`, ... placeholders (passed through)
  */
-function convertPlaceholders(sql: string): string {
+function normalizeSqlForPostgres(sql: string): string {
+  if (/\$(\d+)/.test(sql)) {
+    return sql;
+  }
+  return convertQuestionMarkPlaceholders(sql);
+}
+
+function convertQuestionMarkPlaceholders(sql: string): string {
   let index = 0;
   return sql.replace(/\?/g, () => `$${++index}`);
 }
@@ -260,10 +233,8 @@ function convertPlaceholders(sql: string): string {
  * Get current Unix timestamp expression for the current driver
  */
 export function nowTimestamp(driver: DatabaseDriver): string {
-  if (driver === 'postgres') {
-    return 'EXTRACT(EPOCH FROM NOW())::INTEGER';
-  }
-  return "strftime('%s', 'now')";
+  void driver;
+  return 'EXTRACT(EPOCH FROM NOW())::INTEGER';
 }
 
 /**
@@ -274,12 +245,7 @@ export function upsertSyntax(
   conflictColumn: string,
   updateColumns: string[]
 ): string {
-  if (driver === 'postgres') {
-    const updates = updateColumns.map(col => `${col} = EXCLUDED.${col}`).join(', ');
-    return `ON CONFLICT (${conflictColumn}) DO UPDATE SET ${updates}`;
-  }
-  // SQLite uses INSERT OR REPLACE which replaces the entire row
-  // For column-specific updates, use INSERT ... ON CONFLICT ... DO UPDATE
-  const updates = updateColumns.map(col => `${col} = excluded.${col}`).join(', ');
+  void driver;
+  const updates = updateColumns.map(col => `${col} = EXCLUDED.${col}`).join(', ');
   return `ON CONFLICT (${conflictColumn}) DO UPDATE SET ${updates}`;
 }

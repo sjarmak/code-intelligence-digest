@@ -1,7 +1,6 @@
 import type { Category } from "../model";
 import { VALID_CATEGORIES } from "../model";
-import { getSqlite } from "../db/index";
-import { detectDriver, getDbClient } from "../db/driver";
+import { getDbClient } from "../db/driver";
 import { dbFullTextSearch } from "../db/search";
 import { searchWeb } from "../retrieval/webSearch";
 import {
@@ -14,6 +13,7 @@ import {
   type IntelSourceType,
 } from "../../config/competitor-intel";
 import { classifySourcegraphIntegrationOpportunity, type IntegrationOpportunityLevel } from "./sourcegraph-integration-opportunity";
+import { withLangSmithTraceable } from "../langsmith";
 
 export interface RankedCompetitorIntelItem {
   competitor: string;
@@ -495,10 +495,10 @@ async function loadInternalDocs(periodDays: number, maxDocs: number): Promise<In
   const byId = new Map<string, InternalDoc>();
   const perCategoryLimit = Math.max(20, Math.ceil(maxDocs / Math.max(1, categories.length)));
   const cutoffTime = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-  const driver = detectDriver();
 
   for (const category of categories) {
-    if (driver === "postgres") {
+    
+
       const client = await getDbClient();
       const result = await client.query(
         `SELECT id, title, url, source_title, published_at, summary, content_snippet,
@@ -536,45 +536,8 @@ async function loadInternalDocs(periodDays: number, maxDocs: number): Promise<In
           }),
         );
       }
-    } else {
-      const sqlite = getSqlite();
-      const rows = sqlite
-        .prepare(
-          `SELECT id, title, url, source_title, published_at, summary, content_snippet,
-                  substr(COALESCE(full_text, ''), 1, 2400) AS full_text_excerpt
-           FROM items
-           WHERE category = ? AND published_at >= ? AND url IS NOT NULL
-           ORDER BY published_at DESC
-           LIMIT ?`,
-        )
-        .all(category, cutoffTime, perCategoryLimit) as Array<{
-          id: string;
-          title: string;
-          url: string;
-          source_title?: string | null;
-          published_at: number;
-          summary?: string | null;
-          content_snippet?: string | null;
-          full_text_excerpt?: string | null;
-        }>;
+    
 
-      for (const row of rows) {
-        if (!row.id || !row.title || !row.url || byId.has(row.id)) continue;
-        byId.set(
-          row.id,
-          toInternalDoc({
-            id: row.id,
-            title: row.title,
-            url: row.url,
-            sourceTitle: row.source_title,
-            publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
-            summary: row.summary,
-            snippet: row.content_snippet,
-            fullText: row.full_text_excerpt,
-          }),
-        );
-      }
-    }
   }
 
   return Array.from(byId.values())
@@ -718,9 +681,9 @@ async function retrieveStrategicUrlBackfillDocs(
 ): Promise<CandidateDoc[]> {
   const patterns = ["%swe-bench%", "%swebench%", "%benchmark%"];
   const out: CandidateDoc[] = [];
-  const driver = detectDriver();
 
-  if (driver === "postgres") {
+  
+
     const client = await getDbClient();
     for (const domain of competitor.domains) {
       const result = await client.query(
@@ -768,56 +731,8 @@ async function retrieveStrategicUrlBackfillDocs(
         });
       }
     }
-  } else {
-    const sqlite = getSqlite();
-    for (const domain of competitor.domains) {
-      const rows = sqlite
-        .prepare(
-          `SELECT title, url, source_title, published_at, summary, content_snippet
-           FROM items
-           WHERE lower(url) LIKE ?
-             AND published_at >= ?
-             AND (
-               lower(url) LIKE ? OR lower(url) LIKE ? OR lower(url) LIKE ?
-             )
-           ORDER BY published_at DESC
-           LIMIT ?`,
-        )
-        .all(
-          `%${domain.toLowerCase()}%`,
-          Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000),
-          patterns[0],
-          patterns[1],
-          patterns[2],
-          limit,
-        ) as Array<{
-          title: string;
-          url: string;
-          source_title?: string | null;
-          published_at: number;
-          summary?: string | null;
-          content_snippet?: string | null;
-        }>;
-      for (const row of rows) {
-        const domainMatch = domainMatchesCompetitor(row.url, competitor);
-        if (!domainMatch) continue;
-        const sourceDomain = getDomainFromUrl(row.url);
-        const sourceType = classifySourceTypeByDomain(sourceDomain);
-        out.push({
-          competitorId: competitor.id,
-          title: row.title,
-          summary: row.summary ?? row.content_snippet ?? "",
-          content: row.content_snippet ?? row.summary ?? "",
-          url: row.url,
-          source: sourceDomain || row.source_title || "unknown",
-          source_type: sourceType === "secondary" ? "internal_curated" : sourceType,
-          publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
-          dateConfidence: row.published_at ? "exact" : "unknown",
-          retrievalScore: 4.6,
-        });
-      }
-    }
-  }
+  
+
 
   return dedupeDocs(out).slice(0, limit);
 }
@@ -829,8 +744,8 @@ async function retrieveRecentDomainDocs(
 ): Promise<CandidateDoc[]> {
   const out: CandidateDoc[] = [];
   const cutoff = Math.floor((Date.now() - periodDays * 24 * 60 * 60 * 1000) / 1000);
-  const driver = detectDriver();
-  if (driver === "postgres") {
+  
+
     const client = await getDbClient();
     for (const domain of competitor.domains) {
       const result = await client.query(
@@ -878,56 +793,8 @@ async function retrieveRecentDomainDocs(
         });
       }
     }
-  } else {
-    const sqlite = getSqlite();
-    for (const domain of competitor.domains) {
-      const rows = sqlite
-        .prepare(
-          `SELECT title, url, source_title, published_at, summary, content_snippet
-           FROM items
-           WHERE lower(url) LIKE ?
-             AND published_at >= ?
-           ORDER BY published_at DESC
-           LIMIT ?`,
-        )
-        .all(`%${domain.toLowerCase()}%`, cutoff, limit) as Array<{
-          title: string;
-          url: string;
-          source_title?: string | null;
-          published_at: number;
-          summary?: string | null;
-          content_snippet?: string | null;
-        }>;
-      for (const row of rows) {
-        if (!domainMatchesCompetitor(row.url, competitor)) continue;
-        const text = `${row.title ?? ""} ${row.summary ?? ""} ${row.content_snippet ?? ""}`.toLowerCase();
-        if (!hasMaterialSignal({
-          competitorId: competitor.id,
-          title: row.title ?? "",
-          summary: row.summary ?? "",
-          content: row.content_snippet ?? "",
-          url: row.url ?? "",
-          source: row.source_title ?? "unknown",
-          source_type: "primary",
-          retrievalScore: 3.1,
-        })) {
-          continue;
-        }
-        out.push({
-          competitorId: competitor.id,
-          title: row.title,
-          summary: row.summary ?? row.content_snippet ?? "",
-          content: row.content_snippet ?? row.summary ?? "",
-          url: row.url,
-          source: getDomainFromUrl(row.url) || row.source_title || "unknown",
-          source_type: "primary",
-          publishedAt: row.published_at ? new Date(row.published_at * 1000) : undefined,
-          dateConfidence: row.published_at ? "exact" : "unknown",
-          retrievalScore: /(benchmark|swe[\s-]?bench|pricing|enterprise|security|mcp|release)/i.test(text) ? 3.8 : 3.1,
-        });
-      }
-    }
-  }
+  
+
   return dedupeDocs(out).slice(0, limit);
 }
 
@@ -963,7 +830,7 @@ async function retrieveRecentBlogListing(
           let match: RegExpExecArray | null;
           while ((match = linkRe.exec(html)) !== null) {
             const rawHref = match[1].trim();
-            let linkText = match[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+            const linkText = match[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
             if (!rawHref || !linkText || linkText.length < 5) continue;
             const hasPostPath = /\/blog\/[^/]|\/news\/[^/]|\/updates\/[^/]|\/changelog\/[^/]/.test(rawHref);
             if (!hasPostPath) continue;
@@ -1717,8 +1584,8 @@ async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc
   const byUrl = new Map<string, Date>();
   const byCanonical = new Map<string, Date>();
   const canonicalMissing = Array.from(new Set(missing.map(canonicalUrlKey)));
-  const driver = detectDriver();
-  if (driver === "postgres") {
+  
+
     const client = await getDbClient();
     const exactResult = await client.query(
       `SELECT url, MAX(published_at) AS published_at
@@ -1742,14 +1609,8 @@ async function hydratePublishedDates(docs: CandidateDoc[]): Promise<CandidateDoc
     for (const row of canonicalResult.rows as Array<{ canonical: string; published_at: number | null }>) {
       if (row.published_at) byCanonical.set(row.canonical, new Date(row.published_at * 1000));
     }
-  } else {
-    const sqlite = getSqlite();
-    const stmt = sqlite.prepare(`SELECT url, MAX(published_at) AS published_at FROM items WHERE url = ? GROUP BY url`);
-    for (const url of missing) {
-      const row = stmt.get(url) as { url?: string; published_at?: number } | undefined;
-      if (row?.url && row.published_at) byUrl.set(row.url, new Date(row.published_at * 1000));
-    }
-  }
+  
+
 
   return docs.map((d) => {
     if (d.publishedAt) return d;
@@ -1831,7 +1692,7 @@ export interface CompetitorIntelOptions {
  * - Retrieval (high recall): broad internal + web candidates
  * - Triage (strict): overlap scoring + clustering + source preference
  */
-export async function gatherCompetitorIntel(
+async function gatherCompetitorIntelImpl(
   options: CompetitorIntelOptions = {},
 ): Promise<RankedCompetitorIntelItem[]> {
   const periodDays = options.periodDays ?? 90;
@@ -1938,3 +1799,25 @@ export async function gatherCompetitorIntel(
   const postProcessed = postProcessCompetitorIntelItems(globallyRanked);
   return capOverallPerCompetitor(postProcessed, topOverall);
 }
+
+export const gatherCompetitorIntel = withLangSmithTraceable(gatherCompetitorIntelImpl, {
+  name: "gather_competitor_intel",
+  run_type: "chain",
+  defaultProjectName: "code-intel-digest-agents",
+  processInputs: (inputs) => {
+    const [options] = "args" in inputs ? inputs.args : [undefined];
+    return {
+      periodDays: options?.periodDays ?? null,
+      topPerCompetitor: options?.topPerCompetitor ?? null,
+      topOverall: options?.topOverall ?? null,
+      competitorId: options?.competitorId ?? null,
+    };
+  },
+  processOutputs: (outputs) => ({
+    itemCount: Array.isArray(outputs) ? outputs.length : 0,
+    competitors:
+      Array.isArray(outputs)
+        ? Array.from(new Set(outputs.map((item) => item.competitor))).slice(0, 20)
+        : [],
+  }),
+});

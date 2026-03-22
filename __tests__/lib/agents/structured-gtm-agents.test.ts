@@ -10,6 +10,7 @@ vi.mock("../../../src/lib/pipeline/agentRank", () => ({
 
 import { retrieveForAgent } from "../../../src/lib/pipeline/agentRetrieval";
 import { rankForAgent } from "../../../src/lib/pipeline/agentRank";
+import { CURATOR_TRACE_SCHEMA_VERSION } from "../../../src/lib/retrieval/curator-trace";
 import { generateMarketBrief } from "../../../src/lib/agents/market-brief";
 import { generateContentIdeas } from "../../../src/lib/agents/content-ideas";
 
@@ -56,7 +57,28 @@ describe("structured gtm agents", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(retrieveForAgent).mockResolvedValue([]);
-    vi.mocked(rankForAgent).mockResolvedValue(rankedDocs as Awaited<ReturnType<typeof rankForAgent>>);
+    vi.mocked(rankForAgent).mockImplementation(async (goal, _docs, options) => {
+      const result = rankedDocs as Awaited<ReturnType<typeof rankForAgent>>;
+      if (options?.rankingTrace) {
+        const n = Math.min(options.rankingSampleSize ?? 25, result.length);
+        const rt = options.rankingTrace;
+        rt.schemaVersion = CURATOR_TRACE_SCHEMA_VERSION;
+        rt.goal = goal;
+        rt.totalRanked = result.length;
+        rt.sampleSize = n;
+        rt.documents = result.slice(0, n).map((doc, i) => ({
+          rank: i + 1,
+          id: doc.id,
+          url: doc.url,
+          title: doc.title,
+          source: doc.source,
+          baseScore: doc.baseScore,
+          goalScore: doc.goalScore,
+          agentScore: doc.agentScore,
+        }));
+      }
+      return result;
+    });
   });
 
   it("generates market brief with policy/evidence separation", async () => {
@@ -218,6 +240,7 @@ describe("structured gtm agents", () => {
     const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
     expect(out.periodDays).toBe(30);
     expect(out.playbook_version).toBeTruthy();
+    expect(out.pipeline_trace).toBeUndefined();
     expect(out.ideas.length).toBeGreaterThan(0);
     expect(out.selection_debug).toBeDefined();
     expect(out.ideas[0].sources.length).toBeGreaterThan(0);
@@ -228,6 +251,24 @@ describe("structured gtm agents", () => {
     expect(out.ideas[0].why_now).not.toContain("aligns with active playbook priorities");
   });
 
+  it("includes pipeline_trace when pipelineTrace is enabled", async () => {
+    const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5, pipelineTrace: true });
+    expect(out.pipeline_trace).toBeDefined();
+    expect(out.pipeline_trace?.schemaVersion).toBe(CURATOR_TRACE_SCHEMA_VERSION);
+    expect(out.pipeline_trace?.retrieval.market_brief.goal).toBe("market_brief");
+    expect(out.pipeline_trace?.retrieval.competitor_intel.goal).toBe("competitor_intel");
+    // configSnapshot is filled by real `retrieveForAgent`; unit tests mock retrieval without mutating trace.
+    expect(out.pipeline_trace?.ranking.goal).toBe("content_ideas");
+    expect(out.pipeline_trace?.ranking.documents.length).toBeGreaterThan(0);
+    expect(out.pipeline_trace?.interpretable_steps?.length).toBeGreaterThan(3);
+    expect(out.pipeline_trace?.refinement_stages?.some((s) => s.stage === "final_ideas")).toBe(true);
+    expect(out.pipeline_trace?.candidate_gates.length).toBeGreaterThan(0);
+    expect(out.pipeline_trace?.selection.selection_pool_size).toBeGreaterThan(0);
+
+    const traceArgs = vi.mocked(retrieveForAgent).mock.calls.map((c) => c[1]);
+    expect(traceArgs.every((opts) => opts?.trace != null)).toBe(true);
+  });
+
   it("builds content ideas from market brief + competitor intel pools", async () => {
     vi.mocked(retrieveForAgent).mockResolvedValue([]);
     await generateContentIdeas({ periodDays: 30, numIdeas: 3, focus: "mcp" });
@@ -236,6 +277,622 @@ describe("structured gtm agents", () => {
     expect(goalsQueried).toContain("market_brief");
     expect(goalsQueried).toContain("competitor_intel");
     expect(goalsQueried).not.toContain("content_ideas");
+  });
+
+  it("does not reintroduce guardrail-violating candidates during short-window backfill", async () => {
+    const invalidTitle = "Benchmark: replace GitHub Copilot for enterprise migrations";
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://example.com/secure-context-rollout",
+          title: "Case study: secure context rollout for enterprise monorepos",
+          snippet: "Customer case study with compliance controls, audit trails, and platform engineering workflow evidence.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.92,
+          agentScore: 0.91,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.8,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-16"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/replace-copilot",
+          title: invalidTitle,
+          snippet: "Benchmark launch with customer proof, compliance, and platform engineering details.",
+          metadata: {},
+          baseScore: 0.89,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.9,
+            formatType: 0.7,
+            icpMatch: 0.85,
+            recency: 0.95,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-17"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 3 });
+
+    expect(out.ideas.length).toBe(1);
+    expect(out.ideas[0].sources[0]?.title).not.toBe(invalidTitle);
+    expect(out.ideas.some((idea) => idea.sources.some((source) => source.title === invalidTitle))).toBe(false);
+  });
+
+  it("filters short-window academic research without direct coding-workflow hooks", async () => {
+    const offTopicResearchTitle =
+      "Ontology-Guided Diffusion for Zero-Shot Visual Sim2Real Transfer";
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-software-lifecycle",
+          title: "GitLab enables broader access to agentic AI across the software lifecycle",
+          snippet: "Enterprise developer platform teams evaluate governance, compliance, and software lifecycle controls.",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://arxiv.org/abs/2603.12345",
+          title: offTopicResearchTitle,
+          snippet: "A visual simulation paper with zero-shot transfer benchmarks and diffusion modeling results.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.88,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.1,
+            formatType: 0.6,
+            icpMatch: 0.2,
+            recency: 0.95,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-20"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 3 });
+
+    expect(out.ideas.some((idea) => idea.sources.some((source) => source.title === offTopicResearchTitle))).toBe(false);
+  });
+
+  it("broadens authoritative research titles into Sourcegraph-relevant themes", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://arxiv.org/abs/2603.67890",
+          title: "From Weak Cues to Real Identities: Evaluating Inference-Driven De-Anonymization in LLM Agents",
+          snippet:
+            "Research on enterprise coding agents, repository context exposure, audit controls, and governance for developer platforms.",
+          metadata: {},
+          baseScore: 0.86,
+          goalScore: 0.87,
+          agentScore: 0.86,
+          features: {
+            competitorMatch: 0.4,
+            formatType: 0.7,
+            icpMatch: 0.75,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-20"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].title).toMatch(/Repository Context|Governance|Compliance|Verification|Audit-ready|Audit-Ready/);
+    expect(out.ideas[0].title).not.toContain("From Weak Cues");
+  });
+
+  it("broadens vendor product-update titles into Sourcegraph-relevant themes", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-software-lifecycle",
+          title: "GitLab Enables Broader and More Affordable Access to Agentic AI Across the Software Lifecycle",
+          snippet:
+            "Enterprise developer platform teams evaluate governance, compliance, repository context, and software lifecycle controls.",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].title).not.toContain("GitLab Enables Broader");
+    expect(out.ideas[0].title).not.toContain("Code Search, Deep Search, and Repository Context");
+    expect(out.ideas[0].title).toMatch(/Repository Context|Governance|Enterprise Code Intelligence|Audit-Ready/);
+  });
+
+  it("avoids repeating the same primary source domain across short-window ideas when alternatives exist", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-controls",
+          title: "GitLab adds enterprise agent governance controls",
+          snippet: "Compliance, audit controls, and developer platform governance for AI code changes.",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.94,
+          agentScore: 0.93,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://sourcegraph.com/blog/retrieval-precision-code-search-agents",
+          title: "Guide: Retrieval precision with Code Search and Deep Search for coding agents",
+          snippet: "Documentation and benchmark evidence for repository context, code search, deep search, and verification in large codebases.",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.8,
+            icpMatch: 0.88,
+            recency: 0.95,
+            trendLandscape: 0.5,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.infoq.com/articles/cross-repo-verification-loops",
+          title: "Cross-repo verification loops for platform teams",
+          snippet: "Migration, remediation, verification, and governed rollout in large codebases.",
+          metadata: {},
+          baseScore: 0.89,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.8,
+            icpMatch: 0.82,
+            recency: 0.9,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-18"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 3 });
+
+    const primaryDomains = out.ideas.map((idea) => {
+      const url = idea.sources[0]?.url ?? "";
+      return new URL(url).hostname.replace(/^www\./, "");
+    });
+    expect(new Set(primaryDomains).size).toBe(primaryDomains.length);
+  });
+
+  it("prefers platform persona over security persona when workflow/platform signals are primary", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://example.com/platform-governance",
+          title: "Developer platform governance for repository context",
+          snippet: "Platform engineering teams need audit trails, policy controls, and repository context for coding agents.",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.92,
+          agentScore: 0.91,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].target_persona).toBe("Head of Developer Platform");
+  });
+
+  it("prefers staff engineer for retrieval-context themes without explicit executive language", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://example.com/retrieval-context",
+          title: "Repository context and deep search for coding agents",
+          snippet: "Code search, deep search, MCP, and repository context improve verification in large codebases.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.7,
+            icpMatch: 0.88,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].target_persona).toBe("Staff Engineer");
+  });
+
+  it("filters untrusted secondary corroboration domains from final idea sources", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-controls",
+          title: "GitLab adds enterprise agent governance controls",
+          snippet: "Compliance, audit controls, and developer platform governance for AI code changes.",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.94,
+          agentScore: 0.93,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://tech-insider.org/ai-code-governance-trends",
+          title: "AI governance trends for coding tools",
+          snippet: "Auditability and compliance trends in AI coding workflows.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.4,
+            formatType: 0.6,
+            icpMatch: 0.8,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.infoq.com/articles/ai-code-governance-enterprise",
+          title: "Why enterprise AI code governance needs audit trails and policy controls",
+          snippet: "Case study coverage of compliance, audit trails, policy enforcement, and verification for enterprise developer platforms.",
+          metadata: {},
+          baseScore: 0.89,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.8,
+            icpMatch: 0.84,
+            recency: 0.9,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-18"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 2 });
+
+    expect(
+      out.ideas.some((idea) => idea.sources.some((source) => source.source === "tech-insider.org")),
+    ).toBe(false);
+  });
+
+  it("dedupes corroboration sources by publisher family within each idea", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-controls",
+          title: "GitLab adds enterprise agent governance controls",
+          snippet: "Compliance, audit controls, and developer platform governance for AI code changes.",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.94,
+          agentScore: 0.93,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://gitlab.com/releases/agentic-ai-controls",
+          title: "GitLab release notes for enterprise agent governance controls",
+          snippet: "Documentation, release, audit controls, and policy enforcement for AI code changes.",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.92,
+          agentScore: 0.91,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.7,
+            icpMatch: 0.85,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.infoq.com/articles/ai-code-governance-enterprise",
+          title: "Why enterprise AI code governance needs audit trails and policy controls",
+          snippet: "Case study coverage of compliance, audit trails, policy enforcement, and verification for enterprise developer platforms.",
+          metadata: {},
+          baseScore: 0.89,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.8,
+            icpMatch: 0.84,
+            recency: 0.9,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-18"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
+    const baseDomains = out.ideas[0].sources.map((source) => {
+      const url = new URL(source.url);
+      const host = url.hostname.replace(/^www\./, "");
+      const parts = host.split(".");
+      return parts.length >= 2 ? parts.slice(-2).join(".") : host;
+    });
+
+    expect(new Set(baseDomains).size).toBe(baseDomains.length);
+  });
+
+  it("prefers alternate lead domains across short-window source-driven frames when available", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-controls",
+          title: "GitLab adds enterprise agent governance controls",
+          snippet: "Compliance, audit controls, and developer platform governance for AI code changes.",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.95,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-remediation",
+          title: "GitLab expands agentic remediation workflows",
+          snippet: "Cross-repo remediation and rollout controls for platform engineering teams.",
+          metadata: {},
+          baseScore: 0.94,
+          goalScore: 0.94,
+          agentScore: 0.94,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.88,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.infoq.com/articles/cross-repo-verification-loops",
+          title: "Cross-repo verification loops for platform teams",
+          snippet: "Migration, remediation, verification, and governed rollout in large codebases.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.8,
+            icpMatch: 0.83,
+            recency: 0.9,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-18"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 2 });
+    const primaryDomains = out.ideas.map((idea) => {
+      const url = idea.sources[0]?.url ?? "";
+      return new URL(url).hostname.replace(/^www\./, "");
+    });
+
+    expect(primaryDomains).toContain("about.gitlab.com");
+    expect(primaryDomains).toContain("infoq.com");
+  });
+
+  it("filters weak general-interest secondary domains from short-window primary hooks", async () => {
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/agentic-ai-controls",
+          title: "GitLab adds enterprise agent governance controls",
+          snippet: "Compliance, audit controls, and developer platform governance for AI code changes.",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.95,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.fastcompany.com/enterprise-ai-coding-trends",
+          title: "Enterprise AI coding trends in 2026",
+          snippet: "A high-level business article on AI coding investment and strategy.",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.93,
+          agentScore: 0.93,
+          features: {
+            competitorMatch: 0.4,
+            formatType: 0.6,
+            icpMatch: 0.7,
+            recency: 0.95,
+            trendLandscape: 0.5,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.infoq.com/articles/repository-context-coding-agents",
+          title: "Repository context for coding agents",
+          snippet: "Code search, deep search, and repository context improve verification in large codebases.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.8,
+            icpMatch: 0.85,
+            recency: 0.9,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-18"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 3 });
+
+    expect(
+      out.ideas.some((idea) => idea.sources[0]?.source === "fastcompany.com"),
+    ).toBe(false);
+  });
+
+  it("filters generic product updates without a durable Sourcegraph narrative", async () => {
+    const weakTitle = "Modernizing the Command Line: Heroku CLI v11";
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://www.heroku.com/blog/heroku-cli-v11",
+          title: weakTitle,
+          snippet: "A platform tooling refresh for the Heroku command line with general usability improvements.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.88,
+          agentScore: 0.89,
+          features: {
+            competitorMatch: 0.2,
+            formatType: 0.6,
+            icpMatch: 0.35,
+            recency: 0.95,
+            trendLandscape: 0.2,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://example.com/mcp-governance",
+          title: "Enterprise MCP governance controls for coding agents",
+          snippet: "Compliance, audit trails, and cross-repo context for platform engineering teams.",
+          metadata: {},
+          baseScore: 0.87,
+          goalScore: 0.9,
+          agentScore: 0.88,
+          features: {
+            competitorMatch: 0.5,
+            formatType: 0.5,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.3,
+          },
+          publishedAt: new Date("2026-03-19"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 3 });
+
+    expect(out.ideas.some((idea) => idea.sources.some((source) => source.title === weakTitle))).toBe(false);
   });
 
   it("does not force event-talk channel from playbook defaults", async () => {

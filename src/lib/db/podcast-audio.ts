@@ -2,8 +2,7 @@
  * Database helpers for podcast audio storage and caching
  */
 
-import { getSqlite } from "./index";
-import { getDbClient, detectDriver } from "./driver";
+import { getDbClient } from "./driver";
 import { SegmentAudioMetadata } from "../audio/types";
 
 export interface PodcastAudioRecord {
@@ -43,10 +42,10 @@ interface PodcastAudioRow {
  * Uses ON CONFLICT to handle race conditions gracefully
  */
 export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void> {
-  const driver = detectDriver();
   const generatedAt = Math.floor(Date.now() / 1000);
 
-  if (driver === 'postgres') {
+  
+
     const client = await getDbClient();
     // Use ON CONFLICT to handle duplicate transcript_hash (race condition)
     // If conflict occurs, update the existing record with new audio URL/bytes
@@ -89,43 +88,8 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
       }
       throw error;
     }
-  } else {
-    const sqlite = getSqlite();
-    // SQLite: Try to insert, will throw if transcript_hash already exists (unique constraint)
-    // The caller should catch this and fetch the existing record
-    const stmt = sqlite.prepare(`
-      INSERT INTO generated_podcast_audio (
-        id, podcast_id, title, transcript_hash, provider, voice, format,
-        duration, duration_seconds, audio_url, segment_audio, bytes, generated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  
 
-    try {
-      stmt.run(
-        audio.id,
-        audio.podcastId || null,
-        audio.title ?? null,
-        audio.transcriptHash,
-        audio.provider,
-        audio.voice || null,
-        audio.format,
-        audio.duration || null,
-        audio.durationSeconds || null,
-        audio.audioUrl,
-        audio.segmentAudio ? JSON.stringify(audio.segmentAudio) : null,
-        audio.bytes,
-        generatedAt
-      );
-    } catch (error) {
-      // SQLite throws error with message containing "UNIQUE constraint failed"
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (errorMessage.includes("UNIQUE constraint") || errorMessage.includes("duplicate")) {
-        // Re-throw as a more specific error that the route handler can catch
-        throw new Error(`duplicate key value violates unique constraint "generated_podcast_audio_transcript_hash_key"`);
-      }
-      throw error;
-    }
-  }
 }
 
 /**
@@ -134,27 +98,15 @@ export async function savePodcastAudio(audio: PodcastAudioRecord): Promise<void>
 export async function getPodcastAudioByHash(
   transcriptHash: string
 ): Promise<PodcastAudioRecord | null> {
-  const driver = detectDriver();
 
-  let row: PodcastAudioRow | undefined;
-
-  if (driver === 'postgres') {
-    const client = await getDbClient();
-    const result = await client.query(`
+  const client = await getDbClient();
+  const result = await client.query(`
       SELECT * FROM generated_podcast_audio
       WHERE transcript_hash = $1
       LIMIT 1
     `, [transcriptHash]);
-    row = result.rows[0] as unknown as PodcastAudioRow | undefined;
-  } else {
-    const sqlite = getSqlite();
-    const stmt = sqlite.prepare(`
-      SELECT * FROM generated_podcast_audio
-      WHERE transcript_hash = ?
-      LIMIT 1
-    `);
-    row = stmt.get(transcriptHash) as PodcastAudioRow | undefined;
-  }
+  const row = result.rows[0] as unknown as PodcastAudioRow | undefined;
+
 
   if (!row) return null;
 
@@ -179,27 +131,15 @@ export async function getPodcastAudioByHash(
  * Get audio by ID
  */
 export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecord | null> {
-  const driver = detectDriver();
 
-  let row: PodcastAudioRow | undefined;
-
-  if (driver === 'postgres') {
-    const client = await getDbClient();
-    const result = await client.query(`
+  const client = await getDbClient();
+  const result = await client.query(`
       SELECT * FROM generated_podcast_audio
       WHERE id = $1
       LIMIT 1
     `, [id]);
-    row = result.rows[0] as unknown as PodcastAudioRow | undefined;
-  } else {
-    const sqlite = getSqlite();
-    const stmt = sqlite.prepare(`
-      SELECT * FROM generated_podcast_audio
-      WHERE id = ?
-      LIMIT 1
-    `);
-    row = stmt.get(id) as PodcastAudioRow | undefined;
-  }
+  const row = result.rows[0] as unknown as PodcastAudioRow | undefined;
+
 
   if (!row) return null;
 
@@ -224,9 +164,9 @@ export async function getPodcastAudioById(id: string): Promise<PodcastAudioRecor
  * Check if audio exists for hash
  */
 export async function podcastAudioExists(transcriptHash: string): Promise<boolean> {
-  const driver = detectDriver();
 
-  if (driver === 'postgres') {
+  
+
     const client = await getDbClient();
     const result = await client.query(`
       SELECT id FROM generated_podcast_audio
@@ -234,43 +174,23 @@ export async function podcastAudioExists(transcriptHash: string): Promise<boolea
       LIMIT 1
     `, [transcriptHash]);
     return result.rows.length > 0;
-  } else {
-    const sqlite = getSqlite();
-    const stmt = sqlite.prepare(`
-      SELECT id FROM generated_podcast_audio
-      WHERE transcript_hash = ?
-      LIMIT 1
-    `);
-    const row = stmt.get(transcriptHash);
-    return !!row;
-  }
+  
+
 }
 
 /**
  * List recent audio records
  */
 export async function listRecentPodcastAudio(limit: number = 20): Promise<PodcastAudioRecord[]> {
-  const driver = detectDriver();
 
-  let rows: PodcastAudioRow[];
-
-  if (driver === 'postgres') {
-    const client = await getDbClient();
-    const result = await client.query(`
+  const client = await getDbClient();
+  const result = await client.query(`
       SELECT * FROM generated_podcast_audio
       ORDER BY created_at DESC
       LIMIT $1
     `, [limit]);
-    rows = result.rows as unknown as PodcastAudioRow[];
-  } else {
-    const sqlite = getSqlite();
-    const stmt = sqlite.prepare(`
-      SELECT * FROM generated_podcast_audio
-      ORDER BY created_at DESC
-      LIMIT ?
-    `);
-    rows = stmt.all(limit) as PodcastAudioRow[];
-  }
+  const rows = result.rows as unknown as PodcastAudioRow[];
+
 
   return rows.map((record) => ({
     id: record.id,

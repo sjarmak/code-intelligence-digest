@@ -240,7 +240,7 @@ PostgreSQL is the default database for local development to mirror production ar
 - PostgreSQL is required for both development and production
 - If `LOCAL_DATABASE_URL` is set, it's used for local development (required)
 - If only `DATABASE_URL` is set, it's used (production)
-- If neither is set, falls back to SQLite (legacy, not recommended - PostgreSQL must be configured)
+- If neither is set, database initialization will fail fast (PostgreSQL is required)
 
 This ensures your local development environment mirrors production architecture. PostgreSQL is the primary database for all environments.
 

@@ -1,41 +1,29 @@
 #!/bin/bash
-# Backup local database (SQLite or PostgreSQL)
+# Backup local Postgres database into .data/backups
 
-set -e
+set -euo pipefail
 
 BACKUP_DIR=".data/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 mkdir -p "$BACKUP_DIR"
 
-# Check if SQLite exists
-if [ -f ".data/digest.db" ]; then
-  echo "📦 Backing up SQLite database..."
-  cp ".data/digest.db" "$BACKUP_DIR/digest_${TIMESTAMP}.db"
-  echo "✅ SQLite backup saved to: $BACKUP_DIR/digest_${TIMESTAMP}.db"
+DB_URL="${LOCAL_DATABASE_URL:-${DATABASE_URL:-}}"
+if [ -z "$DB_URL" ]; then
+  echo "Set LOCAL_DATABASE_URL (preferred) or DATABASE_URL to your Postgres connection string."
+  exit 1
 fi
 
-# Check if PostgreSQL is configured
-if [ -n "$LOCAL_DATABASE_URL" ] || [ -n "$DATABASE_URL" ]; then
-  DB_URL="${LOCAL_DATABASE_URL:-$DATABASE_URL}"
-  
-  if [[ "$DB_URL" == postgresql://* ]]; then
-    echo "📦 Backing up PostgreSQL database..."
-    
-    # Extract connection details
-    # Format: postgresql://user:pass@host:port/dbname
-    DB_NAME=$(echo "$DB_URL" | sed -n 's/.*\/\([^?]*\).*/\1/p')
-    
-    # Use pg_dump if available
-    if command -v pg_dump &> /dev/null; then
-      pg_dump "$DB_URL" > "$BACKUP_DIR/postgres_${TIMESTAMP}.sql"
-      echo "✅ PostgreSQL backup saved to: $BACKUP_DIR/postgres_${TIMESTAMP}.sql"
-    else
-      echo "⚠️  pg_dump not found. Install PostgreSQL client tools to backup PostgreSQL."
-    fi
-  fi
+if [[ "$DB_URL" != postgres://* ]] && [[ "$DB_URL" != postgresql://* ]]; then
+  echo "DATABASE_URL / LOCAL_DATABASE_URL must be a postgres:// or postgresql:// connection string."
+  exit 1
 fi
 
-echo ""
-echo "📊 Backup complete! Backups stored in: $BACKUP_DIR"
+if ! command -v pg_dump >/dev/null 2>&1; then
+  echo "⚠️  pg_dump not found. Install PostgreSQL client tools to backup PostgreSQL."
+  exit 1
+fi
 
+OUT_FILE="$BACKUP_DIR/postgres_${TIMESTAMP}.sql"
+pg_dump "$DB_URL" >"$OUT_FILE"
+echo "✅ PostgreSQL backup saved to: $OUT_FILE"

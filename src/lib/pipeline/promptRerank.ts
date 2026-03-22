@@ -97,13 +97,17 @@ export function rerankWithPrompt(
        boostFactor = 0.3;
      }
 
-     const adjustedScore = item.finalScore * boostFactor;
+     // Blend prompt boosts with baseline ranking so very strong baseline scores aren't
+     // trivially overtaken by prompt alignment alone (see tests: "baseline dominance").
+     const baselineInfluence = Math.min(1, Math.max(0, item.finalScore));
+     const effectiveBoost = 1 + (boostFactor - 1) * (1 - baselineInfluence * baselineInfluence);
+     const adjustedScore = item.finalScore * effectiveBoost;
 
      logger.debug(
        `Item "${item.title}": baseline=${item.finalScore.toFixed(3)}, ` +
        `tagMatch=${tagMatchScore.toFixed(2)}, termMatch=${termPresenceScore.toFixed(2)}, ` +
        `alignment=${promptAlignmentScore.toFixed(2)}, boost=${boostFactor.toFixed(2)}x, ` +
-       `adjusted=${adjustedScore.toFixed(3)}`
+       `effective=${effectiveBoost.toFixed(2)}x, adjusted=${adjustedScore.toFixed(3)}`
      );
 
      return {
