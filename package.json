@@ -19,7 +19,9 @@
     "cron:daily": "NODE_OPTIONS=--max-old-space-size=460 npx tsx scripts/cron-daily-sync.ts",
     "cron:agents": "npm run playbook:ensure && npx tsx scripts/cron-agent-jobs.ts",
     "langsmith:dataset:content-ideas": "npx tsx scripts/langsmith/sync-content-ideas-dataset.ts",
+    "langsmith:dataset:market-brief": "npx tsx scripts/langsmith/sync-market-brief-dataset.ts",
     "langsmith:eval:content-ideas": "npx tsx scripts/langsmith/evaluate-content-ideas.ts",
+    "langsmith:eval:market-brief": "npx tsx scripts/langsmith/evaluate-market-brief.ts",
     "backfill:fulltext": "npx tsx scripts/archive/backfill-fulltext-production.ts",
     "clear-audio-cache": "bash -lc 'test -n \"${LOCAL_DATABASE_URL:-${DATABASE_URL:-}}\" && psql \"${LOCAL_DATABASE_URL:-$DATABASE_URL}\" -v ON_ERROR_STOP=1 -c \"DELETE FROM \\\"generated_podcast_audio\\\";\" && rm -rf .data/audio/* && echo \"Audio cache cleared\" || (echo \"Set LOCAL_DATABASE_URL or DATABASE_URL\" && exit 1)'",
     "playbook:ensure": "npx tsx scripts/ensure-playbook-state.ts"

@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 
 const AGENT_GOALS = ["content_ideas", "market_brief", "competitor_intel"] as const;
-const TIME_RANGES = ["day", "week", "month", "year"] as const;
+const TIME_RANGES = ["day", "week", "two_weeks", "month", "year"] as const;
 const GOAL_LABELS: Record<string, string> = {
   content_ideas: "Content Ideas",
   market_brief: "Market Brief",
@@ -17,6 +17,7 @@ const GOAL_LABELS: Record<string, string> = {
 const TIME_RANGE_LABELS: Record<(typeof TIME_RANGES)[number], string> = {
   day: "Past day",
   week: "Past week",
+  two_weeks: "Past two weeks",
   month: "Past month",
   year: "Last 90 days",
 };

@@ -109,6 +109,7 @@ describe("llm-report-writer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockHasLLM.mockReturnValue(true);
+    delete process.env.AGENT_LLM_TIMEOUT_MS;
   });
 
   describe("writeMarketBriefWithLLM", () => {
@@ -162,6 +163,31 @@ describe("llm-report-writer", () => {
       expect(call.messages.some((m) => m.role === "user" && m.content.includes("https://example.com"))).toBe(true);
       expect(call.messages.some((m) => m.role === "system" && m.content.includes("Do NOT split/remix"))).toBe(true);
     });
+
+    it("returns null when the content ideas writer times out", async () => {
+      vi.useFakeTimers();
+      process.env.AGENT_LLM_TIMEOUT_MS = "5";
+      mockCreate.mockImplementationOnce(() => new Promise(() => {}));
+
+      const outPromise = writeContentIdeasWithLLM(minimalContentIdeasPayload, "Content Ideas Agent Report");
+      await vi.advanceTimersByTimeAsync(10);
+      const out = await outPromise;
+
+      expect(out).toBeNull();
+      vi.useRealTimers();
+    });
+
+    it("skips the content ideas writer after structured synthesis timeout", async () => {
+      const out = await writeContentIdeasWithLLM(
+        {
+          ...minimalContentIdeasPayload,
+          llm_debug: { structured_synthesis_timed_out: true },
+        },
+        "Content Ideas Agent Report",
+      );
+      expect(out).toBeNull();
+      expect(mockCreate).not.toHaveBeenCalled();
+    });
   });
 
   describe("writeCompetitorIntelWithLLM", () => {
@@ -178,7 +204,7 @@ describe("llm-report-writer", () => {
     });
 
     it("returns LLM markdown when createChatCompletion succeeds", async () => {
-      const expectedMd = "# Competitor Intel Agent Report\n\n## GitHub\n\n### 1. Copilot for CLI GA";
+      const expectedMd = "# Competitor Intel Agent Report\n\n## GitHub\n\n### Copilot for CLI GA";
       mockCreate.mockResolvedValueOnce({ content: expectedMd, model: "claude-sonnet-4-6" });
       const out = await writeCompetitorIntelWithLLM(
         minimalCompetitorItems,
@@ -190,6 +216,23 @@ describe("llm-report-writer", () => {
       expect(mockCreate).toHaveBeenCalledTimes(1);
       const call = mockCreate.mock.calls[0][0];
       expect(call.messages.some((m) => m.role === "user" && m.content.includes("Copilot for CLI GA"))).toBe(true);
+      expect(call.messages.some((m) => m.role === "system" && m.content.includes("Do not overstate minor releases"))).toBe(true);
+      expect(call.messages.some((m) => m.role === "user" && m.content.includes("\"update_type\":\"product_launch\""))).toBe(true);
+    });
+
+    it("returns null when the completion is truncated at the token limit", async () => {
+      mockCreate.mockResolvedValueOnce({
+        content: "# Competitor Intel Agent Report\n\n## GitHub\n\n### Partial",
+        model: "claude-sonnet-4-6",
+        finish_reason: "max_tokens",
+      });
+      const out = await writeCompetitorIntelWithLLM(
+        minimalCompetitorItems,
+        7,
+        "Competitor Intel Agent Report",
+        "2026-03-02T12:00:00.000Z"
+      );
+      expect(out).toBeNull();
     });
   });
 });

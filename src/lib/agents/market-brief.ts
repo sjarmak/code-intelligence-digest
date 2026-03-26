@@ -1,4 +1,8 @@
-import { retrieveForAgent } from "../pipeline/agentRetrieval";
+import {
+  retrieveForAgent,
+  type AgentRetrievalTrace,
+  type RetrievedDoc,
+} from "../pipeline/agentRetrieval";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
 import { classifySourceTypeByDomain, getDomainFromUrl } from "../../config/competitor-intel";
@@ -8,6 +12,14 @@ import {
 } from "./sourcegraph-integration-opportunity";
 import { AgentScoringDebugger } from "./agent-scoring-debug";
 import { withLangSmithTraceable } from "../langsmith";
+import {
+  createEmptyRankingTrace,
+  CURATOR_TRACE_SCHEMA_VERSION,
+  rankingTraceToSteps,
+  retrievalTraceToSteps,
+  type AgentRankingTrace,
+  type CuratorTraceStep,
+} from "../retrieval/curator-trace";
 
 export interface MarketBriefEvidence {
   source: string;
@@ -42,10 +54,29 @@ export interface MarketBriefOutput {
   /** When set, rendered as "Period: last N days" in the report body. */
   periodDays?: number;
   playbook_confidence_flags?: Record<string, "high" | "medium" | "low">;
+  /** Optional pipeline trace for debugging/evals. */
+  pipeline_trace?: MarketBriefPipelineTrace;
   executive_delta: MarketBriefDelta[];
   watch_items: MarketBriefDelta[];
   invalidations_to_monitor: string[];
   noisy_items_suppressed: string[];
+}
+
+export interface MarketBriefPipelineTrace {
+  schemaVersion: typeof CURATOR_TRACE_SCHEMA_VERSION;
+  focus?: string | null;
+  retrieval: AgentRetrievalTrace;
+  ranking: AgentRankingTrace;
+  selection: {
+    maxItems: number;
+    scored_count: number;
+    selected_count: number;
+    executive_count: number;
+    watch_count: number;
+    invalidation_count: number;
+    noisy_suppressed_count: number;
+  };
+  interpretable_steps?: CuratorTraceStep[];
 }
 
 export type MarketDocType = "product_move" | "landscape_research" | "infra_background" | "tutorial_best_practices" | "unknown";
@@ -61,6 +92,32 @@ interface ScoredDoc {
   evidenceSignalScore: number;
   productRelevanceScore: number;
   landscapeScore: number;
+}
+
+function createEmptyAgentRetrievalTrace(periodDays: number): AgentRetrievalTrace {
+  const cutoffMs = Date.now() - periodDays * 24 * 60 * 60 * 1000;
+  return {
+    goal: "market_brief",
+    periodDays,
+    postgres: { categories: [] },
+    web: { queries: [] },
+    merge: {
+      postgresIn: 0,
+      webIn: 0,
+      mergedUnique: 0,
+      postgresCappedTo: 0,
+      webCappedTo: 0,
+      blockedDropped: { postgres: 0, web: 0 },
+      dedupedByIdOrUrl: 0,
+    },
+    date: {
+      cutoffIso: new Date(cutoffMs).toISOString(),
+      requirePublishedDate: periodDays <= 31,
+      beforeFilter: 0,
+      afterHydrate: 0,
+      afterFilter: 0,
+    },
+  };
 }
 
 const MARKET_TRACKING_DOMAINS = new Set([
@@ -537,19 +594,33 @@ async function generateMarketBriefImpl(options: {
   focus?: string | null;
   maxItems?: number;
   debug?: boolean;
+  /** Test/eval hook: bypass live retrieval and use a fixed doc corpus. */
+  retrievalOverride?: RetrievedDoc[];
+  /** When true, include pipeline trace with retrieval/ranking/selection diagnostics. */
+  pipelineTrace?: boolean;
 } = {}): Promise<MarketBriefOutput> {
   const state = loadPlaybookState();
   const periodDays = options.periodDays ?? 14;
   const maxItems = options.maxItems ?? 20;
   const debugLog = options.debug ? new AgentScoringDebugger("market_brief", periodDays) : null;
+  const pipelineTraceEnabled = options.pipelineTrace === true;
+  const retrievalTrace = pipelineTraceEnabled ? createEmptyAgentRetrievalTrace(periodDays) : null;
 
-  const docs = await retrieveForAgent("market_brief", {
-    periodDays,
-    query: options.focus ?? null,
-    maxEnrich: 0,
-  });
+  const docs =
+    options.retrievalOverride ??
+    await retrieveForAgent("market_brief", {
+      periodDays,
+      query: options.focus ?? null,
+      maxEnrich: 0,
+      trace: retrievalTrace,
+    });
 
-  const ranked = await rankForAgent("market_brief", docs);
+  const rankingTrace = pipelineTraceEnabled ? createEmptyRankingTrace("market_brief", 25) : null;
+  const ranked = await rankForAgent(
+    "market_brief",
+    docs,
+    rankingTrace ? { rankingTrace, rankingSampleSize: 25 } : undefined,
+  );
   const scored = ranked
     .filter((doc) => !isMarketBriefNoise(doc) && !isLowSignalMarketDoc(doc))
     .filter((doc) => hasMinimumGTMRelevance(doc))
@@ -637,12 +708,46 @@ async function generateMarketBriefImpl(options: {
   const watchItems = watchDocs.map((x) => toDelta(x, state));
   const invalidations = selected.filter((x) => x.contradiction).map((x) => x.doc.title).slice(0, 8);
   const noisySuppressed = scored.slice(maxItems).map((x) => x.doc.title).slice(0, 12);
+  let pipelineTracePayload: MarketBriefPipelineTrace | undefined;
+  if (pipelineTraceEnabled && retrievalTrace && rankingTrace) {
+    pipelineTracePayload = {
+      schemaVersion: CURATOR_TRACE_SCHEMA_VERSION,
+      focus: options.focus ?? null,
+      retrieval: retrievalTrace,
+      ranking: rankingTrace,
+      selection: {
+        maxItems,
+        scored_count: scored.length,
+        selected_count: selected.length,
+        executive_count: executive.length,
+        watch_count: watchItems.length,
+        invalidation_count: invalidations.length,
+        noisy_suppressed_count: noisySuppressed.length,
+      },
+      interpretable_steps: [
+        ...retrievalTraceToSteps(retrievalTrace),
+        ...rankingTraceToSteps(rankingTrace),
+        {
+          id: "market_brief_selection",
+          label: "Selection",
+          detail: `scored ${scored.length} · selected ${selected.length} · executive ${executive.length} · watch ${watchItems.length}`,
+          metrics: {
+            scored: scored.length,
+            selected: selected.length,
+            executive: executive.length,
+            watch: watchItems.length,
+          },
+        },
+      ],
+    };
+  }
 
   return postProcessMarketBriefOutput({
     brief_date: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
     periodDays,
     playbook_confidence_flags: state.confidence_flags,
+    ...(pipelineTracePayload ? { pipeline_trace: pipelineTracePayload } : {}),
     executive_delta: executive,
     watch_items: watchItems,
     invalidations_to_monitor: invalidations,
@@ -660,6 +765,8 @@ export const generateMarketBrief = withLangSmithTraceable(generateMarketBriefImp
       periodDays: options?.periodDays ?? null,
       focus: options?.focus ?? null,
       maxItems: options?.maxItems ?? null,
+      pipelineTrace: options?.pipelineTrace === true,
+      hasRetrievalOverride: Array.isArray(options?.retrievalOverride),
       debug: options?.debug === true,
     };
   },
@@ -674,5 +781,9 @@ export const generateMarketBrief = withLangSmithTraceable(generateMarketBriefImp
       outputs && typeof outputs === "object" && "watch_items" in outputs && Array.isArray(outputs.watch_items)
         ? outputs.watch_items.length
         : 0,
+    pipelineTrace:
+      outputs && typeof outputs === "object" && "pipeline_trace" in outputs
+        ? Boolean(outputs.pipeline_trace)
+        : false,
   }),
 });

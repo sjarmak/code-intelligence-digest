@@ -1,6 +1,9 @@
 import { retrieveForAgent, type AgentRetrievalTrace, type RetrievedDoc } from "../pipeline/agentRetrieval";
 import type { AgentGoal } from "../../config/agents";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
+import path from "node:path";
+import JSON5 from "next/dist/compiled/json5";
+import YAML from "yaml";
 import {
   CURATOR_TRACE_SCHEMA_VERSION,
   createEmptyRankingTrace,
@@ -17,6 +20,10 @@ import {
 } from "./sourcegraph-integration-opportunity";
 import { AgentScoringDebugger } from "./agent-scoring-debug";
 import { withLangSmithTraceable } from "../langsmith";
+import { createChatCompletion } from "../llm/completion";
+import { hasLLMConfigured, isClaudeModel } from "../llm/config";
+import { logger } from "../logger";
+import { isAgentLlmTimeoutError, withAgentLlmTimeout } from "./llm-timeout";
 
 /**
  * Content ideas: when LLM is configured, "Generate reports" uses retrieve → rank → shortlist (LLM)
@@ -73,6 +80,9 @@ export interface ContentIdeasOutput {
   /** When set, rendered as "Period: last N days" in the report body. */
   periodDays?: number;
   playbook_confidence_flags?: Record<string, "high" | "medium" | "low">;
+  llm_debug?: {
+    structured_synthesis_timed_out?: boolean;
+  };
   /**
    * End-to-end pipeline diagnostics: Postgres + web retrieval, merge/date gates, ranking pool, and ideation filters.
    * Only populated when `generateContentIdeas({ pipelineTrace: true })` or `GET /api/agents/content-ideas?trace=1`.
@@ -108,6 +118,7 @@ export interface ContentIdeasPipelineTrace {
   retrieval: {
     market_brief: AgentRetrievalTrace;
     competitor_intel: AgentRetrievalTrace;
+    content_pool?: AgentRetrievalTrace;
   };
   /** Top-N ranked docs with scores (content_ideas goal). */
   ranking: AgentRankingTrace;
@@ -205,6 +216,9 @@ export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
   const text = textOf(doc);
   const title = (doc.title ?? "").toLowerCase();
   const snippet = text.slice(0, 1200);
+  const canonicalUrl = canonicalizeUrl(doc.url);
+
+  if (canonicalUrl && isGenericIdeaPage(canonicalUrl)) return false;
 
   const competitive =
     /(github|copilot|cursor|gitlab|augment|moderne|context engine|repo context)/.test(text);
@@ -226,6 +240,10 @@ export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
     /(developer platform|platform engineering|internal developer|idp|devops|sre|monorepo|multi-repo|large codebase|codebase health|engineering velocity)/.test(
       text,
     );
+  const codingContext =
+    /(code search|deep search|code intelligence|codebase|repository|repo|pull request|developer|software delivery|sdlc|coding assistant|ai coding|platform engineering|developer platform|monorepo|multi-repo|cross-repo|mcp|model context protocol|batch changes|codemod|migration|remediation|sourcegraph|copilot|cursor|gitlab duo|claude code)/.test(
+      `${title} ${snippet}`,
+    );
 
   const strongMatch =
     competitive || enterprise || messageImpact || controlPlane || devWorkflow;
@@ -233,6 +251,7 @@ export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
   const baseMatch = strongMatch || evidenceStyle;
 
   if (!baseMatch) return false;
+  if (!codingContext && !competitive && !messageImpact && !devWorkflow) return false;
 
   if (strongMatch) return true;
 
@@ -254,10 +273,18 @@ export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
 function hasBroadSourcegraphNarrativeFit(doc: AgentRankedDoc): boolean {
   const text = textOf(doc);
   const title = (doc.title ?? "").toLowerCase();
+  const canonicalUrl = canonicalizeUrl(doc.url);
+  if (canonicalUrl && isGenericIdeaPage(canonicalUrl)) return false;
   const durableNarrative =
     /(compliance|security|audit|byok|self-hosted|self hosted|rbac|governance|policy|mcp|model context protocol|context layer|repo context|cross-repo|code search|deep search|batch changes|migration|remediation|verification|regression|impact analysis|onboarding|knowledge transfer|monorepo|multi-repo|large codebase|platform engineering|developer platform|engineering velocity|software lifecycle)/.test(
       text,
     );
+  const codingContext =
+    /(code|coding|codebase|repository|repo|developer|software|platform engineering|developer platform|pull request|sdlc|agent|assistant|mcp|code search|deep search|batch changes)/.test(
+      `${title} ${text}`,
+    );
+
+  if (!codingContext) return false;
 
   if (durableNarrative) return true;
 
@@ -322,6 +349,17 @@ const WEAK_SHORT_WINDOW_SECONDARY_DOMAINS = new Set([
   "entrepreneur.com",
   "inc.com",
   "businessinsider.com",
+]);
+
+const LOW_AUTHORITY_BUSINESS_PRESS_DOMAINS = new Set([
+  "devops.com",
+  "techcrunch.com",
+  "venturebeat.com",
+  "forbes.com",
+  "businessinsider.com",
+  "entrepreneur.com",
+  "inc.com",
+  "fastcompany.com",
 ]);
 
 /** Domains whose content is often appsec/fuzzing/tooling rather than AI coding workflows; downgrade when doc doesn't mention AI coding. */
@@ -394,9 +432,55 @@ function sourceBaseDomain(url: string | undefined): string {
   return baseDomainFromHost(host);
 }
 
+function pathFromUrl(url: string | undefined): string {
+  if (!url) return "";
+  try {
+    return new URL(url).pathname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 function isGitHubFamilySource(url: string | undefined): boolean {
   const base = sourceBaseDomain(url);
   return base === "github.com" || base === "github.blog";
+}
+
+function isSourcegraphDomain(url: string | undefined): boolean {
+  const base = sourceBaseDomain(url);
+  return base === "sourcegraph.com";
+}
+
+function collectSourcegraphContextDocs(...docSets: RetrievedDoc[][]): RetrievedDoc[] {
+  const docs = docSets.flat().filter((doc) => isSourcegraphDomain(doc.url));
+  const seenUrls = new Set<string>();
+  const uniqueDocs: RetrievedDoc[] = [];
+  for (const doc of docs) {
+    const canonicalUrl = canonicalizeUrl(doc.url);
+    if (!canonicalUrl || seenUrls.has(canonicalUrl)) continue;
+    seenUrls.add(canonicalUrl);
+    uniqueDocs.push(doc);
+    if (uniqueDocs.length >= 8) break;
+  }
+  return uniqueDocs;
+}
+
+function isGitHubDiscussionLikeUrl(url: string | undefined): boolean {
+  return sourceBaseDomain(url) === "github.com" && /\/(discussions|issues)\//.test(pathFromUrl(url));
+}
+
+function isConversationStyleSource(url: string | undefined): boolean {
+  const base = sourceBaseDomain(url);
+  if (base === "reddit.com" || base === "news.ycombinator.com" || base === "linkedin.com") {
+    return true;
+  }
+  if (base === "dev.to" || base === "medium.com") return true;
+  return isGitHubDiscussionLikeUrl(url);
+}
+
+function isLowAuthorityBusinessPressDomain(domain: string): boolean {
+  const base = domain.toLowerCase().replace(/^www\./, "");
+  return LOW_AUTHORITY_BUSINESS_PRESS_DOMAINS.has(base);
 }
 
 function canonicalizeUrl(url: string | undefined): string {
@@ -416,12 +500,262 @@ function canonicalizeUrl(url: string | undefined): string {
   }
 }
 
+function extractJsonValue(text: string): unknown {
+  const trimmed = text.trim();
+
+  function tryParseJson(candidate: string): unknown {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      try {
+        return JSON5.parse(candidate);
+      } catch {
+        try {
+          return YAML.parse(candidate);
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  function extractBalancedJson(source: string, opener: "{" | "[", startIndex = 0): string | null {
+    const closer = opener === "{" ? "}" : "]";
+    const start = source.indexOf(opener, startIndex);
+    if (start === -1) return null;
+    let depth = 0;
+    let inString = false;
+    let stringQuote: "\"" | "'" | null = null;
+    let escaped = false;
+    for (let i = start; i < source.length; i++) {
+      const ch = source[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === stringQuote) {
+          inString = false;
+          stringQuote = null;
+        }
+        continue;
+      }
+      if (ch === "\"" || ch === "'") {
+        inString = true;
+        stringQuote = ch;
+        continue;
+      }
+      if (ch === opener) depth++;
+      if (ch === closer) depth--;
+      if (depth === 0) {
+        return source.slice(start, i + 1);
+      }
+    }
+    return null;
+  }
+
+  const direct = tryParseJson(trimmed);
+  if (direct !== null) return direct;
+
+  const fencedBlocks = Array.from(trimmed.matchAll(/```(?:json|jsonc)?\s*([\s\S]*?)\s*```/gi));
+  for (const block of fencedBlocks) {
+    const parsed = tryParseJson(block[1]);
+    if (parsed !== null) return parsed;
+    const balancedObject = extractBalancedJson(block[1], "{");
+    if (balancedObject) {
+      const parsedObject = tryParseJson(balancedObject);
+      if (parsedObject !== null) return parsedObject;
+    }
+    const balancedArray = extractBalancedJson(block[1], "[");
+    if (balancedArray) {
+      const parsedArray = tryParseJson(balancedArray);
+      if (parsedArray !== null) return parsedArray;
+    }
+  }
+
+  const objectCandidate = extractBalancedJson(trimmed, "{");
+  if (objectCandidate) {
+    const parsedObject = tryParseJson(objectCandidate);
+    if (parsedObject !== null) return parsedObject;
+  }
+  const arrayCandidate = extractBalancedJson(trimmed, "[");
+  if (arrayCandidate) {
+    const parsedArray = tryParseJson(arrayCandidate);
+    if (parsedArray !== null) return parsedArray;
+  }
+  return null;
+}
+
+function extractIdeasArrayFromLlm(text: string): LlmContentIdeaDraft[] {
+  const parsed = extractJsonValue(text);
+  if (Array.isArray(parsed)) return parsed as LlmContentIdeaDraft[];
+  if (parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).ideas)) {
+    return (parsed as Record<string, unknown>).ideas as LlmContentIdeaDraft[];
+  }
+
+  function tryParseIdea(candidate: string): unknown {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      try {
+        return JSON5.parse(candidate);
+      } catch {
+        try {
+          return YAML.parse(candidate);
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  function extractBalancedObject(source: string, startIndex = 0): string | null {
+    const start = source.indexOf("{", startIndex);
+    if (start === -1) return null;
+    let depth = 0;
+    let inString = false;
+    let stringQuote: "\"" | "'" | null = null;
+    let escaped = false;
+    for (let i = start; i < source.length; i++) {
+      const ch = source[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === stringQuote) {
+          inString = false;
+          stringQuote = null;
+        }
+        continue;
+      }
+      if (ch === "\"" || ch === "'") {
+        inString = true;
+        stringQuote = ch;
+        continue;
+      }
+      if (ch === "{") depth++;
+      if (ch === "}") depth--;
+      if (depth === 0) {
+        return source.slice(start, i + 1);
+      }
+    }
+    return null;
+  }
+
+  function extractScalarField(candidate: string, field: string): string | undefined {
+    const match = candidate.match(new RegExp(`["']${field}["']\\s*:\\s*["']([\\s\\S]*?)["']\\s*(?:,|\\n|$)`));
+    return match?.[1]?.replace(/\\"/g, "\"").replace(/\\n/g, " ").trim();
+  }
+
+  const ideasKeyMatch = /["']?ideas["']?\s*:/.exec(text);
+  if (!ideasKeyMatch) return [];
+  const fromKey = text.slice(ideasKeyMatch.index);
+
+  const arrayCandidate = (() => {
+    const bracketOffset = fromKey.indexOf("[");
+    if (bracketOffset === -1) return null;
+
+    const start = ideasKeyMatch.index + bracketOffset;
+    const closer = "]";
+    let depth = 0;
+    let inString = false;
+    let stringQuote: "\"" | "'" | null = null;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === stringQuote) {
+          inString = false;
+          stringQuote = null;
+        }
+        continue;
+      }
+      if (ch === "\"" || ch === "'") {
+        inString = true;
+        stringQuote = ch;
+        continue;
+      }
+      if (ch === "[") depth++;
+      if (ch === closer) depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+    return null;
+  })();
+
+  if (arrayCandidate) {
+    try {
+      const parsedArray = JSON.parse(arrayCandidate);
+      return Array.isArray(parsedArray) ? (parsedArray as LlmContentIdeaDraft[]) : [];
+    } catch {
+      try {
+        const parsedArray = JSON5.parse(arrayCandidate);
+        return Array.isArray(parsedArray) ? (parsedArray as LlmContentIdeaDraft[]) : [];
+      } catch {
+        try {
+          const parsedArray = YAML.parse(arrayCandidate);
+          return Array.isArray(parsedArray) ? (parsedArray as LlmContentIdeaDraft[]) : [];
+        } catch {
+          // Fall through and salvage complete objects from a truncated array.
+        }
+      }
+    }
+  }
+
+  const bracketOffset = fromKey.indexOf("[");
+  if (bracketOffset === -1) return [];
+  const partialIdeas: LlmContentIdeaDraft[] = [];
+  let searchFrom = ideasKeyMatch.index + bracketOffset + 1;
+  while (searchFrom < text.length) {
+    const objectCandidate = extractBalancedObject(text, searchFrom);
+    if (!objectCandidate) break;
+    const parsedObject = tryParseIdea(objectCandidate);
+    if (parsedObject && typeof parsedObject === "object" && !Array.isArray(parsedObject)) {
+      partialIdeas.push(parsedObject as LlmContentIdeaDraft);
+    } else {
+      const title = extractScalarField(objectCandidate, "title");
+      const thesis = extractScalarField(objectCandidate, "thesis");
+      const sourceUrls = Array.from(objectCandidate.matchAll(/https?:\/\/[^\s"']+/g), (match) => match[0]);
+      if (title && thesis) {
+        partialIdeas.push({
+          title,
+          thesis,
+          source_urls: sourceUrls,
+        });
+      }
+    }
+    const objectStart = text.indexOf(objectCandidate, searchFrom);
+    if (objectStart === -1) break;
+    searchFrom = objectStart + objectCandidate.length;
+  }
+  return partialIdeas;
+}
+
 function isGenericIdeaPage(url: string): boolean {
   try {
     const parsed = new URL(url);
     const path = parsed.pathname.toLowerCase().replace(/\/+$/, "");
     if (path === "" || path === "/") return true;
     if (/^\/(docs|documentation|product|products|features|pricing|careers|company|about)$/.test(path)) return true;
+    if (/^\/(topics|trending|collections|marketplace)(\/|$)/.test(path)) return true;
     return false;
   } catch {
     return true;
@@ -459,17 +793,21 @@ function normalizeTargetSegment(
 }
 
 function detectTopicFrame(text: string): string {
+  const governedAiCodeChangeSignal =
+    hasComplianceControlSignal(text) ||
+    (/(governance|compliance|audit|policy|enterprise controls|verification)/.test(text) &&
+      /(code|coding|codebase|repository|repo|pull request|developer platform|platform engineering|coding assistant|ai coding|batch changes|migration|remediation|mcp|code search|deep search)/.test(
+        text,
+      ));
   if (hasComplianceControlSignal(text)) {
     return "Governance, Compliance, and Verification for AI Code Changes";
   }
   if (
     /(privacy|de-anonymization|data exposure|sensitive context|governance risk|agent security|verification)/.test(text) &&
-    /(compliance|audit|policy|security|byok|self-hosted|self hosted)/.test(text)
+    /(compliance|audit|policy|security|byok|self-hosted|self hosted)/.test(text) &&
+    /(code|coding|codebase|repository|repo|developer|assistant|agent|pull request|sdlc)/.test(text)
   ) {
     return "Governance, Compliance, and Verification for AI Code Changes";
-  }
-  if (/(deep search|code search|semantic search|cross-repo search)/.test(text)) {
-    return "Code Search, Deep Search, and Repository Context";
   }
   if (/(batch changes|codemod|migration|remediation|rollout|upgrade)/.test(text)) {
     return "Cross-Repo Remediation and Migration";
@@ -477,10 +815,13 @@ function detectTopicFrame(text: string): string {
   if (/(mcp|model context protocol|context layer|repo context|retrieval precision|repository context)/.test(text)) {
     return "Repository Context and Retrieval Precision for Coding Agents";
   }
+  if (/(deep search|code search|semantic search|cross-repo search)/.test(text)) {
+    return "Code Search, Deep Search, and Repository Context";
+  }
   if (/(onboarding|knowledge transfer|legacy|complex codebase|monorepo|multi-repo)/.test(text)) {
     return "Developer Onboarding in Large Codebases";
   }
-  if (/(governance|compliance|audit|policy|control layer|enterprise controls)/.test(text)) {
+  if (governedAiCodeChangeSignal) {
     return "Governance and Auditability for Enterprise Coding Workflows";
   }
   return "Enterprise Code Intelligence and Governed Development Workflows";
@@ -539,7 +880,10 @@ function docSupportsFrame(doc: AgentRankedDoc, frame: string): boolean {
     case "Code Search, Deep Search, and Repository Context":
       return /(deep search|code search|semantic search|cross-repo search|symbol search)/.test(text);
     case "Governance and Auditability for Enterprise Coding Workflows":
-      return /(governance|compliance|audit|policy|enterprise controls|verification)/.test(text);
+      return (
+        /(governance|compliance|audit|policy|enterprise controls|verification)/.test(text) &&
+        /(code|coding|codebase|repository|repo|developer|assistant|agent|pull request|sdlc)/.test(text)
+      );
     case "Developer Onboarding in Large Codebases":
       return /(onboarding|knowledge transfer|legacy|complex codebase|monorepo|multi-repo)/.test(text);
     default:
@@ -1000,6 +1344,12 @@ function hasConcreteEvidence(text: string): boolean {
   );
 }
 
+function hasStrongAnchorEvidence(text: string): boolean {
+  return /(customer|case study|benchmark|docs|documentation|ga|general availability|launch|release|pricing|byok|self-hosted|self hosted|rbac|policy enforcement|credits)/.test(
+    text,
+  );
+}
+
 /** Classify the source/format type for content seeding. */
 function classifyContentSeedType(text: string, _domain: string): ContentSeedType {
   const isCaseStudy = /(case study|customer story|customer success|reference account|reference customer)/.test(text);
@@ -1031,14 +1381,14 @@ function buildWhyNow(doc: AgentRankedDoc, text: string): string {
 }
 
 function buildCoreClaim(text: string): string {
-  if (/(compliance|security|audit|byok|self-hosted)/.test(text)) {
-    return "Sourcegraph provides an enterprise control layer (Code Search, Deep Search, Batch Changes) for governed AI coding workflows.";
-  }
   if (/(migration|remediation|codemod|batch changes)/.test(text)) {
     return "Sourcegraph turns large-scale code change work into a controlled, cross-repo workflow with verification loops.";
   }
   if (/(mcp|context layer|repo context)/.test(text)) {
     return "Sourcegraph acts as the repo context layer that makes existing assistants more reliable across complex codebases.";
+  }
+  if (hasComplianceControlSignal(text) || /(compliance|security|audit|byok|self-hosted)/.test(text)) {
+    return "Sourcegraph provides an enterprise control layer (Code Search, Deep Search, Batch Changes) for governed AI coding workflows.";
   }
   return "Sourcegraph complements coding assistants with cross-repo understanding, precise retrieval, and safer execution.";
 }
@@ -1131,6 +1481,39 @@ function isLowLeverageOperationalSource(doc: AgentRankedDoc, periodDays: number)
   return false;
 }
 
+function isWeakAnchorSource(doc: AgentRankedDoc, periodDays: number): boolean {
+  const canonicalUrl = canonicalizeUrl(doc.url) || doc.url;
+  const domain = sourceFromUrl(canonicalUrl);
+  const title = (doc.title ?? "").toLowerCase();
+
+  if (isConversationStyleSource(canonicalUrl)) return true;
+
+  if (periodDays <= 14 && isLowAuthorityBusinessPressDomain(domain)) {
+    return true;
+  }
+
+  if (
+    periodDays <= 14 &&
+    sourceBaseDomain(canonicalUrl) === "github.com" &&
+    /\/community\//.test(pathFromUrl(canonicalUrl))
+  ) {
+    return true;
+  }
+
+  if (
+    periodDays <= 14 &&
+    classifySourceTypeByDomain(domain) === "secondary" &&
+    /(trends|predictions|state of|future of|what('?s| is) next|landscape|roundup)/.test(title) &&
+    !/(code search|deep search|mcp|repository context|cross-repo|migration|remediation|compliance|audit|batch changes)/.test(
+      title,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function buildSourcegraphPositioningAnchors(text: string): string[] {
   const lower = text.toLowerCase();
   const anchors: string[] = [];
@@ -1151,7 +1534,7 @@ function buildSourcegraphPositioningAnchors(text: string): string[] {
   return anchors.slice(0, 2);
 }
 
-function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCandidate {
+function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState, periodDays: number): ScoredIdeaCandidate {
   const text = textOf(doc);
   const domain = sourceFromUrl(doc.url);
   const sourceType = classifySourceTypeByDomain(domain);
@@ -1190,10 +1573,24 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
     : 0.5;
   
   // Source quality (blogs, newsletters, reports are good seeds)
-  const source_quality_score = sourceType === "primary" ? 1 : sourceType === "secondary" ? 0.7 : sourceType === "internal_curated" ? 0.85 : 0.35;
+  const source_quality_score =
+    sourceType === "primary"
+      ? isConversationStyleSource(doc.url)
+        ? 0.45
+        : 1
+      : sourceType === "secondary"
+        ? TRUSTED_SECONDARY_DOMAINS.has(domain) || PREFERRED_SHORT_WINDOW_TECHNICAL_DOMAINS.has(domain)
+          ? 0.82
+          : isLowAuthorityBusinessPressDomain(domain)
+            ? 0.35
+            : 0.7
+        : sourceType === "internal_curated"
+          ? 0.85
+          : 0.2;
   
   // Penalties
   const noisy_domain_penalty = isNoisyDomain(domain) ? 0.3 : 0;
+  const weak_anchor_penalty = isWeakAnchorSource(doc, periodDays) ? (periodDays <= 14 ? 0.2 : 0.12) : 0;
 
   // Rebalanced scoring: prioritize content seed value + quality differentiation
   // Increased seedFormat (25%) and sourceQuality (15%) to create real variance between candidates.
@@ -1206,7 +1603,8 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState): ScoredIdeaCa
     0.25 * message_fit_score +         // Message fit - reduced from 0.35 (too many docs hit 0.6)
     0.10 * timeliness_score +          // Recency boost (lighter weight for month)
     0.15 * source_quality_score -      // Source quality - increased from 0.05 (primary > secondary > community)
-    noisy_domain_penalty;
+    noisy_domain_penalty -
+    weak_anchor_penalty;
 
   const score = contentSeedScore;
 
@@ -1379,6 +1777,7 @@ function isAuthoritativeResearchOrStandardsDomain(domain: string): boolean {
 function isStrongSourceCandidate(doc: AgentRankedDoc, frame: string, periodDays: number): boolean {
   if (!docSupportsFrame(doc, frame)) return false;
   if (isResearchOnlySource(doc, periodDays)) return false;
+  if (isWeakAnchorSource(doc, periodDays)) return false;
   const entry = sourceEntryFromDoc(doc);
   if (!entry) return false;
   if (isIndexOrRoundupSource(entry.url, doc.title, doc.snippet)) return false;
@@ -1536,6 +1935,7 @@ function isAcceptableCorroborationDoc(
   const domain = sourceFromUrl(entry.url);
   const sourceType = classifySourceTypeByDomain(domain);
   const text = textOf(doc);
+  if (isConversationStyleSource(entry.url)) return false;
   if (sourceType === "community") return false;
   if (!hasMinimumContentIdeasRelevance(doc)) return false;
   if (!(hasConcreteEvidence(text) || hasBroadSourcegraphNarrativeFit(doc))) return false;
@@ -2108,6 +2508,7 @@ function narrativeClusterKey(idea: ContentIdea): string {
 function enforceNarrativeClusterCap(
   ideas: ContentIdea[],
   targetCount: number,
+  periodDays: number,
 ): ContentIdea[] {
   const sorted = [...ideas].sort((a, b) => b.priority_score - a.priority_score);
   const clusterCounts = new Map<string, number>();
@@ -2115,11 +2516,19 @@ function enforceNarrativeClusterCap(
   for (const idea of sorted) {
     if (selected.length >= targetCount) break;
     const cluster = narrativeClusterKey(idea);
-    const cap = cluster === "governance_controls" ? 1 : 2;
+    const cap =
+      periodDays <= 14
+        ? 1
+        : cluster === "governance_controls"
+          ? 1
+          : 2;
     const current = clusterCounts.get(cluster) ?? 0;
     if (current >= cap) continue;
     selected.push(idea);
     clusterCounts.set(cluster, current + 1);
+  }
+  if (periodDays <= 14) {
+    return selected.slice(0, targetCount);
   }
   if (selected.length < Math.min(targetCount, ideas.length)) {
     for (const idea of sorted) {
@@ -2354,9 +2763,12 @@ function maybeRewriteLiteralIdeaTitle(idea: ContentIdea): string {
 function isWeakFinalIdeaSource(source: ContentIdea["sources"][number]): boolean {
   const canonicalUrl = canonicalizeUrl(source.url);
   const title = source.title ?? "";
+  const domain = sourceFromUrl(canonicalUrl);
   if (!canonicalUrl) return true;
   if (isGenericIdeaPage(canonicalUrl)) return true;
+  if (isConversationStyleSource(canonicalUrl)) return true;
   if (isNoisyDomain(sourceFromUrl(canonicalUrl))) return true;
+  if (isLowAuthorityBusinessPressDomain(domain)) return true;
   if (isIndexOrRoundupSource(canonicalUrl, title)) return true;
   if (
     /(release notes|changelog|talks to help you navigate the schedule|\[ai ?news\]|weekly digest|roundup|march 20\d{2} update|platform update)/i.test(
@@ -2424,6 +2836,340 @@ function collectCorroboratingSourcesForFrame(
   return extra;
 }
 
+type LlmContentIdeaDraft = {
+  title?: unknown;
+  thesis?: unknown;
+  target_segment?: unknown;
+  target_persona?: unknown;
+  funnel_stage?: unknown;
+  channel?: unknown;
+  why_now?: unknown;
+  core_claim?: unknown;
+  key_insights?: unknown;
+  content_outline?: unknown;
+  source_urls?: unknown;
+  sourcegraph_angle?: unknown;
+  recommended_venue?: unknown;
+  channel_strategy?: unknown;
+  setup_steps?: unknown;
+};
+
+function normalizePersona(raw: unknown): ContentIdea["target_persona"] {
+  const value = String(raw ?? "").toLowerCase().trim();
+  if (value.includes("security")) return "Security/Compliance";
+  if (value.includes("platform")) return "Head of Developer Platform";
+  if (value.includes("vp") || value.includes("executive")) return "VP Engineering";
+  return "Staff Engineer";
+}
+
+function normalizeFunnelStage(raw: unknown): ContentIdea["funnel_stage"] {
+  const value = String(raw ?? "").toLowerCase().trim();
+  if (value.includes("business")) return "business_case";
+  if (value.includes("valid")) return "validation";
+  if (value.includes("expand")) return "expansion";
+  return "awareness";
+}
+
+function normalizeChannel(raw: unknown): ContentIdea["channel"] {
+  const value = String(raw ?? "").toLowerCase().trim();
+  if (value.includes("webinar")) return "webinar";
+  if (value.includes("talk") || value.includes("conference")) return "event_talk";
+  if (value.includes("video") && value.includes("short")) return "short_video";
+  if (value.includes("video")) return "long_video";
+  if (value.includes("case")) return "case_study";
+  if (value.includes("one-pager") || value.includes("one pager")) return "sales_one_pager";
+  if (value.includes("email")) return "email_sequence";
+  if (value.includes("seo")) return "SEO_page";
+  if (value.includes("ad")) return "ad_campaign";
+  if (value.includes("whitepaper") || value.includes("white paper") || value.includes("guide")) return "whitepaper";
+  return "blog";
+}
+
+function isTimedOutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return isAgentLlmTimeoutError(error) || /timed out/i.test(message);
+}
+
+function getContentIdeasLlmModel(): string | undefined {
+  const override = process.env.CONTENT_IDEAS_LLM_MODEL?.trim();
+  if (override) return override;
+  return process.env.OPENAI_API_KEY?.trim() ? "gpt-4o-mini" : undefined;
+}
+
+async function maybeWriteContentIdeasParseDebugArtifact(rawContent: string): Promise<void> {
+  if (process.env.CONTENT_IDEAS_DEBUG_PARSE_FAILURE !== "1") return;
+  try {
+    const fs = await import("node:fs/promises");
+    const dir = path.resolve(process.cwd(), ".data/debug");
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, `content-ideas-parse-failure-${Date.now()}.txt`);
+    await fs.writeFile(file, rawContent, "utf8");
+    logger.warn("Wrote content ideas parse failure artifact", { file });
+  } catch (error) {
+    logger.warn("Failed to write content ideas parse failure artifact", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function synthesizeStructuredContentIdeasWithLLM(args: {
+  candidates: ScoredIdeaCandidate[];
+  sourcegraphContextDocs: RetrievedDoc[];
+  state: PlaybookState;
+  numIdeas: number;
+  periodDays: number;
+}): Promise<{ ideas: ContentIdea[] | null; timedOut: boolean }> {
+  if (!hasLLMConfigured()) return { ideas: null, timedOut: false };
+  const llmModel = getContentIdeasLlmModel();
+  const requestedIdeaCount = Math.min(args.numIdeas, args.periodDays <= 14 ? 3 : 5);
+  const maxTokens = llmModel && isClaudeModel(llmModel) ? 3200 : 1800;
+  const marketSignals = args.candidates
+    .filter((c) => c.doc.id !== MARKET_BRIEF_CONTEXT_ID)
+    .slice(0, 4)
+    .map((c, index) => ({
+      n: index + 1,
+      title: c.doc.title,
+      url: canonicalizeUrl(c.doc.url),
+      source: sourceFromUrl(c.doc.url),
+      published_at: c.doc.publishedAt?.toISOString().slice(0, 10) ?? null,
+      summary: stripBoilerplateNoise(c.doc.snippet ?? "").slice(0, 180),
+      content_seed_score: Number(c.score.toFixed(3)),
+    }))
+    .filter((doc) => !!doc.url);
+  if (marketSignals.length === 0) return { ideas: null, timedOut: false };
+
+  const sourcegraphContext = args.sourcegraphContextDocs.slice(0, 2).map((doc, index) => ({
+    n: index + 1,
+    title: doc.title,
+    url: canonicalizeUrl(doc.url),
+    source: sourceFromUrl(doc.url),
+    summary: stripBoilerplateNoise(doc.snippet ?? "").slice(0, 140),
+  }));
+
+  const prompt = JSON.stringify(
+    {
+      period_days: args.periodDays,
+      num_ideas: requestedIdeaCount,
+      playbook: {
+        primary_beachhead: args.state.primary_beachhead,
+        adjacent_segments: args.state.adjacent_segments,
+        persona_priority: args.state.persona_priority,
+        campaign_themes: args.state.campaign_themes,
+        proof_points: args.state.proof_points ?? [],
+        messaging_guardrails: args.state.messaging_guardrails,
+      },
+      market_signals: marketSignals,
+      sourcegraph_context: sourcegraphContext,
+      allowed_values: {
+        target_segment: ["Capital Markets", "Banks", "Diversified Financial Services", "Insurance", "Other"],
+        target_persona: ["Head of Developer Platform", "VP Engineering", "Staff Engineer", "Security/Compliance"],
+        funnel_stage: ["awareness", "validation", "business_case", "expansion"],
+        channel: [
+          "whitepaper",
+          "webinar",
+          "event_talk",
+          "blog",
+          "SEO_page",
+          "case_study",
+          "email_sequence",
+          "sales_one_pager",
+          "long_video",
+          "short_video",
+          "ad_campaign",
+        ],
+      },
+    },
+    null,
+    2,
+  );
+
+  const system = `You are a GTM content strategist for Sourcegraph.
+
+Generate content ideas that arise naturally from the market signals and Sourcegraph context provided.
+
+Rules:
+- Use the market_signals as the primary evidence for why an idea exists now.
+- Use sourcegraph_context only to ground the angle in current Sourcegraph messaging/product pages. Do not force every idea into the same Sourcegraph narrative.
+- Avoid cloning the same theme across multiple formats. If two ideas are basically the same narrative, keep the stronger one.
+- Prefer 3 distinct, high-signal ideas over 5 repetitive ideas.
+- Do not force governance/compliance unless the evidence clearly points there.
+- Use specific, natural titles. Do not mirror source headlines verbatim and do not use generic templates repeatedly.
+- Choose the channel that best fits the signal; do not default to whitepaper or talk unless justified.
+- Every idea must cite 1-3 source_urls taken exactly from market_signals.
+- Return JSON only with shape {"ideas":[...]}.
+- Each idea object must include:
+  title, thesis, target_segment, target_persona, funnel_stage, channel, why_now, core_claim,
+  key_insights, content_outline, source_urls, sourcegraph_angle, recommended_venue, channel_strategy, setup_steps.`;
+
+  try {
+    const res = await withAgentLlmTimeout(
+      "content ideas structured synthesis",
+      createChatCompletion({
+        messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt },
+      ],
+        model: llmModel,
+        max_tokens: maxTokens,
+        response_format: { type: "json_object" },
+      }),
+    );
+    const rawContent = res.content ?? "";
+    const rawIdeas = extractIdeasArrayFromLlm(rawContent);
+    if (rawIdeas.length === 0) {
+      await maybeWriteContentIdeasParseDebugArtifact(rawContent);
+      logger.warn("Structured content ideas synthesis returned no parseable ideas, using heuristic fallback", {
+        preview: rawContent.slice(0, 400),
+      });
+      return { ideas: null, timedOut: false };
+    }
+
+    const sourceMap = new Map<string, AgentRankedDoc>();
+    for (const candidate of args.candidates) {
+      const canonical = canonicalizeUrl(candidate.doc.url);
+      if (canonical) sourceMap.set(canonical, candidate.doc);
+    }
+
+    const output: ContentIdea[] = [];
+    for (const raw of rawIdeas.slice(0, Math.min(args.numIdeas, 5))) {
+      const title = stripBoilerplateNoise(String(raw.title ?? "").trim());
+      const thesis = stripBoilerplateNoise(String(raw.thesis ?? "").trim());
+      if (!title || !thesis) continue;
+
+      const explicitSourceUrls = Array.isArray(raw.source_urls)
+        ? raw.source_urls
+        : typeof raw.source_urls === "string"
+          ? [raw.source_urls]
+          : [];
+      const fallbackSourceUrls = Array.from(
+        JSON.stringify(raw).matchAll(/https?:\/\/[^\s"']+/g),
+        (match) => match[0],
+      );
+      const sourceUrls = (explicitSourceUrls.length > 0 ? explicitSourceUrls : fallbackSourceUrls)
+        .map((url) => canonicalizeUrl(String(url)))
+        .filter(Boolean);
+      const sources = sourceUrls
+        .map((url) => {
+          const doc = sourceMap.get(url);
+          return doc
+            ? {
+                title: doc.title,
+                source: sourceFromUrl(url),
+                url,
+                date: doc.publishedAt?.toISOString().slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+              }
+            : null;
+        })
+        .filter((value): value is ContentIdea["sources"][number] => value !== null)
+        .slice(0, 3);
+      if (sources.length === 0) {
+        const fallbackDoc = args.candidates[0]?.doc;
+        const fallbackUrl = canonicalizeUrl(fallbackDoc?.url);
+        if (!fallbackDoc || !fallbackUrl) continue;
+        sources.push({
+          title: fallbackDoc.title,
+          source: sourceFromUrl(fallbackUrl),
+          url: fallbackUrl,
+          date: fallbackDoc.publishedAt?.toISOString().slice(0, 10) ?? new Date().toISOString().slice(0, 10),
+        });
+      }
+
+      const joinedText = `${title} ${thesis} ${String(raw.core_claim ?? "")} ${sources.map((s) => s.title).join(" ")}`.toLowerCase();
+      const primaryDoc = sourceMap.get(sources[0].url);
+      const integration = classifySourcegraphIntegrationOpportunity({
+        title,
+        summary: thesis,
+        content: `${String(raw.core_claim ?? "")} ${Array.isArray(raw.content_outline) ? raw.content_outline.join(" ") : ""}`,
+      });
+      const distributionPlan = buildDistributionPlan(normalizeChannel(raw.channel), joinedText);
+      output.push({
+        title,
+        thesis,
+        target_segment: normalizeTargetSegment(String(raw.target_segment ?? "")),
+        target_persona: normalizePersona(raw.target_persona),
+        funnel_stage: normalizeFunnelStage(raw.funnel_stage),
+        channel: normalizeChannel(raw.channel),
+        why_now: stripBoilerplateNoise(String(raw.why_now ?? "").trim()) || buildWhyNow(primaryDoc ?? { ...args.candidates[0].doc }, joinedText),
+        playbook_alignment: args.state.campaign_themes.slice(0, 2),
+        sources,
+        core_claim: stripBoilerplateNoise(String(raw.core_claim ?? "").trim()) || buildCoreClaim(joinedText),
+        key_insights: (Array.isArray(raw.key_insights) ? raw.key_insights : [])
+          .map((value) => stripBoilerplateNoise(String(value)))
+          .filter(Boolean)
+          .slice(0, 4),
+        content_outline: (Array.isArray(raw.content_outline) ? raw.content_outline : [])
+          .map((value) => stripBoilerplateNoise(String(value)))
+          .filter(Boolean)
+          .slice(0, 5),
+        proof_required: ["product evidence", "external trend", "customer story"],
+        guardrails: args.state.messaging_guardrails,
+        evidence_quality_note: primaryDoc ? buildEvidenceQualityNote(primaryDoc, textOf(primaryDoc)) : undefined,
+        integration_opportunity: integration.level,
+        sourcegraph_integration_play: (
+          Array.isArray(raw.sourcegraph_angle)
+            ? raw.sourcegraph_angle
+            : typeof raw.sourcegraph_angle === "string"
+              ? [raw.sourcegraph_angle]
+              : []
+        )
+          .map((value) => stripBoilerplateNoise(String(value)))
+          .filter(Boolean)
+          .slice(0, 3),
+        distribution_plan: {
+          primary_format: distributionPlan.primary_format,
+          recommended_venue:
+            stripBoilerplateNoise(String(raw.recommended_venue ?? "").trim()) || distributionPlan.recommended_venue,
+          channel_strategy:
+            stripBoilerplateNoise(String(raw.channel_strategy ?? "").trim()) || distributionPlan.channel_strategy,
+          setup_steps: (
+            Array.isArray(raw.setup_steps)
+              ? raw.setup_steps
+              : typeof raw.setup_steps === "string"
+                ? [raw.setup_steps]
+                : distributionPlan.setup_steps
+          )
+            .map((value) => stripBoilerplateNoise(String(value)))
+            .filter(Boolean)
+            .slice(0, 4),
+        },
+        priority_score: Number(
+          (
+            sources
+              .map((source) => sourceMap.get(source.url))
+              .filter((doc): doc is AgentRankedDoc => !!doc)
+              .reduce((sum, doc) => sum + (args.candidates.find((c) => canonicalizeUrl(c.doc.url) === canonicalizeUrl(doc.url))?.score ?? 0.7), 0) /
+            Math.max(1, sources.length)
+          ).toFixed(3),
+        ),
+      });
+    }
+
+    if (output.length === 0) {
+      logger.warn("Structured content ideas synthesis produced no valid ideas after normalization, using heuristic fallback", {
+        preview: rawContent.slice(0, 400),
+      });
+      return { ideas: null, timedOut: false };
+    }
+    logger.info("Structured content ideas synthesis succeeded", {
+      requested: args.numIdeas,
+      returned: output.length,
+      marketSignals: marketSignals.length,
+      sourcegraphContext: sourcegraphContext.length,
+    });
+    return { ideas: output, timedOut: false };
+  } catch (error) {
+    logger.warn(
+      isTimedOutError(error)
+        ? "Structured content ideas synthesis timed out, using heuristic fallback"
+        : "Structured content ideas synthesis failed, using heuristic fallback",
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return { ideas: null, timedOut: isTimedOutError(error) };
+  }
+}
+
 export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): ContentIdeasOutput {
   const ideas = payload.ideas
     .map((idea) => {
@@ -2465,7 +3211,7 @@ export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): Cont
 
   const finalIdeas =
     (payload.periodDays ?? 30) <= 14
-      ? dedupedByTopic.length >= Math.min(3, ideas.length)
+      ? dedupedByTopic.length >= Math.min(2, ideas.length)
         ? dedupedByTopic
         : ideas
       : dedupedByTopic.length >= 3
@@ -2502,6 +3248,10 @@ function buildContentIdeasCandidateGates(ctx: {
     {
       name: "not_guardrail_violation",
       keep: (c) => !c.guardrailViolation,
+    },
+    {
+      name: "not_weak_anchor_source",
+      keep: (c, gateCtx) => !isWeakAnchorSource(c.doc, gateCtx.periodDays),
     },
     {
       name: "minimum_content_ideas_relevance",
@@ -2619,6 +3369,7 @@ async function generateContentIdeasImpl(options: {
   retrievalOverride?: {
     marketBriefDocs?: RetrievedDoc[];
     competitorDocs?: RetrievedDoc[];
+    contentIdeaDocs?: RetrievedDoc[];
   };
   debug?: boolean;
   /** When true, include `pipeline_trace` with Postgres/web retrieval + filtering diagnostics (JSON/debug only). */
@@ -2638,9 +3389,12 @@ async function generateContentIdeasImpl(options: {
   const competitorRetrievalTrace = pipelineTraceEnabled
     ? createEmptyAgentRetrievalTrace("competitor_intel", periodDays)
     : null;
+  const contentPoolRetrievalTrace = pipelineTraceEnabled
+    ? createEmptyAgentRetrievalTrace("content_ideas", periodDays)
+    : null;
 
-  // Seed ideas from curated intel pools (market brief + competitor intel), not the generic content pool.
-  // This keeps ideation grounded in high-signal GTM and competitive evidence.
+  // Build the candidate pool from curated intel plus Sourcegraph-owned content so ideas can emerge
+  // from market signals while still being grounded in current product and messaging context.
   const marketDocs =
     options.retrievalOverride?.marketBriefDocs ??
     await retrieveForAgent("market_brief", {
@@ -2656,6 +3410,14 @@ async function generateContentIdeasImpl(options: {
       query: options.focus ?? null,
       maxEnrich: 0,
       trace: competitorRetrievalTrace,
+    });
+  const contentIdeaDocs =
+    options.retrievalOverride?.contentIdeaDocs ??
+    await retrieveForAgent("content_ideas", {
+      periodDays,
+      query: options.focus ?? null,
+      maxEnrich: 0,
+      trace: contentPoolRetrievalTrace,
     });
 
   // If market brief summary was passed (e.g. when run after market brief), inject it as a synthetic context doc.
@@ -2674,8 +3436,9 @@ async function generateContentIdeasImpl(options: {
           },
           ...marketDocs,
           ...competitorDocs,
+          ...contentIdeaDocs,
         ]
-      : [...marketDocs, ...competitorDocs];
+      : [...marketDocs, ...competitorDocs, ...contentIdeaDocs];
 
   const seenIds = new Set<string>();
   const seenUrls = new Set<string>();
@@ -2703,7 +3466,7 @@ async function generateContentIdeasImpl(options: {
   const cutoffMs = Date.now() - windowMs;
 
   const scoredCandidates = applyShortWindowDomainConcentrationPenalty(
-    ranked.map((doc) => scoreCandidate(doc, state)),
+    ranked.map((doc) => scoreCandidate(doc, state, periodDays)),
     periodDays,
   );
 
@@ -2750,6 +3513,20 @@ async function generateContentIdeasImpl(options: {
   // Increased multiplier from 2.5x to 4x to ensure strong domain diversity when candidates cluster.
   const selectionPoolSize = Math.ceil(numIdeas * (periodDays > 14 ? 4.0 : 2.5));
   const selected = buildSelectionPool(candidates, selectionPoolSize, periodDays);
+  let sourcegraphContextDocs = collectSourcegraphContextDocs(contentIdeaDocs, ranked);
+  if (sourcegraphContextDocs.length === 0 && !options.retrievalOverride?.contentIdeaDocs) {
+    const sourcegraphFallbackDocs = await retrieveForAgent("content_ideas", {
+      periodDays: Math.max(periodDays, 365),
+      query: options.focus ?? null,
+      maxEnrich: 0,
+      ...(contentPoolRetrievalTrace ? { trace: contentPoolRetrievalTrace } : {}),
+    });
+    sourcegraphContextDocs = collectSourcegraphContextDocs(sourcegraphFallbackDocs, ranked);
+    logger.info("Recovered Sourcegraph context docs from wider retrieval window", {
+      periodDays,
+      recovered: sourcegraphContextDocs.length,
+    });
+  }
 
   const fallbackIdeas = selected
     .map((candidate) => ({
@@ -2924,6 +3701,11 @@ async function generateContentIdeasImpl(options: {
     evidenceQualifiedIdeas = enforceNarrativeClusterCap(
       evidenceQualifiedIdeas,
       numIdeas,
+      periodDays,
+    );
+    evidenceQualifiedIdeas = enforceChannelDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
     );
     evidenceQualifiedIdeas = diversifyShortWindowPrimaryHooks(
       evidenceQualifiedIdeas,
@@ -2939,6 +3721,23 @@ async function generateContentIdeasImpl(options: {
       evidenceQualifiedIdeas,
       gatedCandidates,
     );
+    evidenceQualifiedIdeas = enforceFrameDiversity(
+      evidenceQualifiedIdeas,
+      numIdeas,
+      Math.min(3, Math.max(2, numIdeas)),
+      false,
+    ).slice(0, numIdeas);
+  }
+
+  const llmSynthesis = await synthesizeStructuredContentIdeasWithLLM({
+    candidates: candidates.slice(0, Math.max(numIdeas * 2, 8)),
+    sourcegraphContextDocs,
+    state,
+    numIdeas,
+    periodDays,
+  });
+  if (llmSynthesis.ideas && llmSynthesis.ideas.length > 0) {
+    evidenceQualifiedIdeas = llmSynthesis.ideas;
   }
   const droppedCandidates = rawIdeas
     .map((i) => i.title)
@@ -3027,6 +3826,7 @@ async function generateContentIdeasImpl(options: {
       retrieval: {
         market_brief: marketRetrievalTrace,
         competitor_intel: competitorRetrievalTrace,
+        ...(contentPoolRetrievalTrace ? { content_pool: contentPoolRetrievalTrace } : {}),
       },
       ranking: rankingTrace,
       pool: {
@@ -3052,6 +3852,7 @@ async function generateContentIdeasImpl(options: {
     playbook_version: state.playbook_version,
     periodDays,
     playbook_confidence_flags: state.confidence_flags,
+    ...(llmSynthesis.timedOut ? { llm_debug: { structured_synthesis_timed_out: true } } : {}),
     ...(pipelineTracePayload ? { pipeline_trace: pipelineTracePayload } : {}),
     selection_debug: {
       target_mix: { beachhead: 0, adjacent: 0, broader: 0 },

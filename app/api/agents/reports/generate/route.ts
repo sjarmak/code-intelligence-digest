@@ -3,7 +3,7 @@
  * Generate agent reports for selected goals.
  * Body: {
  *   goals: ("content_ideas" | "market_brief" | "competitor_intel")[],
- *   timeRange?: "day" | "week" | "month" | "year"
+ *   timeRange?: "day" | "week" | "two_weeks" | "month" | "year"
  * }
  */
 
@@ -14,7 +14,7 @@ import type { AgentGoal } from "@/src/config/agents";
 import { auth } from "@/src/auth";
 
 const VALID_GOALS: AgentGoal[] = ["content_ideas", "market_brief", "competitor_intel"];
-const VALID_TIME_RANGES: ReportTimeRange[] = ["day", "week", "month", "year"];
+const VALID_TIME_RANGES: ReportTimeRange[] = ["day", "week", "two_weeks", "month", "year"];
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       body = (await request.json()) as { goals?: unknown; timeRange?: unknown };
     } catch {
       return NextResponse.json(
-        { error: "Invalid JSON body. Use { goals: [\"content_ideas\", ...], timeRange?: \"day|week|month|year\" }." },
+        { error: "Invalid JSON body. Use { goals: [\"content_ideas\", ...], timeRange?: \"day|week|two_weeks|month|year\" }." },
         { status: 400 }
       );
     }

@@ -32,6 +32,80 @@ export interface CreateChatCompletionResult {
   finish_reason?: string;
 }
 
+const DEFAULT_ANTHROPIC_PROVIDER_TIMEOUT_MS = 300000;
+const DEFAULT_OPENAI_PROVIDER_TIMEOUT_MS = 15000;
+
+class LlmProviderTimeoutError extends Error {
+  readonly provider: "anthropic" | "openai";
+  readonly timeoutMs: number;
+
+  constructor(provider: "anthropic" | "openai", timeoutMs: number) {
+    super(`${provider} completion timed out after ${timeoutMs}ms`);
+    this.name = "LlmProviderTimeoutError";
+    this.provider = provider;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+function getLlmProviderTimeoutMs(
+  provider: "anthropic" | "openai",
+  defaultMs = provider === "anthropic" ? DEFAULT_ANTHROPIC_PROVIDER_TIMEOUT_MS : DEFAULT_OPENAI_PROVIDER_TIMEOUT_MS,
+): number {
+  const providerEnvName =
+    provider === "anthropic" ? "ANTHROPIC_LLM_PROVIDER_TIMEOUT_MS" : "OPENAI_LLM_PROVIDER_TIMEOUT_MS";
+  const raw =
+    Number(process.env[providerEnvName]) || Number(process.env.LLM_PROVIDER_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : defaultMs;
+}
+
+function isLlmProviderTimeoutError(error: unknown): error is LlmProviderTimeoutError {
+  return error instanceof LlmProviderTimeoutError;
+}
+
+async function withProviderTimeout<T>(
+  provider: "anthropic" | "openai",
+  promise: Promise<T>,
+  timeoutMs = getLlmProviderTimeoutMs(provider),
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new LlmProviderTimeoutError(provider, timeoutMs)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
+async function runProviderCompletion<T>(args: {
+  provider: "anthropic" | "openai";
+  model: string;
+  operation: () => Promise<T>;
+}): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    const result = await withProviderTimeout(args.provider, args.operation());
+    logger.info("LLM provider completion succeeded", {
+      provider: args.provider,
+      model: args.model,
+      durationMs: Date.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    logger.warn("LLM provider completion failed", {
+      provider: args.provider,
+      model: args.model,
+      durationMs: Date.now() - startedAt,
+      timeout: isLlmProviderTimeoutError(error),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
 function convertToAnthropic(messages: ChatMessage[]): {
   system: string | undefined;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
@@ -131,15 +205,21 @@ async function createChatCompletionImpl(
     const key = getAnthropicApiKey();
     if (key) {
       try {
-        return await completeWithAnthropic(
+        return await runProviderCompletion({
+          provider: "anthropic",
           model,
-          options.messages,
-          maxTokens
-        );
+          operation: () =>
+            completeWithAnthropic(
+              model,
+              options.messages,
+              maxTokens,
+            ),
+        });
       } catch (error) {
         logger.warn("Anthropic completion failed, falling back to OpenAI if available", {
           error: error instanceof Error ? error.message : String(error),
           model,
+          timeout: isLlmProviderTimeoutError(error),
         });
         // Fall through to OpenAI fallback when possible
       }
@@ -164,13 +244,18 @@ async function createChatCompletionImpl(
   const effectiveModel = isClaudeModel(model)
     ? "gpt-4o-mini"
     : model;
-  return completeWithOpenAI(
-    openaiClient,
-    effectiveModel,
-    options.messages,
-    maxTokens,
-    options.response_format
-  );
+  return runProviderCompletion({
+    provider: "openai",
+    model: effectiveModel,
+    operation: () =>
+      completeWithOpenAI(
+        openaiClient,
+        effectiveModel,
+        options.messages,
+        maxTokens,
+        options.response_format,
+      ),
+  });
 }
 
 export const createChatCompletion = isLangSmithLlmTracingEnabled()

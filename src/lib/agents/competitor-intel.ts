@@ -14,6 +14,10 @@ import {
 } from "../../config/competitor-intel";
 import { classifySourcegraphIntegrationOpportunity, type IntegrationOpportunityLevel } from "./sourcegraph-integration-opportunity";
 import { withLangSmithTraceable } from "../langsmith";
+import {
+  CURATOR_TRACE_SCHEMA_VERSION,
+  type CuratorTraceStep,
+} from "../retrieval/curator-trace";
 
 export interface RankedCompetitorIntelItem {
   competitor: string;
@@ -36,6 +40,68 @@ export interface RankedCompetitorIntelItem {
   sourcegraph_integration_play: string[];
   evidence_notes: string[];
   debug_scores: Record<string, number>;
+}
+
+export interface CompetitorIntelPipelineTrace {
+  schemaVersion?: number;
+  periodDays: number;
+  topPerCompetitor: number;
+  topOverall: number;
+  internalDocsLoaded: number;
+  competitors: Array<{
+    competitorId: string;
+    competitor: string;
+    tier: number;
+    queriesGenerated: number;
+    retrieval: {
+      internalCandidates: number;
+      webCandidates: number;
+      strategicBackfill: number;
+      strategicUrlBackfill: number;
+      recentDomainDocs: number;
+      blogFromWeb: number;
+      blogListing: number;
+      rawMerged: number;
+      afterDbHydrate: number;
+      afterMetadataHydrate: number;
+    };
+    filters: {
+      input: number;
+      kept: number;
+      droppedNoisyUrl: number;
+      droppedCommunity: number;
+      droppedNarrativeNoise: number;
+      droppedHowToNoise: number;
+      droppedOperationalNoise: number;
+      droppedUndated: number;
+      droppedOutOfWindow: number;
+      droppedWeakSignal: number;
+      droppedOtherCompetitorDomain: number;
+      droppedWeakAttribution: number;
+    };
+    clustering: {
+      clusters: number;
+      rankedAboveThreshold: number;
+      diversifiedSelected: number;
+    };
+    selectedTitles: string[];
+  }>;
+  global: {
+    beforeGlobalDedupe: number;
+    afterGlobalDedupe: number;
+    afterPostProcess: number;
+    finalItems: number;
+  };
+  interpretable_steps?: CuratorTraceStep[];
+}
+
+export interface CompetitorIntelOutput {
+  generatedAt: string;
+  periodDays: number;
+  topPerCompetitor: number;
+  topOverall: number;
+  items: RankedCompetitorIntelItem[];
+  pipeline_trace?: CompetitorIntelPipelineTrace;
 }
 
 interface CompetitorIntelQualityRubric {
@@ -146,14 +212,19 @@ function inferUpdateType(text: string): string {
   // competitive move is still product availability/performance.
   if (/(case study|customer story|customer evidence|fortune 500|swe[\s-]?bench|leaderboard)/.test(t))
     return "market_proof";
-  if (
-    /(introducing|now available|general availability|\bga\b|release notes|changelog|preview|beta|launch|launches|released)/.test(t)
-  ) {
-    return "product_launch";
-  }
   if (/(pricing|package|packaging|tier|enterprise plan|credits? pricing|promotional pricing)/.test(t))
     return "pricing_packaging";
   if (/(security|compliance|audit|policy|rbac|sso|self-hosted|on-prem)/.test(t)) return "security_enterprise";
+  if (/(introducing|now available|general availability|\bga\b|preview|beta|launch|launches|launched|public preview|private preview)/.test(t)) {
+    return "product_launch";
+  }
+  if (
+    /(\bv?\d+\.\d+(?:\.\d+){0,2}\b|release notes|changelog|patch release|bug fixes?|improvements?|now supports|added|adds|updated|update|released)/.test(
+      t,
+    )
+  ) {
+    return "product_update";
+  }
   return "product_update";
 }
 
@@ -1161,6 +1232,12 @@ function cleanIntelSummary(text: string, fallbackTitle: string, rubric: Competit
 
 function refineUpdateType(item: RankedCompetitorIntelItem): string {
   const text = `${item.title} ${item.summary} ${item.why_it_matters}`.toLowerCase();
+  const looksVersionedRelease =
+    /(\bv?\d+\.\d+(?:\.\d+){0,2}\b|release notes|changelog|patch release)/.test(text) &&
+    !/(general availability|\bga\b|public beta|private beta|preview|introducing|launch|launched)/.test(text);
+  if (looksVersionedRelease) {
+    return "product_update";
+  }
   if (
     item.update_type === "pricing_packaging" &&
     /(introducing|now available|general availability|\bga\b|release|launch|benchmark|swe[\s-]?bench)/.test(text) &&
@@ -1687,14 +1764,37 @@ export interface CompetitorIntelOptions {
   internalDocsLimit?: number;
 }
 
+function createCompetitorTrace(
+  periodDays: number,
+  topPerCompetitor: number,
+  topOverall: number,
+  internalDocsLoaded: number,
+): CompetitorIntelPipelineTrace {
+  return {
+    schemaVersion: CURATOR_TRACE_SCHEMA_VERSION,
+    periodDays,
+    topPerCompetitor,
+    topOverall,
+    internalDocsLoaded,
+    competitors: [],
+    global: {
+      beforeGlobalDedupe: 0,
+      afterGlobalDedupe: 0,
+      afterPostProcess: 0,
+      finalItems: 0,
+    },
+    interpretable_steps: [],
+  };
+}
+
 /**
  * Retrieval and triage pipeline are intentionally separated:
  * - Retrieval (high recall): broad internal + web candidates
  * - Triage (strict): overlap scoring + clustering + source preference
  */
-async function gatherCompetitorIntelImpl(
+async function gatherCompetitorIntelDetailedImpl(
   options: CompetitorIntelOptions = {},
-): Promise<RankedCompetitorIntelItem[]> {
+): Promise<CompetitorIntelOutput> {
   const periodDays = options.periodDays ?? 90;
   const topPerCompetitor = options.topPerCompetitor ?? 5;
   const topOverall = options.topOverall ?? 20;
@@ -1704,6 +1804,12 @@ async function gatherCompetitorIntelImpl(
   const internalDocsLimit = options.internalDocsLimit ?? 1200;
 
   const internalItems = await loadInternalDocs(periodDays, internalDocsLimit);
+  const pipelineTrace = createCompetitorTrace(
+    periodDays,
+    topPerCompetitor,
+    topOverall,
+    internalItems.length,
+  );
   const competitors = getCompetitorIntelEntries().filter((c) =>
     options.competitorId ? c.id === options.competitorId : true,
   );
@@ -1745,34 +1851,71 @@ async function gatherCompetitorIntelImpl(
     const recentDomainDocs = await retrieveRecentDomainDocs(competitor, periodDays, 10);
     const blogFromWeb = await retrieveCompetitorBlogFromWeb(competitor, periodDays, 16);
     const blogListing = await retrieveRecentBlogListing(competitor, 20);
+    const mergedCandidates = dedupeDocs([
+      ...internalCandidates,
+      ...webCandidates,
+      ...strategicBackfill,
+      ...strategicUrlBackfill,
+      ...recentDomainDocs,
+      ...blogFromWeb,
+      ...blogListing,
+    ]);
 
     // Strict attribution:
     // - explicit competitor signal, OR
     // - primary source domain owned by that competitor.
     // Do NOT keep generic overlap-only items for a competitor.
-    const hydratedByDb = await hydratePublishedDates(
-      dedupeDocs([
-        ...internalCandidates,
-        ...webCandidates,
-        ...strategicBackfill,
-        ...strategicUrlBackfill,
-        ...recentDomainDocs,
-        ...blogFromWeb,
-        ...blogListing,
-      ]),
-    );
+    const hydratedByDb = await hydratePublishedDates(mergedCandidates);
     const hydrated = await hydratePublishedDatesFromMetadata(hydratedByDb, periodDays);
+    const filterStats = {
+      input: hydrated.length,
+      kept: 0,
+      droppedNoisyUrl: 0,
+      droppedCommunity: 0,
+      droppedNarrativeNoise: 0,
+      droppedHowToNoise: 0,
+      droppedOperationalNoise: 0,
+      droppedUndated: 0,
+      droppedOutOfWindow: 0,
+      droppedWeakSignal: 0,
+      droppedOtherCompetitorDomain: 0,
+      droppedWeakAttribution: 0,
+    };
     const deduped = hydrated.filter((doc) => {
-      if (looksNoisyCompetitorUrl(doc.url)) return false;
+      if (looksNoisyCompetitorUrl(doc.url)) {
+        filterStats.droppedNoisyUrl += 1;
+        return false;
+      }
       const ownDomain = domainMatchesCompetitor(doc.url, competitor);
-      if (doc.source_type === "community") return false;
-      if (isNarrativeNoise(doc)) return false;
-      if (isThirdPartyHowToNoise(doc)) return false;
+      if (doc.source_type === "community") {
+        filterStats.droppedCommunity += 1;
+        return false;
+      }
+      if (isNarrativeNoise(doc)) {
+        filterStats.droppedNarrativeNoise += 1;
+        return false;
+      }
+      if (isThirdPartyHowToNoise(doc)) {
+        filterStats.droppedHowToNoise += 1;
+        return false;
+      }
       const operationalNoise = isOperationalTelemetryUpdate(`${doc.title} ${doc.summary} ${doc.content} ${doc.url}`);
-      if (operationalNoise && periodDays <= 31) return false;
-      if (!shouldKeepUndatedDoc(doc, periodDays, ownDomain)) return false;
-      if (!isWithinWindow(doc.publishedAt, periodDays)) return false;
-      if (!ownDomain && !hasMaterialSignal(doc)) return false;
+      if (operationalNoise && periodDays <= 31) {
+        filterStats.droppedOperationalNoise += 1;
+        return false;
+      }
+      if (!shouldKeepUndatedDoc(doc, periodDays, ownDomain)) {
+        filterStats.droppedUndated += 1;
+        return false;
+      }
+      if (!isWithinWindow(doc.publishedAt, periodDays)) {
+        filterStats.droppedOutOfWindow += 1;
+        return false;
+      }
+      if (!ownDomain && !hasMaterialSignal(doc)) {
+        filterStats.droppedWeakSignal += 1;
+        return false;
+      }
       const identityMatch = mentionsCompetitorIdentity(doc, competitor);
       const strongIdentityMatch = mentionsCompetitorIdentityInTitle(doc, competitor);
       const isOtherCompetitorDomain =
@@ -1781,8 +1924,23 @@ async function gatherCompetitorIntelImpl(
       // Must be explicitly about this competitor (identity mention) or come from
       // the competitor's own primary domain. Suppress cross-assignment from other
       // tracked competitor domains.
-      if (isOtherCompetitorDomain && !ownDomain) return false;
-      return ownDomain || strongIdentityMatch || (identityMatch && /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/i.test(`${doc.title} ${doc.summary}`));
+      if (isOtherCompetitorDomain && !ownDomain) {
+        filterStats.droppedOtherCompetitorDomain += 1;
+        return false;
+      }
+      const keep =
+        ownDomain ||
+        strongIdentityMatch ||
+        (identityMatch &&
+          /(benchmark|swe[\s-]?bench|case study|customer|pricing|packaging|enterprise)/i.test(
+            `${doc.title} ${doc.summary}`,
+          ));
+      if (!keep) {
+        filterStats.droppedWeakAttribution += 1;
+        return false;
+      }
+      filterStats.kept += 1;
+      return true;
     });
 
     const clusters = clusterDocs(deduped, competitor);
@@ -1792,15 +1950,92 @@ async function gatherCompetitorIntelImpl(
       .sort((a, b) => b.relevance_score - a.relevance_score);
     const diversified = diversifyPerCompetitor(ranked, topPerCompetitor);
 
+    pipelineTrace.competitors.push({
+      competitorId: competitor.id,
+      competitor: competitor.display_name,
+      tier: competitor.tier,
+      queriesGenerated: queries.length,
+      retrieval: {
+        internalCandidates: internalCandidates.length,
+        webCandidates: webCandidates.length,
+        strategicBackfill: strategicBackfill.length,
+        strategicUrlBackfill: strategicUrlBackfill.length,
+        recentDomainDocs: recentDomainDocs.length,
+        blogFromWeb: blogFromWeb.length,
+        blogListing: blogListing.length,
+        rawMerged: mergedCandidates.length,
+        afterDbHydrate: hydratedByDb.length,
+        afterMetadataHydrate: hydrated.length,
+      },
+      filters: filterStats,
+      clustering: {
+        clusters: clusters.length,
+        rankedAboveThreshold: ranked.length,
+        diversifiedSelected: diversified.length,
+      },
+      selectedTitles: diversified.slice(0, topPerCompetitor).map((item) => item.title),
+    });
+
     allRanked.push(...diversified);
   }
 
   const globallyRanked = dedupeRankedEvents(allRanked.sort((a, b) => b.relevance_score - a.relevance_score));
   const postProcessed = postProcessCompetitorIntelItems(globallyRanked);
-  return capOverallPerCompetitor(postProcessed, topOverall);
+  const finalItems = capOverallPerCompetitor(postProcessed, topOverall);
+
+  pipelineTrace.global = {
+    beforeGlobalDedupe: allRanked.length,
+    afterGlobalDedupe: globallyRanked.length,
+    afterPostProcess: postProcessed.length,
+    finalItems: finalItems.length,
+  };
+  pipelineTrace.interpretable_steps = [
+    {
+      id: "competitor_scope",
+      label: "Competitor scope",
+      detail: `${pipelineTrace.competitors.length} competitors · ${internalItems.length} internal docs loaded · window ${periodDays}d`,
+      metrics: {
+        competitors: pipelineTrace.competitors.length,
+        internalDocsLoaded: internalItems.length,
+        periodDays,
+      },
+    },
+    ...pipelineTrace.competitors.map((entry) => ({
+      id: `competitor_${entry.competitorId}`,
+      label: entry.competitor,
+      detail: `queries ${entry.queriesGenerated} · merged ${entry.retrieval.rawMerged} → kept ${entry.filters.kept} · clusters ${entry.clustering.clusters} · selected ${entry.clustering.diversifiedSelected}`,
+      metrics: {
+        queries: entry.queriesGenerated,
+        rawMerged: entry.retrieval.rawMerged,
+        kept: entry.filters.kept,
+        clusters: entry.clustering.clusters,
+        selected: entry.clustering.diversifiedSelected,
+      },
+    })),
+    {
+      id: "global_selection",
+      label: "Global selection",
+      detail: `${pipelineTrace.global.beforeGlobalDedupe} pre-global → ${pipelineTrace.global.afterGlobalDedupe} deduped → ${pipelineTrace.global.afterPostProcess} cleaned → ${pipelineTrace.global.finalItems} final`,
+      metrics: {
+        beforeGlobalDedupe: pipelineTrace.global.beforeGlobalDedupe,
+        afterGlobalDedupe: pipelineTrace.global.afterGlobalDedupe,
+        afterPostProcess: pipelineTrace.global.afterPostProcess,
+        finalItems: pipelineTrace.global.finalItems,
+      },
+    },
+  ];
+
+  return {
+    generatedAt: new Date().toISOString(),
+    periodDays,
+    topPerCompetitor,
+    topOverall,
+    items: finalItems,
+    pipeline_trace: pipelineTrace,
+  };
 }
 
-export const gatherCompetitorIntel = withLangSmithTraceable(gatherCompetitorIntelImpl, {
+export const gatherCompetitorIntelWithTrace = withLangSmithTraceable(gatherCompetitorIntelDetailedImpl, {
   name: "gather_competitor_intel",
   run_type: "chain",
   defaultProjectName: "code-intel-digest-agents",
@@ -1814,10 +2049,36 @@ export const gatherCompetitorIntel = withLangSmithTraceable(gatherCompetitorInte
     };
   },
   processOutputs: (outputs) => ({
-    itemCount: Array.isArray(outputs) ? outputs.length : 0,
-    competitors:
-      Array.isArray(outputs)
-        ? Array.from(new Set(outputs.map((item) => item.competitor))).slice(0, 20)
-        : [],
+    itemCount: outputs?.items?.length ?? 0,
+    competitors: Array.from(new Set(outputs?.items?.map((item) => item.competitor) ?? [])).slice(0, 20),
+    finalItems: outputs?.pipeline_trace?.global?.finalItems ?? outputs?.items?.length ?? 0,
   }),
 });
+
+export const gatherCompetitorIntel = withLangSmithTraceable(
+  async (options: CompetitorIntelOptions = {}) => {
+    const result = await gatherCompetitorIntelDetailedImpl(options);
+    return result.items;
+  },
+  {
+    name: "gather_competitor_intel_items",
+    run_type: "chain",
+    defaultProjectName: "code-intel-digest-agents",
+    processInputs: (inputs) => {
+      const [options] = "args" in inputs ? inputs.args : [undefined];
+      return {
+        periodDays: options?.periodDays ?? null,
+        topPerCompetitor: options?.topPerCompetitor ?? null,
+        topOverall: options?.topOverall ?? null,
+        competitorId: options?.competitorId ?? null,
+      };
+    },
+    processOutputs: (outputs) => ({
+      itemCount: Array.isArray(outputs) ? outputs.length : 0,
+      competitors:
+        Array.isArray(outputs)
+          ? Array.from(new Set(outputs.map((item) => item.competitor))).slice(0, 20)
+          : [],
+    }),
+  },
+);

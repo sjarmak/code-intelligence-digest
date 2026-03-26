@@ -231,10 +231,17 @@ async function retrieveFromWeb(
     options.query?.trim()
       ? [options.query, ...templates.slice(0, 2)]
       : templates.slice(0, templateLimit);
+  const includeDomains = config.includeDomains;
+  const includeTemplates = config.includeDomainsQueryTemplates;
+  const reservedIncludeSlots =
+    includeDomains?.length && includeTemplates?.length
+      ? Math.min(8, Math.max(4, Math.floor(maxWeb * 0.2)))
+      : 0;
+  const primaryCapacity = Math.max(1, maxWeb - reservedIncludeSlots);
 
   const domains =
     goal === "competitor_intel" ? getCompetitorDomains() : undefined;
-  const numPerQuery = Math.max(3, Math.ceil(maxWeb / queries.length));
+  const numPerQuery = Math.max(3, Math.ceil(primaryCapacity / queries.length));
 
   const byUrl = new Map<string, RetrievedDoc>();
 
@@ -248,7 +255,7 @@ async function retrieveFromWeb(
   }
 
   for (const q of queries) {
-    if (byUrl.size >= maxWeb) break;
+    if (byUrl.size >= primaryCapacity) break;
     const results = await searchWeb(q, {
       numResults: numPerQuery,
       domains: domains?.slice(0, 100),
@@ -279,17 +286,14 @@ async function retrieveFromWeb(
   }
 
   // Optional pass: include our product (e.g. changelog, product pages) for content_ideas.
-  const includeDomains = config.includeDomains;
-  const includeTemplates = config.includeDomainsQueryTemplates;
   if (
     includeDomains?.length &&
-    includeTemplates?.length &&
-    byUrl.size < maxWeb
+    includeTemplates?.length
   ) {
-    const maxInclude = Math.min(10, maxWeb - byUrl.size);
+    const maxInclude = Math.min(reservedIncludeSlots || 10, Math.max(0, maxWeb - byUrl.size));
     const numPerInclude = Math.max(2, Math.ceil(maxInclude / includeTemplates.length));
     for (const q of includeTemplates.slice(0, 4)) {
-      if (byUrl.size >= maxWeb) break;
+      if (byUrl.size >= maxWeb || maxInclude <= 0) break;
       const results = await searchWeb(q, {
         numResults: numPerInclude,
         domains: includeDomains.slice(0, 20),
@@ -321,6 +325,7 @@ async function retrieveFromWeb(
     logger.info("Web retrieval includeDomains pass", {
       goal,
       domains: includeDomains.length,
+      reservedIncludeSlots,
     });
   }
 

@@ -42,12 +42,65 @@ interface StructuredIntelItem {
 }
 
 interface StructuredIntelPayload {
-  goal: string;
   periodDays: number;
   topPerCompetitor: number;
   topOverall: number;
   generatedAt: string;
   items: StructuredIntelItem[];
+  pipeline_trace?: CompetitorIntelPipelineTraceView;
+}
+
+interface CompetitorIntelPipelineTraceView {
+  schemaVersion?: number;
+  periodDays: number;
+  topPerCompetitor: number;
+  topOverall: number;
+  internalDocsLoaded: number;
+  competitors: Array<{
+    competitorId: string;
+    competitor: string;
+    tier: number;
+    queriesGenerated: number;
+    retrieval: {
+      internalCandidates: number;
+      webCandidates: number;
+      strategicBackfill: number;
+      strategicUrlBackfill: number;
+      recentDomainDocs: number;
+      blogFromWeb: number;
+      blogListing: number;
+      rawMerged: number;
+      afterDbHydrate: number;
+      afterMetadataHydrate: number;
+    };
+    filters: {
+      input: number;
+      kept: number;
+      droppedNoisyUrl: number;
+      droppedCommunity: number;
+      droppedNarrativeNoise: number;
+      droppedHowToNoise: number;
+      droppedOperationalNoise: number;
+      droppedUndated: number;
+      droppedOutOfWindow: number;
+      droppedWeakSignal: number;
+      droppedOtherCompetitorDomain: number;
+      droppedWeakAttribution: number;
+    };
+    clustering: {
+      clusters: number;
+      rankedAboveThreshold: number;
+      diversifiedSelected: number;
+    };
+    selectedTitles: string[];
+  }>;
+  global: {
+    beforeGlobalDedupe: number;
+    afterGlobalDedupe: number;
+    afterPostProcess: number;
+    finalItems: number;
+  };
+  interpretable_steps?: Array<{ id: string; label: string; detail: string; metrics?: Record<string, number | string> }>;
 }
 
 /** Subset of `ContentIdeasOutput.pipeline_trace` for display (avoid coupling to full agent module). */
@@ -204,6 +257,8 @@ export default function ReportViewPage() {
   }
 
   const structuredIntel = parseStructuredIntel(report);
+  const competitorTrace =
+    report.agentId === 'competitive_intel' ? structuredIntel?.pipeline_trace ?? null : null;
   const pipelineTrace =
     report.agentId === 'gtm_content' ? getContentIdeasPipelineTrace(report.outputMetadata) : null;
 
@@ -236,6 +291,7 @@ export default function ReportViewPage() {
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {pipelineTrace && <RetrievalTracePanel trace={pipelineTrace} />}
+        {competitorTrace && <CompetitorIntelTracePanel trace={competitorTrace} />}
         {structuredIntel ? (
           <StructuredCompetitorIntel payload={structuredIntel} />
         ) : (
@@ -252,6 +308,95 @@ export default function ReportViewPage() {
         )}
       </main>
     </div>
+  );
+}
+
+function CompetitorIntelTracePanel({ trace }: { trace: CompetitorIntelPipelineTraceView }) {
+  return (
+    <section className="rounded-lg border border-sky-200 bg-sky-50/50 p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-lg font-semibold">Competitor intel · pipeline trace</h2>
+        {trace.schemaVersion != null && (
+          <span className="text-xs font-mono px-2 py-0.5 rounded border border-sky-300 bg-white">
+            schema v{trace.schemaVersion}
+          </span>
+        )}
+      </div>
+      <p className="text-sm text-muted">
+        Internal + web candidate gathering, strict attribution filters, per-competitor clustering, then global dedupe and selection.
+      </p>
+      <div className="rounded-lg border border-surface-border bg-white p-3 text-sm space-y-1">
+        <p>
+          <strong>Window:</strong> last {trace.periodDays} days · top {trace.topPerCompetitor} per competitor · cap {trace.topOverall} overall
+        </p>
+        <p>
+          <strong>Input:</strong> {trace.internalDocsLoaded} internal docs loaded across {trace.competitors.length} competitors
+        </p>
+        <p>
+          <strong>Global:</strong> {trace.global.beforeGlobalDedupe} pre-global → {trace.global.afterGlobalDedupe} deduped →{' '}
+          {trace.global.afterPostProcess} cleaned → {trace.global.finalItems} final items
+        </p>
+      </div>
+      <div className="grid gap-3">
+        {trace.competitors.map((entry) => (
+          <div key={entry.competitorId} className="rounded-lg border border-surface-border bg-white p-4 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-foreground">{entry.competitor}</h3>
+              <span className="text-xs text-muted">tier {entry.tier}</span>
+              <span className="text-xs text-muted">{entry.queriesGenerated} queries</span>
+            </div>
+            <div className="text-xs space-y-1">
+              <p>
+                <strong>Retrieval:</strong> internal {entry.retrieval.internalCandidates} · web {entry.retrieval.webCandidates} · backfill{' '}
+                {entry.retrieval.strategicBackfill + entry.retrieval.strategicUrlBackfill} · domain {entry.retrieval.recentDomainDocs} · blog{' '}
+                {entry.retrieval.blogFromWeb + entry.retrieval.blogListing}
+              </p>
+              <p>
+                <strong>Hydration:</strong> merged {entry.retrieval.rawMerged} → DB {entry.retrieval.afterDbHydrate} → metadata{' '}
+                {entry.retrieval.afterMetadataHydrate}
+              </p>
+              <p>
+                <strong>Filters:</strong> kept {entry.filters.kept}/{entry.filters.input} · weak attribution {entry.filters.droppedWeakAttribution} · weak signal{' '}
+                {entry.filters.droppedWeakSignal} · old {entry.filters.droppedOutOfWindow} · undated {entry.filters.droppedUndated}
+              </p>
+              <p>
+                <strong>Noise dropped:</strong> URLs {entry.filters.droppedNoisyUrl} · community {entry.filters.droppedCommunity} · narrative{' '}
+                {entry.filters.droppedNarrativeNoise} · how-to {entry.filters.droppedHowToNoise} · operational {entry.filters.droppedOperationalNoise} · other competitor domain{' '}
+                {entry.filters.droppedOtherCompetitorDomain}
+              </p>
+              <p>
+                <strong>Selection:</strong> clusters {entry.clustering.clusters} · ranked {entry.clustering.rankedAboveThreshold} · selected{' '}
+                {entry.clustering.diversifiedSelected}
+              </p>
+              {entry.selectedTitles.length > 0 && (
+                <p>
+                  <strong>Selected titles:</strong> {entry.selectedTitles.join(' | ')}
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {trace.interpretable_steps && trace.interpretable_steps.length > 0 && (
+        <details className="text-sm rounded-lg border border-surface-border bg-white p-3" open>
+          <summary className="cursor-pointer font-medium text-foreground">Interpretable steps (ordered)</summary>
+          <ol className="mt-2 space-y-2 list-decimal list-inside text-xs">
+            {trace.interpretable_steps.map((step) => (
+              <li key={step.id}>
+                <strong className="text-foreground">{step.label}</strong>
+                <span className="text-muted"> — {step.detail}</span>
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+      <details className="text-sm">
+        <summary className="cursor-pointer font-medium text-foreground">Raw trace JSON</summary>
+        <pre className="mt-2 max-h-96 overflow-auto rounded border border-surface-border bg-gray-50 p-3 text-xs">
+          {JSON.stringify(trace, null, 2)}
+        </pre>
+      </details>
+    </section>
   );
 }
 
@@ -434,7 +579,15 @@ function RetrievalTracePanel({ trace }: { trace: ContentIdeasPipelineTraceView }
 function parseStructuredIntel(report: ReportDetail): StructuredIntelPayload | null {
   const isCompetitorIntel = report.agentId === 'competitive_intel';
   const isStructured = report.outputMetadata && report.outputMetadata.structuredOutput === true;
-  if (!isCompetitorIntel || !isStructured || !report.outputMarkdown) return null;
+  if (!isCompetitorIntel || !isStructured) return null;
+
+  const structuredPayload = report.outputMetadata?.structuredPayload;
+  if (structuredPayload && typeof structuredPayload === 'object') {
+    const parsed = structuredPayload as StructuredIntelPayload;
+    if (Array.isArray(parsed.items)) return parsed;
+  }
+
+  if (!report.outputMarkdown) return null;
 
   const fenced = report.outputMarkdown.match(/```json\s*([\s\S]*?)```/i);
   const candidate = fenced?.[1]?.trim() ?? report.outputMarkdown.trim();

@@ -11,7 +11,7 @@ import { webSearchForAgentContext } from "../search/url-finder";
 import { saveAgentRun } from "../db/agent-runs";
 import { logger } from "../logger";
 import { withLangSmithTraceable } from "../langsmith";
-import { gatherCompetitorIntel } from "./competitor-intel";
+import { gatherCompetitorIntelWithTrace } from "./competitor-intel";
 import { generateMarketBrief } from "./market-brief";
 import { generateContentIdeas } from "./content-ideas";
 import { formatCompetitorIntelMarkdown, formatContentIdeasMarkdown, formatMarketBriefMarkdown } from "./format-structured-reports";
@@ -99,7 +99,7 @@ async function runAgentJobImpl(
     const periodDays = job.periodDays ?? 90;
     const topPerCompetitor = jobId === "weekly_competitor_summary" ? 7 : 5;
     const topOverall = jobId === "weekly_competitor_summary" ? 30 : 20;
-    const items = await gatherCompetitorIntel({
+    const payload = await gatherCompetitorIntelWithTrace({
       periodDays,
       topPerCompetitor,
       topOverall,
@@ -108,27 +108,22 @@ async function runAgentJobImpl(
       maxWebQueriesPerCompetitor: 2,
       internalDocsLimit: 500,
     });
+    const { items } = payload;
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
-    const generatedAt = new Date().toISOString();
+    const generatedAt = payload.generatedAt;
 
     const llmMarkdown = await writeCompetitorIntelWithLLM(items, periodDays, title, generatedAt);
-    const markdown =
-      llmMarkdown ??
-      formatCompetitorIntelMarkdown(title, {
-        generatedAt,
-        periodDays,
-        topPerCompetitor,
-        items,
-      });
+    const markdown = llmMarkdown ?? formatCompetitorIntelMarkdown(title, payload);
 
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: items.length,
       periodDays,
       topPerCompetitor,
-      topOverall: items.length,
+      topOverall: payload.topOverall,
       structuredOutput: true,
+      structuredPayload: payload,
     });
 
     logger.info("Agent job completed with structured competitor intel", {

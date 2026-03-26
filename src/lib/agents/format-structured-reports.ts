@@ -195,9 +195,9 @@ export function formatContentIdeasMarkdown(title: string, payload: ContentIdeasO
   return lines.join("\n");
 }
 
-function formatOneCompetitorItem(item: RankedCompetitorIntelItem, index: number): string[] {
+function formatOneCompetitorItem(item: RankedCompetitorIntelItem): string[] {
   const lines: string[] = [];
-  lines.push(`### ${index + 1}. ${stripPdfPrefix(item.title)}`);
+  lines.push(`### ${stripPdfPrefix(item.title)}`);
   const sourceLink = item.url ? `[${item.source}](${item.url})` : item.source;
   const dateConfLabel = formatLabel(item.date_confidence, DATE_CONFIDENCE_LABELS);
   const sourceTypeLabel = formatLabel(item.source_type, SOURCE_TYPE_LABELS);
@@ -251,8 +251,8 @@ export function formatCompetitorIntelMarkdown(
 
     lines.push(`## ${displayName}`);
     lines.push("");
-    items.forEach((item, i) => {
-      lines.push(...formatOneCompetitorItem(item, i));
+    items.forEach((item) => {
+      lines.push(...formatOneCompetitorItem(item));
     });
   }
 

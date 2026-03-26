@@ -148,4 +148,119 @@ describe("content ideas quality guards", () => {
     expect(out.ideas[0].thesis).not.toContain("Section Title:");
     expect(out.ideas[0].thesis).not.toContain("Content:");
   });
+
+  it("prefers distinct short-window topics over duplicate format variants", () => {
+    const payload: ContentIdeasOutput = {
+      generated_at: "2026-02-28",
+      playbook_version: "2026.02.15.1",
+      periodDays: 14,
+      ideas: [
+        {
+          title: "Talk Track: Governance, Compliance, and Verification for AI Code Changes",
+          thesis: "A",
+          target_segment: "Banks",
+          target_persona: "VP Engineering",
+          funnel_stage: "validation",
+          channel: "event_talk",
+          why_now: "Now",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "Official launch",
+              source: "github.blog",
+              url: "https://github.blog/security/application-security/update",
+              date: "2026-02-28",
+            },
+          ],
+          core_claim: "Claim",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["play"],
+          distribution_plan: {
+            primary_format: "Conference talk",
+            recommended_venue: "event",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.95,
+        },
+        {
+          title: "Guide: Governance, Compliance, and Verification for AI Code Changes",
+          thesis: "B",
+          target_segment: "Banks",
+          target_persona: "VP Engineering",
+          funnel_stage: "validation",
+          channel: "whitepaper",
+          why_now: "Now",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "Official launch 2",
+              source: "blog.cloudflare.com",
+              url: "https://blog.cloudflare.com/ai-governance-controls",
+              date: "2026-02-28",
+            },
+          ],
+          core_claim: "Claim",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["play"],
+          distribution_plan: {
+            primary_format: "Whitepaper",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.9,
+        },
+        {
+          title: "Video Brief: Cross-Repo Remediation Workflows with Verification",
+          thesis: "C",
+          target_segment: "Banks",
+          target_persona: "VP Engineering",
+          funnel_stage: "validation",
+          channel: "long_video",
+          why_now: "Now",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "Official remediation story",
+              source: "gitlab.com",
+              url: "https://about.gitlab.com/releases/2026/03/19/gitlab-18-10-released/",
+              date: "2026-02-28",
+            },
+          ],
+          core_claim: "Claim",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["play"],
+          distribution_plan: {
+            primary_format: "Video",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.88,
+        },
+      ],
+    };
+
+    const out = postProcessContentIdeasOutput(payload);
+    expect(out.ideas).toHaveLength(2);
+    expect(out.ideas.map((idea) => idea.title)).toContain(
+      "Talk Track: Governance, Compliance, and Verification for AI Code Changes",
+    );
+    expect(out.ideas.map((idea) => idea.title)).toContain(
+      "Video Brief: Cross-Repo Remediation Workflows with Verification",
+    );
+  });
 });

@@ -8,8 +8,18 @@ vi.mock("../../../src/lib/pipeline/agentRank", () => ({
   rankForAgent: vi.fn(),
 }));
 
+vi.mock("../../../src/lib/llm/completion", () => ({
+  createChatCompletion: vi.fn(),
+}));
+
+vi.mock("../../../src/lib/llm/config", () => ({
+  hasLLMConfigured: vi.fn(),
+}));
+
 import { retrieveForAgent } from "../../../src/lib/pipeline/agentRetrieval";
 import { rankForAgent } from "../../../src/lib/pipeline/agentRank";
+import { createChatCompletion } from "../../../src/lib/llm/completion";
+import { hasLLMConfigured } from "../../../src/lib/llm/config";
 import { CURATOR_TRACE_SCHEMA_VERSION } from "../../../src/lib/retrieval/curator-trace";
 import { generateMarketBrief } from "../../../src/lib/agents/market-brief";
 import { generateContentIdeas } from "../../../src/lib/agents/content-ideas";
@@ -57,6 +67,8 @@ describe("structured gtm agents", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(hasLLMConfigured).mockReturnValue(false);
+    delete process.env.AGENT_LLM_TIMEOUT_MS;
     vi.mocked(rankForAgent).mockImplementation(async (goal, _docs, options) => {
       const result = rankedDocs as Awaited<ReturnType<typeof rankForAgent>>;
       if (options?.rankingTrace) {
@@ -236,6 +248,21 @@ describe("structured gtm agents", () => {
     expect(out.executive_delta[0].title).toBe("Enterprise coding assistant adds BYOK audit controls");
   });
 
+  it("includes market brief pipeline_trace when enabled", async () => {
+    const out = await generateMarketBrief({ periodDays: 14, maxItems: 5, pipelineTrace: true });
+    expect(out.pipeline_trace).toBeDefined();
+    expect(out.pipeline_trace?.schemaVersion).toBe(CURATOR_TRACE_SCHEMA_VERSION);
+    expect(out.pipeline_trace?.retrieval.goal).toBe("market_brief");
+    expect(out.pipeline_trace?.ranking.goal).toBe("market_brief");
+    expect(out.pipeline_trace?.ranking.documents.length).toBeGreaterThan(0);
+    expect(out.pipeline_trace?.selection.maxItems).toBe(5);
+    expect(out.pipeline_trace?.selection.scored_count).toBeGreaterThan(0);
+    expect(out.pipeline_trace?.interpretable_steps?.length).toBeGreaterThan(2);
+
+    const traceArgs = vi.mocked(retrieveForAgent).mock.calls.map((c) => c[1]);
+    expect(traceArgs.every((opts) => opts?.trace != null)).toBe(true);
+  });
+
   it("generates content ideas with sources and distribution plan", async () => {
     const out = await generateContentIdeas({ periodDays: 30, numIdeas: 5 });
     expect(out.periodDays).toBe(30);
@@ -269,14 +296,356 @@ describe("structured gtm agents", () => {
     expect(traceArgs.every((opts) => opts?.trace != null)).toBe(true);
   });
 
-  it("builds content ideas from market brief + competitor intel pools", async () => {
+  it("builds content ideas from market, competitor, and Sourcegraph content pools", async () => {
     vi.mocked(retrieveForAgent).mockResolvedValue([]);
     await generateContentIdeas({ periodDays: 30, numIdeas: 3, focus: "mcp" });
 
     const goalsQueried = vi.mocked(retrieveForAgent).mock.calls.map((c) => c[0]);
     expect(goalsQueried).toContain("market_brief");
     expect(goalsQueried).toContain("competitor_intel");
-    expect(goalsQueried).not.toContain("content_ideas");
+    expect(goalsQueried).toContain("content_ideas");
+  });
+
+  it("retains Sourcegraph retrieval context for LLM synthesis even when ranked results are external", async () => {
+    const sourcegraphDoc = {
+      source: "web" as const,
+      url: "https://sourcegraph.com/blog/deep-search-for-enterprise-codebases",
+      title: "Deep Search for enterprise codebases",
+      snippet: "Sourcegraph product context for code search, deep search, and repository navigation.",
+      metadata: { primarySource: "include_domains" },
+      publishedAt: new Date("2026-03-20"),
+    };
+    const marketDoc = {
+      source: "web" as const,
+      url: "https://about.gitlab.com/releases/2026/03/21/agentic-ai-code-migration/",
+      title: "GitLab adds code migration workflow for platform engineering teams",
+      snippet:
+        "Release includes cross-repo migration, repository context, developer platform controls, and verification for large codebases.",
+      metadata: {},
+      baseScore: 0.94,
+      goalScore: 0.95,
+      agentScore: 0.94,
+      features: {
+        competitorMatch: 0.5,
+        formatType: 0.8,
+        icpMatch: 0.9,
+        recency: 0.95,
+        trendLandscape: 0.5,
+      },
+      publishedAt: new Date("2026-03-21"),
+    };
+
+    vi.mocked(retrieveForAgent).mockImplementation(async (goal) => {
+      if (goal === "content_ideas") return [sourcegraphDoc];
+      return [];
+    });
+    vi.mocked(rankForAgent).mockResolvedValue([marketDoc] as Awaited<ReturnType<typeof rankForAgent>>);
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    let parsedPrompt: unknown;
+    vi.mocked(createChatCompletion).mockImplementation(async (request) => {
+      const userPrompt = request.messages.find((message) => message.role === "user")?.content;
+      parsedPrompt = JSON.parse(String(userPrompt));
+
+      return {
+        content: JSON.stringify({
+          ideas: [
+            {
+              title: "What GitLab's migration push means for enterprise platform teams",
+              thesis: "Language modernization is becoming a repeatable platform program instead of a repo-by-repo cleanup task.",
+              target_segment: "Banks",
+              target_persona: "VP Engineering",
+              funnel_stage: "validation",
+              channel: "blog",
+              why_now: "Cloudflare's migration signal creates a concrete, timely hook for platform leaders planning large-scale language change.",
+              core_claim: "The hard part is not code generation; it is cross-repo sequencing, verification, and rollout.",
+              key_insights: [
+                "Migration work exposes cross-repo dependencies that assistant-only workflows miss.",
+              ],
+              content_outline: [
+                "Why large-scale language modernization is now a platform concern",
+              ],
+              source_urls: [marketDoc.url],
+              sourcegraph_angle: [
+                "Use Sourcegraph search and navigation to scope migration blast radius before execution.",
+              ],
+              recommended_venue: "Sourcegraph blog",
+              channel_strategy: "Package as a mid-funnel technical POV piece.",
+              setup_steps: ["Draft around one representative migration scenario."],
+            },
+          ],
+        }),
+      } as Awaited<ReturnType<typeof createChatCompletion>>;
+    });
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
+
+    expect(parsedPrompt).toMatchObject({
+      sourcegraph_context: [
+        {
+          title: sourcegraphDoc.title,
+          url: sourcegraphDoc.url,
+          source: "sourcegraph.com",
+        },
+      ],
+    });
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].title).toContain("GitLab");
+    expect(out.ideas[0].sources[0]?.url).toBe(marketDoc.url);
+  });
+
+  it("recovers Sourcegraph context from a wider retrieval window when the short window has none", async () => {
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    const marketDoc = {
+      source: "web" as const,
+      url: "https://github.blog/changelog/2026-03-25-github-copilot-for-jira-public-preview-enhancements",
+      title: "GitHub Copilot for Jira public preview enhancements",
+      snippet: "Copilot is moving deeper into engineering workflow automation.",
+      metadata: {},
+      publishedAt: new Date("2026-03-25"),
+    };
+    const sourcegraphDoc = {
+      source: "web" as const,
+      url: "https://sourcegraph.com/blog/how-mcp-connects-agents-to-codebase-context",
+      title: "How MCP connects agents to codebase context",
+      snippet: "Sourcegraph MCP and Deep Search connect coding agents to cross-repo context.",
+      metadata: { primarySource: "include_domains" },
+      publishedAt: undefined,
+    };
+
+    vi.mocked(retrieveForAgent)
+      .mockResolvedValueOnce([marketDoc] as Awaited<ReturnType<typeof retrieveForAgent>>)
+      .mockResolvedValueOnce([] as Awaited<ReturnType<typeof retrieveForAgent>>)
+      .mockResolvedValueOnce([marketDoc] as Awaited<ReturnType<typeof retrieveForAgent>>)
+      .mockResolvedValueOnce([sourcegraphDoc] as Awaited<ReturnType<typeof retrieveForAgent>>);
+
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          ...rankedDocs[0],
+          url: marketDoc.url,
+          title: marketDoc.title,
+          snippet: marketDoc.snippet,
+          publishedAt: marketDoc.publishedAt,
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
+
+    expect(vi.mocked(retrieveForAgent)).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(retrieveForAgent).mock.calls[3]?.[1]).toMatchObject({
+      periodDays: 365,
+      maxEnrich: 0,
+    });
+  });
+
+  it("parses Claude-style fenced JSON synthesis with surrounding prose", async () => {
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/repository-context-for-enterprise-agents",
+          title: "Repository context for enterprise coding agents",
+          snippet:
+            "Platform teams need repository context, cross-repo understanding, and governed AI coding workflows.",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-20"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+    vi.mocked(createChatCompletion).mockResolvedValueOnce({
+      content: `Here are the strongest ideas.
+
+\`\`\`json
+{
+  "ideas": [
+    {
+      "title": "Why AI Coding Tools Need Cross-Repo Context",
+      "thesis": "AI coding velocity exposes the limits of single-repo understanding in large engineering organizations.",
+      "target_segment": "Banks",
+      "target_persona": "VP Engineering",
+      "funnel_stage": "validation",
+      "channel": "blog",
+      "why_now": "Recent platform and coding-agent signals make context quality a live budget and architecture question.",
+      "core_claim": "Cross-repo context is becoming the limiting infrastructure layer for AI coding adoption.",
+      "key_insights": ["Repository context is now an engineering systems issue, not just a prompt issue."],
+      "content_outline": ["Why single-repo AI workflows break in multi-repo environments."],
+      "source_urls": ["https://about.gitlab.com/blog/repository-context-for-enterprise-agents"],
+      "sourcegraph_angle": ["Use Sourcegraph search and navigation to ground agent workflows before generation."],
+      "recommended_venue": "Sourcegraph blog",
+      "channel_strategy": "Use as a technical POV asset for platform leaders.",
+      "setup_steps": ["Draft around one concrete cross-repo workflow failure mode."]
+    }
+  ]
+}
+\`\`\`
+
+Use whichever fits best.`,
+      model: "claude-sonnet-4-6",
+    });
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].title).toBe("Why AI Coding Tools Need Cross-Repo Context");
+    expect(out.llm_debug?.structured_synthesis_timed_out).toBeUndefined();
+  });
+
+  it("parses lenient Claude JSON with trailing commas", async () => {
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/repository-context-for-enterprise-agents",
+          title: "Repository context for enterprise coding agents",
+          snippet:
+            "Platform teams need repository context, cross-repo understanding, and governed AI coding workflows.",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-20"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+    vi.mocked(createChatCompletion).mockResolvedValueOnce({
+      content: `\`\`\`json
+{
+  ideas: [
+    {
+      title: "Why AI Coding Context Breaks at Repo Boundaries",
+      thesis: "AI-assisted development in large enterprises fails when context stops at a single repository.",
+      target_segment: "Banks",
+      target_persona: "VP Engineering",
+      funnel_stage: "validation",
+      channel: "blog",
+      why_now: "Recent coding-agent signals expose the gap between generation speed and codebase understanding.",
+      core_claim: "Repository context is now core infrastructure for AI coding quality.",
+      key_insights: ["Cross-repo context is the limiting factor."],
+      content_outline: ["What breaks when AI only sees one repo."],
+      source_urls: ["https://about.gitlab.com/blog/repository-context-for-enterprise-agents"],
+      sourcegraph_angle: ["Ground agent workflows in Sourcegraph search before generation."],
+      recommended_venue: "Sourcegraph blog",
+      channel_strategy: "Use as a technical POV piece.",
+      setup_steps: ["Anchor the piece on one large-codebase failure mode."],
+    },
+  ],
+}
+\`\`\``,
+      model: "claude-sonnet-4-6",
+    });
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].title).toBe("Why AI Coding Context Breaks at Repo Boundaries");
+  });
+
+  it("extracts the ideas array even when the outer Claude object wrapper is malformed", async () => {
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/repository-context-for-enterprise-agents",
+          title: "Repository context for enterprise coding agents",
+          snippet:
+            "Platform teams need repository context, cross-repo understanding, and governed AI coding workflows.",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-20"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+    vi.mocked(createChatCompletion).mockResolvedValueOnce({
+      content: `\`\`\`json
+{
+  "ideas": [
+    {
+      "title": "Why Your AI Coding Tools Hit a Wall at the Repo Boundary",
+      "thesis": "Enterprise AI coding gains flatten when context stops at a single repository.",
+      "target_segment": "Banks",
+      "target_persona": "VP Engineering",
+      "funnel_stage": "validation",
+      "channel": "blog",
+      "why_now": "New coding-agent adoption data makes repo-boundary failures newly visible.",
+      "core_claim": "Cross-repo context is becoming the limiting layer for AI coding effectiveness.",
+      "key_insights": ["Single-repo context breaks down in enterprise codebases."],
+      "content_outline": ["What enterprise teams learn when AI only sees one repo."],
+      "source_urls": ["https://about.gitlab.com/blog/repository-context-for-enterprise-agents"],
+      "sourcegraph_angle": ["Use Sourcegraph to ground cross-repo retrieval before generation."],
+      "recommended_venue": "Sourcegraph blog",
+      "channel_strategy": "Use as a mid-funnel technical POV asset.",
+      "setup_steps": ["Anchor the piece on one multi-repo workflow failure."]
+    }
+  ],
+  "notes": "draft follows"
+  trailing: true
+}
+\`\`\``,
+      model: "claude-sonnet-4-6",
+    });
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].title).toBe("Why Your AI Coding Tools Hit a Wall at the Repo Boundary");
+  });
+
+  it("falls back to heuristic ideas when structured synthesis times out", async () => {
+    vi.useFakeTimers();
+    process.env.AGENT_LLM_TIMEOUT_MS = "5";
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    vi.mocked(createChatCompletion).mockImplementationOnce(() => new Promise(() => {}));
+
+    const outPromise = generateContentIdeas({ periodDays: 14, numIdeas: 2 });
+    await vi.advanceTimersByTimeAsync(10);
+    const out = await outPromise;
+
+    expect(out.ideas.length).toBeGreaterThan(0);
+    expect(out.llm_debug?.structured_synthesis_timed_out).toBe(true);
+    expect(vi.mocked(createChatCompletion)).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("marks provider timeout fallback so the report writer can skip a second LLM call", async () => {
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    vi
+      .mocked(createChatCompletion)
+      .mockRejectedValueOnce(new Error("openai completion timed out after 5000ms"));
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 2 });
+
+    expect(out.ideas.length).toBeGreaterThan(0);
+    expect(out.llm_debug?.structured_synthesis_timed_out).toBe(true);
   });
 
   it("does not reintroduce guardrail-violating candidates during short-window backfill", async () => {
@@ -776,8 +1145,8 @@ describe("structured gtm agents", () => {
       return new URL(url).hostname.replace(/^www\./, "");
     });
 
-    expect(primaryDomains).toContain("about.gitlab.com");
-    expect(primaryDomains).toContain("infoq.com");
+    expect(new Set(primaryDomains).size).toBe(primaryDomains.length);
+    expect(primaryDomains.some((domain) => domain === "about.gitlab.com" || domain === "infoq.com")).toBe(true);
   });
 
   it("filters weak general-interest secondary domains from short-window primary hooks", async () => {
@@ -959,6 +1328,243 @@ describe("structured gtm agents", () => {
     const channels = out.ideas.map((i) => i.channel);
     expect(channels.length).toBeGreaterThan(0);
     expect(channels.every((c) => c !== "event_talk")).toBe(true);
+  });
+
+  it("does not use discussion threads or broad business press as short-window idea anchors", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/releases/2026/03/19/gitlab-18-10-released/",
+          title: "GitLab 18.10 released with agentic SAST FP detection and free-tier Duo credits",
+          snippet: "Official release with security workflow details for engineering teams",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.94,
+          features: { competitorMatch: 0.7, formatType: 0.4, icpMatch: 0.9, recency: 0.96, trendLandscape: 0.38 },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://github.com/codemod/codemod",
+          title: "Codemod CLI for cross-repo remediation and migration",
+          snippet: "Official repository for large-scale transformations and migration workflows",
+          metadata: {},
+          baseScore: 0.94,
+          goalScore: 0.94,
+          agentScore: 0.93,
+          features: { competitorMatch: 0.68, formatType: 0.44, icpMatch: 0.88, recency: 0.95, trendLandscape: 0.37 },
+          publishedAt: new Date("2026-03-13"),
+        },
+        {
+          source: "web" as const,
+          url: "https://sourcegraph.com/blog/webinar-repository-context-platform-teams",
+          title: "Webinar: repository context for platform teams in large codebases",
+          snippet: "Customer walkthrough and implementation guidance for cross-repo context",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.9,
+          agentScore: 0.89,
+          features: { competitorMatch: 0.5, formatType: 0.6, icpMatch: 0.85, recency: 0.94, trendLandscape: 0.34 },
+          publishedAt: new Date("2026-03-18"),
+        },
+        {
+          source: "web" as const,
+          url: "https://github.com/org/repo/discussions/182182",
+          title: "Locking Down GitHub Enterprise: A Security-First Approach That Actually Works",
+          snippet: "Community discussion about enterprise security posture",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: { competitorMatch: 0.65, formatType: 0.3, icpMatch: 0.84, recency: 0.95, trendLandscape: 0.32 },
+          publishedAt: new Date("2026-03-15"),
+        },
+        {
+          source: "web" as const,
+          url: "https://www.techcrunch.com/2026/03/23/delve-fake-compliance/",
+          title: "Delve accused of misleading customers with fake compliance",
+          snippet: "Business press coverage of a compliance controversy",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.92,
+          agentScore: 0.91,
+          features: { competitorMatch: 0.55, formatType: 0.3, icpMatch: 0.8, recency: 0.97, trendLandscape: 0.33 },
+          publishedAt: new Date("2026-03-23"),
+        },
+        {
+          source: "web" as const,
+          url: "https://reddit.com/r/programming/comments/xyz/hot_take_apps/",
+          title: "Hot take: We're building apps for a world that's about to stop using them",
+          snippet: "Community debate about AI and the future of app development",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: { competitorMatch: 0.4, formatType: 0.2, icpMatch: 0.74, recency: 0.98, trendLandscape: 0.31 },
+          publishedAt: new Date("2026-03-23"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 4 });
+    const sourceUrls = out.ideas.flatMap((idea) => idea.sources.map((source) => source.url));
+    const primarySourceUrls = out.ideas.map((idea) => idea.sources[0]?.url ?? "");
+    expect(sourceUrls.some((url) => url.includes("/discussions/"))).toBe(false);
+    expect(sourceUrls.some((url) => url.includes("reddit.com"))).toBe(false);
+    expect(primarySourceUrls.some((url) => url.includes("techcrunch.com"))).toBe(false);
+    expect(
+      primarySourceUrls.some(
+        (url) =>
+          url.includes("about.gitlab.com") ||
+          url.includes("github.com/codemod/codemod") ||
+          url.includes("sourcegraph.com"),
+      ),
+    ).toBe(true);
+  });
+
+  it("caps repeated short-window narratives and keeps channel spread when alternatives exist", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://vendor-a.example.com/repository-context-control-layer",
+          title: "Repository context as the control layer for coding agents",
+          snippet: "Guide for multi-repo retrieval and MCP grounding in large codebases",
+          metadata: {},
+          baseScore: 0.96,
+          goalScore: 0.96,
+          agentScore: 0.95,
+          features: { competitorMatch: 0.7, formatType: 0.45, icpMatch: 0.92, recency: 0.95, trendLandscape: 0.38 },
+          publishedAt: new Date("2026-03-22"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-b.example.com/deep-search-repository-context",
+          title: "Code Search, Deep Search, and repository context for platform teams",
+          snippet: "Docs and benchmarks for precise cross-repo retrieval",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.94,
+          features: { competitorMatch: 0.68, formatType: 0.4, icpMatch: 0.9, recency: 0.94, trendLandscape: 0.37 },
+          publishedAt: new Date("2026-03-21"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-c.example.com/codemod-migration-webinar",
+          title: "Webinar: cross-repo remediation and migration with codemods",
+          snippet: "Customer migration story with verification checkpoints",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: { competitorMatch: 0.64, formatType: 0.6, icpMatch: 0.88, recency: 0.93, trendLandscape: 0.36 },
+          publishedAt: new Date("2026-03-20"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-d.example.com/governance-one-pager",
+          title: "One-pager: governance and auditability for AI code changes",
+          snippet: "Security controls, audit logs, and policy enforcement for enterprise rollouts",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.92,
+          agentScore: 0.91,
+          features: { competitorMatch: 0.6, formatType: 0.5, icpMatch: 0.86, recency: 0.92, trendLandscape: 0.35 },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://vendor-e.example.com/onboarding-video-large-codebases",
+          title: "Video walkthrough: onboarding in large multi-repo codebases",
+          snippet: "Knowledge transfer and navigation workflow for new engineers",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: { competitorMatch: 0.55, formatType: 0.6, icpMatch: 0.84, recency: 0.91, trendLandscape: 0.34 },
+          publishedAt: new Date("2026-03-18"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 4 });
+    expect(out.ideas.length).toBeGreaterThanOrEqual(2);
+    const retrievalContextTitles = out.ideas.filter((idea) =>
+      /(repository context|deep search|code search|mcp)/i.test(idea.title),
+    );
+    expect(retrievalContextTitles.length).toBeLessThanOrEqual(1);
+    const channels = new Set(out.ideas.map((idea) => idea.channel));
+    expect(channels.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("caps governance-heavy short-window output when other frames are available", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://github.blog/security/application-security/github-expands-application-security-coverage-with-ai-powered-detections/",
+          title: "GitHub expands application security coverage with AI-powered detections",
+          snippet: "Security verification and AI-assisted code review controls",
+          metadata: {},
+          baseScore: 0.94,
+          goalScore: 0.94,
+          agentScore: 0.93,
+          features: { competitorMatch: 0.68, formatType: 0.4, icpMatch: 0.88, recency: 0.95, trendLandscape: 0.36 },
+          publishedAt: new Date("2026-03-23"),
+        },
+        {
+          source: "web" as const,
+          url: "https://blog.cloudflare.com/ai-governance-controls-for-code-changes/",
+          title: "Enterprise controls for AI-generated code changes",
+          snippet: "Auditability, policy, and verification for engineering teams",
+          metadata: {},
+          baseScore: 0.93,
+          goalScore: 0.93,
+          agentScore: 0.92,
+          features: { competitorMatch: 0.62, formatType: 0.38, icpMatch: 0.86, recency: 0.94, trendLandscape: 0.35 },
+          publishedAt: new Date("2026-03-22"),
+        },
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/releases/2026/03/19/gitlab-18-10-released/",
+          title: "GitLab 18.10 released with agentic SAST FP detection and free-tier Duo credits",
+          snippet: "Cross-repo agent context and developer workflow implications for platform teams",
+          metadata: {},
+          baseScore: 0.92,
+          goalScore: 0.92,
+          agentScore: 0.91,
+          features: { competitorMatch: 0.66, formatType: 0.42, icpMatch: 0.87, recency: 0.93, trendLandscape: 0.35 },
+          publishedAt: new Date("2026-03-19"),
+        },
+        {
+          source: "web" as const,
+          url: "https://github.com/codemod/codemod",
+          title: "Codemod CLI for cross-repo remediation and migration",
+          snippet: "Large-scale migration and remediation workflow across repositories",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.91,
+          agentScore: 0.9,
+          features: { competitorMatch: 0.64, formatType: 0.45, icpMatch: 0.86, recency: 0.92, trendLandscape: 0.34 },
+          publishedAt: new Date("2026-03-13"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 4 });
+    const governanceIdeas = out.ideas.filter((idea) =>
+      /(governance|audit-ready|compliance)/i.test(idea.title),
+    );
+    expect(governanceIdeas.length).toBeLessThanOrEqual(1);
+    expect(
+      out.ideas.some((idea) => !/(governance|audit-ready|compliance)/i.test(idea.title)),
+    ).toBe(true);
   });
 
   it("excludes off-topic web docs from content ideas via relevance gate", async () => {

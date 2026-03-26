@@ -67,6 +67,18 @@ describe("competitor intel quality pass", () => {
     expect(item.update_type).toBe("product_launch");
   });
 
+  it("downgrades versioned release-note entries to product updates", () => {
+    const [item] = postProcessCompetitorIntelItems([
+      makeItem({
+        title: "Copilot CLI 1.0.10 Release Notes",
+        summary: "Changelog for Copilot CLI v1.0.10 with smaller fixes and improvements.",
+        why_it_matters: "Routine versioned release within the existing CLI product line.",
+        update_type: "product_launch",
+      }),
+    ]);
+    expect(item.update_type).toBe("product_update");
+  });
+
   it("drops entries with invalid URLs", () => {
     const items = postProcessCompetitorIntelItems([makeItem({ url: "not-a-url" })]);
     expect(items).toHaveLength(0);
@@ -84,5 +96,17 @@ describe("competitor intel markdown format", () => {
 
     expect(markdown).toContain("https://cursor.com/blog/composer-1-5");
     expect(markdown).toContain("No evidence notes captured");
+  });
+
+  it("uses plain item headings without ordinal numbers", () => {
+    const markdown = formatCompetitorIntelMarkdown("Competitor Intel Agent Report", {
+      generatedAt: "2026-02-28T00:00:00.000Z",
+      periodDays: 30,
+      topPerCompetitor: 5,
+      items: [makeItem({ title: "Composer 2 ships governance controls" })],
+    });
+
+    expect(markdown).toContain("### Composer 2 ships governance controls");
+    expect(markdown).not.toContain("### 1. Composer 2 ships governance controls");
   });
 });

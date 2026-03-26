@@ -8,6 +8,7 @@
 import { createChatCompletion } from "../llm/completion";
 import { hasLLMConfigured } from "../llm/config";
 import { logger } from "../logger";
+import { isAgentLlmTimeoutError, withAgentLlmTimeout } from "./llm-timeout";
 import type { MarketBriefOutput } from "./market-brief";
 import type { ContentIdeasOutput } from "./content-ideas";
 import type { RankedCompetitorIntelItem } from "./competitor-intel";
@@ -15,8 +16,18 @@ import type { RankedCompetitorIntelItem } from "./competitor-intel";
 const MAX_ITEM_TITLE = 120;
 const MAX_ITEM_SUMMARY = 280;
 const MAX_PAYLOAD_ITEMS = 20;
-const MAX_CONTENT_IDEAS = 12;
+const MAX_CONTENT_IDEAS = 6;
 const MAX_COMPETITOR_ITEMS = 35;
+
+function getContentIdeasLlmModel(): string | undefined {
+  const override = process.env.CONTENT_IDEAS_LLM_MODEL?.trim();
+  if (override) return override;
+  return process.env.OPENAI_API_KEY?.trim() ? "gpt-4o-mini" : undefined;
+}
+
+function stoppedForLength(reason?: string): boolean {
+  return reason === "length" || reason === "max_tokens";
+}
 
 function truncate(s: string, max: number): string {
   const t = (s ?? "").trim();
@@ -69,24 +80,30 @@ function buildContentIdeasContext(payload: ContentIdeasOutput): string {
   const ideas = payload.ideas.slice(0, MAX_CONTENT_IDEAS).map((d, i) => ({
     n: i + 1,
     title: truncate(d.title, MAX_ITEM_TITLE),
-    thesis: truncate(d.thesis, MAX_ITEM_SUMMARY),
+    thesis: truncate(d.thesis, 180),
     segment_persona: `${d.target_segment} / ${d.target_persona}`,
     stage: d.funnel_stage,
-    why_now: truncate(d.why_now, 120),
-    core_claim: truncate(d.core_claim, 150),
-    key_insights: (d.key_insights ?? []).slice(0, 2).map((s) => truncate(s, 100)),
-    content_outline: (d.content_outline ?? []).slice(0, 2).map((s) => truncate(s, 100)),
-    integration_play: (d.sourcegraph_integration_play ?? []).slice(0, 2),
+    why_now: truncate(d.why_now, 90),
+    core_claim: truncate(d.core_claim, 110),
+    key_insights: (d.key_insights ?? []).slice(0, 1).map((s) => truncate(s, 90)),
+    content_outline: (d.content_outline ?? []).slice(0, 1).map((s) => truncate(s, 90)),
+    integration_play: (d.sourcegraph_integration_play ?? []).slice(0, 1),
     primary_format: d.distribution_plan?.primary_format,
-    sources: (d.sources ?? []).slice(0, 3).map((s) => ({
+    sources: (d.sources ?? []).slice(0, 2).map((s) => ({
       source: s.source,
-      title: truncate(s.title, 110),
+      title: truncate(s.title, 80),
       url: s.url,
       date: s.date,
     })),
   }));
   return JSON.stringify(
-    { period, playbook_version: payload.playbook_version, generated_at: payload.generated_at, ideas },
+    {
+      period,
+      playbook_version: payload.playbook_version,
+      generated_at: payload.generated_at,
+      llm_debug: payload.llm_debug,
+      ideas,
+    },
     null,
     0
   );
@@ -135,12 +152,16 @@ function buildCompetitorIntelContext(items: RankedCompetitorIntelItem[], periodD
     title: truncate(d.title, MAX_ITEM_TITLE),
     date: d.date,
     source: d.source,
+    source_type: d.source_type,
     url: d.url,
+    confidence: d.confidence,
+    update_type: d.update_type,
     summary: truncate(d.summary, MAX_ITEM_SUMMARY),
     overlap: d.overlap_with_sourcegraph,
     why_it_matters: truncate(d.why_it_matters, 120),
     integration: d.integration_opportunity,
     actionability: d.actionability,
+    evidence_notes: d.evidence_notes.slice(0, 3),
   }));
   return JSON.stringify({ periodDays, items: list }, null, 0);
 }
@@ -148,8 +169,9 @@ function buildCompetitorIntelContext(items: RankedCompetitorIntelItem[], periodD
 const COMPETITOR_INTEL_SYSTEM = `You are a competitive intelligence analyst for a developer tools company (Sourcegraph: code search, code intelligence, AI-assisted development). Your job is to write a Competitor Intel report in markdown.
 
 Rules:
-- Group items by competitor (use ## CompetitorName section headers). For each item use: ### N. Title, then bullets for Date/source, Link, Confidence, Update type, Overlap with Sourcegraph, Summary, Why it matters, Sourcegraph opportunity, Sourcegraph integration play, Actionability, and optionally Evidence notes in a collapsible detail.
+- Group items by competitor (use ## CompetitorName section headers). For each item use: ### Title, then bullets for Date/source, Link, Confidence, Update type, Overlap with Sourcegraph, Summary, Why it matters, Sourcegraph opportunity, Sourcegraph integration play, Actionability, and optionally Evidence notes in a collapsible detail.
 - Include only items that are clearly about competitors or the ecosystem relevant to code search / code intelligence / AI coding. Drop off-topic or spam.
+- Do not overstate minor releases. Treat patch-version release notes, changelog entries, and routine repo releases as product updates unless the input explicitly says a new product, preview, beta, or GA launched.
 - Do not invent URLs; use only those provided. Preserve links from the context.`;
 
 /**
@@ -180,20 +202,28 @@ ${payload.periodDays != null ? `Period: last ${payload.periodDays} days` : ""}
 Then write ## Executive Delta, ## Watch Items, and if applicable ## Invalidations To Monitor. Use only the information from the JSON above; do not invent items or links.`;
 
   try {
-    const res = await createChatCompletion({
-      messages: [
-        { role: "system", content: MARKET_BRIEF_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 4000,
-    });
+    const res = await withAgentLlmTimeout(
+      "market brief report writer",
+      createChatCompletion({
+        messages: [
+          { role: "system", content: MARKET_BRIEF_SYSTEM },
+          { role: "user", content: user },
+        ],
+        max_tokens: 4000,
+      }),
+    );
     const raw = (res.content ?? "").trim();
     if (!raw) return null;
     return stripDroppedIdeasSection(raw);
   } catch (e) {
-    logger.warn("LLM market brief synthesis failed, will use template fallback", {
+    logger.warn(
+      isAgentLlmTimeoutError(e)
+        ? "LLM market brief synthesis timed out, will use template fallback"
+        : "LLM market brief synthesis failed, will use template fallback",
+      {
       error: e instanceof Error ? e.message : String(e),
-    });
+      },
+    );
     return null;
   }
 }
@@ -206,6 +236,13 @@ export async function writeContentIdeasWithLLM(
   title: string
 ): Promise<string | null> {
   if (!hasLLMConfigured()) return null;
+  if (payload.llm_debug?.structured_synthesis_timed_out) {
+    logger.info("Skipping content ideas report writer after structured synthesis timeout", {
+      generated_at: payload.generated_at,
+      periodDays: payload.periodDays ?? null,
+    });
+    return null;
+  }
   const context = buildContentIdeasContext(payload);
   const user = `Write the Content Ideas report in markdown.
 
@@ -215,7 +252,7 @@ Playbook version: ${payload.playbook_version}
 Generated: ${payload.generated_at}
 
 Structured candidate ideas (drop off-topic; keep only GTM-relevant; you may shorten the list):
-Structured candidate ideas (drop off-topic; keep only source-grounded and audience-relevant; you may shorten the list):
+Keep only source-grounded and audience-relevant ideas:
 
 ${context}
 
@@ -227,20 +264,29 @@ ${payload.periodDays != null ? `Period: last ${payload.periodDays} days` : ""}
 Then write ## Prioritized Ideas. Use only the information from the JSON above; do not invent items or links.`;
 
   try {
-    const res = await createChatCompletion({
-      messages: [
-        { role: "system", content: CONTENT_IDEAS_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 4000,
-    });
+    const res = await withAgentLlmTimeout(
+      "content ideas report writer",
+      createChatCompletion({
+        messages: [
+          { role: "system", content: CONTENT_IDEAS_SYSTEM },
+          { role: "user", content: user },
+        ],
+        model: getContentIdeasLlmModel(),
+        max_tokens: 2200,
+      }),
+    );
     const raw = (res.content ?? "").trim();
     if (!raw) return null;
     return raw;
   } catch (e) {
-    logger.warn("LLM content ideas synthesis failed, will use template fallback", {
+    logger.warn(
+      isAgentLlmTimeoutError(e)
+        ? "LLM content ideas synthesis timed out, will use template fallback"
+        : "LLM content ideas synthesis failed, will use template fallback",
+      {
       error: e instanceof Error ? e.message : String(e),
-    });
+      },
+    );
     return null;
   }
 }
@@ -270,23 +316,37 @@ Start the report with: # ${title}
 Then: Generated: ${generatedAt}
 Window: last ${periodDays} days
 
-Then write one ## CompetitorName section per competitor, with ### N. Title and bullets for each item. Use only the information from the JSON above; do not invent items or links.`;
+Then write one ## CompetitorName section per competitor, with ### Title and bullets for each item. Use only the information from the JSON above; do not invent items or links.`;
 
   try {
-    const res = await createChatCompletion({
-      messages: [
-        { role: "system", content: COMPETITOR_INTEL_SYSTEM },
-        { role: "user", content: user },
-      ],
-      max_tokens: 4500,
-    });
+    const res = await withAgentLlmTimeout(
+      "competitor intel report writer",
+      createChatCompletion({
+        messages: [
+          { role: "system", content: COMPETITOR_INTEL_SYSTEM },
+          { role: "user", content: user },
+        ],
+        max_tokens: 4500,
+      }),
+    );
     const raw = (res.content ?? "").trim();
     if (!raw) return null;
+    if (stoppedForLength(res.finish_reason)) {
+      logger.warn("LLM competitor intel synthesis hit token limit, will use template fallback", {
+        finish_reason: res.finish_reason,
+      });
+      return null;
+    }
     return raw;
   } catch (e) {
-    logger.warn("LLM competitor intel synthesis failed, will use template fallback", {
+    logger.warn(
+      isAgentLlmTimeoutError(e)
+        ? "LLM competitor intel synthesis timed out, will use template fallback"
+        : "LLM competitor intel synthesis failed, will use template fallback",
+      {
       error: e instanceof Error ? e.message : String(e),
-    });
+      },
+    );
     return null;
   }
 }
