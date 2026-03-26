@@ -16,10 +16,15 @@ vi.mock("../../../src/lib/llm/config", () => ({
   hasLLMConfigured: vi.fn(),
 }));
 
+vi.mock("../../../src/lib/retrieval/webSearch", () => ({
+  searchWeb: vi.fn(),
+}));
+
 import { retrieveForAgent } from "../../../src/lib/pipeline/agentRetrieval";
 import { rankForAgent } from "../../../src/lib/pipeline/agentRank";
 import { createChatCompletion } from "../../../src/lib/llm/completion";
 import { hasLLMConfigured } from "../../../src/lib/llm/config";
+import { searchWeb } from "../../../src/lib/retrieval/webSearch";
 import { CURATOR_TRACE_SCHEMA_VERSION } from "../../../src/lib/retrieval/curator-trace";
 import { generateMarketBrief } from "../../../src/lib/agents/market-brief";
 import { generateContentIdeas } from "../../../src/lib/agents/content-ideas";
@@ -68,6 +73,7 @@ describe("structured gtm agents", () => {
     vi.clearAllMocks();
     vi.mocked(retrieveForAgent).mockResolvedValue([]);
     vi.mocked(hasLLMConfigured).mockReturnValue(false);
+    vi.mocked(searchWeb).mockResolvedValue([]);
     delete process.env.AGENT_LLM_TIMEOUT_MS;
     vi.mocked(rankForAgent).mockImplementation(async (goal, _docs, options) => {
       const result = rankedDocs as Awaited<ReturnType<typeof rankForAgent>>;
@@ -415,8 +421,17 @@ describe("structured gtm agents", () => {
     vi.mocked(retrieveForAgent)
       .mockResolvedValueOnce([marketDoc] as Awaited<ReturnType<typeof retrieveForAgent>>)
       .mockResolvedValueOnce([] as Awaited<ReturnType<typeof retrieveForAgent>>)
-      .mockResolvedValueOnce([marketDoc] as Awaited<ReturnType<typeof retrieveForAgent>>)
-      .mockResolvedValueOnce([sourcegraphDoc] as Awaited<ReturnType<typeof retrieveForAgent>>);
+      .mockResolvedValueOnce([marketDoc] as Awaited<ReturnType<typeof retrieveForAgent>>);
+    vi
+      .mocked(searchWeb)
+      .mockResolvedValueOnce([
+        {
+          title: sourcegraphDoc.title,
+          url: sourcegraphDoc.url,
+          content: sourcegraphDoc.snippet,
+        },
+      ])
+      .mockResolvedValueOnce([]);
 
     vi.mocked(rankForAgent).mockResolvedValue(
       [
@@ -432,10 +447,11 @@ describe("structured gtm agents", () => {
 
     await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
 
-    expect(vi.mocked(retrieveForAgent)).toHaveBeenCalledTimes(4);
-    expect(vi.mocked(retrieveForAgent).mock.calls[3]?.[1]).toMatchObject({
-      periodDays: 365,
-      maxEnrich: 0,
+    expect(vi.mocked(retrieveForAgent)).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(searchWeb)).toHaveBeenCalled();
+    expect(vi.mocked(searchWeb).mock.calls[0]?.[1]).toMatchObject({
+      domains: ["sourcegraph.com", "docs.sourcegraph.com"],
+      timeRange: "year",
     });
   });
 

@@ -1,5 +1,5 @@
 import { retrieveForAgent, type AgentRetrievalTrace, type RetrievedDoc } from "../pipeline/agentRetrieval";
-import type { AgentGoal } from "../../config/agents";
+import { getAgentGoalConfig, type AgentGoal } from "../../config/agents";
 import { rankForAgent, type AgentRankedDoc } from "../pipeline/agentRank";
 import path from "node:path";
 import JSON5 from "next/dist/compiled/json5";
@@ -24,6 +24,7 @@ import { createChatCompletion } from "../llm/completion";
 import { hasLLMConfigured, isClaudeModel } from "../llm/config";
 import { logger } from "../logger";
 import { isAgentLlmTimeoutError, withAgentLlmTimeout } from "./llm-timeout";
+import { searchWeb } from "../retrieval/webSearch";
 
 /**
  * Content ideas: when LLM is configured, "Generate reports" uses retrieve → rank → shortlist (LLM)
@@ -463,6 +464,44 @@ function collectSourcegraphContextDocs(...docSets: RetrievedDoc[][]): RetrievedD
     if (uniqueDocs.length >= 8) break;
   }
   return uniqueDocs;
+}
+
+async function loadSourcegraphContextFallbackDocs(query: string | null | undefined): Promise<RetrievedDoc[]> {
+  const config = getAgentGoalConfig("content_ideas");
+  const includeDomains = config.includeDomains ?? [];
+  const includeTemplates = config.includeDomainsQueryTemplates ?? [];
+  if (includeDomains.length === 0 || includeTemplates.length === 0) return [];
+
+  const queries = query?.trim()
+    ? [query, ...includeTemplates.slice(0, 1)]
+    : includeTemplates.slice(0, 2);
+  const byUrl = new Map<string, RetrievedDoc>();
+
+  for (const q of queries) {
+    const results = await searchWeb(q, {
+      numResults: 4,
+      domains: includeDomains.slice(0, 20),
+      topic: "general",
+      timeRange: "year",
+    });
+    for (const result of results) {
+      const key = canonicalizeUrl(result.url);
+      if (!key || byUrl.has(key)) continue;
+      byUrl.set(key, {
+        source: "web",
+        url: result.url,
+        title: result.title,
+        snippet: result.content,
+        content: result.content,
+        publishedAt: result.publishedDate ? new Date(result.publishedDate) : undefined,
+        metadata: { score: result.score, primarySource: "include_domains_fallback" },
+      });
+      if (byUrl.size >= 8) break;
+    }
+    if (byUrl.size >= 8) break;
+  }
+
+  return Array.from(byUrl.values());
 }
 
 function isGitHubDiscussionLikeUrl(url: string | undefined): boolean {
@@ -3515,12 +3554,7 @@ async function generateContentIdeasImpl(options: {
   const selected = buildSelectionPool(candidates, selectionPoolSize, periodDays);
   let sourcegraphContextDocs = collectSourcegraphContextDocs(contentIdeaDocs, ranked);
   if (sourcegraphContextDocs.length === 0 && !options.retrievalOverride?.contentIdeaDocs) {
-    const sourcegraphFallbackDocs = await retrieveForAgent("content_ideas", {
-      periodDays: Math.max(periodDays, 365),
-      query: options.focus ?? null,
-      maxEnrich: 0,
-      ...(contentPoolRetrievalTrace ? { trace: contentPoolRetrievalTrace } : {}),
-    });
+    const sourcegraphFallbackDocs = await loadSourcegraphContextFallbackDocs(options.focus ?? null);
     sourcegraphContextDocs = collectSourcegraphContextDocs(sourcegraphFallbackDocs, ranked);
     logger.info("Recovered Sourcegraph context docs from wider retrieval window", {
       periodDays,
