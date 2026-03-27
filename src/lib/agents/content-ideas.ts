@@ -2932,7 +2932,7 @@ function isTimedOutError(error: unknown): boolean {
 function getContentIdeasLlmModel(): string | undefined {
   const override = process.env.CONTENT_IDEAS_LLM_MODEL?.trim();
   if (override) return override;
-  return process.env.OPENAI_API_KEY?.trim() ? "gpt-4o-mini" : undefined;
+  return undefined;
 }
 
 async function maybeWriteContentIdeasParseDebugArtifact(rawContent: string): Promise<void> {
