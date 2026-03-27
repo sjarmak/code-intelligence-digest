@@ -79,6 +79,7 @@ describe("llm completion", () => {
     expect(openaiCreateMock).toHaveBeenCalledTimes(1);
     expect(result.content).toBe("fallback response");
     expect(result.model).toBe("gpt-4o-mini");
+    expect(result.provider).toBe("openai");
   });
 
   it("throws when Anthropic times out and OpenAI is unavailable", async () => {

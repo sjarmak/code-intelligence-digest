@@ -509,6 +509,7 @@ describe("structured gtm agents", () => {
 
 Use whichever fits best.`,
       model: "claude-sonnet-4-6",
+      provider: "anthropic",
     });
 
     const out = await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
@@ -516,6 +517,9 @@ Use whichever fits best.`,
     expect(out.ideas).toHaveLength(1);
     expect(out.ideas[0].title).toBe("Why AI Coding Tools Need Cross-Repo Context");
     expect(out.llm_debug?.structured_synthesis_timed_out).toBeUndefined();
+    expect(out.llm_debug?.structured_synthesis?.status).toBe("success");
+    expect(out.llm_debug?.structured_synthesis?.provider).toBe("anthropic");
+    expect(out.llm_debug?.structured_synthesis?.model).toBe("claude-sonnet-4-6");
   });
 
   it("parses lenient Claude JSON with trailing commas", async () => {
@@ -568,6 +572,7 @@ Use whichever fits best.`,
 }
 \`\`\``,
       model: "claude-sonnet-4-6",
+      provider: "anthropic",
     });
 
     const out = await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
@@ -628,6 +633,7 @@ Use whichever fits best.`,
 }
 \`\`\``,
       model: "claude-sonnet-4-6",
+      provider: "anthropic",
     });
 
     const out = await generateContentIdeas({ periodDays: 14, numIdeas: 1 });
@@ -648,6 +654,7 @@ Use whichever fits best.`,
 
     expect(out.ideas.length).toBeGreaterThan(0);
     expect(out.llm_debug?.structured_synthesis_timed_out).toBe(true);
+    expect(out.llm_debug?.structured_synthesis?.status).toBe("timeout");
     expect(vi.mocked(createChatCompletion)).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
@@ -662,6 +669,7 @@ Use whichever fits best.`,
 
     expect(out.ideas.length).toBeGreaterThan(0);
     expect(out.llm_debug?.structured_synthesis_timed_out).toBe(true);
+    expect(out.llm_debug?.structured_synthesis?.status).toBe("timeout");
   });
 
   it("does not reintroduce guardrail-violating candidates during short-window backfill", async () => {

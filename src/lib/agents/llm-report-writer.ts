@@ -235,8 +235,18 @@ export async function writeContentIdeasWithLLM(
   payload: ContentIdeasOutput,
   title: string
 ): Promise<string | null> {
-  if (!hasLLMConfigured()) return null;
+  if (!hasLLMConfigured()) {
+    payload.llm_debug = {
+      ...(payload.llm_debug ?? {}),
+      report_writer: { status: "skipped", error: "LLM not configured" },
+    };
+    return null;
+  }
   if (payload.llm_debug?.structured_synthesis_timed_out) {
+    payload.llm_debug = {
+      ...(payload.llm_debug ?? {}),
+      report_writer: { status: "skipped", error: "Skipped after structured synthesis timeout" },
+    };
     logger.info("Skipping content ideas report writer after structured synthesis timeout", {
       generated_at: payload.generated_at,
       periodDays: payload.periodDays ?? null,
@@ -276,9 +286,35 @@ Then write ## Prioritized Ideas. Use only the information from the JSON above; d
       }),
     );
     const raw = (res.content ?? "").trim();
-    if (!raw) return null;
+    if (!raw) {
+      payload.llm_debug = {
+        ...(payload.llm_debug ?? {}),
+        report_writer: {
+          status: "error",
+          provider: res.provider,
+          model: res.model,
+          error: "Empty content",
+        },
+      };
+      return null;
+    }
+    payload.llm_debug = {
+      ...(payload.llm_debug ?? {}),
+      report_writer: {
+        status: "success",
+        provider: res.provider,
+        model: res.model,
+      },
+    };
     return raw;
   } catch (e) {
+    payload.llm_debug = {
+      ...(payload.llm_debug ?? {}),
+      report_writer: {
+        status: isAgentLlmTimeoutError(e) ? "timeout" : "error",
+        error: e instanceof Error ? e.message : String(e),
+      },
+    };
     logger.warn(
       isAgentLlmTimeoutError(e)
         ? "LLM content ideas synthesis timed out, will use template fallback"

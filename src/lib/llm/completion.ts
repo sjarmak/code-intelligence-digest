@@ -29,6 +29,7 @@ export interface CreateChatCompletionOptions {
 export interface CreateChatCompletionResult {
   content: string;
   model: string;
+  provider: "anthropic" | "openai";
   finish_reason?: string;
 }
 
@@ -159,6 +160,7 @@ async function completeWithAnthropic(
   return {
     content,
     model: response.model,
+    provider: "anthropic",
     finish_reason: response.stop_reason ?? undefined,
   };
 }
@@ -187,6 +189,7 @@ async function completeWithOpenAI(
   return {
     content,
     model: response.model,
+    provider: "openai",
     finish_reason: choice?.finish_reason ?? undefined,
   };
 }

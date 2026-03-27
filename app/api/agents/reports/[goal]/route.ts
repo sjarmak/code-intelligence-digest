@@ -79,11 +79,21 @@ export async function GET(
     const stat = fs.statSync(filePath);
     const generatedAt = stat.mtime.toISOString();
     const reportId = path.basename(filePath, ".md");
+    const metadataPath = filePath.replace(/\.md$/, ".json");
+    let metadata: Record<string, unknown> | null = null;
+    if (fs.existsSync(metadataPath)) {
+      try {
+        metadata = JSON.parse(fs.readFileSync(metadataPath, "utf-8")) as Record<string, unknown>;
+      } catch {
+        metadata = null;
+      }
+    }
     return NextResponse.json({
       goal,
       id: reportId,
       generatedAt,
       content,
+      metadata,
     });
   } catch (error) {
     console.error("Agent report read error", error);

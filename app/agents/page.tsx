@@ -33,6 +33,40 @@ interface ReportDetail {
   id: string;
   generatedAt: string;
   content: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+interface ContentIdeasLlmStageView {
+  status?: string;
+  provider?: string;
+  model?: string;
+  error?: string;
+}
+
+interface ContentIdeasLlmDebugView {
+  structured_synthesis_timed_out?: boolean;
+  structured_synthesis?: ContentIdeasLlmStageView;
+  report_writer?: ContentIdeasLlmStageView;
+  final_output?: string;
+}
+
+function getContentIdeasLlmDebug(meta: Record<string, unknown> | null | undefined): ContentIdeasLlmDebugView | null {
+  if (!meta || typeof meta !== "object") return null;
+  const llmDebug = meta.llmDebug;
+  if (!llmDebug || typeof llmDebug !== "object") return null;
+  return llmDebug as ContentIdeasLlmDebugView;
+}
+
+function formatLlmStageLabel(label: string, stage?: ContentIdeasLlmStageView): string | null {
+  if (!stage?.status) return null;
+  const modelBits = [stage.model, stage.provider ? `via ${stage.provider}` : null].filter(Boolean).join(" ");
+  if (stage.status === "success") return `${label}: ${modelBits || "LLM"}`;
+  if (stage.status === "skipped") return `${label}: skipped`;
+  if (stage.status === "timeout") return `${label}: timeout`;
+  if (stage.status === "parse_fallback") return `${label}: parse fallback`;
+  if (stage.status === "normalization_fallback") return `${label}: normalization fallback`;
+  if (stage.status === "not_configured") return `${label}: LLM not configured`;
+  return `${label}: error`;
 }
 
 export default function AgentReportsPage() {
@@ -229,6 +263,15 @@ export default function AgentReportsPage() {
   };
 
   const reportContentRef = useRef<HTMLDivElement>(null);
+  const contentIdeasLlmDebug = viewing?.goal === "content_ideas" ? getContentIdeasLlmDebug(viewing.metadata) : null;
+  const llmStatusLines = contentIdeasLlmDebug
+    ? [
+        formatLlmStageLabel("Structured synthesis", contentIdeasLlmDebug.structured_synthesis),
+        formatLlmStageLabel("Report writer", contentIdeasLlmDebug.report_writer),
+        contentIdeasLlmDebug.final_output === "template_markdown" ? "Final output: template fallback" : null,
+        contentIdeasLlmDebug.final_output === "llm_report_writer" ? "Final output: LLM-written" : null,
+      ].filter((line): line is string => Boolean(line))
+    : [];
 
   const copyRawMarkdown = async () => {
     if (!viewing) return;
@@ -448,6 +491,18 @@ export default function AgentReportsPage() {
             <p className="text-sm text-gray-500 mt-1">
               Generated: {formatDate(viewing.generatedAt)}
             </p>
+            {llmStatusLines.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {llmStatusLines.map((line) => (
+                  <span
+                    key={line}
+                    className="inline-flex items-center rounded-full border border-gray-300 bg-gray-50 px-2.5 py-1 text-xs text-gray-700"
+                  >
+                    {line}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 mt-3">
               <button
                 type="button"

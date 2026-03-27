@@ -7,6 +7,7 @@ import { getDbClient, getDatabaseUrl } from "../db/driver";
 
 const VALID_GOALS = ["content_ideas", "market_brief", "competitor_intel"] as const;
 let agentReportsUserIdEnsured = false;
+let agentReportsMetadataEnsured = false;
 
 /** True when Postgres is configured and agent reports should be stored in the DB. */
 export function isAgentReportsDbEnabled(): boolean {
@@ -17,6 +18,7 @@ export interface ReportRow {
   goal: string;
   id: string;
   generatedAt: string;
+  metadata?: Record<string, unknown> | null;
 }
 
 const LEGACY_USER_ID = "legacy";
@@ -37,9 +39,25 @@ async function ensureAgentReportsUserIdColumn(): Promise<void> {
   }
 }
 
+async function ensureAgentReportsMetadataColumn(): Promise<void> {
+  if (!isAgentReportsDbEnabled() || agentReportsMetadataEnsured) return;
+  const client = await getDbClient();
+  try {
+    await client.run(`ALTER TABLE agent_reports ADD COLUMN IF NOT EXISTS metadata TEXT`);
+    agentReportsMetadataEnsured = true;
+  } catch {
+    // Ignore: table may not exist yet in some local setups until first write.
+  }
+}
+
 function isMissingUserIdColumn(error: unknown): boolean {
   const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return msg.includes(`column "user_id" does not exist`) || msg.includes("column user_id does not exist");
+}
+
+function isMissingMetadataColumn(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return msg.includes(`column "metadata" does not exist`) || msg.includes("column metadata does not exist");
 }
 
 /** Save report to DB (goal, id, content, generatedAt as ISO string). */
@@ -49,21 +67,40 @@ export async function saveReport(
   content: string,
   generatedAt: string,
   userId: string = LEGACY_USER_ID,
+  metadata: Record<string, unknown> | null = null,
 ): Promise<void> {
   if (!isAgentReportsDbEnabled() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return;
   await ensureAgentReportsUserIdColumn();
+  await ensureAgentReportsMetadataColumn();
   const client = await getDbClient();
   const generatedAtEpoch = Math.floor(new Date(generatedAt).getTime() / 1000);
+  const metadataJson = metadata ? JSON.stringify(metadata) : null;
   try {
     await client.run(
-      "INSERT INTO agent_reports (user_id, goal, id, content, generated_at) VALUES (?, ?, ?, ?, ?)",
-      [userId, goal, id, content, generatedAtEpoch]
+      "INSERT INTO agent_reports (user_id, goal, id, content, generated_at, metadata) VALUES (?, ?, ?, ?, ?, ?)",
+      [userId, goal, id, content, generatedAtEpoch, metadataJson]
     );
   } catch (error) {
+    if (isMissingMetadataColumn(error)) {
+      try {
+        await client.run(
+          "INSERT INTO agent_reports (user_id, goal, id, content, generated_at) VALUES (?, ?, ?, ?, ?)",
+          [userId, goal, id, content, generatedAtEpoch]
+        );
+        return;
+      } catch (legacyError) {
+        if (!isMissingUserIdColumn(legacyError)) throw legacyError;
+        await client.run(
+          "INSERT INTO agent_reports (goal, id, content, generated_at) VALUES (?, ?, ?, ?)",
+          [goal, id, content, generatedAtEpoch]
+        );
+        return;
+      }
+    }
     if (!isMissingUserIdColumn(error)) throw error;
     await client.run(
-      "INSERT INTO agent_reports (goal, id, content, generated_at) VALUES (?, ?, ?, ?)",
-      [goal, id, content, generatedAtEpoch]
+      "INSERT INTO agent_reports (goal, id, content, generated_at, metadata) VALUES (?, ?, ?, ?, ?)",
+      [goal, id, content, generatedAtEpoch, metadataJson]
     );
   }
 }
@@ -97,22 +134,57 @@ export async function getReport(
   goal: string,
   id?: string,
   userId: string = LEGACY_USER_ID,
-): Promise<{ goal: string; id: string; generatedAt: string; content: string } | null> {
+): Promise<{ goal: string; id: string; generatedAt: string; content: string; metadata: Record<string, unknown> | null } | null> {
   if (!isAgentReportsDbEnabled() || !VALID_GOALS.includes(goal as (typeof VALID_GOALS)[number])) return null;
   await ensureAgentReportsUserIdColumn();
+  await ensureAgentReportsMetadataColumn();
   const client = await getDbClient();
   let row: Record<string, unknown> | undefined;
   if (id && id !== "latest") {
     try {
       const result = await client.query(
-        "SELECT goal, id, content, generated_at FROM agent_reports WHERE COALESCE(user_id, 'legacy') = ? AND goal = ? AND id = ?",
+        "SELECT goal, id, content, generated_at, metadata FROM agent_reports WHERE COALESCE(user_id, 'legacy') = ? AND goal = ? AND id = ?",
         [userId, goal, id]
       );
       row = result.rows?.[0] as Record<string, unknown> | undefined;
     } catch (error) {
+      if (isMissingMetadataColumn(error)) {
+        try {
+          const result = await client.query(
+            "SELECT goal, id, content, generated_at FROM agent_reports WHERE COALESCE(user_id, 'legacy') = ? AND goal = ? AND id = ?",
+            [userId, goal, id]
+          );
+          row = result.rows?.[0] as Record<string, unknown> | undefined;
+          return row
+            ? {
+                goal: String(row.goal),
+                id: String(row.id),
+                generatedAt: new Date(Number(row.generated_at) * 1000).toISOString(),
+                content: String(row.content),
+                metadata: null,
+              }
+            : null;
+        } catch (legacyError) {
+          if (!isMissingUserIdColumn(legacyError)) throw legacyError;
+          const result = await client.query(
+            "SELECT goal, id, content, generated_at FROM agent_reports WHERE goal = ? AND id = ?",
+            [goal, id]
+          );
+          row = result.rows?.[0] as Record<string, unknown> | undefined;
+          return row
+            ? {
+                goal: String(row.goal),
+                id: String(row.id),
+                generatedAt: new Date(Number(row.generated_at) * 1000).toISOString(),
+                content: String(row.content),
+                metadata: null,
+              }
+            : null;
+        }
+      }
       if (!isMissingUserIdColumn(error)) throw error;
       const result = await client.query(
-        "SELECT goal, id, content, generated_at FROM agent_reports WHERE goal = ? AND id = ?",
+        "SELECT goal, id, content, generated_at, metadata FROM agent_reports WHERE goal = ? AND id = ?",
         [goal, id]
       );
       row = result.rows?.[0] as Record<string, unknown> | undefined;
@@ -120,14 +192,48 @@ export async function getReport(
   } else {
     try {
       const result = await client.query(
-        "SELECT goal, id, content, generated_at FROM agent_reports WHERE COALESCE(user_id, 'legacy') = ? AND goal = ? ORDER BY generated_at DESC LIMIT 1",
+        "SELECT goal, id, content, generated_at, metadata FROM agent_reports WHERE COALESCE(user_id, 'legacy') = ? AND goal = ? ORDER BY generated_at DESC LIMIT 1",
         [userId, goal]
       );
       row = result.rows?.[0] as Record<string, unknown> | undefined;
     } catch (error) {
+      if (isMissingMetadataColumn(error)) {
+        try {
+          const result = await client.query(
+            "SELECT goal, id, content, generated_at FROM agent_reports WHERE COALESCE(user_id, 'legacy') = ? AND goal = ? ORDER BY generated_at DESC LIMIT 1",
+            [userId, goal]
+          );
+          row = result.rows?.[0] as Record<string, unknown> | undefined;
+          return row
+            ? {
+                goal: String(row.goal),
+                id: String(row.id),
+                generatedAt: new Date(Number(row.generated_at) * 1000).toISOString(),
+                content: String(row.content),
+                metadata: null,
+              }
+            : null;
+        } catch (legacyError) {
+          if (!isMissingUserIdColumn(legacyError)) throw legacyError;
+          const result = await client.query(
+            "SELECT goal, id, content, generated_at FROM agent_reports WHERE goal = ? ORDER BY generated_at DESC LIMIT 1",
+            [goal]
+          );
+          row = result.rows?.[0] as Record<string, unknown> | undefined;
+          return row
+            ? {
+                goal: String(row.goal),
+                id: String(row.id),
+                generatedAt: new Date(Number(row.generated_at) * 1000).toISOString(),
+                content: String(row.content),
+                metadata: null,
+              }
+            : null;
+        }
+      }
       if (!isMissingUserIdColumn(error)) throw error;
       const result = await client.query(
-        "SELECT goal, id, content, generated_at FROM agent_reports WHERE goal = ? ORDER BY generated_at DESC LIMIT 1",
+        "SELECT goal, id, content, generated_at, metadata FROM agent_reports WHERE goal = ? ORDER BY generated_at DESC LIMIT 1",
         [goal]
       );
       row = result.rows?.[0] as Record<string, unknown> | undefined;
@@ -139,6 +245,10 @@ export async function getReport(
     id: String(row.id),
     generatedAt: new Date(Number(row.generated_at) * 1000).toISOString(),
     content: String(row.content),
+    metadata:
+      typeof row.metadata === "string" && row.metadata.length > 0
+        ? (JSON.parse(String(row.metadata)) as Record<string, unknown>)
+        : null,
   };
 }
 

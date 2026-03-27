@@ -110,6 +110,7 @@ describe("llm-report-writer", () => {
     vi.clearAllMocks();
     mockHasLLM.mockReturnValue(true);
     delete process.env.AGENT_LLM_TIMEOUT_MS;
+    delete minimalContentIdeasPayload.llm_debug;
   });
 
   describe("writeMarketBriefWithLLM", () => {
@@ -128,7 +129,7 @@ describe("llm-report-writer", () => {
 
     it("returns LLM markdown when createChatCompletion succeeds", async () => {
       const expectedMd = "# Market Brief Agent Report\n\nGenerated: 2026-03-02\n\n## Executive Delta\n\n### 1. MCP context layer adoption\n- Why it matters: Affects near-term GTM motion.";
-      mockCreate.mockResolvedValueOnce({ content: expectedMd, model: "claude-sonnet-4-6" });
+      mockCreate.mockResolvedValueOnce({ content: expectedMd, model: "claude-sonnet-4-6", provider: "anthropic" });
       const out = await writeMarketBriefWithLLM(minimalMarketBriefPayload, "Market Brief Agent Report");
       expect(out).toBe(expectedMd);
       expect(mockCreate).toHaveBeenCalledTimes(1);
@@ -138,7 +139,7 @@ describe("llm-report-writer", () => {
     });
 
     it("returns null when createChatCompletion returns empty content", async () => {
-      mockCreate.mockResolvedValueOnce({ content: "", model: "gpt-4o-mini" });
+      mockCreate.mockResolvedValueOnce({ content: "", model: "gpt-4o-mini", provider: "openai" });
       const out = await writeMarketBriefWithLLM(minimalMarketBriefPayload, "Market Brief Agent Report");
       expect(out).toBeNull();
     });
@@ -154,10 +155,13 @@ describe("llm-report-writer", () => {
 
     it("returns LLM markdown when createChatCompletion succeeds", async () => {
       const expectedMd = "# Content Ideas Agent Report\n\n## Prioritized Ideas\n\n### 1. Blog: Evaluating AI coding benchmarks";
-      mockCreate.mockResolvedValueOnce({ content: expectedMd, model: "claude-sonnet-4-6" });
+      mockCreate.mockResolvedValueOnce({ content: expectedMd, model: "claude-sonnet-4-6", provider: "anthropic" });
       const out = await writeContentIdeasWithLLM(minimalContentIdeasPayload, "Content Ideas Agent Report");
       expect(out).toBe(expectedMd);
       expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(minimalContentIdeasPayload.llm_debug?.report_writer?.status).toBe("success");
+      expect(minimalContentIdeasPayload.llm_debug?.report_writer?.provider).toBe("anthropic");
+      expect(minimalContentIdeasPayload.llm_debug?.report_writer?.model).toBe("claude-sonnet-4-6");
       const call = mockCreate.mock.calls[0][0];
       expect(call.messages.some((m) => m.role === "user" && m.content.includes("Prioritized Ideas"))).toBe(true);
       expect(call.messages.some((m) => m.role === "user" && m.content.includes("https://example.com"))).toBe(true);
@@ -174,18 +178,21 @@ describe("llm-report-writer", () => {
       const out = await outPromise;
 
       expect(out).toBeNull();
+      expect(minimalContentIdeasPayload.llm_debug?.report_writer?.status).toBe("timeout");
       vi.useRealTimers();
     });
 
     it("skips the content ideas writer after structured synthesis timeout", async () => {
+      const payload: ContentIdeasOutput = {
+        ...minimalContentIdeasPayload,
+        llm_debug: { structured_synthesis_timed_out: true },
+      };
       const out = await writeContentIdeasWithLLM(
-        {
-          ...minimalContentIdeasPayload,
-          llm_debug: { structured_synthesis_timed_out: true },
-        },
+        payload,
         "Content Ideas Agent Report",
       );
       expect(out).toBeNull();
+      expect(payload.llm_debug?.report_writer?.status).toBe("skipped");
       expect(mockCreate).not.toHaveBeenCalled();
     });
   });
@@ -205,7 +212,7 @@ describe("llm-report-writer", () => {
 
     it("returns LLM markdown when createChatCompletion succeeds", async () => {
       const expectedMd = "# Competitor Intel Agent Report\n\n## GitHub\n\n### Copilot for CLI GA";
-      mockCreate.mockResolvedValueOnce({ content: expectedMd, model: "claude-sonnet-4-6" });
+      mockCreate.mockResolvedValueOnce({ content: expectedMd, model: "claude-sonnet-4-6", provider: "anthropic" });
       const out = await writeCompetitorIntelWithLLM(
         minimalCompetitorItems,
         7,
@@ -224,6 +231,7 @@ describe("llm-report-writer", () => {
       mockCreate.mockResolvedValueOnce({
         content: "# Competitor Intel Agent Report\n\n## GitHub\n\n### Partial",
         model: "claude-sonnet-4-6",
+        provider: "anthropic",
         finish_reason: "max_tokens",
       });
       const out = await writeCompetitorIntelWithLLM(

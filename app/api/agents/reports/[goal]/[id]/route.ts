@@ -40,9 +40,17 @@ export async function DELETE(
       return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
     const filePath = path.join(REPORT_DIR, goal, `${id}.md`);
+    const metadataPath = path.join(REPORT_DIR, goal, `${id}.json`);
     if (fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);
+      } catch {
+        // ignore
+      }
+    }
+    if (fs.existsSync(metadataPath)) {
+      try {
+        fs.unlinkSync(metadataPath);
       } catch {
         // ignore
       }
@@ -51,12 +59,16 @@ export async function DELETE(
   }
 
   const filePath = path.join(REPORT_DIR, goal, `${id}.md`);
+  const metadataPath = path.join(REPORT_DIR, goal, `${id}.json`);
   if (!fs.existsSync(filePath)) {
     return NextResponse.json({ error: "Report not found" }, { status: 404 });
   }
 
   try {
     fs.unlinkSync(filePath);
+    if (fs.existsSync(metadataPath)) {
+      fs.unlinkSync(metadataPath);
+    }
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     console.error("Agent report delete error", error);

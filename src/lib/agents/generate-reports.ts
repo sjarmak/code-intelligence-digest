@@ -114,6 +114,7 @@ async function runAgentReportImpl(
     const limit = goal === "content_ideas" ? 10 : 20;
 
     let report: string;
+    let reportMetadata: Record<string, unknown> | undefined;
     const reportTitle = `${config.name} Agent Report`;
     if (goal === "market_brief") {
       const payload = await generateMarketBrief({ periodDays, maxItems: limit });
@@ -126,7 +127,12 @@ async function runAgentReportImpl(
         marketBriefSummary: marketBriefSummary ?? null,
       });
       const llmReport = await writeContentIdeasWithLLM(payload, reportTitle);
+      payload.llm_debug = {
+        ...(payload.llm_debug ?? {}),
+        final_output: llmReport ? "llm_report_writer" : "template_markdown",
+      };
       report = llmReport ?? formatContentIdeasMarkdown(reportTitle, payload);
+      reportMetadata = { llmDebug: payload.llm_debug };
     } else if (goal === "competitor_intel") {
       const competitorLimit = periodDays <= 7 ? 20 : periodDays <= 30 ? 30 : 45;
       const competitorTopPer = periodDays <= 7 ? 5 : periodDays <= 30 ? 6 : 8;
@@ -162,8 +168,15 @@ async function runAgentReportImpl(
     if (!fs.existsSync(goalDir)) fs.mkdirSync(goalDir, { recursive: true });
     const outPath = path.join(goalDir, `${id}.md`);
     fs.writeFileSync(outPath, report, "utf-8");
+    if (reportMetadata) {
+      fs.writeFileSync(
+        path.join(goalDir, `${id}.json`),
+        JSON.stringify(reportMetadata, null, 2),
+        "utf-8",
+      );
+    }
     const generatedAt = new Date().toISOString();
-    await saveReport(goal, id, report, generatedAt, userId).catch((err) =>
+    await saveReport(goal, id, report, generatedAt, userId, reportMetadata ?? null).catch((err) =>
       logger.warn("Agent report DB save failed", { goal, id, error: err })
     );
     logger.info("Agent report generated", { goal, id, path: outPath });

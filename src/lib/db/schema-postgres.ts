@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS agent_reports (
   goal TEXT NOT NULL,
   id TEXT NOT NULL,
   content TEXT NOT NULL,
+  metadata TEXT,
   generated_at INTEGER NOT NULL,
   PRIMARY KEY (goal, id)
 );

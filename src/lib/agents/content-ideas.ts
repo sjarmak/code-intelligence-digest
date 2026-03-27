@@ -83,6 +83,19 @@ export interface ContentIdeasOutput {
   playbook_confidence_flags?: Record<string, "high" | "medium" | "low">;
   llm_debug?: {
     structured_synthesis_timed_out?: boolean;
+    structured_synthesis?: {
+      status: "success" | "timeout" | "error" | "parse_fallback" | "normalization_fallback" | "not_configured";
+      provider?: "anthropic" | "openai";
+      model?: string;
+      error?: string;
+    };
+    report_writer?: {
+      status: "success" | "timeout" | "error" | "skipped";
+      provider?: "anthropic" | "openai";
+      model?: string;
+      error?: string;
+    };
+    final_output?: "llm_report_writer" | "template_markdown";
   };
   /**
    * End-to-end pipeline diagnostics: Postgres + web retrieval, merge/date gates, ranking pool, and ideation filters.
@@ -2957,8 +2970,14 @@ async function synthesizeStructuredContentIdeasWithLLM(args: {
   state: PlaybookState;
   numIdeas: number;
   periodDays: number;
-}): Promise<{ ideas: ContentIdea[] | null; timedOut: boolean }> {
-  if (!hasLLMConfigured()) return { ideas: null, timedOut: false };
+}): Promise<{ ideas: ContentIdea[] | null; timedOut: boolean; debug?: NonNullable<ContentIdeasOutput["llm_debug"]>["structured_synthesis"] }> {
+  if (!hasLLMConfigured()) {
+    return {
+      ideas: null,
+      timedOut: false,
+      debug: { status: "not_configured" },
+    };
+  }
   const llmModel = getContentIdeasLlmModel();
   const requestedIdeaCount = Math.min(args.numIdeas, args.periodDays <= 14 ? 3 : 5);
   const maxTokens = llmModel && isClaudeModel(llmModel) ? 3200 : 1800;
@@ -3060,7 +3079,15 @@ Rules:
       logger.warn("Structured content ideas synthesis returned no parseable ideas, using heuristic fallback", {
         preview: rawContent.slice(0, 400),
       });
-      return { ideas: null, timedOut: false };
+      return {
+        ideas: null,
+        timedOut: false,
+        debug: {
+          status: "parse_fallback",
+          provider: res.provider,
+          model: res.model,
+        },
+      };
     }
 
     const sourceMap = new Map<string, AgentRankedDoc>();
@@ -3187,7 +3214,15 @@ Rules:
       logger.warn("Structured content ideas synthesis produced no valid ideas after normalization, using heuristic fallback", {
         preview: rawContent.slice(0, 400),
       });
-      return { ideas: null, timedOut: false };
+      return {
+        ideas: null,
+        timedOut: false,
+        debug: {
+          status: "normalization_fallback",
+          provider: res.provider,
+          model: res.model,
+        },
+      };
     }
     logger.info("Structured content ideas synthesis succeeded", {
       requested: args.numIdeas,
@@ -3195,7 +3230,15 @@ Rules:
       marketSignals: marketSignals.length,
       sourcegraphContext: sourcegraphContext.length,
     });
-    return { ideas: output, timedOut: false };
+    return {
+      ideas: output,
+      timedOut: false,
+      debug: {
+        status: "success",
+        provider: res.provider,
+        model: res.model,
+      },
+    };
   } catch (error) {
     logger.warn(
       isTimedOutError(error)
@@ -3205,7 +3248,15 @@ Rules:
         error: error instanceof Error ? error.message : String(error),
       },
     );
-    return { ideas: null, timedOut: isTimedOutError(error) };
+    return {
+      ideas: null,
+      timedOut: isTimedOutError(error),
+      debug: {
+        status: isTimedOutError(error) ? "timeout" : "error",
+        model: llmModel,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
   }
 }
 
@@ -3881,12 +3932,20 @@ async function generateContentIdeasImpl(options: {
     };
   }
 
+  const llmDebug: NonNullable<ContentIdeasOutput["llm_debug"]> | undefined =
+    llmSynthesis.debug || llmSynthesis.timedOut
+      ? {
+          ...(llmSynthesis.timedOut ? { structured_synthesis_timed_out: true } : {}),
+          ...(llmSynthesis.debug ? { structured_synthesis: llmSynthesis.debug } : {}),
+        }
+      : undefined;
+
   return postProcessContentIdeasOutput({
     generated_at: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
     periodDays,
     playbook_confidence_flags: state.confidence_flags,
-    ...(llmSynthesis.timedOut ? { llm_debug: { structured_synthesis_timed_out: true } } : {}),
+    ...(llmDebug ? { llm_debug: llmDebug } : {}),
     ...(pipelineTracePayload ? { pipeline_trace: pipelineTracePayload } : {}),
     selection_debug: {
       target_mix: { beachhead: 0, adjacent: 0, broader: 0 },

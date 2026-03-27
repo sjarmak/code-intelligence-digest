@@ -186,6 +186,20 @@ interface AgentRetrievalTraceView {
   };
 }
 
+interface ContentIdeasLlmStageView {
+  status?: string;
+  provider?: string;
+  model?: string;
+  error?: string;
+}
+
+interface ContentIdeasLlmDebugView {
+  structured_synthesis_timed_out?: boolean;
+  structured_synthesis?: ContentIdeasLlmStageView;
+  report_writer?: ContentIdeasLlmStageView;
+  final_output?: string;
+}
+
 function getContentIdeasPipelineTrace(
   meta: Record<string, unknown> | null
 ): ContentIdeasPipelineTraceView | null {
@@ -195,6 +209,31 @@ function getContentIdeasPipelineTrace(
   const pt = (sp as Record<string, unknown>).pipeline_trace;
   if (!pt || typeof pt !== 'object') return null;
   return pt as ContentIdeasPipelineTraceView;
+}
+
+function getContentIdeasLlmDebug(
+  meta: Record<string, unknown> | null
+): ContentIdeasLlmDebugView | null {
+  if (!meta) return null;
+  const topLevel = meta.llmDebug;
+  if (topLevel && typeof topLevel === 'object') return topLevel as ContentIdeasLlmDebugView;
+  const structuredPayload = meta.structuredPayload;
+  if (!structuredPayload || typeof structuredPayload !== 'object') return null;
+  const llmDebug = (structuredPayload as Record<string, unknown>).llm_debug;
+  if (!llmDebug || typeof llmDebug !== 'object') return null;
+  return llmDebug as ContentIdeasLlmDebugView;
+}
+
+function formatLlmStageLabel(label: string, stage?: ContentIdeasLlmStageView): string | null {
+  if (!stage?.status) return null;
+  const modelBits = [stage.model, stage.provider ? `via ${stage.provider}` : null].filter(Boolean).join(' ');
+  if (stage.status === 'success') return `${label}: ${modelBits || 'LLM'}`;
+  if (stage.status === 'skipped') return `${label}: skipped`;
+  if (stage.status === 'timeout') return `${label}: timeout`;
+  if (stage.status === 'parse_fallback') return `${label}: parse fallback`;
+  if (stage.status === 'normalization_fallback') return `${label}: normalization fallback`;
+  if (stage.status === 'not_configured') return `${label}: LLM not configured`;
+  return `${label}: error`;
 }
 
 export const dynamic = 'force-dynamic';
@@ -261,6 +300,16 @@ export default function ReportViewPage() {
     report.agentId === 'competitive_intel' ? structuredIntel?.pipeline_trace ?? null : null;
   const pipelineTrace =
     report.agentId === 'gtm_content' ? getContentIdeasPipelineTrace(report.outputMetadata) : null;
+  const contentIdeasLlmDebug =
+    report.agentId === 'gtm_content' ? getContentIdeasLlmDebug(report.outputMetadata) : null;
+  const llmStatusLines = contentIdeasLlmDebug
+    ? [
+        formatLlmStageLabel('Structured synthesis', contentIdeasLlmDebug.structured_synthesis),
+        formatLlmStageLabel('Report writer', contentIdeasLlmDebug.report_writer),
+        contentIdeasLlmDebug.final_output === 'template_markdown' ? 'Final output: template fallback' : null,
+        contentIdeasLlmDebug.final_output === 'llm_report_writer' ? 'Final output: LLM-written' : null,
+      ].filter((line): line is string => Boolean(line))
+    : [];
 
   return (
     <div className="min-h-screen bg-white text-black">
@@ -284,6 +333,18 @@ export default function ReportViewPage() {
               <p className="text-sm text-muted">
                 Based on {report.outputMetadata.itemCount} source items
               </p>
+            )}
+            {llmStatusLines.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {llmStatusLines.map((line) => (
+                  <span
+                    key={line}
+                    className="inline-flex items-center rounded-full border border-gray-300 bg-gray-50 px-2.5 py-1 text-xs text-gray-700"
+                  >
+                    {line}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         </div>

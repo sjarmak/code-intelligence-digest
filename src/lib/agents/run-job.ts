@@ -172,12 +172,18 @@ async function runAgentJobImpl(
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr})`;
     const llmMarkdown = await writeContentIdeasWithLLM(payload, title);
+    payload.llm_debug = {
+      ...(payload.llm_debug ?? {}),
+      final_output: llmMarkdown ? "llm_report_writer" : "template_markdown",
+    };
     const markdown = llmMarkdown ?? formatContentIdeasMarkdown(title, payload);
     const runId = await saveAgentRun(agentId, jobId, title, markdown, {
       itemCount: payload.ideas.length,
       periodDays,
       structuredOutput: true,
       playbookVersion: payload.playbook_version,
+      llmDebug: payload.llm_debug,
+      finalOutput: payload.llm_debug?.final_output,
       structuredPayload: payload,
     });
     logger.info("Agent job completed with structured content ideas", {
