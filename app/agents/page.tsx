@@ -55,6 +55,7 @@ export default function AgentReportsPage() {
   const [cleanupSlackMessage, setCleanupSlackMessage] = useState<string | null>(null);
   const [specificSlackRefs, setSpecificSlackRefs] = useState("");
   const [showLocalSlackCleanup, setShowLocalSlackCleanup] = useState(false);
+  const [copyRawMarkdownState, setCopyRawMarkdownState] = useState<"idle" | "copied" | "failed">("idle");
 
   const refetchReports = () => {
     return fetch("/api/agents/reports")
@@ -82,6 +83,16 @@ export default function AgentReportsPage() {
     const validKeys = new Set(reports.map((r) => `${r.goal}:${r.id}`));
     setSelectedReportKeys((prev) => new Set(Array.from(prev).filter((k) => validKeys.has(k))));
   }, [reports]);
+
+  useEffect(() => {
+    if (copyRawMarkdownState === "idle") return;
+    const timeout = window.setTimeout(() => setCopyRawMarkdownState("idle"), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [copyRawMarkdownState]);
+
+  useEffect(() => {
+    setCopyRawMarkdownState("idle");
+  }, [viewing?.goal, viewing?.id]);
 
   const allSelected = AGENT_GOALS.every((g) => selectedGoals.has(g));
   const toggleAll = () => {
@@ -223,9 +234,9 @@ export default function AgentReportsPage() {
     if (!viewing) return;
     try {
       await navigator.clipboard.writeText(viewing.content);
-      // Could add a brief toast; for now rely on button state
+      setCopyRawMarkdownState("copied");
     } catch {
-      // fallback: no clipboard access
+      setCopyRawMarkdownState("failed");
     }
   };
 
@@ -441,10 +452,20 @@ export default function AgentReportsPage() {
               <button
                 type="button"
                 onClick={copyRawMarkdown}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm font-medium transition-colors ${
+                  copyRawMarkdownState === "copied"
+                    ? "border-green-300 bg-green-50 text-green-700"
+                    : copyRawMarkdownState === "failed"
+                      ? "border-red-300 bg-red-50 text-red-700"
+                      : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                }`}
               >
                 <Copy className="w-4 h-4" />
-                Copy raw markdown
+                {copyRawMarkdownState === "copied"
+                  ? "Copied"
+                  : copyRawMarkdownState === "failed"
+                    ? "Copy failed"
+                    : "Copy raw markdown"}
               </button>
               <button
                 type="button"
@@ -481,6 +502,12 @@ export default function AgentReportsPage() {
                 {sendingSlack ? "Sending…" : "Send to Slack"}
               </button>
             </div>
+            {copyRawMarkdownState === "copied" && (
+              <p className="mt-2 text-sm text-green-700">Raw markdown copied to clipboard.</p>
+            )}
+            {copyRawMarkdownState === "failed" && (
+              <p className="mt-2 text-sm text-red-700">Clipboard access failed. You can still download the Markdown file.</p>
+            )}
             {sendEmailMessage && (
               <p className={`mt-2 text-sm ${sendEmailMessage.startsWith("Sent") ? "text-green-700" : "text-amber-700"}`}>
                 {sendEmailMessage}
