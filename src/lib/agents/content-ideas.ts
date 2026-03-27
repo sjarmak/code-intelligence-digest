@@ -3314,6 +3314,32 @@ export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): Cont
   };
 }
 
+function backfillLlmIdeasWithHeuristicIdeas(
+  llmIdeas: ContentIdea[],
+  heuristicIdeas: ContentIdea[],
+  numIdeas: number,
+): ContentIdea[] {
+  const merged = [...llmIdeas];
+  const seenTitleKeys = new Set(merged.map((idea) => normalizeIdeaTitleKey(idea.title)));
+  const seenTopicKeys = new Set(merged.map((idea) => topicKeyFromIdeaTitle(idea.title)));
+
+  for (const idea of heuristicIdeas) {
+    if (merged.length >= numIdeas) break;
+    const titleKey = normalizeIdeaTitleKey(idea.title);
+    if (seenTitleKeys.has(titleKey)) continue;
+
+    const topicKey = topicKeyFromIdeaTitle(idea.title);
+    const canRelaxTopicCap = heuristicIdeas.length <= numIdeas;
+    if (!canRelaxTopicCap && seenTopicKeys.has(topicKey)) continue;
+
+    merged.push(idea);
+    seenTitleKeys.add(titleKey);
+    seenTopicKeys.add(topicKey);
+  }
+
+  return merged;
+}
+
 /** Synthetic doc ID for injected market brief context (not a real URL). */
 const MARKET_BRIEF_CONTEXT_ID = "internal://market-brief-highlights";
 
@@ -3822,7 +3848,11 @@ async function generateContentIdeasImpl(options: {
     periodDays,
   });
   if (llmSynthesis.ideas && llmSynthesis.ideas.length > 0) {
-    evidenceQualifiedIdeas = llmSynthesis.ideas;
+    evidenceQualifiedIdeas = backfillLlmIdeasWithHeuristicIdeas(
+      llmSynthesis.ideas,
+      evidenceQualifiedIdeas,
+      numIdeas,
+    );
   }
   const droppedCandidates = rawIdeas
     .map((i) => i.title)

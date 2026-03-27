@@ -642,6 +642,98 @@ Use whichever fits best.`,
     expect(out.ideas[0].title).toBe("Why Your AI Coding Tools Hit a Wall at the Repo Boundary");
   });
 
+  it("backfills short-window LLM output when structured synthesis returns too few ideas", async () => {
+    vi.mocked(hasLLMConfigured).mockReturnValue(true);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://sourcegraph.com/blog/model-context-protocol-enterprise-code-search",
+          title: "Model Context Protocol becomes default infrastructure for enterprise code search",
+          snippet: "Platform teams need cross-repo context and code search grounding before generation.",
+          metadata: {},
+          baseScore: 0.95,
+          goalScore: 0.95,
+          agentScore: 0.94,
+          features: {
+            competitorMatch: 0.8,
+            formatType: 0.7,
+            icpMatch: 0.95,
+            recency: 0.98,
+            trendLandscape: 0.7,
+          },
+          publishedAt: new Date("2026-03-26"),
+        },
+        {
+          source: "web" as const,
+          url: "https://about.gitlab.com/blog/cross-repo-migrations-enterprise-ai/",
+          title: "Capital markets teams hit migration risk when AI tools miss cross-repo dependencies",
+          snippet: "Large library upgrades need repository-wide impact analysis and controlled rollout.",
+          metadata: {},
+          baseScore: 0.91,
+          goalScore: 0.92,
+          agentScore: 0.9,
+          features: {
+            competitorMatch: 0.7,
+            formatType: 0.6,
+            icpMatch: 0.93,
+            recency: 0.96,
+            trendLandscape: 0.6,
+          },
+          publishedAt: new Date("2026-03-25"),
+        },
+        {
+          source: "web" as const,
+          url: "https://blog.cloudflare.com/how-context-gaps-slow-engineering-onboarding/",
+          title: "AI-accelerated onboarding still fails when new engineers cannot see system-wide context",
+          snippet: "Knowledge transfer and repository navigation are becoming the onboarding bottleneck.",
+          metadata: {},
+          baseScore: 0.89,
+          goalScore: 0.9,
+          agentScore: 0.88,
+          features: {
+            competitorMatch: 0.6,
+            formatType: 0.5,
+            icpMatch: 0.9,
+            recency: 0.95,
+            trendLandscape: 0.55,
+          },
+          publishedAt: new Date("2026-03-24"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+    vi.mocked(createChatCompletion).mockResolvedValueOnce({
+      content: `{
+  "ideas": [
+    {
+      "title": "Why Your AI Coding Tools Are Only as Good as the Context They Can See",
+      "thesis": "Enterprise AI coding assistants underdeliver when they cannot access cross-repo proprietary context.",
+      "target_segment": "Capital Markets",
+      "target_persona": "Head of Developer Platform",
+      "funnel_stage": "awareness",
+      "channel": "blog",
+      "why_now": "Teams are adopting AI coding tools faster than they are fixing the context layer.",
+      "core_claim": "The missing infrastructure is repository-aware context, not a better chatbot.",
+      "key_insights": ["Cross-repo context is the bottleneck."],
+      "content_outline": ["Why enterprise AI coding fails without context."],
+      "source_urls": ["https://sourcegraph.com/blog/model-context-protocol-enterprise-code-search"],
+      "sourcegraph_angle": ["Use Sourcegraph MCP and Code Search to ground coding agents."],
+      "recommended_venue": "Sourcegraph blog",
+      "channel_strategy": "Publish as a technical POV blog.",
+      "setup_steps": ["Ground the piece in one capital markets workflow."]
+    }
+  ]
+}`,
+      model: "claude-sonnet-4-6",
+      provider: "anthropic",
+    });
+
+    const out = await generateContentIdeas({ periodDays: 14, numIdeas: 3 });
+
+    expect(out.ideas.length).toBeGreaterThanOrEqual(2);
+    expect(out.ideas[0].title).toBe("Why Your AI Coding Tools Are Only as Good as the Context They Can See");
+  });
+
   it("falls back to heuristic ideas when structured synthesis times out", async () => {
     vi.useFakeTimers();
     process.env.AGENT_LLM_TIMEOUT_MS = "5";
