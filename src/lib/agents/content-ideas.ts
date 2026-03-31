@@ -197,23 +197,6 @@ interface ScoredIdeaCandidate {
 
 type SegmentBucket = "beachhead" | "adjacent" | "broader";
 
-const GTM_SIGNAL_TERMS = [
-  "code search",
-  "deep search",
-  "cross-repo",
-  "cross repo",
-  "mcp",
-  "context layer",
-  "context engine",
-  "batch changes",
-  "migration",
-  "remediation",
-  "compliance",
-  "self-hosted",
-  "byok",
-  "platform team",
-];
-
 const SOURCEGRAPH_PRODUCT_SUITE_SIGNALS = [
   "Code Search",
   "Deep Search",
@@ -988,14 +971,6 @@ function thesisSimilarityKey(thesis: string): string {
     .slice(0, 120);
 }
 
-function stableHash(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) {
-    h = (h * 31 + input.charCodeAt(i)) >>> 0;
-  }
-  return h;
-}
-
 function topicFromSourceTitle(title: string): string | null {
   const cleaned = title
     .replace(/^\s*github\s*-\s*/i, "")
@@ -1016,7 +991,11 @@ function shouldPreferBroadThemeTopic(
   sourceUrl?: string,
 ): boolean {
   const domain = sourceFromUrl(sourceUrl);
-  if (isAuthoritativeResearchOrStandardsDomain(domain)) return true;
+  if (isAuthoritativeResearchOrStandardsDomain(domain)) {
+    return !/(code|coding|repository|repo|developer platform|platform engineering|software lifecycle|coding assistant|agentic ai|cross-repo|mcp|batch changes|deep search|code search|compliance|governance)/.test(
+      `${sourceTitle ?? ""} ${text}`,
+    );
+  }
 
   const researchHeavyTitle =
     /(zero-shot|sim2real|ontology|diffusion|multimodal|benchmarking|de-anonymization|inference-driven|representation learning)/i.test(
@@ -1030,22 +1009,123 @@ function shouldPreferBroadThemeTopic(
     /(\[ai ?news\]|announcing|introducing|launch|launches|release|update|now available|now live|broader access|affordable access|modernizing|march 20\d{2} update|v\d+\b|shifts to coding|pulls ahead|runs large models|growing pains)/i.test(
       sourceTitle ?? "",
     );
-  return (researchHeavyTitle && !directWorkflowSignal) || genericVendorOrProductTitle;
+  return (researchHeavyTitle && !directWorkflowSignal) || (genericVendorOrProductTitle && !directWorkflowSignal);
+}
+
+function sourceTopicIsUseful(rawTopic: string): boolean {
+  const topic = rawTopic.toLowerCase().trim();
+  if (!topic || topic.length < 18) return false;
+  if (
+    /(announcing|introducing|release notes|changelog|broader access|affordable access|now available|now live|march 20\d{2} update)/.test(
+      topic,
+    )
+  ) {
+    return false;
+  }
+  if (
+    /(zero-shot|sim2real|ontology|diffusion|multimodal|benchmarking|de-anonymization|inference-driven|representation learning|real identities)/.test(
+      topic,
+    )
+  ) {
+    return false;
+  }
+  if (/^(guide|webinar|brief|blog|case study|talk track|playbook|video brief|campaign):/.test(topic)) {
+    return false;
+  }
+  return true;
+}
+
+function audienceLabelForSegment(segment: ContentIdea["target_segment"]): string {
+  switch (segment) {
+    case "Capital Markets":
+      return "capital-markets engineering teams";
+    case "Banks":
+      return "bank engineering teams";
+    case "Diversified Financial Services":
+      return "financial-services platform teams";
+    case "Insurance":
+      return "insurance engineering teams";
+    default:
+      return "platform and engineering teams";
+  }
+}
+
+function evidenceLead(sourceTitle?: string): string {
+  const cleaned = stripBoilerplateNoise(sourceTitle ?? "")
+    .replace(/^\s*(guide|webinar|brief|blog|case study|talk track|playbook|video brief|campaign)\s*:\s*/i, "")
+    .trim();
+  if (!cleaned) return "a recent source";
+  return cleaned.length <= 90 ? cleaned : `${cleaned.slice(0, 87).trimEnd()}...`;
+}
+
+function deriveProblemStatement(text: string, segment: ContentIdea["target_segment"]): string {
+  const audience = audienceLabelForSegment(segment);
+  if (/(repo boundary|repository boundary|downstream|dependency|dependencies|call path|ownership)/.test(text)) {
+    return `${audience} are discovering that coding agents fail first at repo boundaries, hidden dependencies, and ownership gaps.`;
+  }
+  if (/(mcp|model context protocol|context layer|repo context|retrieval precision|repository context)/.test(text)) {
+    return `${audience} are learning that model quality stops mattering when repository context and retrieval precision break down.`;
+  }
+  if (/(batch changes|codemod|migration|remediation|rollout|upgrade)/.test(text)) {
+    return `${audience} need a safer way to scope blast radius, sequence changes, and verify cross-repo rollouts.`;
+  }
+  if (hasComplianceControlSignal(text) || /(compliance|security|audit|policy|byok|self-hosted|self hosted|rbac)/.test(text)) {
+    return `${audience} are moving from "try the assistant" to reviewable standards, policy, and auditability around generated code.`;
+  }
+  if (/(onboarding|knowledge transfer|legacy|complex codebase|monorepo|multi-repo)/.test(text)) {
+    return `${audience} still lose time on system understanding even when AI speeds up code generation.`;
+  }
+  return `${audience} are hitting operational limits in AI coding workflows that generic assistant messaging does not explain well.`;
+}
+
+function deriveSpecificTopic(
+  frame: string,
+  text: string,
+  sourceTitle?: string,
+  sourceUrl?: string,
+): string {
+  const derivedTopic = sourceTitle ? topicFromSourceTitle(sourceTitle) : null;
+  if (derivedTopic && sourceTopicIsUseful(derivedTopic) && !shouldPreferBroadThemeTopic(text, sourceTitle, sourceUrl)) {
+    return derivedTopic;
+  }
+
+  switch (frame) {
+    case "Governance, Compliance, and Verification for AI Code Changes":
+      if (/(team standards|encoding team standards|standards)/.test(text)) {
+        return "Encoding Team Standards for AI-Assisted Code Review";
+      }
+      if (/(policy|audit|byok|self-hosted|self hosted|rbac|data residency)/.test(text)) {
+        return "Turning AI Code Changes Into Reviewable, Audit-Ready Workflows";
+      }
+      return "Where AI Coding Teams Need Policy, Auditability, and Verification";
+    case "Repository Context and Retrieval Precision for Coding Agents":
+      if (/(repo boundary|repository boundary|downstream|dependency|dependencies)/.test(text)) {
+        return "Why Coding Agents Hit a Wall at Repo Boundaries";
+      }
+      if (/(developer platform|platform engineering)/.test(text)) {
+        return "What Developer Platforms Need Before Agent-Driven Coding Scales";
+      }
+      return "What Repository Context Really Changes in Agent-Driven Development";
+    case "Code Search, Deep Search, and Repository Context":
+      if (/(symbol|ownership|usage path|call path)/.test(text)) {
+        return "How Teams Recover Ownership and Usage Paths for Coding Agents";
+      }
+      return "How Repository Context Changes Code Search for Agent Workflows";
+    case "Cross-Repo Remediation and Migration":
+      if (/(security|cve|patch|remediation)/.test(text)) {
+        return "How Teams Govern Cross-Repo Remediation Without Losing Verification";
+      }
+      return "How Teams Sequence Cross-Repo Migrations Without Regression Blind Spots";
+    case "Developer Onboarding in Large Codebases":
+      return "Why AI Does Not Eliminate the Onboarding Problem in Large Codebases";
+    default:
+      return buildNarrativeTopic(frame, text);
+  }
 }
 
 function extractIdeaTopic(text: string, sourceTitle?: string, sourceUrl?: string): string {
   const frame = detectTopicFrame(text);
-  if (shouldPreferBroadThemeTopic(text, sourceTitle, sourceUrl)) {
-    return buildNarrativeTopic(frame, text);
-  }
-  const derivedTopic = sourceTitle ? topicFromSourceTitle(sourceTitle) : null;
-  const productLedDerivedTopic =
-    !!derivedTopic &&
-    /(code search|deep search|repository context|retrieval precision|governance|compliance|batch changes|sourcegraph|gitlab|github|workers ai)/i.test(
-      derivedTopic,
-    );
-  if (derivedTopic && derivedTopic.length >= 18 && !productLedDerivedTopic) return derivedTopic;
-  return buildNarrativeTopic(frame, text);
+  return deriveSpecificTopic(frame, text, sourceTitle, sourceUrl);
 }
 
 function toTitleCase(input: string): string {
@@ -1081,12 +1161,13 @@ function polishIdeaTopic(rawTopic: string): string {
 }
 
 function buildSourcegraphIdeaTitle(
-  _segment: ContentIdea["target_segment"],
+  segment: ContentIdea["target_segment"],
   channel: ContentIdea["channel"],
   text: string,
   sourceTitle?: string,
   sourceUrl?: string,
 ): string {
+  const frame = detectTopicFrame(text);
   const safeTopic = polishIdeaTopic(extractIdeaTopic(text, sourceTitle, sourceUrl));
 
   const channelVerb: Record<ContentIdea["channel"], string> = {
@@ -1103,6 +1184,18 @@ function buildSourcegraphIdeaTitle(
     ad_campaign: "Campaign",
   };
 
+  if (segment !== "Other" && frame === "Repository Context and Retrieval Precision for Coding Agents") {
+    const segmentTopic =
+      segment === "Capital Markets"
+        ? "Why Financial Codebases Break Context-Poor Coding Agents"
+        : segment === "Banks"
+          ? "Why Banking Codebases Expose the Repo-Boundary Problem in Coding Agents"
+          : segment === "Diversified Financial Services"
+            ? "Why Financial-Services Platform Teams Need Better Repo Context"
+            : "Why Insurance Engineering Teams Need Better Repo Context";
+    return `${channelVerb[channel]}: ${segmentTopic}`.slice(0, 120);
+  }
+
   return `${channelVerb[channel]}: ${safeTopic}`.slice(0, 120);
 }
 
@@ -1115,32 +1208,23 @@ function buildSourcegraphThesis(
 ): string {
   const topic = polishIdeaTopic(extractIdeaTopic(text, sourceTitle, sourceUrl)).toLowerCase();
   const frame = detectTopicFrame(text);
-  const segmentContext =
-    segment === "Other"
-      ? "platform and engineering teams"
-      : `${segment} and adjacent regulated-industry teams`;
-  const variants =
-    frame === "Cross-Repo Remediation and Migration"
-      ? [
-          `${segmentContext} ${persona} buyers need a repeatable way to execute cross-repo remediation and migration with verification, review, and rollback built in; position Sourcegraph as the governed execution layer around existing assistants.`,
-          `Use ${topic} to show ${segmentContext} ${persona} buyers that assistant suggestions are not enough for large migrations; Sourcegraph adds the search, rollout, and verification workflow needed to ship safely at scale.`,
-        ]
-      : frame === "Repository Context and Retrieval Precision for Coding Agents" ||
-          frame === "Code Search, Deep Search, and Repository Context"
-        ? [
-            `${segmentContext} ${persona} buyers evaluating coding agents need precise repository context before generation; position Sourcegraph as the retrieval and grounding layer that makes assistant workflows reliable in large codebases.`,
-            `Anchor ${topic} on the shift from generic prompts to repository-aware workflows: Sourcegraph gives ${segmentContext} ${persona} buyers the codebase context and verification path that assistant-only tools lack.`,
-          ]
-        : /Governance/.test(frame)
-          ? [
-              `${segmentContext} ${persona} buyers need a way to govern AI-generated code changes with audit-ready controls, policy enforcement, and codebase-wide verification; frame Sourcegraph as the enterprise control layer around existing assistants.`,
-              `Use ${topic} to show ${segmentContext} ${persona} buyers that the real enterprise gap is not generation quality but governed execution, auditability, and verification across the codebase.`,
-            ]
-          : [
-              `For ${segmentContext} ${persona} buyers, position Sourcegraph around ${topic} to execute cross-repo change safely at scale while complementing existing coding assistants.`,
-              `${segmentContext} ${persona} buyers evaluating ${topic} need an approach that connects codebase context, verification, and rollout instead of another assistant surface.`,
-            ];
-  return variants[stableHash(`${topic}|${segment}|${persona}`) % variants.length];
+  const sourceHook = evidenceLead(sourceTitle);
+  const problem = deriveProblemStatement(text, segment);
+
+  switch (frame) {
+    case "Cross-Repo Remediation and Migration":
+      return `${problem} Use ${sourceHook} to show ${persona} readers why migrations and remediations become execution and verification problems long before they become model-quality problems.`;
+    case "Repository Context and Retrieval Precision for Coding Agents":
+    case "Code Search, Deep Search, and Repository Context":
+      return `${problem} Use ${sourceHook} to explain why ${topic} is now an engineering-systems problem for ${persona} buyers, not just a prompt-quality problem.`;
+    case "Governance, Compliance, and Verification for AI Code Changes":
+    case "Governance and Auditability for Enterprise Coding Workflows":
+      return `${problem} Use ${sourceHook} to frame how teams are turning AI coding into a governed workflow with standards, review, and verification.`;
+    case "Developer Onboarding in Large Codebases":
+      return `${problem} Use ${sourceHook} to show why onboarding, repository navigation, and system understanding remain unsolved even in AI-assisted teams.`;
+    default:
+      return `${problem} Use ${sourceHook} to turn ${topic} into a concrete buying and operating discussion instead of a generic AI-coding trend piece.`;
+  }
 }
 
 function buildKeyInsights(
@@ -1148,14 +1232,45 @@ function buildKeyInsights(
   persona: ContentIdea["target_persona"],
   text: string,
   sourceTitle?: string,
-  sourceUrl?: string,
+  _sourceUrl?: string,
 ): string[] {
-  const topic = extractIdeaTopic(text, sourceTitle, sourceUrl).toLowerCase();
-  return [
-    `${segment === "Other" ? "Enterprise platform teams" : segment} ${persona} buyers need reliable cross-repo context, not another assistant surface.`,
-    `Sourcegraph’s differentiation in ${topic} should be framed as complementary to Cursor/Copilot/Claude Code.`,
-    "GTM motion should emphasize enterprise controls (compliance, BYOK/self-hosted, auditability) with concrete operational examples.",
-  ];
+  const frame = detectTopicFrame(text);
+  const sourceHook = evidenceLead(sourceTitle);
+  const audience = `${segment === "Other" ? "Enterprise" : segment} ${persona}`;
+  switch (frame) {
+    case "Cross-Repo Remediation and Migration":
+      return [
+        `${sourceHook} is useful because it turns migration risk into a visible rollout and verification problem.`,
+        `${audience} buyers care about blast radius, sequencing, and rollback more than assistant novelty.`,
+        "The strongest angle is operational: how teams verify downstream impact before shipping codebase-wide changes.",
+      ];
+    case "Repository Context and Retrieval Precision for Coding Agents":
+    case "Code Search, Deep Search, and Repository Context":
+      return [
+        `${sourceHook} provides a timely proof signal that repository context is becoming infrastructure for coding agents.`,
+        `${audience} buyers need ownership, dependency, and usage-path visibility before they trust generated changes.`,
+        "The strongest angle is not model-vs-model; it is what happens when agents cross repo boundaries in production workflows.",
+      ];
+    case "Governance, Compliance, and Verification for AI Code Changes":
+    case "Governance and Auditability for Enterprise Coding Workflows":
+      return [
+        `${sourceHook} gives you a concrete way to talk about standards, review loops, and auditability around generated code.`,
+        `${audience} buyers are asking how AI-generated changes get reviewed, approved, and traced after the pilot phase.`,
+        "The strongest angle is process design: what standards, controls, and verification steps teams are encoding now.",
+      ];
+    case "Developer Onboarding in Large Codebases":
+      return [
+        `${sourceHook} shows that system understanding is still the gating factor for new engineers in large codebases.`,
+        `${audience} buyers care when AI speeds up code writing but not architecture comprehension.`,
+        "The strongest angle is the gap between faster generation and slower understanding in multi-repo environments.",
+      ];
+    default:
+      return [
+        `${sourceHook} is useful because it gives the idea a named, current proof point rather than a generic trend claim.`,
+        `${audience} buyers respond better to concrete workflow failures than to broad AI-coding abstractions.`,
+        "The strongest angle is the operational problem the source exposes, not the vendor that published it.",
+      ];
+  }
 }
 
 function buildContentOutline(
@@ -1167,6 +1282,8 @@ function buildContentOutline(
   sourceUrl?: string,
 ): string[] {
   const topic = extractIdeaTopic(text, sourceTitle, sourceUrl).toLowerCase();
+  const sourceHook = evidenceLead(sourceTitle);
+  const problem = deriveProblemStatement(text, segment);
   const channelLabelMap: Record<ContentIdea["channel"], string> = {
     event_talk: "talk",
     webinar: "webinar",
@@ -1182,11 +1299,11 @@ function buildContentOutline(
   };
   const channelLabel = channelLabelMap[channel];
   return [
-    `Context: why ${segment === "Other" ? "platform teams" : segment} teams care about ${topic} now`,
-    `Problem framing for ${persona}: limits of assistant-only workflows in large, complex codebases`,
-    "Sourcegraph POV: use Code Search + Deep Search for accurate context, then Batch Changes for safe large-scale execution.",
-    "Proof section: product evidence + customer signal + external market trigger",
-    `CTA for ${channelLabel}: convert to a scoped next step (buyer workshop, follow-up meeting, or technical validation).`,
+    `Open with the external trigger: ${sourceHook}.`,
+    `Define the operating problem for ${persona}: ${problem}`,
+    `Break down what actually fails in ${topic}: context, verification, sequencing, ownership, or rollout.`,
+    "Add proof: one market signal, one product/workflow example, and one concrete implementation step.",
+    `Close the ${channelLabel} with a scoped next step for the reader: workshop, evaluation plan, or technical validation.`,
   ];
 }
 
@@ -1396,12 +1513,6 @@ function hasConcreteEvidence(text: string): boolean {
   );
 }
 
-function hasStrongAnchorEvidence(text: string): boolean {
-  return /(customer|case study|benchmark|docs|documentation|ga|general availability|launch|release|pricing|byok|self-hosted|self hosted|rbac|policy enforcement|credits)/.test(
-    text,
-  );
-}
-
 /** Classify the source/format type for content seeding. */
 function classifyContentSeedType(text: string, _domain: string): ContentSeedType {
   const isCaseStudy = /(case study|customer story|customer success|reference account|reference customer)/.test(text);
@@ -1423,26 +1534,30 @@ function classifyContentSeedType(text: string, _domain: string): ContentSeedType
 function buildWhyNow(doc: AgentRankedDoc, text: string): string {
   const source = sourceFromUrl(doc.url);
   const date = doc.publishedAt ? doc.publishedAt.toISOString().slice(0, 10) : "recently";
+  const hook = evidenceLead(doc.title);
   if (/(launch|release|\bga\b|pricing)/.test(text)) {
-    return `Fresh product signal from ${source} (${date}) creates a concrete hook for near-term GTM content.`;
+    return `${hook} was published by ${source} on ${date}, giving this idea a named product or workflow trigger instead of a generic trend claim.`;
   }
   if (/(customer|case study|benchmark|report)/.test(text)) {
-    return `External proof signal from ${source} (${date}) can strengthen credibility in active opportunities.`;
+    return `${hook} from ${source} (${date}) adds external proof you can cite in active evaluations and not just opinion-led messaging.`;
   }
-  return `Recent signal from ${source} (${date}) is relevant but should be paired with one corroborating source before broad activation.`;
+  return `${hook} from ${source} (${date}) gives the idea a current hook, but it should still be paired with corroborating evidence before broad activation.`;
 }
 
 function buildCoreClaim(text: string): string {
   if (/(migration|remediation|codemod|batch changes)/.test(text)) {
-    return "Sourcegraph turns large-scale code change work into a controlled, cross-repo workflow with verification loops.";
+    return "The hard part of AI-assisted migrations is scoping blast radius, sequencing changes, and verifying downstream impact across repositories.";
   }
   if (/(mcp|context layer|repo context)/.test(text)) {
-    return "Sourcegraph acts as the repo context layer that makes existing assistants more reliable across complex codebases.";
+    return "Repository context quality, not raw model quality, is becoming the limiting factor in coding-agent reliability.";
   }
   if (hasComplianceControlSignal(text) || /(compliance|security|audit|byok|self-hosted)/.test(text)) {
-    return "Sourcegraph provides an enterprise control layer (Code Search, Deep Search, Batch Changes) for governed AI coding workflows.";
+    return "Teams adopting AI coding are moving from experimentation to encoded standards, review loops, and audit-ready verification.";
   }
-  return "Sourcegraph complements coding assistants with cross-repo understanding, precise retrieval, and safer execution.";
+  if (/(onboarding|knowledge transfer|legacy|complex codebase|monorepo|multi-repo)/.test(text)) {
+    return "AI can speed up code writing without solving the system-understanding problem that dominates onboarding in large codebases.";
+  }
+  return "Enterprise AI-coding adoption is exposing operating problems in context, verification, and rollout that generic assistant messaging glosses over.";
 }
 
 function buildEvidenceQualityNote(doc: AgentRankedDoc, text: string): string {
@@ -1456,12 +1571,6 @@ function buildEvidenceQualityNote(doc: AgentRankedDoc, text: string): string {
   if (sourceType === "secondary" && concrete) return "Moderate confidence: concrete secondary source; corroborate once.";
   if (sourceType === "community") return "Low confidence: community signal; use as hypothesis only.";
   return "Low confidence: weak evidence; monitor before promoting.";
-}
-
-function hasStrongMaterialSignal(text: string): boolean {
-  return /(ga|general availability|launch|release|pricing|customer|case study|benchmark|security|compliance|byok|rbac|self-hosted|enterprise)/.test(
-    text,
-  );
 }
 
 function isAcademicResearchDomain(domain: string): boolean {
@@ -1615,9 +1724,9 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState, periodDays: n
   const proof_feasibility_score = /(benchmark|customer|case study|release notes|docs|\bga\b)/.test(text) ? 0.9 : 0.5;
   
   // Product/message fit (content seed value, not hard GTM signals)
-  const strongProduct = /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted)/.test(text);
-  const partialProduct = /(developer (platform|tools|productivity)|coding assistant|ai coding|enterprise (codebase|tooling)|codebase (context|understanding))/i.test(text);
-  const message_fit_score = strongProduct ? 1 : partialProduct ? 0.6 : 0.35;
+  const strongProduct = /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted|repository context|retrieval precision|verification|rollout)/.test(text);
+  const partialProduct = /(developer (platform|tools|productivity)|coding assistant|ai coding|enterprise (codebase|tooling)|codebase (context|understanding)|onboarding|migration|remediation)/i.test(text);
+  const message_fit_score = strongProduct ? 1 : partialProduct ? 0.7 : 0.3;
   
   // Timeliness (less aggressive weight for month windows; variety matters more)
   const timeliness_score = doc.publishedAt 
@@ -1643,18 +1752,27 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState, periodDays: n
   // Penalties
   const noisy_domain_penalty = isNoisyDomain(domain) ? 0.3 : 0;
   const weak_anchor_penalty = isWeakAnchorSource(doc, periodDays) ? (periodDays <= 14 ? 0.2 : 0.12) : 0;
+  const specificity_score =
+    /(repo boundary|repository boundary|downstream|dependency|dependencies|blast radius|ownership|usage path|call path|review loop|team standards|verification|rollback|onboarding|knowledge transfer|regulated|capital markets|banking|insurance)/.test(
+      text,
+    )
+      ? 0.95
+      : /(platform engineering|developer platform|cross-repo|repository context|retrieval precision|migration|remediation|audit|policy)/.test(
+            text,
+          )
+        ? 0.72
+        : 0.45;
 
   // Rebalanced scoring: prioritize content seed value + quality differentiation
-  // Increased seedFormat (25%) and sourceQuality (15%) to create real variance between candidates.
-  // Reduced messageFit (25%) since most docs hit 0.6 and don't differentiate.
-  // Kept channel + evidence + timeliness moderate.
   const contentSeedScore =
-    0.25 * seedFormatScore +           // Format quality (case study > blog > newsletter > other) - increased for differentiation
-    0.12 * channel_efficiency_score +  // Channel fit
-    0.12 * proof_feasibility_score +   // Evidence availability
-    0.25 * message_fit_score +         // Message fit - reduced from 0.35 (too many docs hit 0.6)
-    0.10 * timeliness_score +          // Recency boost (lighter weight for month)
-    0.15 * source_quality_score -      // Source quality - increased from 0.05 (primary > secondary > community)
+    0.18 * seedFormatScore +
+    0.1 * channel_efficiency_score +
+    0.14 * proof_feasibility_score +
+    0.18 * message_fit_score +
+    0.13 * specificity_score +
+    0.12 * doc.agentScore +
+    0.08 * timeliness_score +
+    0.12 * source_quality_score -
     noisy_domain_penalty -
     weak_anchor_penalty;
 
@@ -2769,21 +2887,6 @@ function rebalanceCorroboratingSourcesAcrossIdeas(
   );
 }
 
-function extractIdeaTitlePrefix(title: string): string {
-  const match = title.match(/^([^:]+):\s*/);
-  return match?.[1]?.trim() || "Guide";
-}
-
-function buildBroadThemeTitle(prefix: string, idea: ContentIdea): string {
-  const topic = polishIdeaTopic(
-    detectTopicFrame(
-      `${idea.title} ${idea.thesis} ${idea.core_claim} ${idea.sources.map((s) => s.title).join(" ")}`
-        .toLowerCase(),
-    ),
-  );
-  return `${prefix}: ${topic}`.slice(0, 120);
-}
-
 function maybeRewriteLiteralIdeaTitle(idea: ContentIdea): string {
   const currentTitle = stripBoilerplateNoise(idea.title);
   const sourceTitles = idea.sources.map((s) => s.title).filter(Boolean);
@@ -2809,7 +2912,13 @@ function maybeRewriteLiteralIdeaTitle(idea: ContentIdea): string {
       currentTitle,
     );
   if (!weakOrLiteralTitle) return currentTitle;
-  return buildBroadThemeTitle(extractIdeaTitlePrefix(currentTitle), idea);
+  return buildSourcegraphIdeaTitle(
+    idea.target_segment,
+    idea.channel,
+    `${idea.thesis} ${idea.core_claim} ${idea.sources.map((s) => s.title).join(" ")}`.toLowerCase(),
+    idea.sources[0]?.title,
+    idea.sources[0]?.url,
+  );
 }
 
 function isWeakFinalIdeaSource(source: ContentIdea["sources"][number]): boolean {
@@ -2983,7 +3092,7 @@ async function synthesizeStructuredContentIdeasWithLLM(args: {
   const maxTokens = llmModel && isClaudeModel(llmModel) ? 3200 : 1800;
   const marketSignals = args.candidates
     .filter((c) => c.doc.id !== MARKET_BRIEF_CONTEXT_ID)
-    .slice(0, 4)
+    .slice(0, Math.max(6, args.numIdeas * 2))
     .map((c, index) => ({
       n: index + 1,
       title: c.doc.title,
@@ -2992,6 +3101,21 @@ async function synthesizeStructuredContentIdeasWithLLM(args: {
       published_at: c.doc.publishedAt?.toISOString().slice(0, 10) ?? null,
       summary: stripBoilerplateNoise(c.doc.snippet ?? "").slice(0, 180),
       content_seed_score: Number(c.score.toFixed(3)),
+      problem_angle: deriveProblemStatement(textOf(c.doc), normalizeTargetSegment(c.segment)),
+      concrete_signals: [
+        /(mcp|model context protocol|repository context|repo context|retrieval precision)/.test(textOf(c.doc))
+          ? "repo_context"
+          : null,
+        /(batch changes|codemod|migration|remediation|rollout|rollback)/.test(textOf(c.doc))
+          ? "cross_repo_change"
+          : null,
+        /(policy|audit|compliance|self-hosted|self hosted|byok|rbac|team standards)/.test(textOf(c.doc))
+          ? "governance"
+          : null,
+        /(onboarding|knowledge transfer|legacy|monorepo|multi-repo)/.test(textOf(c.doc))
+          ? "onboarding"
+          : null,
+      ].filter(Boolean),
     }))
     .filter((doc) => !!doc.url);
   if (marketSignals.length === 0) return { ideas: null, timedOut: false };
@@ -3047,7 +3171,10 @@ Generate content ideas that arise naturally from the market signals and Sourcegr
 
 Rules:
 - Use the market_signals as the primary evidence for why an idea exists now.
-- Use sourcegraph_context only to ground the angle in current Sourcegraph messaging/product pages. Do not force every idea into the same Sourcegraph narrative.
+- Use sourcegraph_context only to ground where Sourcegraph fits. Do not make it the main thesis of every idea.
+- Prefer buyer-problem titles over category labels. Bad: "Repository Context as the Control Layer". Better: "Why Financial Codebases Break Context-Poor Coding Agents".
+- Avoid the phrases "context layer", "control layer", "governed execution layer", and "complements existing assistants" unless a source explicitly uses them.
+- Distinguish between adjacent but different angles. "repo-boundary failures", "team standards", "rollback/verification", and "onboarding/system understanding" are not the same story.
 - Avoid cloning the same theme across multiple formats. If two ideas are basically the same narrative, keep the stronger one.
 - Prefer 3 distinct, high-signal ideas over 5 repetitive ideas.
 - Do not force governance/compliance unless the evidence clearly points there.
@@ -3374,8 +3501,16 @@ function buildContentIdeasCandidateGates(ctx: {
       keep: (c) => hasMinimumContentIdeasRelevance(c.doc),
     },
     {
-      name: "broad_sourcegraph_narrative_fit",
-      keep: (c) => hasBroadSourcegraphNarrativeFit(c.doc),
+      name: "concrete_content_angle",
+      keep: (c) => {
+        const text = textOf(c.doc);
+        return (
+          hasConcreteEvidence(text) ||
+          /(repo boundary|repository boundary|downstream|dependency|dependencies|ownership|usage path|call path|team standards|verification|rollback|onboarding|knowledge transfer|blast radius|mcp|model context protocol|repository context|repo context|retrieval precision|code search|deep search|cross-repo|platform engineering|developer platform|migration|remediation|audit|policy)/.test(
+            text,
+          )
+        );
+      },
     },
     {
       name: "has_canonical_url",
@@ -3430,7 +3565,12 @@ function buildContentIdeasCandidateGates(ctx: {
         const sourceType = classifySourceTypeByDomain(domain);
         if (
           (sourceType === "secondary" || sourceType === "community") &&
-          !hasConcreteEvidence(text)
+          !(
+            hasConcreteEvidence(text) ||
+            /(mcp|model context protocol|repository context|repo context|retrieval precision|code search|deep search|cross-repo|migration|remediation|onboarding|knowledge transfer|ownership|dependency|dependencies|verification|rollback|team standards|audit|policy)/.test(
+              text,
+            )
+          )
         ) {
           return false;
         }

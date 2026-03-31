@@ -50,12 +50,12 @@ describe("hasMinimumContentIdeasRelevance", () => {
     ).toBe(false);
   });
 
-  it("accepts vendor-titled content when enterprise or workflow hooks are present", () => {
+  it("accepts vendor-titled content when enterprise controls are tied to coding workflows", () => {
     expect(
       hasMinimumContentIdeasRelevance(
         doc({
           title: "Announcing Claude 4 for Enterprise",
-          snippet: "Self-hosted deployment and compliance controls for regulated industries.",
+          snippet: "Self-hosted deployment and compliance controls for enterprise coding assistants in regulated industries.",
         }),
       ),
     ).toBe(true);

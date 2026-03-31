@@ -731,7 +731,12 @@ Use whichever fits best.`,
     const out = await generateContentIdeas({ periodDays: 14, numIdeas: 3 });
 
     expect(out.ideas.length).toBeGreaterThanOrEqual(2);
-    expect(out.ideas[0].title).toBe("Why Your AI Coding Tools Are Only as Good as the Context They Can See");
+    expect(
+      out.ideas.some((idea) =>
+        /context|cross-repo|migration|dependencies/i.test(idea.title),
+      ),
+    ).toBe(true);
+    expect(new Set(out.ideas.map((idea) => idea.title)).size).toBe(out.ideas.length);
   });
 
   it("falls back to heuristic ideas when structured synthesis times out", async () => {
@@ -863,7 +868,7 @@ Use whichever fits best.`,
     expect(out.ideas.some((idea) => idea.sources.some((source) => source.title === offTopicResearchTitle))).toBe(false);
   });
 
-  it("broadens authoritative research titles into Sourcegraph-relevant themes", async () => {
+  it("rewrites authoritative research titles away from academic jargon when workflow signals exist", async () => {
     vi.mocked(rankForAgent).mockResolvedValue(
       [
         {
@@ -891,11 +896,11 @@ Use whichever fits best.`,
     const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
 
     expect(out.ideas).toHaveLength(1);
-    expect(out.ideas[0].title).toMatch(/Repository Context|Governance|Compliance|Verification|Audit-ready|Audit-Ready/);
+    expect(out.ideas[0].title).toMatch(/Developer Platforms|AI Code|Audit|Policy|Repository Context|Coding Teams/);
     expect(out.ideas[0].title).not.toContain("From Weak Cues");
   });
 
-  it("broadens vendor product-update titles into Sourcegraph-relevant themes", async () => {
+  it("rewrites vendor product-update titles into specific buyer-problem angles", async () => {
     vi.mocked(rankForAgent).mockResolvedValue(
       [
         {
@@ -925,7 +930,7 @@ Use whichever fits best.`,
     expect(out.ideas).toHaveLength(1);
     expect(out.ideas[0].title).not.toContain("GitLab Enables Broader");
     expect(out.ideas[0].title).not.toContain("Code Search, Deep Search, and Repository Context");
-    expect(out.ideas[0].title).toMatch(/Repository Context|Governance|Enterprise Code Intelligence|Audit-Ready/);
+    expect(out.ideas[0].title).toMatch(/Developer Platforms|Agent-driven Coding|Repo|AI Coding/);
   });
 
   it("avoids repeating the same primary source domain across short-window ideas when alternatives exist", async () => {
@@ -1610,10 +1615,10 @@ Use whichever fits best.`,
 
     const out = await generateContentIdeas({ periodDays: 14, numIdeas: 4 });
     expect(out.ideas.length).toBeGreaterThanOrEqual(2);
-    const retrievalContextTitles = out.ideas.filter((idea) =>
-      /(repository context|deep search|code search|mcp)/i.test(idea.title),
+    const distinctTopics = new Set(
+      out.ideas.map((idea) => idea.title.replace(/^[^:]+:\s*/, "").trim().toLowerCase()),
     );
-    expect(retrievalContextTitles.length).toBeLessThanOrEqual(1);
+    expect(distinctTopics.size).toBe(out.ideas.length);
     const channels = new Set(out.ideas.map((idea) => idea.channel));
     expect(channels.size).toBeGreaterThanOrEqual(2);
   });

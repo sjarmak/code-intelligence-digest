@@ -80,18 +80,18 @@ function buildContentIdeasContext(payload: ContentIdeasOutput): string {
   const ideas = payload.ideas.slice(0, MAX_CONTENT_IDEAS).map((d, i) => ({
     n: i + 1,
     title: truncate(d.title, MAX_ITEM_TITLE),
-    thesis: truncate(d.thesis, 180),
+    thesis: truncate(d.thesis, 260),
     segment_persona: `${d.target_segment} / ${d.target_persona}`,
     stage: d.funnel_stage,
-    why_now: truncate(d.why_now, 90),
-    core_claim: truncate(d.core_claim, 110),
-    key_insights: (d.key_insights ?? []).slice(0, 1).map((s) => truncate(s, 90)),
-    content_outline: (d.content_outline ?? []).slice(0, 1).map((s) => truncate(s, 90)),
-    integration_play: (d.sourcegraph_integration_play ?? []).slice(0, 1),
+    why_now: truncate(d.why_now, 160),
+    core_claim: truncate(d.core_claim, 180),
+    key_insights: (d.key_insights ?? []).slice(0, 3).map((s) => truncate(s, 140)),
+    content_outline: (d.content_outline ?? []).slice(0, 3).map((s) => truncate(s, 140)),
+    integration_play: (d.sourcegraph_integration_play ?? []).slice(0, 2),
     primary_format: d.distribution_plan?.primary_format,
-    sources: (d.sources ?? []).slice(0, 2).map((s) => ({
+    sources: (d.sources ?? []).slice(0, 3).map((s) => ({
       source: s.source,
-      title: truncate(s.title, 80),
+      title: truncate(s.title, 120),
       url: s.url,
       date: s.date,
     })),
@@ -117,6 +117,8 @@ Rules:
 - Render one output idea per input idea. Do NOT split/remix one candidate into multiple ideas and do NOT invent extra ideas.
 - Preserve source fidelity: include only URLs from the input JSON and keep source/date details aligned to those URLs.
 - Keep variety across domains when the input already contains domain-diverse ideas.
+- Preserve concrete distinctions between ideas. Do not flatten multiple ideas into the same "context layer/governance" language if their evidence points to different failure modes.
+- Avoid repetitive sales phrasing. The report should read like a strategist explaining concrete market hooks, not a recycled positioning doc.
 - Output valid markdown with this exact section header: ## Prioritized Ideas.
 - For each idea use: ### N. Title, then bullet lines for Segment/persona, Stage, Thesis, Why now, Core claim, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Primary format, Recommended venue, Channel strategy, Setup plan (bullets), Key insights (bullets), Content outline (bullets), Sources (links).
 - Do NOT include a "Dropped ideas" section or prose about excluded ideas in the final report; keep exclusions in internal/debug metadata only.
