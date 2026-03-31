@@ -1446,7 +1446,8 @@ function buildDistributionPlan(
 }
 
 function textOf(doc: AgentRankedDoc): string {
-  return `${doc.title} ${doc.snippet ?? ""} ${doc.content ?? ""}`.toLowerCase();
+  const body = doc.content?.trim() ? doc.content : doc.snippet ?? "";
+  return `${doc.title} ${body}`.toLowerCase();
 }
 
 function detectSegment(text: string): ContentIdea["target_segment"] {
@@ -3656,7 +3657,7 @@ async function generateContentIdeasImpl(options: {
     await retrieveForAgent("market_brief", {
       periodDays,
       query: options.focus ?? null,
-      maxEnrich: 0,
+      maxEnrich: 3,
       trace: marketRetrievalTrace,
     });
   const competitorDocs =
@@ -3664,7 +3665,7 @@ async function generateContentIdeasImpl(options: {
     await retrieveForAgent("competitor_intel", {
       periodDays,
       query: options.focus ?? null,
-      maxEnrich: 0,
+      maxEnrich: 3,
       trace: competitorRetrievalTrace,
     });
   const contentIdeaDocs =
@@ -3672,7 +3673,7 @@ async function generateContentIdeasImpl(options: {
     await retrieveForAgent("content_ideas", {
       periodDays,
       query: options.focus ?? null,
-      maxEnrich: 0,
+      maxEnrich: 3,
       trace: contentPoolRetrievalTrace,
     });
 

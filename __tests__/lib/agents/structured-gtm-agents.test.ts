@@ -1385,6 +1385,45 @@ Use whichever fits best.`,
     expect(out.ideas.some((idea) => idea.sources.some((source) => source.title === weakTitle))).toBe(false);
   });
 
+  it("does not turn agent-development workflow articles into retrieval-bottleneck claims", async () => {
+    vi.mocked(retrieveForAgent).mockResolvedValue([]);
+    vi.mocked(rankForAgent).mockResolvedValue(
+      [
+        {
+          source: "web" as const,
+          url: "https://github.blog/ai-and-ml/github-copilot/agent-driven-development-in-copilot-applied-science/",
+          title: "Agent-driven development in Copilot Applied Science",
+          snippet:
+            "Using Copilot CLI to build agents faster through prompting, architecture, iteration, documentation, guardrails, retrieval precision, and repository context.",
+          content:
+            "Using Copilot CLI to build agents faster through prompting, architecture, iteration, documentation, tests, and guardrails. The article focuses on planning mode, refactoring, trust but verify, and treating the agent like a junior engineer.",
+          metadata: {},
+          baseScore: 0.9,
+          goalScore: 0.88,
+          agentScore: 0.87,
+          features: {
+            competitorMatch: 0.62,
+            formatType: 0.4,
+            icpMatch: 0.8,
+            recency: 0.96,
+            trendLandscape: 0.4,
+          },
+          publishedAt: new Date("2026-03-31"),
+        },
+      ] as Awaited<ReturnType<typeof rankForAgent>>,
+    );
+
+    const out = await generateContentIdeas({ periodDays: 7, numIdeas: 1 });
+
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].sources[0]?.title).toBe("Agent-driven development in Copilot Applied Science");
+    expect(
+      /retrieval precision|repository context|repo context|context layer|model quality stops mattering/i.test(
+        `${out.ideas[0].title} ${out.ideas[0].thesis} ${out.ideas[0].why_now} ${out.ideas[0].core_claim}`,
+      ),
+    ).toBe(false);
+  });
+
   it("does not force event-talk channel from playbook defaults", async () => {
     vi.mocked(rankForAgent).mockResolvedValue(
       [

@@ -482,6 +482,8 @@ export function mergeRetrievedDocs(
 
 /**
  * Enrich docs that have a URL but no or short content by fetching full text (e.g. Readability).
+ * Used to replace synthetic search snippets with actual page text before downstream agents
+ * make source-grounded claims.
  * Respects maxEnrich to avoid slow requests.
  */
 export async function enrichWithFullText(
@@ -490,7 +492,7 @@ export async function enrichWithFullText(
 ): Promise<RetrievedDoc[]> {
   const toEnrich = docs.filter(
     (d) =>
-      d.source === "postgres_items" &&
+      (d.source === "postgres_items" || d.source === "web") &&
       d.url &&
       !d.url.includes("inoreader.com") &&
       (!d.content || d.content.length < 300)
@@ -518,7 +520,14 @@ export async function enrichWithFullText(
           (d) => (d.id && d.id === doc.id) || (d.url === doc.url && d.title === doc.title)
         );
         if (idx >= 0) {
-          out[idx] = { ...out[idx], content: result.text };
+          out[idx] = {
+            ...out[idx],
+            content: result.text,
+            snippet:
+              out[idx].source !== "web" && out[idx].snippet && out[idx].snippet.length >= 120
+                ? out[idx].snippet
+                : result.text.slice(0, 320),
+          };
         }
       }
     } catch (err) {
