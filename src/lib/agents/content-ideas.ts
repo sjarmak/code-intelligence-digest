@@ -73,6 +73,16 @@ export interface ContentIdea {
     setup_steps: string[];
   };
   priority_score: number;
+  editorial_rubric?: {
+    version: number;
+    base_priority_score: number;
+    adjusted_priority_score: number;
+    evidence_breadth: number;
+    sourcegraph_ownability: number;
+    format_fit: number;
+    hook_independence: number;
+    notes: string[];
+  };
 }
 
 export interface ContentIdeasOutput {
@@ -3050,6 +3060,284 @@ function sourceDomainOverlapCount(a: ContentIdea, b: ContentIdea): number {
   return overlap;
 }
 
+const CONTENT_IDEA_EDITORIAL_RUBRIC_VERSION = 1;
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function ideaBodyText(idea: ContentIdea): string {
+  return `${idea.title} ${idea.thesis} ${idea.core_claim} ${idea.why_now} ${idea.sourcegraph_integration_play.join(" ")} ${idea.content_outline.join(" ")}`.toLowerCase();
+}
+
+function uniqueSourceUrlsForIdea(idea: ContentIdea): string[] {
+  return Array.from(
+    new Set(
+      idea.sources
+        .map((source) => canonicalizeUrl(source.url))
+        .filter((url): url is string => !!url),
+    ),
+  );
+}
+
+function uniqueSourceDomainsForIdea(idea: ContentIdea): string[] {
+  return Array.from(
+    new Set(
+      idea.sources
+        .map((source) => sourceBaseDomain(source.url) || sourceFromUrl(source.url))
+        .filter((domain): domain is string => !!domain),
+    ),
+  );
+}
+
+function isFundingOrFundraiseHook(text: string): boolean {
+  return /(series [a-f]|funding|fundraise|raised|raises|seed round|\$\d|million|valuation|資金調達)/.test(
+    text,
+  );
+}
+
+function isAnnouncementHook(text: string): boolean {
+  return /(announcing|introducing|launch|launches|released?|now available|general availability|\bga\b|product announcement)/.test(
+    text,
+  );
+}
+
+function isHeavyweightContentChannel(channel: ContentIdea["channel"]): boolean {
+  return ["whitepaper", "webinar", "event_talk", "long_video", "case_study"].includes(channel);
+}
+
+function isMidweightContentChannel(channel: ContentIdea["channel"]): boolean {
+  return ["blog", "SEO_page"].includes(channel);
+}
+
+function countSourcegraphProductAnchors(text: string): number {
+  const matches = [
+    /\bcode search\b/,
+    /\bdeep search\b/,
+    /\bbatch changes\b/,
+    /\bcody\b/,
+    /\bownership\b/,
+    /\bdependency|dependencies\b/,
+    /\busage path|call path\b/,
+    /\bverification|impact analysis|blast radius\b/,
+    /\brepo context|repository context|cross-repo\b/,
+  ];
+  return matches.reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
+}
+
+function genericSourcegraphAnglePenalty(text: string): number {
+  if (
+    /(verification layer|context layer|control layer|queryable infrastructure layer|sits behind ai code review|complements existing assistants)/.test(
+      text,
+    ) &&
+    countSourcegraphProductAnchors(text) < 2
+  ) {
+    return 0.2;
+  }
+  return 0;
+}
+
+function scoreIdeaEvidenceBreadth(idea: ContentIdea, periodDays: number): { score: number; notes: string[] } {
+  const uniqueUrls = uniqueSourceUrlsForIdea(idea);
+  const uniqueDomains = uniqueSourceDomainsForIdea(idea);
+  const primaryText = `${idea.sources[0]?.title ?? ""} ${idea.why_now}`.toLowerCase();
+  let score =
+    uniqueUrls.length >= 3 && uniqueDomains.length >= 3
+      ? 1
+      : uniqueUrls.length >= 2 && uniqueDomains.length >= 2
+        ? 0.86
+        : uniqueUrls.length >= 2
+          ? 0.72
+          : 0.34;
+  const notes: string[] = [];
+  if (periodDays > 14 && uniqueUrls.length < 2) {
+    score -= 0.18;
+    notes.push("month-window idea lacks corroborating sources");
+  }
+  if (uniqueDomains.length < uniqueUrls.length) {
+    score -= 0.06;
+    notes.push("sources cluster on one domain");
+  }
+  if (uniqueUrls.length === 1 && isFundingOrFundraiseHook(primaryText)) {
+    score -= 0.18;
+    notes.push("single-source fundraise hook");
+  }
+  return { score: clamp01(score), notes };
+}
+
+function scoreIdeaSourcegraphOwnability(idea: ContentIdea): { score: number; notes: string[] } {
+  const text = ideaBodyText(idea);
+  const productAnchors = countSourcegraphProductAnchors(text);
+  let score = 0.32;
+  const notes: string[] = [];
+  score += Math.min(0.4, productAnchors * 0.11);
+  if (/(ownership|dependency|dependencies|usage path|call path|verification|impact analysis|blast radius|approval workflow|audit|policy|review standards)/.test(text)) {
+    score += 0.2;
+  }
+  const genericPenalty = genericSourcegraphAnglePenalty(text);
+  if (genericPenalty > 0) {
+    score -= genericPenalty;
+    notes.push("sourcegraph angle is too generic");
+  }
+  if (productAnchors < 2) {
+    notes.push("limited product-specific Sourcegraph proof");
+  }
+  return { score: clamp01(score), notes };
+}
+
+function scoreIdeaFormatFit(idea: ContentIdea): { score: number; notes: string[] } {
+  const sourceCount = uniqueSourceUrlsForIdea(idea).length;
+  const primaryText = `${idea.sources[0]?.title ?? ""} ${idea.core_claim}`.toLowerCase();
+  const hasProofSignal = /(customer|case study|benchmark|documentation|docs|ga|general availability|pricing|security|compliance|audit)/.test(
+    primaryText,
+  );
+  let score =
+    isHeavyweightContentChannel(idea.channel)
+      ? sourceCount >= 3
+        ? 1
+        : sourceCount >= 2
+          ? 0.82
+          : 0.22
+      : isMidweightContentChannel(idea.channel)
+        ? sourceCount >= 2
+          ? 0.88
+          : 0.58
+        : sourceCount >= 2 || hasProofSignal
+          ? 0.88
+          : 0.72;
+  const notes: string[] = [];
+  if (isHeavyweightContentChannel(idea.channel) && sourceCount < 2) {
+    notes.push("heavyweight format without enough supporting evidence");
+  }
+  if (idea.channel === "whitepaper" && sourceCount < 2) {
+    score -= 0.08;
+    notes.push("whitepaper recommendation is too heavy for the evidence");
+  }
+  return { score: clamp01(score), notes };
+}
+
+function scoreIdeaHookIndependence(idea: ContentIdea): { score: number; notes: string[] } {
+  const primaryText = `${idea.sources[0]?.title ?? ""} ${idea.why_now} ${idea.thesis}`.toLowerCase();
+  const uniqueUrls = uniqueSourceUrlsForIdea(idea).length;
+  const uniqueDomains = uniqueSourceDomainsForIdea(idea).length;
+  let score = uniqueUrls >= 3 ? 1 : uniqueUrls >= 2 ? 0.84 : 0.46;
+  const notes: string[] = [];
+  if (isFundingOrFundraiseHook(primaryText) && uniqueUrls === 1) {
+    score = 0.08;
+    notes.push("idea depends on a single competitor funding announcement");
+  } else if (isFundingOrFundraiseHook(primaryText)) {
+    score -= 0.16;
+    notes.push("fundraise hook needs broader corroboration");
+  } else if (isAnnouncementHook(primaryText) && uniqueUrls === 1) {
+    score -= 0.12;
+    notes.push("single-source product announcement hook");
+  }
+  if (uniqueDomains < uniqueUrls) {
+    score -= 0.06;
+  }
+  return { score: clamp01(score), notes };
+}
+
+function applyEditorialRubricToIdea(idea: ContentIdea, periodDays: number): ContentIdea {
+  const basePriority = idea.editorial_rubric?.base_priority_score ?? idea.priority_score;
+  const evidence = scoreIdeaEvidenceBreadth(idea, periodDays);
+  const ownability = scoreIdeaSourcegraphOwnability(idea);
+  const formatFit = scoreIdeaFormatFit(idea);
+  const hookIndependence = scoreIdeaHookIndependence(idea);
+  const adjustedPriority =
+    basePriority +
+    (evidence.score - 0.5) * 0.24 +
+    (ownability.score - 0.5) * 0.22 +
+    (formatFit.score - 0.5) * 0.16 +
+    (hookIndependence.score - 0.5) * 0.2;
+  const notes = Array.from(
+    new Set([
+      ...evidence.notes,
+      ...ownability.notes,
+      ...formatFit.notes,
+      ...hookIndependence.notes,
+    ]),
+  ).slice(0, 4);
+
+  return {
+    ...idea,
+    priority_score: Number(adjustedPriority.toFixed(3)),
+    editorial_rubric: {
+      version: CONTENT_IDEA_EDITORIAL_RUBRIC_VERSION,
+      base_priority_score: Number(basePriority.toFixed(3)),
+      adjusted_priority_score: Number(adjustedPriority.toFixed(3)),
+      evidence_breadth: Number(evidence.score.toFixed(3)),
+      sourcegraph_ownability: Number(ownability.score.toFixed(3)),
+      format_fit: Number(formatFit.score.toFixed(3)),
+      hook_independence: Number(hookIndependence.score.toFixed(3)),
+      notes,
+    },
+  };
+}
+
+function rankIdeasWithEditorialRubric(
+  ideas: ContentIdea[],
+  options: { periodDays: number; targetCount: number },
+): ContentIdea[] {
+  if (ideas.length <= 1) {
+    return ideas.map((idea) => applyEditorialRubricToIdea(idea, options.periodDays));
+  }
+
+  const rescored = ideas.map((idea) => applyEditorialRubricToIdea(idea, options.periodDays));
+  const remaining = [...rescored];
+  const ordered: ContentIdea[] = [];
+  const personaCounts = new Map<ContentIdea["target_persona"], number>();
+  const stageCounts = new Map<ContentIdea["funnel_stage"], number>();
+  const channelCounts = new Map<ContentIdea["channel"], number>();
+  const clusterCounts = new Map<string, number>();
+  const domainCounts = new Map<string, number>();
+
+  while (remaining.length > 0) {
+    const portfolioAware = ordered.length < options.targetCount;
+    const ranked = [...remaining]
+      .map((idea) => {
+        if (!portfolioAware) {
+          return { idea, score: idea.priority_score };
+        }
+        let score = idea.priority_score;
+        if ((personaCounts.get(idea.target_persona) ?? 0) === 0) score += 0.045;
+        if ((stageCounts.get(idea.funnel_stage) ?? 0) === 0) score += 0.035;
+        if ((channelCounts.get(idea.channel) ?? 0) === 0) score += 0.03;
+        const cluster = narrativeClusterKey(idea);
+        if ((clusterCounts.get(cluster) ?? 0) === 0) score += 0.055;
+        const primaryDomain = primarySourceDomain(idea);
+        if ((domainCounts.get(primaryDomain) ?? 0) === 0) score += 0.02;
+
+        const personaCap = options.periodDays <= 14 ? 1 : 2;
+        const stageCap = options.periodDays <= 14 ? 2 : 2;
+        const clusterCap = options.periodDays <= 14 ? 1 : 2;
+        if ((personaCounts.get(idea.target_persona) ?? 0) >= personaCap) score -= 0.08;
+        if ((stageCounts.get(idea.funnel_stage) ?? 0) >= stageCap) score -= 0.05;
+        if ((clusterCounts.get(cluster) ?? 0) >= clusterCap) score -= 0.08;
+
+        return { idea, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    const picked = ranked[0]?.idea;
+    if (!picked) break;
+    ordered.push(picked);
+    const cluster = narrativeClusterKey(picked);
+    personaCounts.set(picked.target_persona, (personaCounts.get(picked.target_persona) ?? 0) + 1);
+    stageCounts.set(picked.funnel_stage, (stageCounts.get(picked.funnel_stage) ?? 0) + 1);
+    channelCounts.set(picked.channel, (channelCounts.get(picked.channel) ?? 0) + 1);
+    clusterCounts.set(cluster, (clusterCounts.get(cluster) ?? 0) + 1);
+    const primaryDomain = primarySourceDomain(picked);
+    domainCounts.set(primaryDomain, (domainCounts.get(primaryDomain) ?? 0) + 1);
+    const pickedKey = normalizeIdeaTitleKey(picked.title);
+    const index = remaining.findIndex((idea) => normalizeIdeaTitleKey(idea.title) === pickedKey);
+    if (index >= 0) remaining.splice(index, 1);
+    else break;
+  }
+
+  return ordered;
+}
+
 function enforcePrimarySourceDiversity(
   ideas: ContentIdea[],
   targetCount: number,
@@ -3565,6 +3853,10 @@ Generate content ideas that arise naturally from the market signals and Sourcegr
 Rules:
 - Use the market_signals as the primary evidence for why an idea exists now.
 - Use sourcegraph_context only to ground where Sourcegraph fits. Do not make it the main thesis of every idea.
+- Top-ranked ideas should be grounded in 2+ independent signals whenever the input makes that possible.
+- Do not build a top idea around a competitor fundraise or announcement alone; only use that hook when broader workflow evidence supports the same thesis.
+- Match the format to the evidence. A single fresh post can justify a brief or blog; whitepapers, webinars, event talks, and long-form assets need broader proof.
+- The Sourcegraph angle must cite concrete product truth or workflow capability such as Code Search, Deep Search, Batch Changes, ownership/dependency visibility, or verification before merge.
 - Prefer buyer-problem titles over category labels. Bad: "Repository Context as the Control Layer". Better: "Why Financial Codebases Break Context-Poor Coding Agents".
 - Avoid the phrases "context layer", "control layer", "governed execution layer", and "complements existing assistants" unless a source explicitly uses them.
 - Distinguish between adjacent but different angles. "repo-boundary failures", "team standards", "rollback/verification", and "onboarding/system understanding" are not the same story.
@@ -3879,7 +4171,10 @@ export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): Cont
 
   return {
     ...payload,
-    ideas: finalIdeas,
+    ideas: rankIdeasWithEditorialRubric(finalIdeas, {
+      periodDays: payload.periodDays ?? 30,
+      targetCount: (payload.periodDays ?? 30) <= 14 ? Math.min(3, finalIdeas.length) : Math.min(5, finalIdeas.length),
+    }),
   };
 }
 
@@ -4373,7 +4668,11 @@ async function generateContentIdeasImpl(options: {
     return channelDiversified;
   })();
   const corroboratedIdeas = periodDays > 14 ? ideas : addCorroboratingSources(ideas, selected);
-  let evidenceQualifiedIdeas = enforceMonthlyEvidenceThreshold(corroboratedIdeas, periodDays);
+  let evidenceQualifiedIdeas = rankIdeasWithEditorialRubric(corroboratedIdeas, {
+    periodDays,
+    targetCount: numIdeas,
+  });
+  evidenceQualifiedIdeas = enforceMonthlyEvidenceThreshold(evidenceQualifiedIdeas, periodDays);
   if (periodDays > 14) {
     evidenceQualifiedIdeas = backfillMonthIdeasWithFormatDiversity(
       evidenceQualifiedIdeas,
@@ -4477,6 +4776,10 @@ async function generateContentIdeasImpl(options: {
       numIdeas,
     );
   }
+  evidenceQualifiedIdeas = rankIdeasWithEditorialRubric(evidenceQualifiedIdeas, {
+    periodDays,
+    targetCount: numIdeas,
+  }).slice(0, numIdeas);
   const droppedCandidates = rawIdeas
     .map((i) => i.title)
     .filter((title) =>

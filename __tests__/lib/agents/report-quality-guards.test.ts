@@ -263,4 +263,231 @@ describe("content ideas quality guards", () => {
       "Video Brief: Cross-Repo Remediation Workflows with Verification",
     );
   });
+
+  it("demotes single-source heavyweight competitor hooks in favor of corroborated Sourcegraph-ownable ideas", () => {
+    const payload: ContentIdeasOutput = {
+      generated_at: "2026-04-06",
+      playbook_version: "2026.02.15.1",
+      periodDays: 14,
+      ideas: [
+        {
+          title: "Guide: Governance and Auditability for Enterprise Coding Workflows",
+          thesis: "A competitor Series B frames quality gates as the next market battleground.",
+          target_segment: "Other",
+          target_persona: "VP Engineering",
+          funnel_stage: "awareness",
+          channel: "whitepaper",
+          why_now: "A Series B announcement published today makes this timely.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "CodeRabbit raises $60 million in Series B to build quality gates for AI coding",
+              source: "coderabbit.ai",
+              url: "https://coderabbit.ai/blog/series-b",
+              date: "2026-04-06",
+            },
+          ],
+          core_claim: "AI coding needs governance.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "medium_opportunity",
+          sourcegraph_integration_play: ["Position Sourcegraph as the verification layer behind AI code review."],
+          distribution_plan: {
+            primary_format: "Analyst-style whitepaper",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.95,
+        },
+        {
+          title: "Brief: What Multi-Agent Coding Workflows Need From Repository Context",
+          thesis: "New multi-agent repo workflows expose ownership, dependency, and verification gaps that only show up across repository boundaries.",
+          target_segment: "Other",
+          target_persona: "Head of Developer Platform",
+          funnel_stage: "awareness",
+          channel: "blog",
+          why_now: "Multiple April workflow launches and engineering posts point to the same repository-context bottleneck.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "GitHub details multi-agent workflows across repositories",
+              source: "github.blog",
+              url: "https://github.blog/engineering/platform-security/multi-agent-workflows-across-repositories",
+              date: "2026-04-05",
+            },
+            {
+              title: "How Meta mapped tribal knowledge before AI touched large-scale pipelines",
+              source: "engineering.fb.com",
+              url: "https://engineering.fb.com/2026/04/06/ai-tribal-knowledge",
+              date: "2026-04-06",
+            },
+          ],
+          core_claim: "Multi-agent coding workflows break when repo context, ownership, and downstream impact are not queryable before merge.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: [
+            "Use Sourcegraph Code Search and Deep Search to recover cross-repo ownership and usage paths before agents edit code.",
+            "Add Batch Changes plus verification before merge for controlled rollout.",
+          ],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.9,
+        },
+      ],
+    };
+
+    const out = postProcessContentIdeasOutput(payload);
+    expect(out.ideas).toHaveLength(2);
+    expect(out.ideas[0].title).toBe(
+      "Brief: What Multi-Agent Coding Workflows Need From Repository Context",
+    );
+    expect(out.ideas[0].editorial_rubric?.evidence_breadth).toBeGreaterThan(
+      out.ideas[1].editorial_rubric?.evidence_breadth ?? 0,
+    );
+    expect(out.ideas[0].editorial_rubric?.sourcegraph_ownability).toBeGreaterThan(
+      out.ideas[1].editorial_rubric?.sourcegraph_ownability ?? 0,
+    );
+    expect(out.ideas[1].editorial_rubric?.format_fit).toBeLessThan(0.5);
+  });
+
+  it("uses portfolio-aware ordering so the top short-window slate is not one narrative cluster", () => {
+    const payload: ContentIdeasOutput = {
+      generated_at: "2026-04-06",
+      playbook_version: "2026.02.15.1",
+      periodDays: 14,
+      ideas: [
+        {
+          title: "Brief: How Teams Add Quality Gates to AI Code Review",
+          thesis: "Teams are adding approval workflows and review standards to AI-assisted code review.",
+          target_segment: "Other",
+          target_persona: "VP Engineering",
+          funnel_stage: "awareness",
+          channel: "blog",
+          why_now: "A recent launch made governed AI code review visible again.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "Enterprise coding assistant adds audit controls",
+              source: "vendor.example",
+              url: "https://vendor.example/audit-controls",
+              date: "2026-04-06",
+            },
+            {
+              title: "Platform teams define review standards for AI code changes",
+              source: "thenewstack.io",
+              url: "https://thenewstack.io/review-standards",
+              date: "2026-04-05",
+            },
+          ],
+          core_claim: "Governed AI coding requires review standards before merge.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["Use Sourcegraph verification before merge."],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.93,
+        },
+        {
+          title: "Webinar: Turning AI Code Changes Into Audit-Ready Workflows",
+          thesis: "Security and platform leaders need auditability around AI-generated changes.",
+          target_segment: "Other",
+          target_persona: "VP Engineering",
+          funnel_stage: "validation",
+          channel: "webinar",
+          why_now: "Governance requirements are rising.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "Vendor adds policy controls",
+              source: "vendor-two.example",
+              url: "https://vendor-two.example/policy-controls",
+              date: "2026-04-06",
+            },
+            {
+              title: "Analyst note on AI coding governance",
+              source: "infoq.com",
+              url: "https://infoq.com/governance-note",
+              date: "2026-04-05",
+            },
+          ],
+          core_claim: "Auditability is the gating factor for AI code review at scale.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["Frame Sourcegraph as the verification layer."],
+          distribution_plan: {
+            primary_format: "Live webinar",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.91,
+        },
+        {
+          title: "Brief: Cross-Repo Upgrade and Migration Workflows",
+          thesis: "Cross-repo migrations surface dependency and rollback risk that assistants cannot safely infer from one file at a time.",
+          target_segment: "Other",
+          target_persona: "Head of Developer Platform",
+          funnel_stage: "expansion",
+          channel: "blog",
+          why_now: "Fresh migration stories show that rollout sequencing and verification are still the hard parts.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "Large-scale codemod rollout with verification",
+              source: "moderne.ai",
+              url: "https://moderne.ai/codemod-rollout",
+              date: "2026-04-06",
+            },
+            {
+              title: "Engineering team details rollback-safe dependency migration",
+              source: "engineering.example",
+              url: "https://engineering.example/dependency-migration",
+              date: "2026-04-04",
+            },
+          ],
+          core_claim: "Cross-repo migration success depends on dependency visibility, rollout control, and verification before merge.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: [
+            "Use Code Search for dependency mapping and Batch Changes for controlled rollout.",
+          ],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.86,
+        },
+      ],
+    };
+
+    const out = postProcessContentIdeasOutput(payload);
+    expect(out.ideas).toHaveLength(3);
+    expect(out.ideas[0].title).toBe("Brief: How Teams Add Quality Gates to AI Code Review");
+    expect(out.ideas[1].title).toBe("Brief: Cross-Repo Upgrade and Migration Workflows");
+  });
 });
