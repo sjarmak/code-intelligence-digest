@@ -31,6 +31,20 @@ export interface RetrievedDoc {
   metadata: Record<string, unknown>;
 }
 
+interface WebResultLike {
+  url: string;
+  title: string;
+  content?: string;
+}
+
+interface GoalRelevanceDocLike {
+  url?: string;
+  title: string;
+  snippet?: string;
+  content?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface RetrieveForAgentOptions {
   periodDays?: number;
   query?: string | null;
@@ -64,7 +78,7 @@ export interface AgentRetrievalTrace {
       numResults: number;
       domains?: number;
       hits: number;
-      kind: "primary" | "include_domains";
+      kind: "primary" | "supplemental_domains" | "include_domains";
     }>;
   };
   merge: {
@@ -233,11 +247,17 @@ async function retrieveFromWeb(
       : templates.slice(0, templateLimit);
   const includeDomains = config.includeDomains;
   const includeTemplates = config.includeDomainsQueryTemplates;
+  const supplementalDomains = config.supplementalDomains;
+  const supplementalTemplates = config.supplementalDomainsQueryTemplates;
+  const reservedSupplementalSlots =
+    supplementalDomains?.length && supplementalTemplates?.length
+      ? Math.min(8, Math.max(4, Math.floor(maxWeb * 0.2)))
+      : 0;
   const reservedIncludeSlots =
     includeDomains?.length && includeTemplates?.length
       ? Math.min(8, Math.max(4, Math.floor(maxWeb * 0.2)))
       : 0;
-  const primaryCapacity = Math.max(1, maxWeb - reservedIncludeSlots);
+  const primaryCapacity = Math.max(1, maxWeb - reservedSupplementalSlots - reservedIncludeSlots);
 
   const domains =
     goal === "competitor_intel" ? getCompetitorDomains() : undefined;
@@ -247,6 +267,12 @@ async function retrieveFromWeb(
 
   const effectivePeriodDays = options.periodDays ?? config.timeHorizonDays;
   const timeRange = periodDaysToWebTimeRange(effectivePeriodDays);
+  const webTopic: "news" | "general" =
+    goal === "market_brief"
+      ? "news"
+      : goal === "content_ideas"
+        ? "general"
+        : "general";
   const trace = options.trace ?? null;
   if (trace) {
     trace.web.timeRange = timeRange;
@@ -259,18 +285,19 @@ async function retrieveFromWeb(
     const results = await searchWeb(q, {
       numResults: numPerQuery,
       domains: domains?.slice(0, 100),
-      topic: goal === "market_brief" ? "news" : "general",
+      topic: webTopic,
       timeRange,
     });
     trace?.web.queries.push({
       query: q,
-      topic: goal === "market_brief" ? "news" : "general",
+      topic: webTopic,
       numResults: numPerQuery,
       domains: domains ? Math.min(100, domains.length) : undefined,
       hits: results.length,
       kind: "primary",
     });
     for (const r of results) {
+      if (!shouldKeepWebResultForGoal(goal, effectivePeriodDays, r, "primary")) continue;
       const key = normalizeUrl(r.url);
       if (byUrl.has(key)) continue;
       byUrl.set(key, {
@@ -282,6 +309,45 @@ async function retrieveFromWeb(
         publishedAt: r.publishedDate ? new Date(r.publishedDate) : undefined,
         metadata: { score: r.score },
       });
+    }
+  }
+
+  if (supplementalDomains?.length && supplementalTemplates?.length) {
+    const maxSupplemental = Math.min(
+      reservedSupplementalSlots || 8,
+      Math.max(0, maxWeb - byUrl.size - reservedIncludeSlots),
+    );
+    const numPerSupplemental = Math.max(2, Math.ceil(maxSupplemental / supplementalTemplates.length));
+    for (const q of supplementalTemplates.slice(0, 4)) {
+      if (byUrl.size >= maxWeb || maxSupplemental <= 0) break;
+      const results = await searchWeb(q, {
+        numResults: numPerSupplemental,
+        domains: supplementalDomains.slice(0, 20),
+        topic: webTopic,
+        timeRange,
+      });
+      trace?.web.queries.push({
+        query: q,
+        topic: webTopic,
+        numResults: numPerSupplemental,
+        domains: Math.min(20, supplementalDomains.length),
+        hits: results.length,
+        kind: "supplemental_domains",
+      });
+      for (const r of results) {
+        if (!shouldKeepWebResultForGoal(goal, effectivePeriodDays, r, "primary")) continue;
+        const key = normalizeUrl(r.url);
+        if (byUrl.has(key)) continue;
+        byUrl.set(key, {
+          source: "web",
+          url: r.url,
+          title: r.title,
+          snippet: r.content,
+          content: r.content,
+          publishedAt: r.publishedDate ? new Date(r.publishedDate) : undefined,
+          metadata: { score: r.score, primarySource: "supplemental_domains" },
+        });
+      }
     }
   }
 
@@ -309,6 +375,7 @@ async function retrieveFromWeb(
         kind: "include_domains",
       });
       for (const r of results) {
+        if (!shouldKeepWebResultForGoal(goal, effectivePeriodDays, r, "include_domains")) continue;
         const key = normalizeUrl(r.url);
         if (byUrl.has(key)) continue;
         byUrl.set(key, {
@@ -332,6 +399,65 @@ async function retrieveFromWeb(
   const list = Array.from(byUrl.values()).slice(0, maxWeb);
   logger.info("Web retrieval for agent", { goal, docCount: list.length });
   return list;
+}
+
+export function shouldKeepWebResultForGoal(
+  goal: AgentGoal,
+  periodDays: number,
+  result: WebResultLike,
+  kind: "primary" | "include_domains" = "primary"
+): boolean {
+  return shouldKeepRetrievedDocForGoal(
+    goal,
+    periodDays,
+    {
+      url: result.url,
+      title: result.title,
+      content: result.content,
+    },
+    kind,
+  );
+}
+
+export function shouldKeepRetrievedDocForGoal(
+  goal: AgentGoal,
+  periodDays: number,
+  doc: GoalRelevanceDocLike,
+  kind?: "primary" | "include_domains"
+): boolean {
+  const effectiveKind =
+    kind ??
+    (typeof doc.metadata?.primarySource === "string" && doc.metadata.primarySource === "include_domains"
+      ? "include_domains"
+      : "primary");
+  if (goal !== "content_ideas" || periodDays > 14 || effectiveKind === "include_domains") return true;
+
+  const url = (doc.url ?? "").toLowerCase();
+  const text = `${doc.title} ${doc.snippet ?? ""} ${doc.content ?? ""}`.toLowerCase();
+
+  const directCodingWorkflowSignal =
+    /(code search|deep search|repository|repo\b|codebase|cross-repo|pull request|code review|coding agent|ai coding|copilot|cursor|gitlab duo|claude code|mcp|model context protocol|batch changes|codemod|developer workflow|ownership|dependency|dependencies|rollback|verification|team standards|self-hosted|self hosted|byok|rbac|audit trail|developer platform|platform engineering)/.test(
+      text,
+    ) ||
+    (/software engineering workflows?/.test(text) && /(repo|repository|codebase|files)/.test(text));
+
+  if (!directCodingWorkflowSignal) return false;
+
+  const adjacentOrOfftopic =
+    /(national security|foreign policy|\bwar\b|\belection\b|geopolitics|\biran\b|consumer app|mobile app|browser privacy|computer vision|marketing campaign|sales outreach|customer support|kubernetes leap|personal essay|ripped off|developer portal|api developer portal|docs portal|documentation portal|age verification|mass surveillance|surveillance infrastructure)/.test(
+      text,
+    ) ||
+    /(theatlantic\.com|belief\.horse)/.test(url);
+
+  return !adjacentOrOfftopic;
+}
+
+function filterRetrievedDocsForGoal(
+  docs: RetrievedDoc[],
+  goal: AgentGoal,
+  periodDays: number
+): RetrievedDoc[] {
+  return docs.filter((doc) => shouldKeepRetrievedDocForGoal(goal, periodDays, doc));
 }
 
 function normalizeUrl(url: string): string {
@@ -651,11 +777,12 @@ export async function retrieveForAgent(
   if (trace) {
     trace.date.afterFilter = dateFiltered.length;
   }
+  const goalFiltered = filterRetrievedDocsForGoal(dateFiltered, goal, periodDays);
 
   const maxEnrich = options.maxEnrich ?? 0;
   if (maxEnrich > 0) {
-    return enrichWithFullText(dateFiltered, maxEnrich);
+    return enrichWithFullText(goalFiltered, maxEnrich);
   }
 
-  return dateFiltered;
+  return goalFiltered;
 }

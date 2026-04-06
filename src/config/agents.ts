@@ -43,6 +43,10 @@ export interface AgentGoalConfig {
   includeDomains?: string[];
   /** Query templates for the includeDomains pass (e.g. "Sourcegraph changelog", "Sourcegraph product features"). */
   includeDomainsQueryTemplates?: string[];
+  /** Optional trusted external domains to search in a separate domain-scoped pass. */
+  supplementalDomains?: string[];
+  /** Query templates for the supplemental domain pass. */
+  supplementalDomainsQueryTemplates?: string[];
 }
 
 const ICP_DEFAULT =
@@ -53,14 +57,14 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
     name: "Content Ideas",
     description:
       "Surfaces content ideas informed by market and industry research: webinars, blogs, case studies, and campaigns that align with our ICP and with the same research signals that inform the market brief. Research is inspired by ingested content but not limited to it—web discovery finds additional relevant signals.",
-    primaryCategories: ["tech_articles", "product_news", "community", "newsletters"],
+    primaryCategories: ["tech_articles", "product_news", "ai_news", "newsletters"],
     icpDescription: ICP_DEFAULT,
     timeHorizonDays: 30,
     retrievalStrategies: {
-      postgresWeight: 0.45,
-      webWeight: 0.55,
-      maxPostgresDocs: 45,
-      maxWebDocs: 50,
+      postgresWeight: 0.65,
+      webWeight: 0.35,
+      maxPostgresDocs: 55,
+      maxWebDocs: 35,
     },
     rankingProfile: {
       // Favor goal features (ICP, format, competitor) over raw digest baseScore so generic ai_news does not dominate seeds.
@@ -71,27 +75,37 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
       recencyWeight: 0.05,
     },
     postgresQueryTerms: [
-      "webinar",
-      "white paper",
-      "whitepaper",
-      "tutorial",
-      "case study",
-      "blog",
-      "video",
-      "best practices",
-      "code intelligence",
+      "GitHub Copilot",
+      "Copilot CLI",
+      "multi-agent",
+      "cross-repo",
+      "repository context",
+      "code review",
+      "model context protocol",
+      "team standards",
       "code search",
-      "developer productivity",
+      "batch changes",
+      "deep search",
+      "developer platform",
+      "platform engineering",
+      "migration",
+      "remediation",
+      "verification",
+      "rollback",
+      "onboarding",
+      "large codebase",
+      "multi-repo",
     ],
     webQueryTemplates: [
-      "webinar code intelligence developer tools",
-      "white paper code search large codebase",
-      "case study AI coding assistant enterprise",
-      "best practices developer marketing content",
-      "code intelligence adoption trends developer tools",
-      "code search deep search market landscape content",
-      "enterprise codebase tooling developer productivity",
-      "AI coding assistant industry trends content marketing",
+      "github copilot cli fleet repository context",
+      "cross-repo code review ai coding workflow",
+      "multi-repo coding agent context retrieval",
+      "mcp code search repository context coding agents",
+      "batch changes migration codemod verification codebase",
+      "team standards ai generated code review workflow",
+      "ai code review quality gates enterprise engineering",
+      "self-hosted ai coding audit policy codebase",
+      "code search deep search enterprise developer platform",
     ],
     blockedDomains: [
       "instagram.com",
@@ -99,11 +113,21 @@ export const AGENT_GOAL_CONFIGS: Record<AgentGoal, AgentGoalConfig> = {
       "facebook.com",
       "twitter.com",
       "x.com",
+      "news.ycombinator.com",
+      "ycombinator.com",
+      "rss.xcancel.com",
     ],
     includeDomains: ["sourcegraph.com", "docs.sourcegraph.com"],
     includeDomainsQueryTemplates: [
       "Sourcegraph changelog product updates features",
       "Sourcegraph code search deep search batch changes product",
+    ],
+    supplementalDomains: ["github.blog", "martinfowler.com", "infoq.com", "thenewstack.io"],
+    supplementalDomainsQueryTemplates: [
+      "copilot cli fleet repository context",
+      "team standards ai generated code review workflow",
+      "mcp code search repository context coding agents",
+      "batch changes migration codemod verification codebase",
     ],
   },
 

@@ -125,6 +125,8 @@ export interface ContentIdeasOutput {
   ideas: ContentIdea[];
 }
 
+type ContentIdeaDocLike = Pick<RetrievedDoc, "url" | "title" | "snippet" | "content" | "publishedAt">;
+
 export interface ContentIdeasPipelineTrace {
   /** Aligns with `CURATOR_TRACE_SCHEMA_VERSION`. */
   schemaVersion?: number;
@@ -209,7 +211,7 @@ const SOURCEGRAPH_PRODUCT_SUITE_SIGNALS = [
  * enterprise dev, competitors, or control plane. Excludes web-search noise that has no real
  * relevance to our positioning or product.
  */
-export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
+export function hasMinimumContentIdeasRelevance(doc: ContentIdeaDocLike): boolean {
   const text = textOf(doc);
   const title = (doc.title ?? "").toLowerCase();
   const snippet = text.slice(0, 1200);
@@ -226,7 +228,7 @@ export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
       text,
     );
   const controlPlane =
-    /(code review|documentation|onboarding|vulnerability|remediation|batch changes|monitoring|observability)/.test(
+    /(code review|onboarding|vulnerability|remediation|batch changes|monitoring|observability)/.test(
       text,
     );
   const evidenceStyle =
@@ -267,7 +269,7 @@ export function hasMinimumContentIdeasRelevance(doc: AgentRankedDoc): boolean {
   return true;
 }
 
-function hasBroadSourcegraphNarrativeFit(doc: AgentRankedDoc): boolean {
+function hasBroadSourcegraphNarrativeFit(doc: ContentIdeaDocLike): boolean {
   const text = textOf(doc);
   const title = (doc.title ?? "").toLowerCase();
   const canonicalUrl = canonicalizeUrl(doc.url);
@@ -357,6 +359,7 @@ const LOW_AUTHORITY_BUSINESS_PRESS_DOMAINS = new Set([
   "entrepreneur.com",
   "inc.com",
   "fastcompany.com",
+  "yahoo.com",
 ]);
 
 /** Domains whose content is often appsec/fuzzing/tooling rather than AI coding workflows; downgrade when doc doesn't mention AI coding. */
@@ -504,18 +507,218 @@ function isGitHubDiscussionLikeUrl(url: string | undefined): boolean {
   return sourceBaseDomain(url) === "github.com" && /\/(discussions|issues)\//.test(pathFromUrl(url));
 }
 
-function isConversationStyleSource(url: string | undefined): boolean {
+function isCommentStyleSource(url: string | undefined, title?: string): boolean {
+  const raw = (url ?? "").toLowerCase();
+  if (raw.includes("#comment-") || /[?&]commentid=/.test(raw)) return true;
+  return /^comment on\b/i.test(title ?? "");
+}
+
+function isPodcastLikeSource(url: string | undefined, title?: string, text?: string): boolean {
+  const base = sourceBaseDomain(url);
+  if (base === "spotify.com") return true;
+  return /(podcast|episode|show notes|listen now|watch now|streaming now)/i.test(`${title ?? ""} ${text ?? ""}`);
+}
+
+function isNewsletterHostedSource(url: string | undefined): boolean {
+  const base = sourceBaseDomain(url);
+  return base === "substack.com" || base.endsWith(".substack.com") || base === "beehiiv.com" || base.endsWith(".beehiiv.com");
+}
+
+function isShortWindowKnownBadAnchorPattern(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const title = (doc.title ?? "").toLowerCase();
+  return (
+    /^fragments:\s*/.test(title) ||
+    /what a security audit of \d[\d,]* ai coding skills/.test(title) ||
+    /platform engineering for ai: the platform team shift/.test(title) ||
+    /earnings calls\.\s*0 engineering outcomes tied to ai/.test(title) ||
+    /when \.npmignore is harder than agi/.test(title) ||
+    /copilot usage metrics now includes per-user .* organization reports/.test(title)
+  );
+}
+
+function isShortWindowBroadAdoptionSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const text = textOf(doc);
+  const title = (doc.title ?? "").toLowerCase();
+  const broadAdoptionSignal =
+    /(economic index|learning curves|state of ai|ai adoption|adoption report|usage patterns|productivity trends|future of work|economic impact|how ai is changing)/.test(
+      `${title} ${text}`,
+    );
+  if (!broadAdoptionSignal) return false;
+  return !hasShortWindowDurableWorkflowTheme(text);
+}
+
+function isShortWindowCodeReviewAutomationSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const text = textOf(doc);
+  const reviewAutomationSignal =
+    /(autofix|auto-fix|review comments|implement that|code review|pull request|pr review|review workflow)/.test(text);
+  if (!reviewAutomationSignal) return false;
+  const broaderWorkflowSignal =
+    hasRepoContextFailureSignal(text) ||
+    hasMigrationWorkflowSignal(text) ||
+    hasComplianceControlSignal(text) ||
+    /(\bmcp\b|model context protocol|cross-repo|repo boundary|dependency|dependencies|ownership|usage path|blast radius|rollback|verification|team standards|quality gates?|merge gates?|review standards|approval workflow|policy enforcement|developer platform|platform engineering|multi-agent|\/fleet|code search|deep search)/.test(
+      text,
+    );
+  return !broaderWorkflowSignal;
+}
+
+function isShortWindowSkillMarketplaceSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const text = textOf(doc);
+  const skillMarketplaceSignal =
+    /(ai coding skills|coding skills|skills marketplace|plugin marketplace|skill audit|skills found lurking|prompt skills|agent skills)/.test(
+      text,
+    );
+  if (!skillMarketplaceSignal) return false;
+  const codebaseWorkflowSignal =
+    /(repo|repository|codebase|pull request|code review|cross-repo|developer platform|batch changes|rollback|verification|policy enforcement|audit trail|rbac|byok|self-hosted|self hosted)/.test(
+      text,
+    );
+  return !codebaseWorkflowSignal;
+}
+
+function isShortWindowLowLeverageProductUpdate(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const url = canonicalizeUrl(doc.url) || doc.url || "";
+  const text = textOf(doc);
+  const title = (doc.title ?? "").toLowerCase();
+  const changelogLike =
+    /github\.blog\/changelog\//.test(url) ||
+    /(release notes|changelog|what('|’)s changed|what has changed)/.test(`${title} ${text}`);
+  if (!changelogLike) return false;
+
+  const lowLeverageOperationalSignal =
+    /(tab is now|renamed to|sidebar|navigation|menu label|colocate|easier to triage|all existing urls and api endpoints remain the same|underlying alert types and data are unchanged)/.test(
+      text,
+    );
+  if (!lowLeverageOperationalSignal) return false;
+
+  const materialWorkflowSignal =
+    hasRepoContextFailureSignal(text) ||
+    hasMigrationWorkflowSignal(text) ||
+    hasComplianceControlSignal(text) ||
+    /(\bmcp\b|model context protocol|\/fleet|multi-agent|pull request|code review|cross-repo|batch changes|self-hosted|self hosted|byok|rbac|audit trail|customer|case study|benchmark|pricing)/.test(
+      text,
+    );
+  return !materialWorkflowSignal;
+}
+
+function isShortWindowDeveloperPortalSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const text = textOf(doc);
+  const title = (doc.title ?? "").toLowerCase();
+  return /(api developer portal|developer portal|api docs|documentation portal|docs portal)/.test(
+    `${title} ${text}`,
+  );
+}
+
+function isShortWindowGenericFrameworkMigrationSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const text = textOf(doc);
+  const title = (doc.title ?? "").toLowerCase();
+  const genericMigrationSurface =
+    /(react\s*1[89]|next\.?js|kubernetes|eks|framework migration|upgrade guide|production migration)/.test(
+      `${title} ${text}`,
+    ) && /(migration|upgrade|modernization|rollout)/.test(`${title} ${text}`);
+  if (!genericMigrationSurface) return false;
+  const aiOrRepoWorkflowSignal =
+    /(\bmcp\b|model context protocol|coding agent|ai coding|copilot|cursor|gitlab duo|claude code|code search|deep search|cross-repo|batch changes|codemod|developer platform|platform engineering|repository context|repo boundary)/.test(
+      text,
+    );
+  return !aiOrRepoWorkflowSignal;
+}
+
+function isConversationStyleSource(url: string | undefined, title?: string): boolean {
   const base = sourceBaseDomain(url);
   if (base === "reddit.com" || base === "news.ycombinator.com" || base === "linkedin.com") {
     return true;
   }
+  if (isCommentStyleSource(url, title)) return true;
   if (base === "dev.to" || base === "medium.com") return true;
   return isGitHubDiscussionLikeUrl(url);
 }
 
 function isLowAuthorityBusinessPressDomain(domain: string): boolean {
   const base = domain.toLowerCase().replace(/^www\./, "");
-  return LOW_AUTHORITY_BUSINESS_PRESS_DOMAINS.has(base);
+  return LOW_AUTHORITY_BUSINESS_PRESS_DOMAINS.has(base) || LOW_AUTHORITY_BUSINESS_PRESS_DOMAINS.has(baseDomainFromHost(base));
+}
+
+function hasDirectCodingWorkflowHook(text: string): boolean {
+  return /(\bmcp\b|model context protocol|coding assistant|ai coding|coding agent|developer platform|platform engineering|copilot|cursor|gitlab duo|claude code|code search|deep search|cross-repo|repository|repo|codebase|batch changes|migration|remediation|code review|pull request|onboarding|knowledge transfer|team standards|ownership|dependency|dependencies|verification|rollback)/.test(
+    text,
+  );
+}
+
+function hasStrictShortWindowCodingWorkflowSignal(text: string): boolean {
+  const directCodingSurface =
+    /(coding assistant|ai coding|coding agent|code search|deep search|code review|pull request|repository|repo|codebase|cross-repo|batch changes|migration|remediation|copilot|cursor|gitlab duo|claude code|sourcegraph)/.test(
+      text,
+    );
+  const platformCodingSurface =
+    /(developer platform|platform engineering)/.test(text) &&
+    /(code|coding|repository|repo|codebase|pull request|code review|developer workflow|copilot|cursor|gitlab duo|claude code|batch changes|migration|code search|deep search)/.test(
+      text,
+    );
+  const codingSurface = directCodingSurface || platformCodingSurface;
+  const adjacentNoise =
+    /(computer vision|image generation|marketing campaign|sales outreach|customer support|mobile app|app store|dns resolution|browser privacy|safety monitoring)/.test(
+      text,
+    );
+  const macroAdoptionNoise =
+    /(economic index|learning curves|state of ai|future of work|workplace adoption|usage patterns|economic impact|general productivity trends|consumer adoption)/.test(
+      text,
+    );
+  return codingSurface && !adjacentNoise && !macroAdoptionNoise;
+}
+
+function hasShortWindowDurableWorkflowTheme(text: string): boolean {
+  return (
+    (hasStrictShortWindowCodingWorkflowSignal(text) &&
+      (/(repo boundary|repository boundary|cross-repo|dependency|dependencies|ownership|usage path|call path|blast radius|rollback|verification|batch changes|onboarding|knowledge transfer|developer platform|platform engineering|self-hosted|self hosted|byok|rbac|audit trail|team standards|code search|deep search|monorepo|multi-repo)/.test(
+        text,
+      ) ||
+        /(quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(text) ||
+        hasMigrationWorkflowSignal(text) ||
+        ((/\bmcp\b|model context protocol|fleet|multi-agent|parallel agents|agent swarm/).test(text) &&
+          /(repo|repository|codebase|code search|deep search|dependency|dependencies|verification|rollback|ownership|developer platform|platform engineering)/.test(
+            text,
+          ))))
+  );
+}
+
+function hasMigrationWorkflowSignal(text: string): boolean {
+  return /(\bmigration\b|\bmigrations\b|\bremediation\b|\bremediations\b|\bcodemod\b|\brollout\b|\bupgrade\b|\bmodernization\b|\bdeprecation\b|batch changes)/.test(
+    text,
+  );
+}
+
+function hasMultiAgentWorkflowSignal(text: string): boolean {
+  return (
+    /(\bfleet\b|multi-agent|parallel agents|agent swarm)/.test(text) &&
+    /(code|coding|developer workflow|software engineering|repo|repository|codebase|cross-repo|files|dependency|dependencies|ownership|code search|deep search|verification)/.test(
+      text,
+    )
+  );
+}
+
+function isGenericMarketSizingSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
+  if (periodDays > 14) return false;
+  const text = textOf(doc);
+  const title = (doc.title ?? "").toLowerCase();
+  const domain = sourceFromUrl(doc.url);
+  const sourceType = classifySourceTypeByDomain(domain);
+  if (sourceType !== "secondary") return false;
+
+  const marketSizingSignal =
+    /(market (analysis|forecast|size|growth|outlook)|industry (analysis|forecast|outlook)|cagr|worth \$|\b2030\b|\b2031\b|\b2032\b|\b2033\b|\b2034\b|\b2035\b|market report|growth forecast|valuation)/.test(
+      `${title} ${text}`,
+    );
+  if (!marketSizingSignal) return false;
+
+  return !hasDirectCodingWorkflowHook(text);
 }
 
 function canonicalizeUrl(url: string | undefined): string {
@@ -533,6 +736,26 @@ function canonicalizeUrl(url: string | undefined): string {
   } catch {
     return "";
   }
+}
+
+function hasRepoContextFailureSignal(text: string): boolean {
+  return (
+    /(context layer|repo context|repository context|retrieval precision|repo boundary|repository boundary|cross-repo search|cross-repo (symbol|symbols|retrieval|dependency|dependencies|ownership|usage)|usage path|call path|blast radius)/.test(
+      text,
+    ) ||
+    (/(cross-repo|multi-repo|monorepo|repository|repo|codebase)/.test(text) &&
+      /(ownership|dependency|dependencies|usage path|call path|blast radius)/.test(text))
+  );
+}
+
+function hasMcpInfrastructureSignal(text: string): boolean {
+  return /(\bmcp\b|model context protocol)/.test(text);
+}
+
+function hasStrongRepoContextClaim(text: string): boolean {
+  return /(model quality stops mattering|repository context quality|repo context|repository context|retrieval precision|not raw model quality|context layer)/.test(
+    text,
+  );
 }
 
 function extractJsonValue(text: string): unknown {
@@ -830,7 +1053,7 @@ function normalizeTargetSegment(
 function detectTopicFrame(text: string): string {
   const governedAiCodeChangeSignal =
     hasComplianceControlSignal(text) ||
-    (/(governance|compliance|audit|policy|enterprise controls|verification)/.test(text) &&
+    (/(governance|compliance|audit|policy|enterprise controls|verification|quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(text) &&
       /(code|coding|codebase|repository|repo|pull request|developer platform|platform engineering|coding assistant|ai coding|batch changes|migration|remediation|mcp|code search|deep search)/.test(
         text,
       ));
@@ -844,10 +1067,13 @@ function detectTopicFrame(text: string): string {
   ) {
     return "Governance, Compliance, and Verification for AI Code Changes";
   }
-  if (/(batch changes|codemod|migration|remediation|rollout|upgrade)/.test(text)) {
+  if (hasMultiAgentWorkflowSignal(text)) {
+    return "Repository Context and Retrieval Precision for Coding Agents";
+  }
+  if (hasMigrationWorkflowSignal(text)) {
     return "Cross-Repo Remediation and Migration";
   }
-  if (/(mcp|model context protocol|context layer|repo context|retrieval precision|repository context)/.test(text)) {
+  if (hasRepoContextFailureSignal(text)) {
     return "Repository Context and Retrieval Precision for Coding Agents";
   }
   if (/(deep search|code search|semantic search|cross-repo search)/.test(text)) {
@@ -873,11 +1099,14 @@ function buildNarrativeTopic(frame: string, text: string): string {
       if (/(developer platform|platform engineering)/.test(text)) {
         return "Repository Context for Developer Platforms";
       }
-      if (/(agent|retrieval|mcp|context layer|repository context)/.test(text)) {
+      if (/(agent|retrieval|context layer|repository context)/.test(text)) {
         return "Repository Context as the Control Layer for Coding Agents";
       }
       return "Retrieval Precision for Enterprise Codebases";
     case "Repository Context and Retrieval Precision for Coding Agents":
+      if (hasMultiAgentWorkflowSignal(text)) {
+        return "What Multi-Agent Coding Workflows Need From Repository Context";
+      }
       if (/(developer platform|platform engineering)/.test(text)) {
         return "Why Developer Platforms Need a Repository Context Layer";
       }
@@ -909,7 +1138,7 @@ function docSupportsFrame(doc: AgentRankedDoc, frame: string): boolean {
     case "Governance, Compliance, and Verification for AI Code Changes":
       return hasComplianceControlSignal(text);
     case "Repository Context and Retrieval Precision for Coding Agents":
-      return /(mcp|model context protocol|context layer|repo context|agent context)/.test(text);
+      return hasRepoContextFailureSignal(text);
     case "Cross-Repo Remediation and Migration":
       return /(batch changes|codemod|migration|remediation|large-scale code change)/.test(text);
     case "Code Search, Deep Search, and Repository Context":
@@ -981,6 +1210,7 @@ function topicFromSourceTitle(title: string): string | null {
     .replace(/\s+/g, " ")
     .trim();
   if (!cleaned || cleaned.length < 20) return null;
+  if (/[^\x00-\x7F]/.test(cleaned)) return null;
   if (/(home|homepage|index|latest|updates)$/i.test(cleaned)) return null;
   return cleaned.slice(0, 90);
 }
@@ -1022,11 +1252,24 @@ function sourceTopicIsUseful(rawTopic: string): boolean {
   ) {
     return false;
   }
+  if (/(series [a-f]|funding|fundraise|raised|raises|seed round|\$\d|million|資金調達)/.test(topic)) {
+    return false;
+  }
   if (
     /(zero-shot|sim2real|ontology|diffusion|multimodal|benchmarking|de-anonymization|inference-driven|representation learning|real identities)/.test(
       topic,
     )
   ) {
+    return false;
+  }
+  if (
+    /(you don['’]?t need to .* will|autofix will|the .* tab is now|economic index|learning curves|what('|’)s changed)/.test(
+      topic,
+    )
+  ) {
+    return false;
+  }
+  if (/(run multiple agents at once|copilot usage metrics now includes per-user)/.test(topic)) {
     return false;
   }
   if (/^(guide|webinar|brief|blog|case study|talk track|playbook|video brief|campaign):/.test(topic)) {
@@ -1054,19 +1297,32 @@ function evidenceLead(sourceTitle?: string): string {
   const cleaned = stripBoilerplateNoise(sourceTitle ?? "")
     .replace(/^\s*(guide|webinar|brief|blog|case study|talk track|playbook|video brief|campaign)\s*:\s*/i, "")
     .trim();
-  if (!cleaned) return "a recent source";
+  if (!cleaned) return "a recent workflow announcement";
+  if (/[^\x00-\x7F]/.test(cleaned)) return "a recent workflow announcement";
+  if (/(series [a-f]|funding|fundraise|raised|raises|seed round|\$\d|million|資金調達)/i.test(cleaned)) {
+    return "a recent workflow announcement";
+  }
   return cleaned.length <= 90 ? cleaned : `${cleaned.slice(0, 87).trimEnd()}...`;
 }
 
 function deriveProblemStatement(text: string, segment: ContentIdea["target_segment"]): string {
   const audience = audienceLabelForSegment(segment);
+  if (/(quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(text)) {
+    return `${audience} are discovering that AI code review only becomes trustworthy once teams add quality gates, approval workflows, and explicit review standards.`;
+  }
   if (/(repo boundary|repository boundary|downstream|dependency|dependencies|call path|ownership)/.test(text)) {
     return `${audience} are discovering that coding agents fail first at repo boundaries, hidden dependencies, and ownership gaps.`;
   }
-  if (/(mcp|model context protocol|context layer|repo context|retrieval precision|repository context)/.test(text)) {
+  if (hasMultiAgentWorkflowSignal(text)) {
+    return `${audience} are learning that multi-agent coding workflows only work when each agent gets the right repository scope, dependencies, and file context.`;
+  }
+  if (hasRepoContextFailureSignal(text)) {
     return `${audience} are learning that model quality stops mattering when repository context and retrieval precision break down.`;
   }
-  if (/(batch changes|codemod|migration|remediation|rollout|upgrade)/.test(text)) {
+  if (hasMcpInfrastructureSignal(text)) {
+    return `${audience} are learning that agent infrastructure needs explicit context tools and integration points before it can work reliably in production.`;
+  }
+  if (hasMigrationWorkflowSignal(text)) {
     return `${audience} need a safer way to scope blast radius, sequence changes, and verify cross-repo rollouts.`;
   }
   if (hasComplianceControlSignal(text) || /(compliance|security|audit|policy|byok|self-hosted|self hosted|rbac)/.test(text)) {
@@ -1091,6 +1347,9 @@ function deriveSpecificTopic(
 
   switch (frame) {
     case "Governance, Compliance, and Verification for AI Code Changes":
+      if (/(quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(text)) {
+        return "How Teams Add Quality Gates to AI Code Review";
+      }
       if (/(team standards|encoding team standards|standards)/.test(text)) {
         return "Encoding Team Standards for AI-Assisted Code Review";
       }
@@ -1099,6 +1358,9 @@ function deriveSpecificTopic(
       }
       return "Where AI Coding Teams Need Policy, Auditability, and Verification";
     case "Repository Context and Retrieval Precision for Coding Agents":
+      if (hasMultiAgentWorkflowSignal(text)) {
+        return "What Multi-Agent Coding Workflows Need From Repository Context";
+      }
       if (/(repo boundary|repository boundary|downstream|dependency|dependencies)/.test(text)) {
         return "Why Coding Agents Hit a Wall at Repo Boundaries";
       }
@@ -1282,6 +1544,7 @@ function buildContentOutline(
   sourceUrl?: string,
 ): string[] {
   const topic = extractIdeaTopic(text, sourceTitle, sourceUrl).toLowerCase();
+  const frame = detectTopicFrame(text);
   const sourceHook = evidenceLead(sourceTitle);
   const problem = deriveProblemStatement(text, segment);
   const channelLabelMap: Record<ContentIdea["channel"], string> = {
@@ -1301,7 +1564,14 @@ function buildContentOutline(
   return [
     `Open with the external trigger: ${sourceHook}.`,
     `Define the operating problem for ${persona}: ${problem}`,
-    `Break down what actually fails in ${topic}: context, verification, sequencing, ownership, or rollout.`,
+    `Break down what actually fails in ${topic}: ${
+      frame === "Cross-Repo Remediation and Migration"
+        ? "sequencing, verification, rollback, ownership, or rollout."
+        : frame === "Repository Context and Retrieval Precision for Coding Agents" ||
+            frame === "Code Search, Deep Search, and Repository Context"
+          ? "retrieval scope, dependencies, ownership, verification gaps, or repo-boundary context."
+          : "context, verification, sequencing, ownership, or process design."
+    }`,
     "Add proof: one market signal, one product/workflow example, and one concrete implementation step.",
     `Close the ${channelLabel} with a scoped next step for the reader: workshop, evaluation plan, or technical validation.`,
   ];
@@ -1445,7 +1715,7 @@ function buildDistributionPlan(
   };
 }
 
-function textOf(doc: AgentRankedDoc): string {
+function textOf(doc: ContentIdeaDocLike): string {
   const body = doc.content?.trim() ? doc.content : doc.snippet ?? "";
   return `${doc.title} ${body}`.toLowerCase();
 }
@@ -1509,7 +1779,7 @@ function detectGuardrailViolation(text: string): boolean {
 }
 
 function hasConcreteEvidence(text: string): boolean {
-  return /(launch|release|\bga\b|general availability|pricing|customer|case study|benchmark|docs|documentation|security|compliance|audit|byok|self-hosted|self hosted|report|availability|available|credits|supports|integration|policy|verification)/.test(
+  return /(launch|release|introduc(?:e|es|ed|ing)|deploy(?:s|ed|ment)|deprecation|deprecated|\bga\b|general availability|generally available|pricing|customer|case study|benchmark|docs|documentation|security|compliance|audit|byok|self-hosted|self hosted|report|availability|available|credits|supports|integration|policy|verification|quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(
     text,
   );
 }
@@ -1546,11 +1816,20 @@ function buildWhyNow(doc: AgentRankedDoc, text: string): string {
 }
 
 function buildCoreClaim(text: string): string {
-  if (/(migration|remediation|codemod|batch changes)/.test(text)) {
+  if (/(quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(text)) {
+    return "AI-assisted code review only becomes trustworthy when teams add explicit quality gates, approval workflow, and review standards before merge.";
+  }
+  if (hasMultiAgentWorkflowSignal(text)) {
+    return "Multi-agent coding workflows only become reliable when each agent can retrieve the right repository scope, file context, and dependency information.";
+  }
+  if (hasMigrationWorkflowSignal(text)) {
     return "The hard part of AI-assisted migrations is scoping blast radius, sequencing changes, and verifying downstream impact across repositories.";
   }
-  if (/(mcp|context layer|repo context)/.test(text)) {
+  if (hasRepoContextFailureSignal(text)) {
     return "Repository context quality, not raw model quality, is becoming the limiting factor in coding-agent reliability.";
+  }
+  if (hasMcpInfrastructureSignal(text)) {
+    return "Production agent workflows require explicit context tools and integration infrastructure, not just a stronger model or prompt.";
   }
   if (hasComplianceControlSignal(text) || /(compliance|security|audit|byok|self-hosted)/.test(text)) {
     return "Teams adopting AI coding are moving from experimentation to encoded standards, review loops, and audit-ready verification.";
@@ -1558,7 +1837,7 @@ function buildCoreClaim(text: string): string {
   if (/(onboarding|knowledge transfer|legacy|complex codebase|monorepo|multi-repo)/.test(text)) {
     return "AI can speed up code writing without solving the system-understanding problem that dominates onboarding in large codebases.";
   }
-  return "Enterprise AI-coding adoption is exposing operating problems in context, verification, and rollout that generic assistant messaging glosses over.";
+  return "Enterprise AI-coding adoption is exposing operating problems in repository context, verification, and workflow design that generic assistant messaging glosses over.";
 }
 
 function buildEvidenceQualityNote(doc: AgentRankedDoc, text: string): string {
@@ -1596,7 +1875,7 @@ function hasCommercialProductMarketSignal(text: string): boolean {
   return launchOrProof || vendorOrCompetitor;
 }
 
-function isResearchOnlySource(doc: AgentRankedDoc, periodDays: number): boolean {
+function isResearchOnlySource(doc: ContentIdeaDocLike, periodDays: number): boolean {
   const domain = sourceFromUrl(doc.url);
   if (!isAcademicResearchDomain(domain)) return false;
   const text = textOf(doc);
@@ -1614,10 +1893,18 @@ function isResearchOnlySource(doc: AgentRankedDoc, periodDays: number): boolean 
   return !(commercialSignal && directWorkflowSignal);
 }
 
-function isLowLeverageOperationalSource(doc: AgentRankedDoc, periodDays: number): boolean {
+function isLowLeverageOperationalSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
   const text = textOf(doc);
   const url = (doc.url ?? "").toLowerCase();
   const title = (doc.title ?? "").toLowerCase();
+
+  if (periodDays <= 14 && isIndexOrRoundupSource(url, doc.title ?? "", doc.snippet ?? doc.content ?? "")) {
+    return true;
+  }
+
+  if (periodDays <= 14 && /sourcegraph\.com\/changelog\/releases\/?$/.test(url)) {
+    return true;
+  }
 
   // For month windows, avoid operational changelog noise unless it's a material market move.
   if (periodDays > 14 && /github\.blog\/changelog\//.test(url)) {
@@ -1643,12 +1930,24 @@ function isLowLeverageOperationalSource(doc: AgentRankedDoc, periodDays: number)
   return false;
 }
 
-function isWeakAnchorSource(doc: AgentRankedDoc, periodDays: number): boolean {
+function isWeakAnchorSource(doc: ContentIdeaDocLike, periodDays: number): boolean {
   const canonicalUrl = canonicalizeUrl(doc.url) || doc.url;
   const domain = sourceFromUrl(canonicalUrl);
   const title = (doc.title ?? "").toLowerCase();
+  const text = textOf(doc);
 
-  if (isConversationStyleSource(canonicalUrl)) return true;
+  if (isConversationStyleSource(canonicalUrl, doc.title)) return true;
+  if (isPodcastLikeSource(canonicalUrl, doc.title, text)) return true;
+  if (isNewsletterHostedSource(canonicalUrl)) return true;
+  if (isShortWindowKnownBadAnchorPattern(doc, periodDays)) return true;
+  if (isShortWindowBroadAdoptionSource(doc, periodDays)) return true;
+  if (isShortWindowCodeReviewAutomationSource(doc, periodDays)) return true;
+  if (isShortWindowSkillMarketplaceSource(doc, periodDays)) return true;
+  if (isShortWindowDeveloperPortalSource(doc, periodDays)) return true;
+  if (isShortWindowGenericFrameworkMigrationSource(doc, periodDays)) return true;
+  if (isShortWindowLowLeverageProductUpdate(doc, periodDays)) return true;
+  if (isGenericMarketSizingSource(doc, periodDays)) return true;
+  if (periodDays <= 14 && !hasStrictShortWindowCodingWorkflowSignal(text)) return true;
 
   if (periodDays <= 14 && isLowAuthorityBusinessPressDomain(domain)) {
     return true;
@@ -1676,13 +1975,29 @@ function isWeakAnchorSource(doc: AgentRankedDoc, periodDays: number): boolean {
   return false;
 }
 
+function shouldSeedShortWindowContentIdeaPool(doc: RetrievedDoc, periodDays: number): boolean {
+  if (doc.id === MARKET_BRIEF_CONTEXT_ID) return true;
+  if (periodDays > 14) return true;
+  const text = textOf(doc);
+  const seedPool = typeof doc.metadata.contentSeedPool === "string" ? doc.metadata.contentSeedPool : undefined;
+  if ((seedPool === "market_brief" || seedPool === "competitor_intel") && !hasShortWindowDurableWorkflowTheme(text)) {
+    return false;
+  }
+  if (!hasMinimumContentIdeasRelevance(doc)) return false;
+  if (isWeakAnchorSource(doc, periodDays)) return false;
+  if (isLowLeverageOperationalSource(doc, periodDays)) return false;
+  return true;
+}
+
 function buildSourcegraphPositioningAnchors(text: string): string[] {
   const lower = text.toLowerCase();
   const anchors: string[] = [];
-  if (/(mcp|context layer|repo context|agent context)/.test(lower)) {
+  if (hasRepoContextFailureSignal(lower)) {
     anchors.push("Use Sourcegraph Deep Search + Code Search as the context and retrieval layer for coding agents.");
+  } else if (hasMcpInfrastructureSignal(lower)) {
+    anchors.push("Expose Sourcegraph via MCP so agents can call code search and codebase context tools directly in planning and execution loops.");
   }
-  if (/(migration|remediation|codemod|large-scale|batch)/.test(lower)) {
+  if (hasMigrationWorkflowSignal(lower) || /\blarge-scale\b/.test(lower)) {
     anchors.push("Pair agent suggestions with Sourcegraph Batch Changes for controlled cross-repo rollout and rollback.");
   }
   if (/(compliance|security|audit|byok|self-hosted|rbac|policy)/.test(lower)) {
@@ -1725,8 +2040,8 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState, periodDays: n
   const proof_feasibility_score = /(benchmark|customer|case study|release notes|docs|\bga\b)/.test(text) ? 0.9 : 0.5;
   
   // Product/message fit (content seed value, not hard GTM signals)
-  const strongProduct = /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted|repository context|retrieval precision|verification|rollout)/.test(text);
-  const partialProduct = /(developer (platform|tools|productivity)|coding assistant|ai coding|enterprise (codebase|tooling)|codebase (context|understanding)|onboarding|migration|remediation)/i.test(text);
+  const strongProduct = /(code search|cross-repo|batch changes|mcp|context layer|compliance|byok|self-hosted|repository context|retrieval precision|verification|rollout|quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(text);
+  const partialProduct = /(developer (platform|tools|productivity)|coding assistant|ai coding|enterprise (codebase|tooling)|codebase (context|understanding)|onboarding|migration|remediation|review loop|pull request governance|merge policy)/i.test(text);
   const message_fit_score = strongProduct ? 1 : partialProduct ? 0.7 : 0.3;
   
   // Timeliness (less aggressive weight for month windows; variety matters more)
@@ -1754,7 +2069,7 @@ function scoreCandidate(doc: AgentRankedDoc, state: PlaybookState, periodDays: n
   const noisy_domain_penalty = isNoisyDomain(domain) ? 0.3 : 0;
   const weak_anchor_penalty = isWeakAnchorSource(doc, periodDays) ? (periodDays <= 14 ? 0.2 : 0.12) : 0;
   const specificity_score =
-    /(repo boundary|repository boundary|downstream|dependency|dependencies|blast radius|ownership|usage path|call path|review loop|team standards|verification|rollback|onboarding|knowledge transfer|regulated|capital markets|banking|insurance)/.test(
+    /(repo boundary|repository boundary|downstream|dependency|dependencies|blast radius|ownership|usage path|call path|review loop|team standards|verification|rollback|onboarding|knowledge transfer|regulated|capital markets|banking|insurance|quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(
       text,
     )
       ? 0.95
@@ -1889,7 +2204,7 @@ function sourceEntryFromDoc(doc: AgentRankedDoc): ContentIdea["sources"][number]
 
 function isIndexOrRoundupSource(url: string, title: string, snippet?: string): boolean {
   const text = `${title} ${snippet ?? ""}`.toLowerCase();
-  if (/(show hn|fastest growing|top \d+|startup list|ranked list|roundup|weekly|newsletter|digest)/i.test(text)) return true;
+  if (/(show hn|fastest growing|top \d+|startup list|ranked list|roundup|weekly|newsletter|digest|^fragments:\s*)/i.test(text)) return true;
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
@@ -2106,9 +2421,11 @@ function isAcceptableCorroborationDoc(
   const domain = sourceFromUrl(entry.url);
   const sourceType = classifySourceTypeByDomain(domain);
   const text = textOf(doc);
-  if (isConversationStyleSource(entry.url)) return false;
+  if (isConversationStyleSource(entry.url, entry.title)) return false;
+  if (isPodcastLikeSource(entry.url, entry.title, text)) return false;
   if (sourceType === "community") return false;
   if (!hasMinimumContentIdeasRelevance(doc)) return false;
+  if (!hasStrictShortWindowCodingWorkflowSignal(text)) return false;
   if (!(hasConcreteEvidence(text) || hasBroadSourcegraphNarrativeFit(doc))) return false;
   if (isIndexOrRoundupSource(entry.url, doc.title, doc.snippet)) return false;
   if (isWeakFinalIdeaSource(entry)) return false;
@@ -2476,7 +2793,7 @@ function backfillShortWindowDistinctThemes(
   state: PlaybookState,
   targetCount: number,
 ): ContentIdea[] {
-  const minimum = Math.min(Math.max(3, targetCount), 6);
+  const minimum = Math.min(targetCount, 3);
   if (ideas.length >= minimum) return ideas.slice(0, targetCount);
 
   const out = [...ideas];
@@ -2928,18 +3245,93 @@ function isWeakFinalIdeaSource(source: ContentIdea["sources"][number]): boolean 
   const domain = sourceFromUrl(canonicalUrl);
   if (!canonicalUrl) return true;
   if (isGenericIdeaPage(canonicalUrl)) return true;
-  if (isConversationStyleSource(canonicalUrl)) return true;
+  if (isConversationStyleSource(canonicalUrl, title)) return true;
+  if (isPodcastLikeSource(canonicalUrl, title, title)) return true;
   if (isNoisyDomain(sourceFromUrl(canonicalUrl))) return true;
   if (isLowAuthorityBusinessPressDomain(domain)) return true;
   if (isIndexOrRoundupSource(canonicalUrl, title)) return true;
   if (
-    /(release notes|changelog|talks to help you navigate the schedule|\[ai ?news\]|weekly digest|roundup|march 20\d{2} update|platform update)/i.test(
+    /(market (analysis|forecast|size|growth|outlook)|industry (analysis|forecast|outlook)|cagr|worth \$|\b2030\b|\b2031\b|\b2032\b|\b2033\b|\b2034\b|\b2035\b|market report|growth forecast|valuation)/i.test(
       title,
     )
   ) {
     return true;
   }
+  if (
+    /(release notes|changelog|talks to help you navigate the schedule|\[ai ?news\]|weekly digest|roundup|march 20\d{2} update|platform update|economic index|learning curves)/i.test(
+      `${title} ${canonicalUrl}`,
+    )
+  ) {
+    return true;
+  }
   return false;
+}
+
+function isWeakSingleSourceShortWindowIdea(idea: ContentIdea, periodDays: number | undefined): boolean {
+  if ((periodDays ?? 30) > 14) return false;
+  if (idea.sources.length !== 1) return false;
+  const sourceTitle = stripBoilerplateNoise(idea.sources[0]?.title ?? "").toLowerCase();
+  const weakMarketingHeadline =
+    /(you don['’]?t need to .* will|autofix will|the .* tab is now|economic index|learning curves|what('|’)s changed)/.test(
+      sourceTitle,
+    );
+  if (!weakMarketingHeadline) return false;
+  const broadNarrativeClaim =
+    /(repository context|retrieval precision|model quality stops mattering|governance|audit-ready|cross-repo|migration|remediation|onboarding|knowledge transfer)/.test(
+      `${idea.title} ${idea.thesis} ${idea.core_claim}`.toLowerCase(),
+    );
+  return broadNarrativeClaim;
+}
+
+const SEGMENT_SUPPORT_PATTERNS: Record<Exclude<ContentIdea["target_segment"], "Other">, RegExp> = {
+  "Capital Markets":
+    /(capital market|trading|trading system|hedge fund|broker|front office|market data|risk engine|order routing|fix protocol)/,
+  Banks: /(bank|banking|core banking|retail banking|commercial banking)/,
+  "Diversified Financial Services": /(financial services|finserv|wealth management|asset management)/,
+  Insurance: /(insurance|underwriting|claims|policy administration)/,
+};
+
+function segmentSupportedByText(segment: ContentIdea["target_segment"], text: string): boolean {
+  if (segment === "Other") return true;
+  return SEGMENT_SUPPORT_PATTERNS[segment].test(text);
+}
+
+function hasUnsupportedVerticalClaim(ideaText: string, sourceText: string): boolean {
+  const genericUnsupportedVerticalPatterns = [
+    /financial engineering|financial platforms?|financial systems?|financial codebases?|regulated industr(?:y|ies)|trading infrastructure|trading platform/,
+  ];
+  return (
+    Object.values(SEGMENT_SUPPORT_PATTERNS).some(
+      (pattern) => pattern.test(ideaText) && !pattern.test(sourceText),
+    ) ||
+    genericUnsupportedVerticalPatterns.some(
+      (pattern) => pattern.test(ideaText) && !pattern.test(sourceText),
+    )
+  );
+}
+
+function stripUnsupportedVerticalLanguage(text: string): string {
+  return stripBoilerplateNoise(
+    text
+      .replace(/financial engineering/gi, "enterprise engineering")
+      .replace(/financial platforms?/gi, "enterprise platforms")
+      .replace(/financial systems?/gi, "enterprise systems")
+      .replace(/financial codebases?/gi, "enterprise codebases")
+      .replace(/regulated industr(?:y|ies)/gi, "enterprise environments")
+      .replace(/capital markets?/gi, "enterprise")
+      .replace(/trading systems?/gi, "codebase")
+      .replace(/trading infrastructure/gi, "large codebase")
+      .replace(/hedge funds?/gi, "engineering teams")
+      .replace(/\bbanks?\b/gi, "enterprises")
+      .replace(/banking/gi, "enterprise")
+      .replace(/financial services|finserv/gi, "enterprise")
+      .replace(/wealth management|asset management/gi, "enterprise")
+      .replace(/insurance/gi, "enterprise")
+      .replace(/risk engines?/gi, "downstream service")
+      .replace(/market data/gi, "shared dependency")
+      .replace(/order routing/gi, "service orchestration")
+      .replace(/underwriting|claims|policy administration/gi, "production workflows"),
+  );
 }
 
 function scoreCorroborationCandidate(
@@ -3107,7 +3499,7 @@ async function synthesizeStructuredContentIdeasWithLLM(args: {
         /(mcp|model context protocol|repository context|repo context|retrieval precision)/.test(textOf(c.doc))
           ? "repo_context"
           : null,
-        /(batch changes|codemod|migration|remediation|rollout|rollback)/.test(textOf(c.doc))
+        hasMigrationWorkflowSignal(textOf(c.doc)) || /\brollback\b/.test(textOf(c.doc))
           ? "cross_repo_change"
           : null,
         /(policy|audit|compliance|self-hosted|self hosted|byok|rbac|team standards)/.test(textOf(c.doc))
@@ -3226,8 +3618,8 @@ Rules:
 
     const output: ContentIdea[] = [];
     for (const raw of rawIdeas.slice(0, Math.min(args.numIdeas, 5))) {
-      const title = stripBoilerplateNoise(String(raw.title ?? "").trim());
-      const thesis = stripBoilerplateNoise(String(raw.thesis ?? "").trim());
+      let title = stripBoilerplateNoise(String(raw.title ?? "").trim());
+      let thesis = stripBoilerplateNoise(String(raw.thesis ?? "").trim());
       if (!title || !thesis) continue;
 
       const explicitSourceUrls = Array.isArray(raw.source_urls)
@@ -3270,31 +3662,73 @@ Rules:
 
       const joinedText = `${title} ${thesis} ${String(raw.core_claim ?? "")} ${sources.map((s) => s.title).join(" ")}`.toLowerCase();
       const primaryDoc = sourceMap.get(sources[0].url);
+      const sourceDocs = sources
+        .map((source) => sourceMap.get(source.url))
+        .filter((doc): doc is AgentRankedDoc => !!doc);
+      const sourceCorpus = sourceDocs.map((doc) => textOf(doc)).join(" ");
+      if (
+        hasStrongRepoContextClaim(joinedText) &&
+        sourceDocs.length > 0 &&
+        sourceDocs.every((doc) => !hasRepoContextFailureSignal(textOf(doc)))
+      ) {
+        continue;
+      }
+      const unsupportedVertical = sourceCorpus ? hasUnsupportedVerticalClaim(joinedText, sourceCorpus) : false;
+      if (unsupportedVertical) {
+        title = buildSourcegraphIdeaTitle(
+          "Other",
+          normalizeChannel(raw.channel),
+          sourceCorpus || joinedText,
+          sources[0]?.title,
+          sources[0]?.url,
+        );
+        thesis = stripUnsupportedVerticalLanguage(thesis);
+      }
+      const groundedSegment = (() => {
+        const requested = normalizeTargetSegment(String(raw.target_segment ?? ""));
+        if (unsupportedVertical) return "Other";
+        if (!sourceCorpus || segmentSupportedByText(requested, sourceCorpus)) return requested;
+        return "Other";
+      })();
+      const whyNow = stripBoilerplateNoise(String(raw.why_now ?? "").trim());
+      const coreClaim = stripBoilerplateNoise(String(raw.core_claim ?? "").trim());
+      const keyInsights = (Array.isArray(raw.key_insights) ? raw.key_insights : [])
+        .map((value) =>
+          unsupportedVertical
+            ? stripUnsupportedVerticalLanguage(String(value))
+            : stripBoilerplateNoise(String(value)),
+        )
+        .filter(Boolean)
+        .slice(0, 4);
+      const contentOutline = (Array.isArray(raw.content_outline) ? raw.content_outline : [])
+        .map((value) =>
+          unsupportedVertical
+            ? stripUnsupportedVerticalLanguage(String(value))
+            : stripBoilerplateNoise(String(value)),
+        )
+        .filter(Boolean)
+        .slice(0, 5);
+      const normalizedWhyNow = unsupportedVertical ? stripUnsupportedVerticalLanguage(whyNow) : whyNow;
+      const normalizedCoreClaim = unsupportedVertical ? stripUnsupportedVerticalLanguage(coreClaim) : coreClaim;
       const integration = classifySourcegraphIntegrationOpportunity({
         title,
         summary: thesis,
-        content: `${String(raw.core_claim ?? "")} ${Array.isArray(raw.content_outline) ? raw.content_outline.join(" ") : ""}`,
+        content: `${normalizedCoreClaim} ${contentOutline.join(" ")}`,
       });
       const distributionPlan = buildDistributionPlan(normalizeChannel(raw.channel), joinedText);
       output.push({
         title,
         thesis,
-        target_segment: normalizeTargetSegment(String(raw.target_segment ?? "")),
+        target_segment: groundedSegment,
         target_persona: normalizePersona(raw.target_persona),
         funnel_stage: normalizeFunnelStage(raw.funnel_stage),
         channel: normalizeChannel(raw.channel),
-        why_now: stripBoilerplateNoise(String(raw.why_now ?? "").trim()) || buildWhyNow(primaryDoc ?? { ...args.candidates[0].doc }, joinedText),
+        why_now: normalizedWhyNow || buildWhyNow(primaryDoc ?? { ...args.candidates[0].doc }, joinedText),
         playbook_alignment: args.state.campaign_themes.slice(0, 2),
         sources,
-        core_claim: stripBoilerplateNoise(String(raw.core_claim ?? "").trim()) || buildCoreClaim(joinedText),
-        key_insights: (Array.isArray(raw.key_insights) ? raw.key_insights : [])
-          .map((value) => stripBoilerplateNoise(String(value)))
-          .filter(Boolean)
-          .slice(0, 4),
-        content_outline: (Array.isArray(raw.content_outline) ? raw.content_outline : [])
-          .map((value) => stripBoilerplateNoise(String(value)))
-          .filter(Boolean)
-          .slice(0, 5),
+        core_claim: normalizedCoreClaim || buildCoreClaim(joinedText),
+        key_insights: keyInsights,
+        content_outline: contentOutline,
         proof_required: ["product evidence", "external trend", "customer story"],
         guardrails: args.state.messaging_guardrails,
         evidence_quality_note: primaryDoc ? buildEvidenceQualityNote(primaryDoc, textOf(primaryDoc)) : undefined,
@@ -3391,12 +3825,17 @@ Rules:
 export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): ContentIdeasOutput {
   const ideas = payload.ideas
     .map((idea) => {
+      const originalPrimaryUrl = canonicalizeUrl(idea.sources[0]?.url);
       const sources = idea.sources
         .map((s) => ({ ...s, url: canonicalizeUrl(s.url) }))
         .filter((s) => !!s.url && !isWeakFinalIdeaSource(s));
       if (sources.length === 0) return null;
+      const filteredPrimaryUrl = canonicalizeUrl(sources[0]?.url);
+      if ((payload.periodDays ?? 30) <= 14 && originalPrimaryUrl && filteredPrimaryUrl && originalPrimaryUrl !== filteredPrimaryUrl) {
+        return null;
+      }
       const rewrittenTitle = maybeRewriteLiteralIdeaTitle({ ...idea, sources });
-      return {
+      const normalizedIdea = {
         ...idea,
         title: stripBoilerplateNoise(rewrittenTitle),
         thesis: stripBoilerplateNoise(idea.thesis),
@@ -3412,6 +3851,8 @@ export function postProcessContentIdeasOutput(payload: ContentIdeasOutput): Cont
               }).sourcegraph_integration_play,
         sources,
       };
+      if (isWeakSingleSourceShortWindowIdea(normalizedIdea, payload.periodDays)) return null;
+      return normalizedIdea;
     })
     .filter((i): i is ContentIdea => i !== null);
 
@@ -3450,6 +3891,15 @@ function backfillLlmIdeasWithHeuristicIdeas(
   const merged = [...llmIdeas];
   const seenTitleKeys = new Set(merged.map((idea) => normalizeIdeaTitleKey(idea.title)));
   const seenTopicKeys = new Set(merged.map((idea) => topicKeyFromIdeaTitle(idea.title)));
+  const seenSourceFrameKeys = new Set(
+    merged
+      .map((idea) => {
+        const primaryUrl = canonicalizeUrl(idea.sources[0]?.url);
+        if (!primaryUrl) return null;
+        return `${primaryUrl}|${ideaFrameKey(idea)}`;
+      })
+      .filter((value): value is string => !!value),
+  );
 
   for (const idea of heuristicIdeas) {
     if (merged.length >= numIdeas) break;
@@ -3460,9 +3910,14 @@ function backfillLlmIdeasWithHeuristicIdeas(
     const canRelaxTopicCap = heuristicIdeas.length <= numIdeas;
     if (!canRelaxTopicCap && seenTopicKeys.has(topicKey)) continue;
 
+    const primaryUrl = canonicalizeUrl(idea.sources[0]?.url);
+    const sourceFrameKey = primaryUrl ? `${primaryUrl}|${ideaFrameKey(idea)}` : null;
+    if (sourceFrameKey && seenSourceFrameKeys.has(sourceFrameKey)) continue;
+
     merged.push(idea);
     seenTitleKeys.add(titleKey);
     seenTopicKeys.add(topicKey);
+    if (sourceFrameKey) seenSourceFrameKeys.add(sourceFrameKey);
   }
 
   return merged;
@@ -3498,6 +3953,10 @@ function buildContentIdeasCandidateGates(ctx: {
       keep: (c, gateCtx) => !isWeakAnchorSource(c.doc, gateCtx.periodDays),
     },
     {
+      name: "not_generic_market_sizing_source",
+      keep: (c, gateCtx) => !isGenericMarketSizingSource(c.doc, gateCtx.periodDays),
+    },
+    {
       name: "minimum_content_ideas_relevance",
       keep: (c) => hasMinimumContentIdeasRelevance(c.doc),
     },
@@ -3507,11 +3966,15 @@ function buildContentIdeasCandidateGates(ctx: {
         const text = textOf(c.doc);
         return (
           hasConcreteEvidence(text) ||
-          /(repo boundary|repository boundary|downstream|dependency|dependencies|ownership|usage path|call path|team standards|verification|rollback|onboarding|knowledge transfer|blast radius|mcp|model context protocol|repository context|repo context|retrieval precision|code search|deep search|cross-repo|platform engineering|developer platform|migration|remediation|audit|policy)/.test(
+          /(repo boundary|repository boundary|downstream|dependency|dependencies|ownership|usage path|call path|team standards|verification|rollback|onboarding|knowledge transfer|blast radius|mcp|model context protocol|repository context|repo context|retrieval precision|code search|deep search|cross-repo|platform engineering|developer platform|audit|policy|quality gates?|merge gates?|review standards|approval workflow|policy enforcement)/.test(
             text,
-          )
+          ) || hasMigrationWorkflowSignal(text)
         );
       },
+    },
+    {
+      name: "short_window_durable_workflow_theme",
+      keep: (c, gateCtx) => (gateCtx.periodDays > 14 ? true : hasShortWindowDurableWorkflowTheme(textOf(c.doc))),
     },
     {
       name: "has_canonical_url",
@@ -3568,9 +4031,9 @@ function buildContentIdeasCandidateGates(ctx: {
           (sourceType === "secondary" || sourceType === "community") &&
           !(
             hasConcreteEvidence(text) ||
-            /(mcp|model context protocol|repository context|repo context|retrieval precision|code search|deep search|cross-repo|migration|remediation|onboarding|knowledge transfer|ownership|dependency|dependencies|verification|rollback|team standards|audit|policy)/.test(
+            /(mcp|model context protocol|repository context|repo context|retrieval precision|code search|deep search|cross-repo|onboarding|knowledge transfer|ownership|dependency|dependencies|verification|rollback|team standards|audit|policy)/.test(
               text,
-            )
+            ) || hasMigrationWorkflowSignal(text)
           )
         ) {
           return false;
@@ -3650,32 +4113,50 @@ async function generateContentIdeasImpl(options: {
     ? createEmptyAgentRetrievalTrace("content_ideas", periodDays)
     : null;
 
+  const tagSeedPool = (
+    docs: RetrievedDoc[],
+    contentSeedPool: "market_brief" | "competitor_intel" | "content_ideas",
+  ): RetrievedDoc[] =>
+    docs.map((doc) => ({
+      ...doc,
+      metadata: {
+        ...doc.metadata,
+        contentSeedPool,
+      },
+    }));
+
   // Build the candidate pool from curated intel plus Sourcegraph-owned content so ideas can emerge
   // from market signals while still being grounded in current product and messaging context.
-  const marketDocs =
+  const marketDocs = tagSeedPool(
     options.retrievalOverride?.marketBriefDocs ??
     await retrieveForAgent("market_brief", {
       periodDays,
       query: options.focus ?? null,
       maxEnrich: 3,
       trace: marketRetrievalTrace,
-    });
-  const competitorDocs =
+    }),
+    "market_brief",
+  );
+  const competitorDocs = tagSeedPool(
     options.retrievalOverride?.competitorDocs ??
     await retrieveForAgent("competitor_intel", {
       periodDays,
       query: options.focus ?? null,
       maxEnrich: 3,
       trace: competitorRetrievalTrace,
-    });
-  const contentIdeaDocs =
+    }),
+    "competitor_intel",
+  );
+  const contentIdeaDocs = tagSeedPool(
     options.retrievalOverride?.contentIdeaDocs ??
     await retrieveForAgent("content_ideas", {
       periodDays,
       query: options.focus ?? null,
       maxEnrich: 3,
       trace: contentPoolRetrievalTrace,
-    });
+    }),
+    "content_ideas",
+  );
 
   // If market brief summary was passed (e.g. when run after market brief), inject it as a synthetic context doc.
   const docsWithBriefContext =
@@ -3699,7 +4180,7 @@ async function generateContentIdeasImpl(options: {
 
   const seenIds = new Set<string>();
   const seenUrls = new Set<string>();
-  const allDocs = docsWithBriefContext.filter((d) => {
+  const dedupedDocs = docsWithBriefContext.filter((d) => {
     if (d.id === MARKET_BRIEF_CONTEXT_ID) return true;
     if (d.id && seenIds.has(d.id)) return false;
     const url = canonicalizeUrl(d.url);
@@ -3709,6 +4190,7 @@ async function generateContentIdeasImpl(options: {
     seenUrls.add(url);
     return true;
   });
+  const allDocs = dedupedDocs.filter((doc) => shouldSeedShortWindowContentIdeaPool(doc, periodDays));
 
   const rankingTrace: AgentRankingTrace | null = pipelineTraceEnabled
     ? createEmptyRankingTrace("content_ideas", 25)
