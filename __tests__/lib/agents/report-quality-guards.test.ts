@@ -354,6 +354,9 @@ describe("content ideas quality guards", () => {
     expect(out.ideas[0].editorial_rubric?.evidence_breadth).toBeGreaterThan(
       out.ideas[1].editorial_rubric?.evidence_breadth ?? 0,
     );
+    expect(out.ideas[0].editorial_rubric?.lead_source_authority).toBeGreaterThan(
+      out.ideas[1].editorial_rubric?.lead_source_authority ?? 0,
+    );
     expect(out.ideas[0].editorial_rubric?.sourcegraph_ownability).toBeGreaterThan(
       out.ideas[1].editorial_rubric?.sourcegraph_ownability ?? 0,
     );
@@ -487,7 +490,268 @@ describe("content ideas quality guards", () => {
 
     const out = postProcessContentIdeasOutput(payload);
     expect(out.ideas).toHaveLength(3);
-    expect(out.ideas[0].title).toBe("Brief: How Teams Add Quality Gates to AI Code Review");
-    expect(out.ideas[1].title).toBe("Brief: Cross-Repo Upgrade and Migration Workflows");
+    expect(out.ideas.slice(0, 2).map((idea) => idea.title)).toEqual([
+      "Brief: Cross-Repo Upgrade and Migration Workflows",
+      "Brief: How Teams Add Quality Gates to AI Code Review",
+    ]);
+    expect(out.ideas.map((idea) => idea.title)).toContain(
+      "Webinar: Turning AI Code Changes Into Audit-Ready Workflows",
+    );
+  });
+
+  it("penalizes low-authority lead sources even when the idea is otherwise corroborated", () => {
+    const payload: ContentIdeasOutput = {
+      generated_at: "2026-04-07",
+      playbook_version: "2026.02.15.1",
+      periodDays: 14,
+      ideas: [
+        {
+          title: "Brief: Repo Context Fails First in Enterprise Agent Rollouts",
+          thesis: "A mandate plus parallel-agent tooling exposes repository-boundary failures first.",
+          target_segment: "Other",
+          target_persona: "Head of Developer Platform",
+          funnel_stage: "awareness",
+          channel: "blog",
+          why_now: "A low-authority business-summary site amplified the mandate story this week.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "JPMorgan ties engineer reviews to AI use for 65,000 staff",
+              source: "letsdatascience.com",
+              url: "https://letsdatascience.com/jpmorgan-ai-adoption",
+              date: "2026-04-07",
+            },
+            {
+              title: "Meta maps tribal knowledge before AI touches large-scale pipelines",
+              source: "engineering.fb.com",
+              url: "https://engineering.fb.com/2026/04/06/ai-tribal-knowledge",
+              date: "2026-04-06",
+            },
+          ],
+          core_claim: "Repo boundaries and ownership gaps break enterprise agents before code quality does.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: [
+            "Use Sourcegraph Code Search and Deep Search to recover ownership and dependency paths before agents act.",
+          ],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.93,
+        },
+        {
+          title: "Brief: Repository Context Failures in Parallel Agent Workflows",
+          thesis: "Parallel-agent tooling and engineering practice now point to the same repository-context bottleneck.",
+          target_segment: "Other",
+          target_persona: "Head of Developer Platform",
+          funnel_stage: "awareness",
+          channel: "blog",
+          why_now: "GitHub and Meta both surfaced fresh evidence for repo-boundary failures this week.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "GitHub details multi-agent workflows across repositories",
+              source: "github.blog",
+              url: "https://github.blog/engineering/platform-security/multi-agent-workflows-across-repositories",
+              date: "2026-04-05",
+            },
+            {
+              title: "Meta maps tribal knowledge before AI touches large-scale pipelines",
+              source: "engineering.fb.com",
+              url: "https://engineering.fb.com/2026/04/06/ai-tribal-knowledge",
+              date: "2026-04-06",
+            },
+          ],
+          core_claim: "Parallel agents need repository context and dependency visibility before merge.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: [
+            "Use Sourcegraph Code Search and Deep Search to recover ownership and dependency paths before agents act.",
+          ],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.91,
+        },
+      ],
+    };
+
+    const out = postProcessContentIdeasOutput(payload);
+    expect(out.ideas).toHaveLength(1);
+    expect(out.ideas[0].title).toBe("Brief: Repository Context Failures in Parallel Agent Workflows");
+    expect(out.ideas[0].editorial_rubric?.lead_source_authority).toBeGreaterThan(0.7);
+  });
+
+  it("keeps single-source short-window ideas out of the top three when corroborated alternatives exist", () => {
+    const payload: ContentIdeasOutput = {
+      generated_at: "2026-04-07",
+      playbook_version: "2026.02.15.1",
+      periodDays: 14,
+      ideas: [
+        {
+          title: "Guide: AI Code Review Needs Quality Gates",
+          thesis: "A funded competitor frames quality gates as the next enterprise requirement.",
+          target_segment: "Other",
+          target_persona: "VP Engineering",
+          funnel_stage: "awareness",
+          channel: "whitepaper",
+          why_now: "A single April announcement made quality gates visible.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "CodeRabbit raises $60 million in Series B to build quality gates for AI coding",
+              source: "coderabbit.ai",
+              url: "https://coderabbit.ai/blog/series-b",
+              date: "2026-04-06",
+            },
+          ],
+          core_claim: "AI code review needs gates before merge.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "medium_opportunity",
+          sourcegraph_integration_play: ["Position Sourcegraph as the verification layer behind AI code review."],
+          distribution_plan: {
+            primary_format: "Analyst-style whitepaper",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.98,
+        },
+        {
+          title: "Brief: Multi-Agent Repo Boundaries Break First",
+          thesis: "Parallel-agent tooling and real engineering practice now point to the same repo-boundary failure mode.",
+          target_segment: "Other",
+          target_persona: "Head of Developer Platform",
+          funnel_stage: "awareness",
+          channel: "blog",
+          why_now: "GitHub and Meta surfaced fresh evidence this week.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "GitHub details multi-agent workflows across repositories",
+              source: "github.blog",
+              url: "https://github.blog/engineering/platform-security/multi-agent-workflows-across-repositories",
+              date: "2026-04-05",
+            },
+            {
+              title: "Meta maps tribal knowledge before AI touches large-scale pipelines",
+              source: "engineering.fb.com",
+              url: "https://engineering.fb.com/2026/04/06/ai-tribal-knowledge",
+              date: "2026-04-06",
+            },
+          ],
+          core_claim: "Repo context beats prompt quality as the first constraint in enterprise agent workflows.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["Use Code Search and Deep Search to recover dependency and ownership paths before agents act."],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.9,
+        },
+        {
+          title: "Brief: Cross-Repo Migration Workflows Need Verification",
+          thesis: "Migration stories show that dependency visibility and rollback discipline are still the hard parts.",
+          target_segment: "Other",
+          target_persona: "Staff Engineer",
+          funnel_stage: "business_case",
+          channel: "blog",
+          why_now: "Multiple migration stories landed this week.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "Large-scale codemod rollout with verification",
+              source: "moderne.ai",
+              url: "https://moderne.ai/codemod-rollout",
+              date: "2026-04-06",
+            },
+            {
+              title: "Engineering team details rollback-safe dependency migration",
+              source: "engineering.example",
+              url: "https://engineering.example/dependency-migration",
+              date: "2026-04-04",
+            },
+          ],
+          core_claim: "Cross-repo migrations need dependency mapping and rollback-ready rollout control.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["Use Batch Changes plus Code Search for controlled rollout and verification."],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.89,
+        },
+        {
+          title: "Brief: AI Onboarding Still Breaks on Tribal Knowledge",
+          thesis: "Large-codebase onboarding remains a system-understanding problem even with AI assistance.",
+          target_segment: "Other",
+          target_persona: "Staff Engineer",
+          funnel_stage: "expansion",
+          channel: "blog",
+          why_now: "Fresh engineering stories surfaced the same knowledge-mapping problem.",
+          playbook_alignment: [],
+          sources: [
+            {
+              title: "How Meta mapped tribal knowledge before AI touched large-scale pipelines",
+              source: "engineering.fb.com",
+              url: "https://engineering.fb.com/2026/04/06/ai-tribal-knowledge",
+              date: "2026-04-06",
+            },
+            {
+              title: "Internal developer platform teams revisit onboarding with AI",
+              source: "thenewstack.io",
+              url: "https://thenewstack.io/ai-onboarding-large-codebases",
+              date: "2026-04-05",
+            },
+          ],
+          core_claim: "System understanding is still the gating factor in large codebases.",
+          key_insights: ["Insight"],
+          content_outline: ["Outline"],
+          proof_required: [],
+          guardrails: [],
+          integration_opportunity: "high_opportunity",
+          sourcegraph_integration_play: ["Use Deep Search and code navigation to recover system understanding faster."],
+          distribution_plan: {
+            primary_format: "Blog post",
+            recommended_venue: "site",
+            channel_strategy: "x",
+            setup_steps: [],
+          },
+          priority_score: 0.88,
+        },
+      ],
+    };
+
+    const out = postProcessContentIdeasOutput(payload);
+    expect(out.ideas).toHaveLength(4);
+    expect(out.ideas.slice(0, 3).every((idea) => idea.sources.length >= 2)).toBe(true);
+    expect(out.ideas[3].title).toBe("Guide: AI Code Review Needs Quality Gates");
   });
 });

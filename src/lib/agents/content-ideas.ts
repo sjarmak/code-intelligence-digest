@@ -78,6 +78,7 @@ export interface ContentIdea {
     base_priority_score: number;
     adjusted_priority_score: number;
     evidence_breadth: number;
+    lead_source_authority: number;
     sourcegraph_ownability: number;
     format_fit: number;
     hook_independence: number;
@@ -354,6 +355,7 @@ const WEAK_SHORT_WINDOW_SECONDARY_DOMAINS = new Set([
   "fastcompany.com",
   "gitkraken.com",
   "forbes.com",
+  "letsdatascience.com",
   "venturebeat.com",
   "entrepreneur.com",
   "inc.com",
@@ -365,6 +367,7 @@ const LOW_AUTHORITY_BUSINESS_PRESS_DOMAINS = new Set([
   "techcrunch.com",
   "venturebeat.com",
   "forbes.com",
+  "letsdatascience.com",
   "businessinsider.com",
   "entrepreneur.com",
   "inc.com",
@@ -3110,6 +3113,10 @@ function isMidweightContentChannel(channel: ContentIdea["channel"]): boolean {
   return ["blog", "SEO_page"].includes(channel);
 }
 
+function primarySourceTypeForIdea(idea: ContentIdea): ReturnType<typeof classifySourceTypeByDomain> {
+  return classifySourceTypeByDomain(primarySourceDomain(idea));
+}
+
 function countSourcegraphProductAnchors(text: string): number {
   const matches = [
     /\bcode search\b/,
@@ -3126,13 +3133,15 @@ function countSourcegraphProductAnchors(text: string): number {
 }
 
 function genericSourcegraphAnglePenalty(text: string): number {
-  if (
-    /(verification layer|context layer|control layer|queryable infrastructure layer|sits behind ai code review|complements existing assistants)/.test(
+  const vagueLayerClaim =
+    /(verification layer|context layer|control layer|queryable infrastructure layer|missing infrastructure layer|retrieval layer|infrastructure layer between the agent and the codebase|thing that lets agents|sits behind ai code review|complements existing assistants)/.test(
       text,
-    ) &&
+    );
+  if (
+    vagueLayerClaim &&
     countSourcegraphProductAnchors(text) < 2
   ) {
-    return 0.2;
+    return 0.3;
   }
   return 0;
 }
@@ -3161,6 +3170,34 @@ function scoreIdeaEvidenceBreadth(idea: ContentIdea, periodDays: number): { scor
   if (uniqueUrls.length === 1 && isFundingOrFundraiseHook(primaryText)) {
     score -= 0.18;
     notes.push("single-source fundraise hook");
+  }
+  return { score: clamp01(score), notes };
+}
+
+function scoreIdeaLeadSourceAuthority(idea: ContentIdea): { score: number; notes: string[] } {
+  const domain = primarySourceDomain(idea);
+  const sourceType = primarySourceTypeForIdea(idea);
+  const notes: string[] = [];
+  let score =
+    sourceType === "primary"
+      ? 0.94
+      : TRUSTED_SECONDARY_DOMAINS.has(domain) || PREFERRED_SHORT_WINDOW_TECHNICAL_DOMAINS.has(domain)
+        ? 0.8
+        : sourceType === "secondary"
+          ? 0.58
+          : 0.4;
+
+  if (isLowAuthorityBusinessPressDomain(domain)) {
+    score -= 0.3;
+    notes.push("lead source is low-authority business press");
+  }
+  if (WEAK_SHORT_WINDOW_SECONDARY_DOMAINS.has(domain)) {
+    score -= 0.12;
+    notes.push("lead source is a weak short-window secondary domain");
+  }
+  if (isNoisyDomain(domain)) {
+    score -= 0.2;
+    notes.push("lead source domain is noisy");
   }
   return { score: clamp01(score), notes };
 }
@@ -3241,18 +3278,21 @@ function scoreIdeaHookIndependence(idea: ContentIdea): { score: number; notes: s
 function applyEditorialRubricToIdea(idea: ContentIdea, periodDays: number): ContentIdea {
   const basePriority = idea.editorial_rubric?.base_priority_score ?? idea.priority_score;
   const evidence = scoreIdeaEvidenceBreadth(idea, periodDays);
+  const leadSourceAuthority = scoreIdeaLeadSourceAuthority(idea);
   const ownability = scoreIdeaSourcegraphOwnability(idea);
   const formatFit = scoreIdeaFormatFit(idea);
   const hookIndependence = scoreIdeaHookIndependence(idea);
   const adjustedPriority =
     basePriority +
     (evidence.score - 0.5) * 0.24 +
+    (leadSourceAuthority.score - 0.5) * 0.18 +
     (ownability.score - 0.5) * 0.22 +
     (formatFit.score - 0.5) * 0.16 +
     (hookIndependence.score - 0.5) * 0.2;
   const notes = Array.from(
     new Set([
       ...evidence.notes,
+      ...leadSourceAuthority.notes,
       ...ownability.notes,
       ...formatFit.notes,
       ...hookIndependence.notes,
@@ -3267,6 +3307,7 @@ function applyEditorialRubricToIdea(idea: ContentIdea, periodDays: number): Cont
       base_priority_score: Number(basePriority.toFixed(3)),
       adjusted_priority_score: Number(adjustedPriority.toFixed(3)),
       evidence_breadth: Number(evidence.score.toFixed(3)),
+      lead_source_authority: Number(leadSourceAuthority.score.toFixed(3)),
       sourcegraph_ownability: Number(ownability.score.toFixed(3)),
       format_fit: Number(formatFit.score.toFixed(3)),
       hook_independence: Number(hookIndependence.score.toFixed(3)),
@@ -3307,6 +3348,14 @@ function rankIdeasWithEditorialRubric(
         if ((clusterCounts.get(cluster) ?? 0) === 0) score += 0.055;
         const primaryDomain = primarySourceDomain(idea);
         if ((domainCounts.get(primaryDomain) ?? 0) === 0) score += 0.02;
+        const sourceCount = uniqueSourceUrlsForIdea(idea).length;
+        const isEarlyTopSlate = options.periodDays <= 14 && ordered.length < Math.min(3, options.targetCount);
+        const hasMultiSourceAlternative = remaining.some(
+          (candidate) =>
+            normalizeIdeaTitleKey(candidate.title) !== normalizeIdeaTitleKey(idea.title) &&
+            uniqueSourceUrlsForIdea(candidate).length >= 2,
+        );
+        if (isEarlyTopSlate && sourceCount < 2 && hasMultiSourceAlternative) score -= 1.25;
 
         const personaCap = options.periodDays <= 14 ? 1 : 2;
         const stageCap = options.periodDays <= 14 ? 2 : 2;
