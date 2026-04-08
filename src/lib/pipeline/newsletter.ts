@@ -822,6 +822,7 @@ function buildNewsletterHTML(markdown: string): string {
   );
 
   // Convert list items: collapse consecutive lines starting with - into a list
+  // Also fold indented continuation lines (e.g. "  whyItMatters") into the preceding <li>
   const lines = html.split("\n");
   const result: string[] = [];
   let inList = false;
@@ -836,10 +837,14 @@ function buildNewsletterHTML(markdown: string): string {
         );
         inList = true;
       }
-      // Remove leading dash and convert to list item
-      const itemText = line.replace(/^- /, "").trim();
+      // Collect the item text plus any indented continuation lines
+      let itemText = line.replace(/^- /, "").trim();
+      while (i + 1 < lines.length && lines[i + 1].match(/^ {2,}/)) {
+        i++;
+        itemText += `<br/><span style="display: inline-block; margin-top: 0.25rem; color: #555;">${lines[i].trim()}</span>`;
+      }
       result.push(
-        `<li style="margin-bottom: 0.75rem; line-height: 1.6; color: #333; padding-left: 1.5rem; position: relative;"><span style="position: absolute; left: 0;">•</span> ${itemText}</li>`,
+        `<li style="margin-bottom: 0.75rem; line-height: 1.6; color: #333; padding-left: 1.5rem; position: relative; page-break-inside: avoid;"><span style="position: absolute; left: 0;">•</span> ${itemText}</li>`,
       );
     } else {
       if (inList) {
