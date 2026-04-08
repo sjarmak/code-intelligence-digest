@@ -146,7 +146,7 @@ async function summarizeChunk(
   chunk: string,
   index: number,
   total: number,
-  llmOptions?: LLMClientOptions
+  llmOptions?: LLMClientOptions,
 ): Promise<string> {
   const result = await createChatCompletion({
     messages: [
@@ -169,12 +169,18 @@ ${chunk}`,
 function isEmailNewsletterSource(sourceTitle: string): boolean {
   // Only known email newsletters should have no link
   // Don't include ALL Inoreader URLs - only the actual newsletters
-  return ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(
-    name => sourceTitle.includes(name)
-  );
+  return [
+    "TLDR",
+    "Byte Byte Go",
+    "Pointer",
+    "Substack",
+    "Elevate",
+    "Architecture Notes",
+    "Leadership in Tech",
+    "Programming Digest",
+    "System Design",
+  ].some((name) => sourceTitle.includes(name));
 }
-
-
 
 /**
  * Strip HTML tags from text
@@ -197,10 +203,12 @@ function stripHtml(html: string): string {
 export async function extractItemDigest(
   item: RankedItem,
   userPrompt: string = "",
-  llmOptions?: LLMClientOptions
+  llmOptions?: LLMClientOptions,
 ): Promise<ItemDigest> {
   if (!hasLLMConfigured()) {
-    logger.warn(`No LLM configured for item "${item.title}", using fallback digest (URL: ${item.url})`);
+    logger.warn(
+      `No LLM configured for item "${item.title}", using fallback digest (URL: ${item.url})`,
+    );
     return await generateFallbackDigest(item, userPrompt);
   }
 
@@ -209,7 +217,9 @@ export async function extractItemDigest(
     let fullText = item.fullText || item.summary || item.contentSnippet || "";
 
     if (isEmailNewsletterSource(item.sourceTitle) && item.summary) {
-      logger.info(`Using embedded content for email newsletter: "${item.title}"`);
+      logger.info(
+        `Using embedded content for email newsletter: "${item.title}"`,
+      );
       fullText = stripHtml(item.summary);
     }
 
@@ -219,10 +229,14 @@ export async function extractItemDigest(
     if (chunks.length > 1) {
       // Skip LLM chunking for extremely long articles (likely spam/HTML bloat)
       if (chunks.length > 200) {
-        logger.info(`Skipping chunking for extremely long article: "${item.title}" (${chunks.length} chunks - likely spam)`);
+        logger.info(
+          `Skipping chunking for extremely long article: "${item.title}" (${chunks.length} chunks - likely spam)`,
+        );
         processedText = fullText.substring(0, 3000); // Use first 3000 chars only
       } else {
-        logger.info(`Chunking long article: "${item.title}" (${chunks.length} chunks)`);
+        logger.info(
+          `Chunking long article: "${item.title}" (${chunks.length} chunks)`,
+        );
 
         // Summarize chunks in batches to control memory usage
         const chunkSummaries: string[] = [];
@@ -232,8 +246,8 @@ export async function extractItemDigest(
           const chunkBatch = chunks.slice(i, i + CHUNK_BATCH_SIZE);
           const summaries = await Promise.all(
             chunkBatch.map((chunk, idx) =>
-              summarizeChunk(chunk, i + idx + 1, chunks.length, llmOptions)
-            )
+              summarizeChunk(chunk, i + idx + 1, chunks.length, llmOptions),
+            ),
           );
           chunkSummaries.push(...summaries);
 
@@ -295,22 +309,31 @@ export async function extractItemDigest(
 
     if (!digestUrl || digestUrl.includes("inoreader.com")) {
       logger.debug(`Attempting to find URL for article: "${item.title}"`);
-      const foundUrl = await findArticleUrl(item.title, item.sourceTitle, item.summary || item.fullText);
+      const foundUrl = await findArticleUrl(
+        item.title,
+        item.sourceTitle,
+        item.summary || item.fullText,
+      );
       if (foundUrl) {
         digestUrl = foundUrl;
-        logger.info(`Found article URL via search: "${item.title}" -> ${foundUrl}`);
+        logger.info(
+          `Found article URL via search: "${item.title}" -> ${foundUrl}`,
+        );
       }
     }
-
-
 
     // Fetch enriched metadata from the article URL (author, original source, etc.)
     const metadata = await fetchArticleMetadata(digestUrl);
 
     // Save extracted URL if it was discovered (different from original)
-    if (digestUrl !== item.url && (digestUrl.startsWith("http://") || digestUrl.startsWith("https://"))) {
-      await saveExtractedUrl(item.id, digestUrl).catch(err => {
-        logger.warn(`Failed to save extracted URL for ${item.id}`, { error: err });
+    if (
+      digestUrl !== item.url &&
+      (digestUrl.startsWith("http://") || digestUrl.startsWith("https://"))
+    ) {
+      await saveExtractedUrl(item.id, digestUrl).catch((err) => {
+        logger.warn(`Failed to save extracted URL for ${item.id}`, {
+          error: err,
+        });
       });
     }
 
@@ -322,18 +345,25 @@ export async function extractItemDigest(
       category: item.category,
       topicTags: Array.isArray(extracted.topicTags) ? extracted.topicTags : [],
       gist: extracted.gist || "",
-      keyBullets: Array.isArray(extracted.keyBullets) ? extracted.keyBullets : [],
-      namedEntities: Array.isArray(extracted.namedEntities) ? extracted.namedEntities : [],
+      keyBullets: Array.isArray(extracted.keyBullets)
+        ? extracted.keyBullets
+        : [],
+      namedEntities: Array.isArray(extracted.namedEntities)
+        ? extracted.namedEntities
+        : [],
       whyItMatters: extracted.whyItMatters || "",
       sourceCredibility: extracted.sourceCredibility || "medium",
-      userRelevanceScore: Math.min(10, Math.max(0, extracted.userRelevanceScore || 5)),
+      userRelevanceScore: Math.min(
+        10,
+        Math.max(0, extracted.userRelevanceScore || 5),
+      ),
 
       // Enriched metadata from article page
       author: metadata.author,
       publishDate: metadata.publishDate,
       originalSource: metadata.originalSource,
     };
-    } catch (error) {
+  } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
     logger.warn(`Extraction failed for "${item.title}"`, {
@@ -342,8 +372,8 @@ export async function extractItemDigest(
       itemId: item.id,
     });
     return await generateFallbackDigest(item, userPrompt);
-    }
-    }
+  }
+}
 
 /**
  * Check if URL is from Reddit (discussion threads, not primary sources)
@@ -375,46 +405,100 @@ function shouldExcludeItem(item: RankedItem): boolean {
 export async function extractBatchDigests(
   items: RankedItem[],
   userPrompt: string = "",
-  llmOptions?: LLMClientOptions
+  llmOptions?: LLMClientOptions,
 ): Promise<ItemDigest[]> {
-  logger.info(`[EXTRACT_START] Extracting digests for ${items.length} items, userPrompt="${userPrompt}"`);
+  logger.info(
+    `[EXTRACT_START] Extracting digests for ${items.length} items, userPrompt="${userPrompt}"`,
+  );
 
   // Filter out non-article URLs before processing (Reddit, Google News redirects)
-  const validItems = items.filter(item => !shouldExcludeItem(item));
+  const validItems = items.filter((item) => !shouldExcludeItem(item));
   if (validItems.length < items.length) {
-    logger.info(`Filtered out ${items.length - validItems.length} non-article items before extraction (Reddit, Google News redirects)`);
+    logger.info(
+      `Filtered out ${items.length - validItems.length} non-article items before extraction (Reddit, Google News redirects)`,
+    );
   }
 
   // First pass: decompose newsletters into constituent articles
-  logger.info(`[BEFORE_DECOMPOSE] About to decompose ${validItems.length} items`);
+  logger.info(
+    `[BEFORE_DECOMPOSE] About to decompose ${validItems.length} items`,
+  );
   const decomposedItems = decomposeNewsletterItems(validItems);
-  logger.info(`[AFTER_DECOMPOSE] Got ${decomposedItems.length} items after decomposition`);
+  logger.info(
+    `[AFTER_DECOMPOSE] Got ${decomposedItems.length} items after decomposition`,
+  );
   logger.info(
     `After decomposition: ${decomposedItems.length} items ` +
-    `(${decomposedItems.length - items.length > 0 ? "+" : ""}${decomposedItems.length - items.length} from newsletters)`
+      `(${decomposedItems.length - items.length > 0 ? "+" : ""}${decomposedItems.length - items.length} from newsletters)`,
   );
 
   // Log decomposition results in detail
   if (decomposedItems.length > items.length) {
-    logger.info(`Decomposition produced extra items. Sample URLs: ${decomposedItems.slice(0, 3).map(i => i.url).join(", ")}`);
+    logger.info(
+      `Decomposition produced extra items. Sample URLs: ${decomposedItems
+        .slice(0, 3)
+        .map((i) => i.url)
+        .join(", ")}`,
+    );
   }
 
   // Debug: Log ALL newsletter item URLs before and after decomposition
-  const newsletterItems = items.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(n => i.sourceTitle.includes(n)));
-  const decomposedNewsletters = decomposedItems.filter(i => ["TLDR", "Byte Byte Go", "Pointer", "Substack", "Elevate", "Architecture Notes", "Leadership in Tech", "Programming Digest", "System Design"].some(n => i.sourceTitle.includes(n)));
+  const newsletterItems = items.filter((i) =>
+    [
+      "TLDR",
+      "Byte Byte Go",
+      "Pointer",
+      "Substack",
+      "Elevate",
+      "Architecture Notes",
+      "Leadership in Tech",
+      "Programming Digest",
+      "System Design",
+    ].some((n) => i.sourceTitle.includes(n)),
+  );
+  const decomposedNewsletters = decomposedItems.filter((i) =>
+    [
+      "TLDR",
+      "Byte Byte Go",
+      "Pointer",
+      "Substack",
+      "Elevate",
+      "Architecture Notes",
+      "Leadership in Tech",
+      "Programming Digest",
+      "System Design",
+    ].some((n) => i.sourceTitle.includes(n)),
+  );
   if (newsletterItems.length > 0) {
-    logger.info(`[URL_DEBUG] Original newsletter items (${newsletterItems.length}): ${newsletterItems.map(i => `${i.title.substring(0, 30)}... -> ${i.url}`).join(" | ")}`);
-    logger.info(`[URL_DEBUG] Decomposed newsletter items (${decomposedNewsletters.length}): ${decomposedNewsletters.slice(0, 5).map(i => `${i.title.substring(0, 30)}... -> ${i.url}`).join(" | ")}`);
+    logger.info(
+      `[URL_DEBUG] Original newsletter items (${newsletterItems.length}): ${newsletterItems.map((i) => `${i.title.substring(0, 30)}... -> ${i.url}`).join(" | ")}`,
+    );
+    logger.info(
+      `[URL_DEBUG] Decomposed newsletter items (${decomposedNewsletters.length}): ${decomposedNewsletters
+        .slice(0, 5)
+        .map((i) => `${i.title.substring(0, 30)}... -> ${i.url}`)
+        .join(" | ")}`,
+    );
     // Detailed debug for first decomposed item
     if (decomposedNewsletters.length > 0) {
       const first = decomposedNewsletters[0];
-      logger.info(`[EXTRACT_DEBUG] First decomposed item: id=${first.id}, url=${first.url}, has fullText=${!!(first.fullText)}, fullText length=${first.fullText?.length || 0}`);
+      logger.info(
+        `[EXTRACT_DEBUG] First decomposed item: id=${first.id}, url=${first.url}, has fullText=${!!first.fullText}, fullText length=${first.fullText?.length || 0}`,
+      );
     }
   }
 
   // Log decomposed item URLs BEFORE extraction
-  const decomposedItemUrls = decomposedItems.slice(0, 5).map(i => ({ id: i.id.substring(0, 40), title: i.title.substring(0, 40), url: i.url }));
-  logger.info(`[BEFORE_EXTRACT] Decomposed item URLs: ${JSON.stringify(decomposedItemUrls)}`);
+  const decomposedItemUrls = decomposedItems
+    .slice(0, 5)
+    .map((i) => ({
+      id: i.id.substring(0, 40),
+      title: i.title.substring(0, 40),
+      url: i.url,
+    }));
+  logger.info(
+    `[BEFORE_EXTRACT] Decomposed item URLs: ${JSON.stringify(decomposedItemUrls)}`,
+  );
 
   // Extract digests in batches to control memory usage
   const digests: ItemDigest[] = [];
@@ -424,10 +508,12 @@ export async function extractBatchDigests(
     const batch = decomposedItems.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
     const totalBatches = Math.ceil(decomposedItems.length / BATCH_SIZE);
-    logger.info(`Extracting digests batch ${batchNum}/${totalBatches} (${batch.length} items)`);
+    logger.info(
+      `Extracting digests batch ${batchNum}/${totalBatches} (${batch.length} items)`,
+    );
 
     const batchDigests = await Promise.all(
-      batch.map((item) => extractItemDigest(item, userPrompt, llmOptions))
+      batch.map((item) => extractItemDigest(item, userPrompt, llmOptions)),
     );
 
     digests.push(...batchDigests);
@@ -441,8 +527,16 @@ export async function extractBatchDigests(
   logger.info(`Extracted ${digests.length} digests`);
 
   // Log sample digest URLs AFTER extraction
-  const digestUrls = digests.slice(0, 5).map(d => ({ id: d.id.substring(0, 40), title: d.title.substring(0, 40), url: d.url }));
-  logger.info(`[AFTER_EXTRACT] Sample digest URLs: ${JSON.stringify(digestUrls)}`);
+  const digestUrls = digests
+    .slice(0, 5)
+    .map((d) => ({
+      id: d.id.substring(0, 40),
+      title: d.title.substring(0, 40),
+      url: d.url,
+    }));
+  logger.info(
+    `[AFTER_EXTRACT] Sample digest URLs: ${JSON.stringify(digestUrls)}`,
+  );
 
   return digests;
 }
@@ -450,19 +544,31 @@ export async function extractBatchDigests(
 /**
  * Fallback digest when extraction fails or API unavailable
  */
-async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Promise<ItemDigest> {
+async function generateFallbackDigest(
+  item: RankedItem,
+  _userPrompt: string,
+): Promise<ItemDigest> {
   const tags = item.llmScore.tags.slice(0, 5);
-  const rawContent = item.summary || item.contentSnippet || "No summary available";
+  const rawContent =
+    item.summary || item.contentSnippet || "No summary available";
 
   // Strip HTML if needed
-  const cleanContent = rawContent.includes("<") ? stripHtml(rawContent) : rawContent;
+  const cleanContent = rawContent.includes("<")
+    ? stripHtml(rawContent)
+    : rawContent;
 
   // Generate more informative whyItMatters from actual content
-  let whyItMatters = cleanContent.substring(0, 150).trim();
+  // Find the end of a complete sentence within the first 300 chars
+  const contentForWIM = cleanContent.substring(0, 300).trim();
+  const lastPeriod = contentForWIM.lastIndexOf(". ");
+  let whyItMatters =
+    lastPeriod > 50
+      ? contentForWIM.substring(0, lastPeriod + 1)
+      : contentForWIM.endsWith(".")
+        ? contentForWIM
+        : contentForWIM.substring(0, 150).trim() + "...";
   if (whyItMatters.length < 50) {
     whyItMatters = `From ${item.sourceTitle}. Topics: ${tags.join(", ")}`;
-  } else if (!whyItMatters.endsWith(".")) {
-    whyItMatters += "...";
   }
 
   // All newsletter articles are published elsewhere
@@ -474,13 +580,21 @@ async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Pr
     const contentUrl = extractUrlFromContent(item.summary || item.fullText);
     if (contentUrl) {
       digestUrl = contentUrl;
-      logger.debug(`Extracted URL from content: "${item.title}" -> ${digestUrl}`);
+      logger.debug(
+        `Extracted URL from content: "${item.title}" -> ${digestUrl}`,
+      );
     } else {
       // Still missing? Try web search
-      const foundUrl = await findArticleUrl(item.title, item.sourceTitle, item.summary || item.fullText);
+      const foundUrl = await findArticleUrl(
+        item.title,
+        item.sourceTitle,
+        item.summary || item.fullText,
+      );
       if (foundUrl) {
         digestUrl = foundUrl;
-        logger.info(`Found URL via fallback search: "${item.title}" -> ${digestUrl}`);
+        logger.info(
+          `Found URL via fallback search: "${item.title}" -> ${digestUrl}`,
+        );
       }
     }
   }
@@ -489,9 +603,14 @@ async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Pr
   const metadataSync = extractMetadataSync(digestUrl);
 
   // Save extracted URL if it was discovered (different from original)
-  if (digestUrl !== item.url && (digestUrl.startsWith("http://") || digestUrl.startsWith("https://"))) {
-    await saveExtractedUrl(item.id, digestUrl).catch(err => {
-      logger.warn(`Failed to save extracted URL for ${item.id}`, { error: err });
+  if (
+    digestUrl !== item.url &&
+    (digestUrl.startsWith("http://") || digestUrl.startsWith("https://"))
+  ) {
+    await saveExtractedUrl(item.id, digestUrl).catch((err) => {
+      logger.warn(`Failed to save extracted URL for ${item.id}`, {
+        error: err,
+      });
     });
   }
 
@@ -503,9 +622,10 @@ async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Pr
     category: item.category,
     topicTags: tags,
     gist: cleanContent.substring(0, 100).trim(),
-    keyBullets: cleanContent.length > 150
-      ? [cleanContent.substring(0, 150).trim() + "..."]
-      : [cleanContent.trim()],
+    keyBullets:
+      cleanContent.length > 150
+        ? [cleanContent.substring(0, 150).trim() + "..."]
+        : [cleanContent.trim()],
     namedEntities: [],
     whyItMatters,
     sourceCredibility: "medium",
@@ -516,4 +636,4 @@ async function generateFallbackDigest(item: RankedItem, _userPrompt: string): Pr
     publishDate: metadataSync.publishDate,
     originalSource: metadataSync.originalSource,
   };
-  }
+}

@@ -36,7 +36,8 @@ function truncateForLLM(text: string | undefined, maxChars: number): string {
  */
 function isValidUrl(url: string): boolean {
   if (!url || typeof url !== "string") return false;
-  if (url.includes("inoreader.com") || url.includes("google.com/reader")) return false;
+  if (url.includes("inoreader.com") || url.includes("google.com/reader"))
+    return false;
   return url.startsWith("http://") || url.startsWith("https://");
 }
 
@@ -50,7 +51,10 @@ function buildSynthesisContext(items: RankedItem[]): string {
       // For top 3 items, include full text; for others, use summary
       const isTopItem = idx < 3;
       const text = isTopItem
-        ? truncateForLLM(item.fullText || item.summary || item.contentSnippet, 3000)
+        ? truncateForLLM(
+            item.fullText || item.summary || item.contentSnippet,
+            3000,
+          )
         : truncateForLLM(item.summary || item.contentSnippet, 500);
       const score = Math.min(100, Math.round(item.finalScore * 100));
       return `[${idx + 1}] "${item.title}" — ${item.sourceTitle} (${item.author || "Unknown"}) | Score: ${score}
@@ -71,7 +75,7 @@ export async function generateNewsletterContent(
   period: "week" | "month",
   categories: Category[],
   profile: PromptProfile | null,
-  llmOptions?: LLMClientOptions
+  llmOptions?: LLMClientOptions,
 ): Promise<NewsletterContent> {
   if (items.length === 0) {
     return {
@@ -83,7 +87,7 @@ export async function generateNewsletterContent(
   }
 
   logger.info(
-    `Generating newsletter for ${items.length} items, period=${period}, categories=${categories.join(",")}`
+    `Generating newsletter for ${items.length} items, period=${period}, categories=${categories.join(",")}`,
   );
 
   const synthesisContext = buildSynthesisContext(items);
@@ -149,10 +153,16 @@ Return only valid JSON.`,
     const parsed = JSON.parse(content);
     summary = parsed.summary || "No summary generated.";
     themes = Array.isArray(parsed.themes) ? parsed.themes : [];
-    markdown = parsed.markdown || "# Code Intelligence Digest\n\nNo content generated.";
-    html = parsed.html || "<article><h1>Code Intelligence Digest</h1><p>No content generated.</p></article>";
+    markdown =
+      parsed.markdown || "# Code Intelligence Digest\n\nNo content generated.";
+    html =
+      parsed.html ||
+      "<article><h1>Code Intelligence Digest</h1><p>No content generated.</p></article>";
 
-    if (!markdown || markdown === "# Code Intelligence Digest\n\nNo content generated.") {
+    if (
+      !markdown ||
+      markdown === "# Code Intelligence Digest\n\nNo content generated."
+    ) {
       throw new Error("LLM returned empty markdown");
     }
   } catch (error) {
@@ -180,69 +190,85 @@ export async function generateNewsletterFromDigests(
   categories: Category[],
   profile: PromptProfile | null,
   userPrompt?: string,
-  llmOptions?: LLMClientOptions
+  llmOptions?: LLMClientOptions,
 ): Promise<NewsletterContent> {
-  const periodLabel = period === "week" ? "weekly" : period === "month" ? "monthly" : period === "all" ? "all-time" : "custom";
-  return await generateNewsletterFromDigestData(digests, periodLabel, userPrompt || "", llmOptions);
+  const periodLabel =
+    period === "week"
+      ? "weekly"
+      : period === "month"
+        ? "monthly"
+        : period === "all"
+          ? "all-time"
+          : "custom";
+  return await generateNewsletterFromDigestData(
+    digests,
+    periodLabel,
+    userPrompt || "",
+    llmOptions,
+  );
 }
 
 /**
-   * Group digests by their resource category label (research, community, newsletters, etc.)
-   * Returns ordered map: research > tech_articles > product_news > ai_news > other prioritized items
-  */
-function groupByResourceCategory(digests: ItemDigest[]): Map<string, ItemDigest[]> {
-    const byCategory = new Map<string, ItemDigest[]>();
+ * Group digests by their resource category label (research, community, newsletters, etc.)
+ * Returns ordered map: research > tech_articles > product_news > ai_news > other prioritized items
+ */
+function groupByResourceCategory(
+  digests: ItemDigest[],
+): Map<string, ItemDigest[]> {
+  const byCategory = new Map<string, ItemDigest[]>();
 
-    // Category label mapping for display
-    const categoryLabels: Record<string, string> = {
-      newsletters: "Newsletters",
-      podcasts: "Podcasts",
-      tech_articles: "Tech Articles",
-      ai_news: "AI News",
-      ai_dev: "AI Dev",
-      product_news: "Product News",
-      community: "Community",
-      research: "Research",
-    };
+  // Category label mapping for display
+  const categoryLabels: Record<string, string> = {
+    newsletters: "Newsletters",
+    podcasts: "Podcasts",
+    tech_articles: "Tech Articles",
+    ai_news: "AI News",
+    ai_dev: "AI Dev",
+    product_news: "Product News",
+    community: "Community",
+    research: "Research",
+  };
 
-    // Define priority order (lower number = higher priority)
-    const categoryPriority: Record<string, number> = {
-      research: 1,
-      tech_articles: 2,
-      product_news: 3,
-      ai_news: 4,
-      ai_dev: 4,
-      community: 5,
-      newsletters: 6,
-      podcasts: 7,
-    };
+  // Define priority order (lower number = higher priority)
+  const categoryPriority: Record<string, number> = {
+    research: 1,
+    tech_articles: 2,
+    product_news: 3,
+    ai_news: 4,
+    ai_dev: 4,
+    community: 5,
+    newsletters: 6,
+    podcasts: 7,
+  };
 
-    // Group by category first
-    const tempMap = new Map<string, ItemDigest[]>();
-    for (const digest of digests) {
-      const displayLabel = categoryLabels[digest.category] || digest.category;
+  // Group by category first
+  const tempMap = new Map<string, ItemDigest[]>();
+  for (const digest of digests) {
+    const displayLabel = categoryLabels[digest.category] || digest.category;
 
-      if (!tempMap.has(displayLabel)) {
-        tempMap.set(displayLabel, []);
-      }
-      tempMap.get(displayLabel)!.push(digest);
+    if (!tempMap.has(displayLabel)) {
+      tempMap.set(displayLabel, []);
     }
-
-    // Sort entries by category priority and add to result map (which preserves insertion order)
-    const sortedEntries = Array.from(tempMap.entries()).sort((a, b) => {
-      const catKeyA = Object.entries(categoryLabels).find(([, v]) => v === a[0])?.[0] || a[0];
-      const catKeyB = Object.entries(categoryLabels).find(([, v]) => v === b[0])?.[0] || b[0];
-      const priorA = categoryPriority[catKeyA] ?? 99;
-      const priorB = categoryPriority[catKeyB] ?? 99;
-      return priorA - priorB;
-    });
-
-    for (const [label, items] of sortedEntries) {
-      byCategory.set(label, items);
-    }
-
-    return byCategory;
+    tempMap.get(displayLabel)!.push(digest);
   }
+
+  // Sort entries by category priority and add to result map (which preserves insertion order)
+  const sortedEntries = Array.from(tempMap.entries()).sort((a, b) => {
+    const catKeyA =
+      Object.entries(categoryLabels).find(([, v]) => v === a[0])?.[0] || a[0];
+    const catKeyB =
+      Object.entries(categoryLabels).find(([, v]) => v === b[0])?.[0] || b[0];
+    const priorA = categoryPriority[catKeyA] ?? 99;
+    const priorB = categoryPriority[catKeyB] ?? 99;
+    return priorA - priorB;
+  });
+
+  for (const [label, items] of sortedEntries) {
+    byCategory.set(label, items);
+  }
+
+  return byCategory;
+}
 
 /**
  * Generate newsletter directly from ItemDigest data (better quality)
@@ -251,93 +277,112 @@ async function generateNewsletterFromDigestData(
   digests: ItemDigest[],
   periodLabel: string,
   userPrompt: string,
-  llmOptions?: LLMClientOptions
+  llmOptions?: LLMClientOptions,
 ): Promise<NewsletterContent> {
   // Log items with missing/invalid URLs for transparency
-  const itemsWithoutUrl = digests.filter(d => !isValidUrl(d.url));
+  const itemsWithoutUrl = digests.filter((d) => !isValidUrl(d.url));
   if (itemsWithoutUrl.length > 0) {
-    logger.warn(`${itemsWithoutUrl.length} items without valid URLs will appear without links`, {
-      titles: itemsWithoutUrl.map(d => d.title),
-    });
+    logger.warn(
+      `${itemsWithoutUrl.length} items without valid URLs will appear without links`,
+      {
+        titles: itemsWithoutUrl.map((d) => d.title),
+      },
+    );
   }
 
   // Debug: Log digest URLs for newsletters category
-  const newsletterDigests = digests.filter(d => d.category === "newsletters");
+  const newsletterDigests = digests.filter((d) => d.category === "newsletters");
   if (newsletterDigests.length > 0) {
-    logger.info(`[URL_DEBUG] Newsletter digests (${newsletterDigests.length}): ${newsletterDigests.slice(0, 5).map(d => `${d.title.substring(0, 30)}... -> ${d.url}`).join(" | ")}`);
+    logger.info(
+      `[URL_DEBUG] Newsletter digests (${newsletterDigests.length}): ${newsletterDigests
+        .slice(0, 5)
+        .map((d) => `${d.title.substring(0, 30)}... -> ${d.url}`)
+        .join(" | ")}`,
+    );
   }
 
   // Group items by resource category (research, community, newsletters, etc.)
-   const byCategory = groupByResourceCategory(digests);
+  const byCategory = groupByResourceCategory(digests);
 
-   // Extract themes for metadata, respecting user prompt guidance
-   const themeFreq = new Map<string, number>();
-   for (const digest of digests) {
-     for (const tag of digest.topicTags) {
-       themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
-     }
-   }
+  // Extract themes for metadata, respecting user prompt guidance
+  const themeFreq = new Map<string, number>();
+  for (const digest of digests) {
+    for (const tag of digest.topicTags) {
+      themeFreq.set(tag, (themeFreq.get(tag) || 0) + 1);
+    }
+  }
 
-   // Parse user prompt to extract focus topics for theme boosting
-   let userPromptTopics: string[] = [];
-   if (userPrompt) {
-     // Extract known domain terms from prompt
-     const domainTerms = [
-       "code search",
-       "semantic search",
-       "context management",
-       "information retrieval",
-       "agentic workflows",
-       "agents",
-       "developer productivity",
-       "embeddings",
-       "rag",
-       "vector database",
-     ];
-     const lowerPrompt = userPrompt.toLowerCase();
-     userPromptTopics = domainTerms.filter(term => lowerPrompt.includes(term));
-   }
+  // Parse user prompt to extract focus topics for theme boosting
+  let userPromptTopics: string[] = [];
+  if (userPrompt) {
+    // Extract known domain terms from prompt
+    const domainTerms = [
+      "code search",
+      "semantic search",
+      "context management",
+      "information retrieval",
+      "agentic workflows",
+      "agents",
+      "developer productivity",
+      "embeddings",
+      "rag",
+      "vector database",
+    ];
+    const lowerPrompt = userPrompt.toLowerCase();
+    userPromptTopics = domainTerms.filter((term) => lowerPrompt.includes(term));
+  }
 
-   // Boost themes that match user prompt topics
-   if (userPromptTopics.length > 0) {
-     for (const [theme, score] of themeFreq.entries()) {
-       const themeLower = theme.toLowerCase();
-       const isPromptTopic = userPromptTopics.some(
-         topic => themeLower.includes(topic) || topic.includes(themeLower)
-       );
-       if (isPromptTopic) {
-         themeFreq.set(theme, score * 2.5);
-       }
-     }
-   }
+  // Boost themes that match user prompt topics
+  if (userPromptTopics.length > 0) {
+    for (const [theme, score] of themeFreq.entries()) {
+      const themeLower = theme.toLowerCase();
+      const isPromptTopic = userPromptTopics.some(
+        (topic) => themeLower.includes(topic) || topic.includes(themeLower),
+      );
+      if (isPromptTopic) {
+        themeFreq.set(theme, score * 2.5);
+      }
+    }
+  }
 
-   const themes = Array.from(themeFreq.entries())
-     .sort((a, b) => b[1] - a[1])
-     .slice(0, 5)
-     .map(([t]) => t);
+  const themes = Array.from(themeFreq.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([t]) => t);
 
   if (!hasLLMConfigured()) {
     // Fallback: return basic structure
-    logger.warn("No LLM configured (OPENAI_API_KEY or ANTHROPIC_API_KEY) for synthesis, using basic template");
+    logger.warn(
+      "No LLM configured (OPENAI_API_KEY or ANTHROPIC_API_KEY) for synthesis, using basic template",
+    );
     return generateNewsletterFallback(
-      digests.map(d => ({
-        title: d.title,
-        url: d.url, // CRITICAL: preserve URL from digest
-        sourceTitle: d.sourceTitle,
-        category: d.category,
-        summary: d.gist,
-        contentSnippet: d.keyBullets.join(" "),
-        llmScore: { tags: d.topicTags, relevance: d.userRelevanceScore, usefulness: 0 },
-        finalScore: Math.min(1, d.userRelevanceScore / 10),
-      } as unknown as RankedItem)),
-      periodLabel
+      digests.map(
+        (d) =>
+          ({
+            title: d.title,
+            url: d.url, // CRITICAL: preserve URL from digest
+            sourceTitle: d.sourceTitle,
+            category: d.category,
+            summary: d.gist,
+            contentSnippet: d.keyBullets.join(" "),
+            llmScore: {
+              tags: d.topicTags,
+              relevance: d.userRelevanceScore,
+              usefulness: 0,
+            },
+            finalScore: Math.min(1, d.userRelevanceScore / 10),
+          }) as unknown as RankedItem,
+      ),
+      periodLabel,
     );
   }
 
   // Filter by user relevance score BEFORE quality review
   // Items with score < 3 are likely off-topic for the user's focus areas
   const MIN_RELEVANCE_SCORE = 3;
-  const relevantDigests = digests.filter((d) => d.userRelevanceScore >= MIN_RELEVANCE_SCORE);
+  const relevantDigests = digests.filter(
+    (d) => d.userRelevanceScore >= MIN_RELEVANCE_SCORE,
+  );
 
   if (relevantDigests.length < digests.length) {
     logger.info("Filtered low-relevance digests", {
@@ -350,7 +395,9 @@ async function generateNewsletterFromDigestData(
 
   // Review remaining digests for quality issues BEFORE summary generation
   const review = await reviewNewsletter("", relevantDigests, llmOptions);
-  const filteredDigests = relevantDigests.filter((d) => !review.digestsWithIssues.has(d.id));
+  const filteredDigests = relevantDigests.filter(
+    (d) => !review.digestsWithIssues.has(d.id),
+  );
 
   if (review.issues.length > 0) {
     logger.warn("Filtering out low-quality digests", {
@@ -365,10 +412,18 @@ async function generateNewsletterFromDigestData(
   const byCategory2 = groupByResourceCategory(usedDigests);
 
   // Build summary from digests (async LLM-based)
-  const summaryText = await buildExecutiveSummary(usedDigests, themes, llmOptions);
+  const summaryText = await buildExecutiveSummary(
+    usedDigests,
+    themes,
+    llmOptions,
+  );
 
   // Build markdown directly from categorized digests
-  const markdown = buildNewsletterMarkdown(byCategory2, periodLabel, summaryText);
+  const markdown = buildNewsletterMarkdown(
+    byCategory2,
+    periodLabel,
+    summaryText,
+  );
 
   // Build HTML from markdown
   const html = buildNewsletterHTML(markdown);
@@ -401,7 +456,7 @@ async function generateNewsletterFromDigestData(
  */
 function generateNewsletterFallback(
   items: RankedItem[],
-  periodLabel: string
+  periodLabel: string,
 ): NewsletterContent {
   // Group by category
   const byCategory = new Map<Category, RankedItem[]>();
@@ -419,31 +474,41 @@ function generateNewsletterFallback(
     for (const tag of item.llmScore.tags) {
       const current = themeFreq.get(tag) || { count: 0, avgScore: 0 };
       current.count += 1;
-      current.avgScore = (current.avgScore * (current.count - 1) + item.finalScore) / current.count;
+      current.avgScore =
+        (current.avgScore * (current.count - 1) + item.finalScore) /
+        current.count;
       themeFreq.set(tag, current);
     }
   }
   const themes = Array.from(themeFreq.entries())
-    .sort((a, b) => (b[1].avgScore * b[1].count) - (a[1].avgScore * a[1].count))
+    .sort((a, b) => b[1].avgScore * b[1].count - a[1].avgScore * a[1].count)
     .slice(0, 8)
     .map(([t]) => t);
 
   // Build markdown with professional header
   const title = `Code Intelligence Digest`;
   const subtitle = `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Update`;
-  const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const publishDate = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 
   let markdown = `# ${title}\n`;
   markdown += `## ${subtitle}\n`;
   markdown += `**Published:** ${publishDate} | **Items:** ${items.length}\n\n`;
 
-  const topThemes = themes.slice(0, 4).map(t => t.replace(/-/g, " "));
+  const topThemes = themes.slice(0, 4).map((t) => t.replace(/-/g, " "));
 
   // Build a more substantive executive summary
   const sourceScores = new Map<string, number>();
   for (const item of items) {
     const score = item.finalScore || 0;
-    sourceScores.set(item.sourceTitle, Math.max(sourceScores.get(item.sourceTitle) || 0, score));
+    sourceScores.set(
+      item.sourceTitle,
+      Math.max(sourceScores.get(item.sourceTitle) || 0, score),
+    );
   }
   const topSources = Array.from(sourceScores.entries())
     .sort((a, b) => b[1] - a[1])
@@ -459,14 +524,18 @@ function generateNewsletterFallback(
   // Group by category and synthesize (markdown only)
   for (const [category, categoryItems] of byCategory) {
     if (!category || categoryItems.length === 0) continue;
-    const categoryLabel = category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, " ");
+    const categoryLabel =
+      category.charAt(0).toUpperCase() + category.slice(1).replace(/_/g, " ");
     markdown += `## ${categoryLabel}\n\n`;
 
     // Sort by score and take top items
-    const topItems = categoryItems.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0)).slice(0, 7);
+    const topItems = categoryItems
+      .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0))
+      .slice(0, 7);
 
     for (const item of topItems) {
-      const desc = item.summary || item.contentSnippet || "No description available.";
+      const desc =
+        item.summary || item.contentSnippet || "No description available.";
       const firstLine = desc.split("\n")[0].substring(0, 250);
 
       markdown += `**[${item.title}](${item.url})**\n`;
@@ -488,17 +557,18 @@ function generateNewsletterFallback(
   <p style="line-height: 1.7; color: #aaa;">The community is advancing context management techniques, multi-step reasoning patterns, and productivity infrastructure—with particular momentum in benchmarking methodologies and enterprise-scale codebase tooling. Featured sources include ${topSources.join(", ")}.</p>
   </section>
   ${Array.from(byCategory.entries())
-  .filter(([category]) => category && category.length > 0)
-  .map(
-    ([category, categoryItems]) => `
+    .filter(([category]) => category && category.length > 0)
+    .map(
+      ([category, categoryItems]) => `
   <section style="margin-bottom: 2rem;">
   <h2 style="font-size: 1.5em; color: #0066cc; border-bottom: 1px solid #333; padding-bottom: 0.5rem;">${category.charAt(0).toUpperCase()}${category.slice(1).replace(/_/g, " ")}</h2>
   ${categoryItems
-  .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0))
-  .slice(0, 7)
-  .map(
-    (item) => {
-      const desc = (item.summary || item.contentSnippet || "").split("\n")[0].substring(0, 250);
+    .sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0))
+    .slice(0, 7)
+    .map((item) => {
+      const desc = (item.summary || item.contentSnippet || "")
+        .split("\n")[0]
+        .substring(0, 250);
       return `
   <article style="margin-bottom: 1.5rem; padding: 1.25rem; border-left: 4px solid #0066cc; background: #252525;">
   <h3 style="margin: 0 0 0.5rem 0; font-size: 1.1em;"><a href="${item.url}" style="color: #0066cc; text-decoration: none; font-weight: 600;">${item.title}</a></h3>
@@ -506,38 +576,49 @@ function generateNewsletterFallback(
   <p style="margin: 0.75rem 0 0 0; line-height: 1.6; color: #ccc;">${desc}${desc.length >= 250 ? "..." : ""}</p>
   </article>
   `;
-    }
-  )
-  .join("")}
+    })
+    .join("")}
   </section>
-  `
-  )
-  .join("")}
+  `,
+    )
+    .join("")}
   </article>`;
 
   return {
-    summary: `This ${periodLabel} code intelligence digest synthesizes ${items.length} curated items across code search, semantic IR, agentic workflows, and enterprise developer tooling. Key themes emerging this period: ${themes.slice(0, 3).map(t => t.replace(/-/g, " ")).join(", ")}. Featured sources: ${topSources.join(", ")}. The sector continues accelerating context management, multi-step reasoning, and codebase-scale productivity infrastructure with expanding benchmark ecosystems.`,
+    summary: `This ${periodLabel} code intelligence digest synthesizes ${items.length} curated items across code search, semantic IR, agentic workflows, and enterprise developer tooling. Key themes emerging this period: ${themes
+      .slice(0, 3)
+      .map((t) => t.replace(/-/g, " "))
+      .join(
+        ", ",
+      )}. Featured sources: ${topSources.join(", ")}. The sector continues accelerating context management, multi-step reasoning, and codebase-scale productivity infrastructure with expanding benchmark ecosystems.`,
     themes,
     markdown,
     html,
   };
+}
+
+/**
+ * Build executive summary from digests using LLM
+ */
+async function buildExecutiveSummary(
+  digests: ItemDigest[],
+  themes: string[],
+  opts?: LLMClientOptions,
+): Promise<string> {
+  if (!hasLLMConfigured()) {
+    return buildExecutiveSummaryFallback(digests, themes);
   }
 
-  /**
-   * Build executive summary from digests using LLM
-   */
-  async function buildExecutiveSummary(digests: ItemDigest[], themes: string[], opts?: LLMClientOptions): Promise<string> {
-    if (!hasLLMConfigured()) {
-      return buildExecutiveSummaryFallback(digests, themes);
-    }
+  const itemCount = Math.min(15, digests.length);
+  const itemSummaries = digests
+    .slice(0, itemCount)
+    .map(
+      (d) =>
+        `- **${d.title}** (${d.sourceTitle}): ${d.whyItMatters}${d.keyBullets.length > 0 ? ` Key point: ${d.keyBullets[0]}` : ""}`,
+    )
+    .join("\n");
 
-    const itemCount = Math.min(15, digests.length);
-    const itemSummaries = digests
-      .slice(0, itemCount)
-      .map(d => `- **${d.title}** (${d.sourceTitle}): ${d.whyItMatters}${d.keyBullets.length > 0 ? ` Key point: ${d.keyBullets[0]}` : ""}`)
-      .join("\n");
-
-    const mainPrompt = `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
+  const mainPrompt = `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. NO AI-speak. Be direct and specific.
 
 **Featured Topics:** ${themes.join(", ") || "benchmarking coding agents, code search, codebase understanding tools, developer workflows"}
 
@@ -563,189 +644,233 @@ ${itemSummaries}
 
 Write substantive paragraphs. Ground every claim in the actual items provided.`;
 
-    try {
-      logger.info(`Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`);
-      const result = await createChatCompletion({
-        messages: [{ role: "user", content: mainPrompt }],
-        max_tokens: 600,
-        openaiOptions: opts,
-      });
-      const content = result.content?.trim();
-      if (content && content.length > 0) {
-        logger.info(`LLM summary generated: ${content.length} chars`);
-        return content;
-      }
-      logger.warn("LLM returned empty response, trying shorter fallback prompt");
-    } catch (e) {
-      logger.warn("Failed to generate LLM summary, trying fallback", {
-        error: e instanceof Error ? e.message : String(e),
-      });
+  try {
+    logger.info(
+      `Generating LLM summary for ${digests.length} digests with themes: ${themes.slice(0, 3).join(", ")}`,
+    );
+    const result = await createChatCompletion({
+      messages: [{ role: "user", content: mainPrompt }],
+      max_tokens: 1000,
+      openaiOptions: opts,
+    });
+    const content = result.content?.trim();
+    if (content && content.length > 0) {
+      logger.info(`LLM summary generated: ${content.length} chars`);
+      return content;
     }
-
-    try {
-      const fallbackResult = await createChatCompletion({
-        messages: [
-          {
-            role: "user",
-            content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. Be direct.\n\n**Featured Topics:** ${themes.join(", ") || "code search, context management, agents"}\n\n**Key Items:**\n${itemSummaries}\n\nWrite substantive paragraphs. Ground every claim in the items provided.`,
-          },
-        ],
-        max_tokens: 600,
-        openaiOptions: opts,
-      });
-      const fallbackContent = fallbackResult.content?.trim();
-      if (fallbackContent && fallbackContent.length > 0) {
-        return fallbackContent;
-      }
-    } catch {
-      // ignore
-    }
-    return buildExecutiveSummaryFallback(digests, themes);
+    logger.warn("LLM returned empty response, trying shorter fallback prompt");
+  } catch (e) {
+    logger.warn("Failed to generate LLM summary, trying fallback", {
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 
-  /**
-   * Fallback summary template (avoids AI-like language, focuses on actual insights)
-   */
-  function buildExecutiveSummaryFallback(digests: ItemDigest[], themes: string[]): string {
-    // Extract real, concrete insights from top digests
-    const topItems = digests.slice(0, 10);
-    const insights: string[] = [];
+  try {
+    const fallbackResult = await createChatCompletion({
+      messages: [
+        {
+          role: "user",
+          content: `Write a 300-400 word executive summary for a code intelligence digest. NO corporate language. Be direct.\n\n**Featured Topics:** ${themes.join(", ") || "code search, context management, agents"}\n\n**Key Items:**\n${itemSummaries}\n\nWrite substantive paragraphs. Ground every claim in the items provided.`,
+        },
+      ],
+      max_tokens: 1000,
+      openaiOptions: opts,
+    });
+    const fallbackContent = fallbackResult.content?.trim();
+    if (fallbackContent && fallbackContent.length > 0) {
+      return fallbackContent;
+    }
+  } catch {
+    // ignore
+  }
+  return buildExecutiveSummaryFallback(digests, themes);
+}
 
-    // Build specific insights from actual content (not templates)
-    for (const item of topItems) {
-      // Use whyItMatters if it contains actual findings
-      if (item.whyItMatters && !item.whyItMatters.match(/^(This|The|Research|provides|relevant)/i)) {
-        insights.push(item.whyItMatters);
-      } else if (item.keyBullets && item.keyBullets.length > 0) {
-        // Otherwise use key bullets
-        const bullet = item.keyBullets[0];
-        if (bullet && bullet.length > 30) {
-          insights.push(bullet);
-        }
+/**
+ * Fallback summary template (avoids AI-like language, focuses on actual insights)
+ */
+function buildExecutiveSummaryFallback(
+  digests: ItemDigest[],
+  themes: string[],
+): string {
+  // Extract real, concrete insights from top digests
+  const topItems = digests.slice(0, 10);
+  const insights: string[] = [];
+
+  // Build specific insights from actual content (not templates)
+  for (const item of topItems) {
+    // Use whyItMatters if it contains actual findings
+    if (
+      item.whyItMatters &&
+      !item.whyItMatters.match(/^(This|The|Research|provides|relevant)/i)
+    ) {
+      insights.push(item.whyItMatters);
+    } else if (item.keyBullets && item.keyBullets.length > 0) {
+      // Otherwise use key bullets
+      const bullet = item.keyBullets[0];
+      if (bullet && bullet.length > 30) {
+        insights.push(bullet);
       }
     }
+  }
 
-    // Get unique insights
-    const uniqueInsights = Array.from(new Set(insights.map(i => i.trim()))).slice(0, 4);
+  // Get unique insights
+  const uniqueInsights = Array.from(
+    new Set(insights.map((i) => i.trim())),
+  ).slice(0, 4);
 
-    // Build summary with actual findings
-    let summary = "";
+  // Build summary with actual findings
+  let summary = "";
 
-    // Start with what's actually being covered
-    const topSources = Array.from(new Set(digests.map(d => d.sourceTitle))).slice(0, 3);
+  // Start with what's actually being covered
+  const topSources = Array.from(
+    new Set(digests.map((d) => d.sourceTitle)),
+  ).slice(0, 3);
 
-    if (uniqueInsights.length > 0) {
-      summary = uniqueInsights.join(" ");
-      if (summary.length < 200) {
-        // If too short, add topic context
-        const topThemes = themes.slice(0, 3).join(", ");
-        summary += ` These updates cover ${topThemes}.`;
-      }
-    } else {
-      // Minimal fallback
+  if (uniqueInsights.length > 0) {
+    summary = uniqueInsights.join(" ");
+    if (summary.length < 200) {
+      // If too short, add topic context
       const topThemes = themes.slice(0, 3).join(", ");
-      summary = `This digest covers ${topThemes}. Content from ${topSources.join(", ")}.`;
+      summary += ` These updates cover ${topThemes}.`;
     }
-
-    return summary;
+  } else {
+    // Minimal fallback
+    const topThemes = themes.slice(0, 3).join(", ");
+    summary = `This digest covers ${topThemes}. Content from ${topSources.join(", ")}.`;
   }
 
-  /**
-   * Build markdown newsletter directly from categorized digests
-   */
-  function buildNewsletterMarkdown(byCategory: Map<string, ItemDigest[]>, periodLabel: string, summary?: string): string {
-    const publishDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-    let markdown = `# Code Intelligence Digest\n\n`;
-    markdown += `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Edition — ${publishDate}\n\n`;
+  return summary;
+}
 
-    if (summary) {
-      markdown += `## Overview\n\n${summary}\n\n`;
-    }
+/**
+ * Build markdown newsletter directly from categorized digests
+ */
+function buildNewsletterMarkdown(
+  byCategory: Map<string, ItemDigest[]>,
+  periodLabel: string,
+  summary?: string,
+): string {
+  const publishDate = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  let markdown = `# Code Intelligence Digest\n\n`;
+  markdown += `${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Edition — ${publishDate}\n\n`;
 
-    // Build each category section
-    for (const [categoryName, items] of byCategory) {
-      if (!categoryName || items.length === 0) continue;
-
-      markdown += `## ${categoryName}\n\n`;
-
-      for (const item of items) {
-         // Only create a link if the URL is valid (not Inoreader, not empty)
-         const urlValid = isValidUrl(item.url);
-         if (!urlValid) {
-           logger.warn(`[URL_MISSING] ${categoryName} item without valid URL: title="${item.title.substring(0, 50)}...", url="${item.url}", source="${item.sourceTitle}"`);
-         }
-         const titleMD = urlValid
-           ? `**[${item.title}](${item.url})**`
-           : `**${item.title}**`;
-         markdown += `- ${titleMD} — *${item.sourceTitle}*\n`;
-         markdown += `  ${item.whyItMatters}\n\n`;
-       }
-    }
-
-    return markdown;
+  if (summary) {
+    markdown += `## Overview\n\n${summary}\n\n`;
   }
 
-  /**
-   * Convert markdown newsletter to semantic HTML with light theme
-   */
-  function buildNewsletterHTML(markdown: string): string {
-    let html = markdown;
+  // Build each category section
+  for (const [categoryName, items] of byCategory) {
+    if (!categoryName || items.length === 0) continue;
 
-    // Convert markdown headers (before links, so we can detect them)
-    html = html.replace(/^# (.*?)$/gm, '<h1 style="color: #1a1a1a; margin-bottom: 0.25rem; font-size: 2.5em; font-weight: 700;">$1</h1>');
-    html = html.replace(/^## (.*?)$/gm, '<h2 style="color: #1a1a1a; margin-top: 2rem; margin-bottom: 0.75rem; font-size: 1.5em; font-weight: 600;">$1</h2>');
+    markdown += `## ${categoryName}\n\n`;
 
-    // Convert links BEFORE bold/italic (so we don't accidentally format link text)
-    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" style="color: #0066cc; text-decoration: none; font-weight: 500;" target="_blank" rel="noopener noreferrer">$1</a>');
+    for (const item of items) {
+      // Only create a link if the URL is valid (not Inoreader, not empty)
+      const urlValid = isValidUrl(item.url);
+      if (!urlValid) {
+        logger.warn(
+          `[URL_MISSING] ${categoryName} item without valid URL: title="${item.title.substring(0, 50)}...", url="${item.url}", source="${item.sourceTitle}"`,
+        );
+      }
+      const titleMD = urlValid
+        ? `**[${item.title}](${item.url})**`
+        : `**${item.title}**`;
+      markdown += `- ${titleMD} — *${item.sourceTitle}*\n`;
+      markdown += `  ${item.whyItMatters}\n\n`;
+    }
+  }
 
-    // Convert bold and italic
-    html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="font-weight: 600; color: #1a1a1a;">$1</strong>');
-    html = html.replace(/\*(.*?)\*/g, '<em style="font-style: italic; color: #555;">$1</em>');
+  return markdown;
+}
 
-    // Convert list items: collapse consecutive lines starting with - into a list
-    const lines = html.split('\n');
-    const result: string[] = [];
-    let inList = false;
+/**
+ * Convert markdown newsletter to semantic HTML with light theme
+ */
+function buildNewsletterHTML(markdown: string): string {
+  let html = markdown;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+  // Convert markdown headers (before links, so we can detect them)
+  html = html.replace(
+    /^# (.*?)$/gm,
+    '<h1 style="color: #1a1a1a; margin-bottom: 0.25rem; font-size: 2.5em; font-weight: 700;">$1</h1>',
+  );
+  html = html.replace(
+    /^## (.*?)$/gm,
+    '<h2 style="color: #1a1a1a; margin-top: 2rem; margin-bottom: 0.75rem; font-size: 1.5em; font-weight: 600;">$1</h2>',
+  );
 
-      if (line.match(/^- /)) {
-        if (!inList) {
-          result.push('<ul style="margin-left: 1.5rem; margin-bottom: 1.5rem; list-style: none; padding: 0;">');
-          inList = true;
-        }
-        // Remove leading dash and convert to list item
-        const itemText = line.replace(/^- /, '').trim();
-        result.push(`<li style="margin-bottom: 0.75rem; line-height: 1.6; color: #333; padding-left: 1.5rem; position: relative;"><span style="position: absolute; left: 0;">•</span> ${itemText}</li>`);
+  // Convert links BEFORE bold/italic (so we don't accidentally format link text)
+  html = html.replace(
+    /\[(.*?)\]\((.*?)\)/g,
+    '<a href="$2" style="color: #0066cc; text-decoration: none; font-weight: 500;" target="_blank" rel="noopener noreferrer">$1</a>',
+  );
+
+  // Convert bold and italic
+  html = html.replace(
+    /\*\*(.*?)\*\*/g,
+    '<strong style="font-weight: 600; color: #1a1a1a;">$1</strong>',
+  );
+  html = html.replace(
+    /\*(.*?)\*/g,
+    '<em style="font-style: italic; color: #555;">$1</em>',
+  );
+
+  // Convert list items: collapse consecutive lines starting with - into a list
+  const lines = html.split("\n");
+  const result: string[] = [];
+  let inList = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.match(/^- /)) {
+      if (!inList) {
+        result.push(
+          '<ul style="margin-left: 1.5rem; margin-bottom: 1.5rem; list-style: none; padding: 0;">',
+        );
+        inList = true;
+      }
+      // Remove leading dash and convert to list item
+      const itemText = line.replace(/^- /, "").trim();
+      result.push(
+        `<li style="margin-bottom: 0.75rem; line-height: 1.6; color: #333; padding-left: 1.5rem; position: relative;"><span style="position: absolute; left: 0;">•</span> ${itemText}</li>`,
+      );
+    } else {
+      if (inList) {
+        result.push("</ul>");
+        inList = false;
+      }
+
+      // Handle paragraph breaks (empty lines)
+      if (line.trim() === "") {
+        // Skip empty lines; they'll be handled by CSS margins
+      } else if (line.match(/^<h[1-2]/)) {
+        // Don't wrap headers in paragraph
+        result.push(line);
       } else {
-        if (inList) {
-          result.push('</ul>');
-          inList = false;
-        }
-
-        // Handle paragraph breaks (empty lines)
-        if (line.trim() === '') {
-          // Skip empty lines; they'll be handled by CSS margins
-        } else if (line.match(/^<h[1-2]/)) {
-          // Don't wrap headers in paragraph
-          result.push(line);
-        } else {
-          // Wrap regular text in paragraph
-          result.push(`<p style="line-height: 1.7; color: #333; margin-bottom: 1rem; font-size: 1rem;">${line}</p>`);
-        }
+        // Wrap regular text in paragraph
+        result.push(
+          `<p style="line-height: 1.7; color: #333; margin-bottom: 1rem; font-size: 1rem;">${line}</p>`,
+        );
       }
     }
+  }
 
-    if (inList) {
-      result.push('</ul>');
-    }
+  if (inList) {
+    result.push("</ul>");
+  }
 
-    html = result.join('\n');
+  html = result.join("\n");
 
-    return `<article style="font-family: system-ui, -apple-system, sans-serif; color: #333; background: #ffffff; padding: 3rem 2rem;">
+  return `<article style="font-family: system-ui, -apple-system, sans-serif; color: #333; background: #ffffff; padding: 3rem 2rem;">
     <div style="max-width: 900px; margin: 0 auto;">
       ${html}
     </div>
   </article>`;
-  }
+}

@@ -82,7 +82,9 @@ export function NewsletterViewer({
   themes,
   generationMetadata,
 }: NewsletterViewerProps) {
-  const [activeTab, setActiveTab] = useState<"rendered" | "markdown" | "metadata">("rendered");
+  const [activeTab, setActiveTab] = useState<
+    "rendered" | "markdown" | "metadata"
+  >("rendered");
   const [generatedDate, setGeneratedDate] = useState("");
 
   React.useEffect(() => {
@@ -94,18 +96,26 @@ export function NewsletterViewer({
     alert("Markdown copied to clipboard!");
   };
 
-  const handleDownloadMarkdown = () => {
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
     const element = document.createElement("a");
-    element.setAttribute("href", `data:text/plain;charset=utf-8,${encodeURIComponent(markdown)}`);
-    element.setAttribute("download", `${id}-newsletter.md`);
-    element.style.display = "none";
+    element.href = url;
+    element.download = filename;
     document.body.appendChild(element);
     element.click();
-    document.body.removeChild(element);
+    // Delay cleanup so mobile browsers can start the download
+    setTimeout(() => {
+      document.body.removeChild(element);
+      URL.revokeObjectURL(url);
+    }, 100);
+  };
+
+  const handleDownloadMarkdown = () => {
+    const blob = new Blob([markdown], { type: "text/plain;charset=utf-8" });
+    downloadBlob(blob, `${id}-newsletter.md`);
   };
 
   const handleDownloadHTML = () => {
-    const element = document.createElement("a");
     const htmlDoc = `<!DOCTYPE html>
   <html>
   <head>
@@ -133,12 +143,8 @@ export function NewsletterViewer({
   </div>
   </body>
   </html>`;
-    element.setAttribute("href", `data:text/html;charset=utf-8,${encodeURIComponent(htmlDoc)}`);
-    element.setAttribute("download", `${id}-newsletter.html`);
-    element.style.display = "none";
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
+    const blob = new Blob([htmlDoc], { type: "text/html;charset=utf-8" });
+    downloadBlob(blob, `${id}-newsletter.html`);
   };
 
   const handleDownloadPDF = async () => {
@@ -169,9 +175,14 @@ export function NewsletterViewer({
         setTimeout(() => {
           newWindow.print();
         }, 500);
+      } else {
+        // Fallback for mobile: download the HTML file directly
+        downloadBlob(blob, `${id}-newsletter-print.html`);
       }
     } catch (error) {
-      alert(`Failed to generate PDF: ${error instanceof Error ? error.message : "Unknown error"}`);
+      alert(
+        `Failed to generate PDF: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
     }
   };
 
@@ -181,7 +192,9 @@ export function NewsletterViewer({
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 sm:p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 break-words">{title}</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 break-words">
+              {title}
+            </h1>
             <p className="text-sm text-gray-500 mt-1">{generatedDate}</p>
           </div>
           <div className="text-left sm:text-right flex-shrink-0">
@@ -193,7 +206,10 @@ export function NewsletterViewer({
         {/* Categories Pills */}
         <div className="flex flex-wrap gap-2">
           {categories.map((cat) => (
-            <span key={cat} className="inline-block px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full border border-gray-200">
+            <span
+              key={cat}
+              className="inline-block px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full border border-gray-200"
+            >
               {CATEGORY_LABELS[cat] || cat}
             </span>
           ))}
@@ -201,7 +217,9 @@ export function NewsletterViewer({
 
         {/* Summary */}
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-          <p className="text-sm leading-relaxed text-gray-700">{parseMarkdownText(summary)}</p>
+          <p className="text-sm leading-relaxed text-gray-700">
+            {parseMarkdownText(summary)}
+          </p>
         </div>
 
         {/* Action Buttons */}
@@ -273,17 +291,28 @@ export function NewsletterViewer({
             <div className="space-y-3 text-sm text-gray-700">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                  <p className="text-xs uppercase tracking-wide text-gray-500">Items</p>
-                  <p>{itemsIncluded} selected / {itemsRetrieved} retrieved</p>
+                  <p className="text-xs uppercase tracking-wide text-gray-500">
+                    Items
+                  </p>
+                  <p>
+                    {itemsIncluded} selected / {itemsRetrieved} retrieved
+                  </p>
                 </div>
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                  <p className="text-xs uppercase tracking-wide text-gray-500">Generation</p>
-                  <p>{generationMetadata.modelUsed} · {generationMetadata.duration}</p>
+                  <p className="text-xs uppercase tracking-wide text-gray-500">
+                    Generation
+                  </p>
+                  <p>
+                    {generationMetadata.modelUsed} ·{" "}
+                    {generationMetadata.duration}
+                  </p>
                 </div>
               </div>
               {themes.length > 0 && (
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Themes</p>
+                  <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">
+                    Themes
+                  </p>
                   <ul className="list-disc list-inside text-gray-800 space-y-1">
                     {themes.map((theme) => (
                       <li key={theme}>{theme}</li>
