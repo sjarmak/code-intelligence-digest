@@ -1,0 +1,550 @@
+{
+  "probedAt": "2026-04-21T17:10:11.484Z",
+  "serverVersion": "PostgreSQL 18.3 (Debian 18.3-1.pgdg12+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+  "extensions": [
+    {
+      "extname": "pg_trgm",
+      "extversion": "1.6"
+    },
+    {
+      "extname": "plpgsql",
+      "extversion": "1.0"
+    },
+    {
+      "extname": "vector",
+      "extversion": "0.8.1"
+    }
+  ],
+  "totalBytes": 2751520768,
+  "tables": [
+    {
+      "name": "item_embeddings",
+      "rowCount": 74624,
+      "sizeBytes": 1208459264,
+      "sizeHuman": "1152 MB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "item_id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "item_id",
+          "refTable": "items",
+          "refColumn": "id"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "items",
+      "rowCount": 94309,
+      "sizeBytes": 777699328,
+      "sizeHuman": "742 MB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": [
+        {
+          "fromTable": "item_embeddings",
+          "fromColumn": "item_id"
+        },
+        {
+          "fromTable": "starred_items",
+          "fromColumn": "item_id"
+        },
+        {
+          "fromTable": "item_relevance",
+          "fromColumn": "item_id"
+        },
+        {
+          "fromTable": "saved_items",
+          "fromColumn": "item_id"
+        },
+        {
+          "fromTable": "digest_items",
+          "fromColumn": "item_id"
+        }
+      ]
+    },
+    {
+      "name": "paper_sections",
+      "rowCount": 33130,
+      "sizeBytes": 677715968,
+      "sizeHuman": "646 MB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "item_scores",
+      "rowCount": 100608,
+      "sizeBytes": 44466176,
+      "sizeHuman": "42 MB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "item_id",
+        "scored_at"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "ads_papers",
+      "rowCount": 1977,
+      "sizeBytes": 39436288,
+      "sizeHuman": "38 MB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "bibcode"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": [
+        {
+          "fromTable": "paper_annotations",
+          "fromColumn": "bibcode"
+        },
+        {
+          "fromTable": "paper_tag_links",
+          "fromColumn": "bibcode"
+        },
+        {
+          "fromTable": "ads_library_papers",
+          "fromColumn": "bibcode"
+        }
+      ]
+    },
+    {
+      "name": "agent_reports",
+      "rowCount": 158,
+      "sizeBytes": 1236992,
+      "sizeHuman": "1208 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "goal",
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "agent_runs",
+      "rowCount": 39,
+      "sizeBytes": 589824,
+      "sizeHuman": "576 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": true,
+      "timestampCol": "created_at",
+      "hasTimestampIndex": true,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "generated_newsletters",
+      "rowCount": 9,
+      "sizeBytes": 221184,
+      "sizeHuman": "216 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": true,
+      "timestampCol": "created_at",
+      "hasTimestampIndex": true,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "digest_items",
+      "rowCount": 51,
+      "sizeBytes": 212992,
+      "sizeHuman": "208 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "item_id",
+          "refTable": "items",
+          "refColumn": "id"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "ads_library_papers",
+      "rowCount": 416,
+      "sizeBytes": 188416,
+      "sizeHuman": "184 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "library_id",
+        "bibcode"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "bibcode",
+          "refTable": "ads_papers",
+          "refColumn": "bibcode"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "feeds",
+      "rowCount": 138,
+      "sizeBytes": 188416,
+      "sizeHuman": "184 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "usage_quota",
+      "rowCount": 198,
+      "sizeBytes": 139264,
+      "sizeHuman": "136 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "key"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "generated_podcast_audio",
+      "rowCount": 94,
+      "sizeBytes": 122880,
+      "sizeHuman": "120 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": true,
+      "timestampCol": "created_at",
+      "hasTimestampIndex": true,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": [
+        {
+          "fromTable": "user_podcast_audio",
+          "fromColumn": "audio_id"
+        }
+      ]
+    },
+    {
+      "name": "starred_items",
+      "rowCount": 0,
+      "sizeBytes": 114688,
+      "sizeHuman": "112 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "item_id",
+          "refTable": "items",
+          "refColumn": "id"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "saved_items",
+      "rowCount": 0,
+      "sizeBytes": 98304,
+      "sizeHuman": "96 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "item_id",
+          "refTable": "items",
+          "refColumn": "id"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "item_relevance",
+      "rowCount": 0,
+      "sizeBytes": 81920,
+      "sizeHuman": "80 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": false,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "item_id",
+          "refTable": "items",
+          "refColumn": "id"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "cache_metadata",
+      "rowCount": 1,
+      "sizeBytes": 65536,
+      "sizeHuman": "64 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "key"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "digest_selections",
+      "rowCount": 16,
+      "sizeBytes": 65536,
+      "sizeHuman": "64 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "global_api_budget",
+      "rowCount": 97,
+      "sizeBytes": 65536,
+      "sizeHuman": "64 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": false,
+      "timestampCol": "last_updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "date"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "sync_state",
+      "rowCount": 3,
+      "sizeBytes": 65536,
+      "sizeHuman": "64 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": false,
+      "timestampCol": "last_updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "user_podcast_audio",
+      "rowCount": 6,
+      "sizeBytes": 65536,
+      "sizeHuman": "64 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": true,
+      "timestampCol": "created_at",
+      "hasTimestampIndex": true,
+      "primaryKey": [
+        "user_id",
+        "audio_id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "audio_id",
+          "refTable": "generated_podcast_audio",
+          "refColumn": "id"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "user_paper_favorites",
+      "rowCount": 12,
+      "sizeBytes": 49152,
+      "sizeHuman": "48 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "user_id",
+        "bibcode"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "admin_settings",
+      "rowCount": 1,
+      "sizeBytes": 32768,
+      "sizeHuman": "32 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": false,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "key"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "paper_annotations",
+      "rowCount": 0,
+      "sizeBytes": 32768,
+      "sizeHuman": "32 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "bibcode",
+          "refTable": "ads_papers",
+          "refColumn": "bibcode"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "paper_tag_links",
+      "rowCount": 0,
+      "sizeBytes": 32768,
+      "sizeHuman": "32 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": true,
+      "timestampCol": "created_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "bibcode",
+        "tag_id"
+      ],
+      "fkOutgoing": [
+        {
+          "column": "bibcode",
+          "refTable": "ads_papers",
+          "refColumn": "bibcode"
+        },
+        {
+          "column": "tag_id",
+          "refTable": "paper_tags",
+          "refColumn": "id"
+        }
+      ],
+      "fkIncoming": []
+    },
+    {
+      "name": "user_cache",
+      "rowCount": 2,
+      "sizeBytes": 32768,
+      "sizeHuman": "32 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": false,
+      "timestampCol": null,
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "key"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    },
+    {
+      "name": "paper_tags",
+      "rowCount": 0,
+      "sizeBytes": 24576,
+      "sizeHuman": "24 kB",
+      "hasUpdatedAt": false,
+      "hasCreatedAt": true,
+      "timestampCol": "created_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": [
+        {
+          "fromTable": "paper_tag_links",
+          "fromColumn": "tag_id"
+        }
+      ]
+    },
+    {
+      "name": "ads_libraries",
+      "rowCount": 0,
+      "sizeBytes": 16384,
+      "sizeHuman": "16 kB",
+      "hasUpdatedAt": true,
+      "hasCreatedAt": true,
+      "timestampCol": "updated_at",
+      "hasTimestampIndex": false,
+      "primaryKey": [
+        "id"
+      ],
+      "fkOutgoing": [],
+      "fkIncoming": []
+    }
+  ]
+}
