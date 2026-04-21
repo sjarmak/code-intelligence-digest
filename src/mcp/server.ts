@@ -34,6 +34,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import { createMirrorCopilotDbContext } from '../lib/copilot';
+import { generateEmbedding } from '../lib/embeddings/generate';
 import type { Category } from '../lib/model';
 
 const VALID_CATEGORIES = [
@@ -169,6 +170,121 @@ server.registerTool(
               full_text: item.fullText,
               categories: item.categories,
             },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+// ---- semantic_search_items ---------------------------------------------
+
+server.registerTool(
+  'semantic_search_items',
+  {
+    description:
+      'Semantic search for items using vector similarity (pgvector). ' +
+      'The query string is embedded server-side with OpenAI ' +
+      'text-embedding-3-small; results are items whose embedding is closest ' +
+      'by cosine distance. Use this for conceptual queries where keyword ' +
+      'matching underperforms — e.g. "how are people thinking about codebase ' +
+      'understanding and agent context". Only items that have been embedded ' +
+      'are returned (most items in item_embeddings; ads_papers/paper_sections ' +
+      'are NOT currently embedded).',
+    inputSchema: {
+      query: z
+        .string()
+        .min(1)
+        .describe('Natural-language query. Works best with full sentences or topic descriptions.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe('Max items to return. Default 10, max 50.'),
+    },
+  },
+  async ({ query, limit }) => {
+    const vec = await generateEmbedding(query);
+    const items = await db.semanticSearchByVector(vec, limit);
+
+    const summary = items.map((it) => ({
+      id: it.id,
+      title: it.title,
+      url: it.url,
+      source: it.sourceTitle,
+      author: it.author,
+      category: it.category,
+      published_at: it.publishedAt.toISOString(),
+      summary: it.summary?.slice(0, 400),
+    }));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            { count: summary.length, items: summary },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+// ---- aggregate_items ---------------------------------------------------
+
+server.registerTool(
+  'aggregate_items',
+  {
+    description:
+      'Group items by source, author, or category, with counts and average ' +
+      'LLM relevance score per group. Useful for "who is publishing most on X" ' +
+      'or "top sources in ai_dev this month". Results sorted by count desc.',
+    inputSchema: {
+      group_by: z
+        .enum(['source', 'author', 'category'])
+        .describe('Dimension to group by.'),
+      category: z
+        .enum(VALID_CATEGORIES)
+        .optional()
+        .describe('Restrict to one category. Ignored if group_by === "category".'),
+      since: z
+        .string()
+        .optional()
+        .describe('ISO date (YYYY-MM-DD) — only items created on/after this date.'),
+      until: z
+        .string()
+        .optional()
+        .describe('ISO date (YYYY-MM-DD) — only items created strictly before this date.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .default(20)
+        .describe('Max groups to return. Default 20, max 200.'),
+    },
+  },
+  async ({ group_by, category, since, until, limit }) => {
+    const buckets = await db.aggregateItems({
+      groupBy: group_by,
+      category,
+      since: since ? Math.floor(new Date(since).getTime() / 1000) : undefined,
+      until: until ? Math.floor(new Date(until).getTime() / 1000) : undefined,
+      limit,
+    });
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            { count: buckets.length, groupBy: group_by, buckets },
             null,
             2
           ),

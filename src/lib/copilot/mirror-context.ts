@@ -14,10 +14,21 @@
 import { Pool, type PoolClient } from 'pg';
 import type { Category, FeedItem } from '../model';
 import type {
+  AggregateBucket,
+  AggregateDimension,
+  AggregateItemsOptions,
   CopilotDbContext,
   MirrorStatus,
   SearchItemsOptions,
 } from './db-context';
+
+const AGGREGATE_COL: Record<AggregateDimension, string> = {
+  source: 'source_title',
+  author: 'author',
+  category: 'category',
+};
+
+const EMBEDDING_DIM = 1536;
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 20;
@@ -148,6 +159,84 @@ export class MirrorCopilotDbContext implements CopilotDbContext {
 
     const r = await this.pool.query<ItemRow>(sql, params);
     return r.rows.map(rowToFeedItem);
+  }
+
+  async semanticSearchByVector(vec: number[], limit: number): Promise<FeedItem[]> {
+    if (vec.length !== EMBEDDING_DIM) {
+      throw new Error(
+        `semanticSearchByVector expects ${EMBEDDING_DIM}-dim vector, got ${vec.length}`
+      );
+    }
+    const capped = Math.min(Math.max(limit, 1), MAX_LIMIT);
+    // pgvector literal is "[0.1,0.2,...]" cast to ::vector.
+    const vecStr = `[${vec.join(',')}]`;
+    const r = await this.pool.query<ItemRow>(
+      `SELECT ${ITEM_COLUMNS.split(', ').map((c) => `i.${c}`).join(', ')}
+       FROM item_embeddings e
+       JOIN items i ON i.id = e.item_id
+       ORDER BY e.embedding <=> $1::vector
+       LIMIT $2`,
+      [vecStr, capped]
+    );
+    return r.rows.map(rowToFeedItem);
+  }
+
+  async aggregateItems(opts: AggregateItemsOptions): Promise<AggregateBucket[]> {
+    const { groupBy, since, until, category } = opts;
+    const limit = Math.min(opts.limit ?? 20, MAX_LIMIT);
+
+    const col = AGGREGATE_COL[groupBy];
+    const clauses: string[] = [`${col} IS NOT NULL`, `${col} <> ''`];
+    const params: unknown[] = [];
+
+    if (since != null) {
+      params.push(since);
+      clauses.push(`i.created_at >= $${params.length}`);
+    }
+    if (until != null) {
+      params.push(until);
+      clauses.push(`i.created_at < $${params.length}`);
+    }
+    if (category && groupBy !== 'category') {
+      params.push(category);
+      clauses.push(`i.category = $${params.length}`);
+    }
+
+    params.push(limit);
+    const sql = `
+      SELECT
+        i.${col}                          AS group_val,
+        COUNT(*)::INT                     AS count,
+        AVG(s.final_score)::FLOAT         AS avg_final_score,
+        MIN(i.published_at)::BIGINT       AS earliest,
+        MAX(i.published_at)::BIGINT       AS latest
+      FROM items i
+      LEFT JOIN LATERAL (
+        SELECT final_score FROM item_scores
+        WHERE item_id = i.id
+        ORDER BY scored_at DESC LIMIT 1
+      ) s ON TRUE
+      WHERE ${clauses.join(' AND ')}
+      GROUP BY i.${col}
+      ORDER BY count DESC
+      LIMIT $${params.length}
+    `;
+
+    const r = await this.pool.query<{
+      group_val: string;
+      count: number;
+      avg_final_score: number | null;
+      earliest: number | null;
+      latest: number | null;
+    }>(sql, params);
+
+    return r.rows.map((row) => ({
+      group: row.group_val,
+      count: Number(row.count),
+      avgFinalScore: row.avg_final_score != null ? Number(row.avg_final_score) : null,
+      earliest: new Date((row.earliest ?? 0) * 1000).toISOString(),
+      latest: new Date((row.latest ?? 0) * 1000).toISOString(),
+    }));
   }
 
   async getMirrorStatus(): Promise<MirrorStatus> {

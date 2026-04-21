@@ -43,6 +43,29 @@ export interface MirrorStatus {
   totalRowsSynced: number;
 }
 
+export type AggregateDimension = 'source' | 'author' | 'category';
+
+export interface AggregateItemsOptions {
+  /** Dimension to group by. */
+  groupBy: AggregateDimension;
+  /** Earliest created_at (epoch seconds, inclusive). */
+  since?: number;
+  /** Latest created_at (epoch seconds, exclusive). */
+  until?: number;
+  /** Restrict to one category (ignored if groupBy === 'category'). */
+  category?: Category;
+  /** Max groups to return. Default 20, hard cap 200. */
+  limit?: number;
+}
+
+export interface AggregateBucket {
+  group: string;
+  count: number;
+  avgFinalScore: number | null;
+  earliest: string;
+  latest: string;
+}
+
 export interface CopilotDbContext {
   /** Fetch a single item by primary key, or null if not present locally. */
   getItemById(id: string): Promise<FeedItem | null>;
@@ -52,6 +75,19 @@ export interface CopilotDbContext {
    * for free-text; otherwise just filters + orders by created_at DESC.
    */
   searchItems(opts: SearchItemsOptions): Promise<FeedItem[]>;
+
+  /**
+   * Find items whose embedding is closest (by cosine distance) to the
+   * given query vector. Vector must be 1536-dim (text-embedding-3-small).
+   * Only returns items that have an embedding in item_embeddings.
+   */
+  semanticSearchByVector(vec: number[], limit: number): Promise<FeedItem[]>;
+
+  /**
+   * Group items by source/author/category, optionally filtered by window
+   * and category, returning counts + avg LLM final_score per bucket.
+   */
+  aggregateItems(opts: AggregateItemsOptions): Promise<AggregateBucket[]>;
 
   /**
    * Freshness snapshot of the mirror. Surface this to users so they know
