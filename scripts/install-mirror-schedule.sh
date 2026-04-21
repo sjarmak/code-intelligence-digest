@@ -1,54 +1,75 @@
 #!/bin/bash
 #
-# Install the launchd hourly mirror schedule.
+# Install all launchd schedules for the production → local mirror:
+#   - com.codeintel.mirror              hourly,  :05 (hourly sync)
+#   - com.codeintel.mirror.reconcile    daily,   03:10 (deletion reconciliation)
+#   - com.codeintel.mirror.schema-drift weekly,  Mon 04:00 (schema-drift alert)
 #
-# This substitutes {{REPO_ROOT}} + {{LOG_DIR}} into the plist template,
-# writes it to ~/Library/LaunchAgents/, and loads it via launchctl.
-#
-# Safe to re-run: unloads any existing job before loading the new one.
+# Each plist template has {{REPO_ROOT}} and {{LOG_DIR}} placeholders; this
+# script substitutes them, lints the rendered plist with plutil, and loads
+# it via launchctl. Safe to re-run — existing jobs are unloaded first.
 #
 # To remove, run scripts/uninstall-mirror-schedule.sh.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TEMPLATE="$REPO_ROOT/scripts/launchd/com.codeintel.mirror.plist"
+TEMPLATE_DIR="$REPO_ROOT/scripts/launchd"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-DEST="$LAUNCH_AGENTS_DIR/com.codeintel.mirror.plist"
 LOG_DIR="$HOME/.code-intel-digest-logs"
 
-if [ ! -f "$TEMPLATE" ]; then
-  echo "✗ Template not found: $TEMPLATE" >&2
-  exit 1
-fi
+PLISTS=(
+  "com.codeintel.mirror.plist"
+  "com.codeintel.mirror.reconcile.plist"
+  "com.codeintel.mirror.schema-drift.plist"
+)
 
 mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
 
-# Substitute and write to final location.
-sed \
-  -e "s|{{REPO_ROOT}}|$REPO_ROOT|g" \
-  -e "s|{{LOG_DIR}}|$LOG_DIR|g" \
-  "$TEMPLATE" > "$DEST"
+install_one() {
+  local name="$1"
+  local template="$TEMPLATE_DIR/$name"
+  local dest="$LAUNCH_AGENTS_DIR/$name"
 
-# Validate the rendered plist before activating.
-if ! plutil -lint "$DEST" >/dev/null 2>&1; then
-  echo "✗ Rendered plist failed validation: $DEST" >&2
-  plutil -lint "$DEST" >&2 || true
-  rm -f "$DEST"
-  exit 1
-fi
+  if [ ! -f "$template" ]; then
+    echo "✗ Template missing: $template" >&2
+    return 1
+  fi
 
-# Unload any existing job first (ignore failure if not loaded).
-launchctl unload "$DEST" 2>/dev/null || true
-launchctl load "$DEST"
+  sed \
+    -e "s|{{REPO_ROOT}}|$REPO_ROOT|g" \
+    -e "s|{{LOG_DIR}}|$LOG_DIR|g" \
+    "$template" > "$dest"
 
-echo "✓ Installed $DEST"
-echo "  Repo:     $REPO_ROOT"
-echo "  Log dir:  $LOG_DIR"
-echo "  Schedule: every hour at :05"
+  if ! plutil -lint "$dest" >/dev/null 2>&1; then
+    echo "✗ Rendered plist failed validation: $dest" >&2
+    plutil -lint "$dest" >&2 || true
+    rm -f "$dest"
+    return 1
+  fi
+
+  launchctl unload "$dest" 2>/dev/null || true
+  launchctl load "$dest"
+  echo "  ✓ $name"
+}
+
+echo "Installing launchd jobs:"
+for plist in "${PLISTS[@]}"; do
+  install_one "$plist"
+done
+
 echo
-echo "Useful commands:"
-echo "  tail -f $LOG_DIR/mirror.log             # watch live output"
-echo "  launchctl list | grep codeintel.mirror  # confirm it's loaded"
-echo "  launchctl start com.codeintel.mirror    # fire once manually"
-echo "  scripts/uninstall-mirror-schedule.sh    # remove"
+echo "Schedules:"
+echo "  hourly sync           every hour at :05"
+echo "  deletion reconcile    daily at 03:10"
+echo "  schema-drift check    Mondays at 04:00"
+echo
+echo "Logs:   $LOG_DIR"
+echo "Remove: scripts/uninstall-mirror-schedule.sh"
+echo
+echo "Useful:"
+echo "  launchctl list | grep codeintel.mirror"
+echo "  launchctl start com.codeintel.mirror              # fire hourly now"
+echo "  launchctl start com.codeintel.mirror.reconcile    # fire reconcile now"
+echo "  launchctl start com.codeintel.mirror.schema-drift # fire drift-check now"
+echo "  tail -f $LOG_DIR/mirror.log"

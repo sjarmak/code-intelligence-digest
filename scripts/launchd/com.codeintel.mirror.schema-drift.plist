@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template — install via scripts/install-mirror-schedule.sh. -->
+<!-- {{REPO_ROOT}} and {{LOG_DIR}} are substituted at install time. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.codeintel.mirror.schema-drift</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{REPO_ROOT}}/scripts/mirror-schema-drift-weekly.sh</string>
+    </array>
+
+    <!-- Runs weekly, Monday at 04:00. Sunday is Weekday=0 or 7 on macOS launchd. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>{{REPO_ROOT}}</string>
+
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/launchd.schema-drift.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/launchd.schema-drift.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template — install via scripts/install-mirror-schedule.sh. -->
+<!-- {{REPO_ROOT}} and {{LOG_DIR}} are substituted at install time. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.codeintel.mirror.reconcile</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{REPO_ROOT}}/scripts/mirror-reconcile-daily.sh</string>
+    </array>
+
+    <!-- Runs daily at 03:10 — low-traffic hour, well clear of the :05 hourly mirror. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>10</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>{{REPO_ROOT}}</string>
+
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/launchd.reconcile.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/launchd.reconcile.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
