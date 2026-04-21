@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:16
+    # pgvector/pgvector image ships pgvector + pg_trgm pre-installed,
+    # matching production (Render Postgres 18 + pgvector 0.8.1).
+    image: pgvector/pgvector:pg18
     container_name: code-intel-digest-postgres
     environment:
       POSTGRES_USER: code_intel_user
@@ -10,7 +12,9 @@ services:
     ports:
       - "5433:5432"  # Use 5433 to avoid conflict with system PostgreSQL
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # pg18+ expects the parent dir so it can manage version-specific
+      # subdirectories (for pg_upgrade compatibility).
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U code_intel_user"]
       interval: 5s
