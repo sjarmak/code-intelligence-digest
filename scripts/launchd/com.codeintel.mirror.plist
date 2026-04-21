@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template — install via scripts/install-mirror-schedule.sh. -->
+<!-- {{REPO_ROOT}} and {{LOG_DIR}} are substituted at install time. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.codeintel.mirror</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{REPO_ROOT}}/scripts/mirror-hourly.sh</string>
+    </array>
+
+    <!--
+      Fires every hour at :05 (5 minutes after the hour). Render cron runs
+      at :00, so this leaves a 5-minute head start for fresh data to land
+      before we pull. Adjust if the Render cron offset changes.
+    -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>{{REPO_ROOT}}</string>
+
+    <!-- launchd's own stderr/stdout for the job (wrapper adds its own log) -->
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/launchd.err.log</string>
+
+    <!-- launchd inherits an empty environment; give child process a sane PATH -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Don't restart on failure; let the next :05 tick retry -->
+    <key>KeepAlive</key>
+    <false/>
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
