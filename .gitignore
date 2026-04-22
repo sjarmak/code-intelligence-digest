@@ -57,6 +57,10 @@ history/
 # generated audio files
 .data/audio/
 
+# Claude Code local state (skills under .claude/skills/ ARE tracked)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
 # local database and cache
 .data/
 .cache/
