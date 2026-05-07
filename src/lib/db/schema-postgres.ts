@@ -244,6 +244,14 @@ CREATE TABLE IF NOT EXISTS agent_reports (
   generated_at INTEGER NOT NULL,
   PRIMARY KEY (goal, id)
 );
+
+-- OAuth refresh tokens for providers that rotate tokens (e.g. Inoreader).
+-- Env-var seeded on first deploy; app writes back the new RT on every refresh.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  provider TEXT PRIMARY KEY,
+  refresh_token TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `;
 
 /**

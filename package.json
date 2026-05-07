@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint",
     "test": "vitest run",
+    "auth-inoreader": "npx tsx scripts/auth-inoreader.ts",
     "db:backup": "bash scripts/backup-db.sh",
     "db:restore": "bash scripts/restore-db.sh",
     "db:start": "docker-compose up -d postgres",

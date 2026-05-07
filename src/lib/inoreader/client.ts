@@ -6,6 +6,11 @@
 
 import { InoreaderStreamResponse, InoreaderTokenResponse } from "./types.js";
 import { logger } from "../logger";
+import {
+  getStoredRefreshToken,
+  storeRefreshToken,
+  seedRefreshTokenIfMissing,
+} from "../db/oauth-tokens";
 
 /**
  * Rate limit info from Inoreader API response headers
@@ -85,11 +90,32 @@ export class InoreaderClient {
 
     const clientId = process.env.INOREADER_CLIENT_ID;
     const clientSecret = process.env.INOREADER_CLIENT_SECRET;
-    const refreshToken = process.env.INOREADER_REFRESH_TOKEN;
+    const envRefreshToken = process.env.INOREADER_REFRESH_TOKEN;
 
-    if (!clientId || !clientSecret || !refreshToken) {
+    if (!clientId || !clientSecret) {
       throw new Error(
-        "Missing Inoreader credentials. Set INOREADER_CLIENT_ID, INOREADER_CLIENT_SECRET, and INOREADER_REFRESH_TOKEN environment variables."
+        "Missing Inoreader credentials. Set INOREADER_CLIENT_ID and INOREADER_CLIENT_SECRET."
+      );
+    }
+
+    let storedRefreshToken: string | null = null;
+    try {
+      storedRefreshToken = await getStoredRefreshToken("inoreader");
+      if (!storedRefreshToken && envRefreshToken) {
+        await seedRefreshTokenIfMissing("inoreader", envRefreshToken);
+        storedRefreshToken = envRefreshToken;
+      }
+    } catch (dbError) {
+      logger.warn("[INOREADER-AUTH] DB lookup failed, falling back to env var", {
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+      });
+      storedRefreshToken = envRefreshToken ?? null;
+    }
+
+    const refreshToken = storedRefreshToken ?? envRefreshToken;
+    if (!refreshToken) {
+      throw new Error(
+        "No Inoreader refresh token available. Set INOREADER_REFRESH_TOKEN or seed oauth_tokens."
       );
     }
 
@@ -109,6 +135,11 @@ export class InoreaderClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        logger.error("[INOREADER-AUTH] Refresh failed — manual re-auth may be required", {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText,
+        });
         throw new Error(
           `Failed to refresh Inoreader token: ${response.status} ${response.statusText} - ${errorText}`
         );
@@ -116,6 +147,18 @@ export class InoreaderClient {
 
       const data = (await response.json()) as InoreaderTokenResponse;
       this.accessToken = data.access_token;
+
+      if (data.refresh_token && data.refresh_token !== refreshToken) {
+        try {
+          await storeRefreshToken("inoreader", data.refresh_token);
+          logger.info("[INOREADER-AUTH] Persisted rotated refresh token");
+        } catch (writeError) {
+          logger.error(
+            "[INOREADER-AUTH] CRITICAL: failed to persist rotated refresh token — next refresh will fail",
+            writeError,
+          );
+        }
+      }
 
       return this.accessToken;
     } catch (error) {
