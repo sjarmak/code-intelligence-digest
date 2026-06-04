@@ -19,4 +19,10 @@ export type {
   SearchItemsOptions,
   MirrorStatus,
 } from './db-context';
-export { createMirrorCopilotDbContext, MirrorCopilotDbContext } from './mirror-context';
+export {
+  createMirrorCopilotDbContext,
+  createDirectCopilotDbContext,
+  resolveCopilotDbContext,
+  MirrorCopilotDbContext,
+} from './mirror-context';
+export type { CopilotDbMode } from './mirror-context';

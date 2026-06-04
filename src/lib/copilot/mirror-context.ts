@@ -307,6 +307,64 @@ export function createMirrorCopilotDbContext(): CopilotDbContext {
   return new MirrorCopilotDbContext(pool);
 }
 
+/**
+ * CopilotDbContext that connects DIRECTLY to a remote (e.g. Render) database,
+ * skipping the local mirror. Read-only by design — but unlike the mirror
+ * context, write-safety is NOT enforced by a hostname guard here. Instead it
+ * MUST be pointed at a read-only database role (e.g. a `GRANT SELECT`-only
+ * Render role), so the copilot is physically unable to write to production.
+ *
+ * Enabled via COPILOT_DB_MODE=direct (or simply by setting
+ * COPILOT_REMOTE_DATABASE_URL). SSL is on because managed Postgres providers
+ * like Render require it. The mirror remains the default.
+ */
+export function createDirectCopilotDbContext(): CopilotDbContext {
+  const url = process.env.COPILOT_REMOTE_DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      'COPILOT_REMOTE_DATABASE_URL is not set; required for direct (no-mirror) mode.'
+    );
+  }
+
+  const pool = new Pool({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+    max: 4,
+    idleTimeoutMillis: 30_000,
+  });
+
+  return new MirrorCopilotDbContext(pool);
+}
+
+export type CopilotDbMode = 'mirror' | 'direct';
+
+/**
+ * Pick the backing store from the environment:
+ *   - COPILOT_DB_MODE=direct  -> direct remote (read-only role)
+ *   - COPILOT_DB_MODE=mirror  -> local mirror (forces mirror even if a remote
+ *                                 URL is present)
+ *   - unset                   -> direct if COPILOT_REMOTE_DATABASE_URL is set,
+ *                                 otherwise the local mirror (back-compat).
+ */
+export function resolveCopilotDbContext(): {
+  db: CopilotDbContext;
+  mode: CopilotDbMode;
+} {
+  const explicit = process.env.COPILOT_DB_MODE;
+  const mode: CopilotDbMode =
+    explicit === 'direct'
+      ? 'direct'
+      : explicit === 'mirror'
+        ? 'mirror'
+        : process.env.COPILOT_REMOTE_DATABASE_URL
+          ? 'direct'
+          : 'mirror';
+
+  return mode === 'direct'
+    ? { db: createDirectCopilotDbContext(), mode }
+    : { db: createMirrorCopilotDbContext(), mode };
+}
+
 export { MirrorCopilotDbContext as _MirrorCopilotDbContextForTests };
 export { assertLocalUrl as _assertLocalUrlForTests };
 // Use `createMirrorCopilotDbContext()` for normal usage. The underscore

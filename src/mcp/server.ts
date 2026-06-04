@@ -33,7 +33,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { createMirrorCopilotDbContext } from '../lib/copilot';
+import { resolveCopilotDbContext } from '../lib/copilot';
 import { generateEmbedding } from '../lib/embeddings/generate';
 import type { Category } from '../lib/model';
 
@@ -49,7 +49,7 @@ const VALID_CATEGORIES = [
   'marketing',
 ] as const satisfies readonly Category[];
 
-const db = createMirrorCopilotDbContext();
+const { db, mode: dbMode } = resolveCopilotDbContext();
 
 const server = new McpServer(
   { name: 'code-intel-copilot', version: '0.1.0' },
@@ -300,22 +300,30 @@ server.registerTool(
   'mirror_status',
   {
     description:
-      'Report freshness of the local mirror. ALWAYS call this before generating ' +
-      'answers that claim to cover "today" or "this week" — warn the user if ' +
-      'staleMinutes is unexpectedly large (> 90 usually means the hourly sync ' +
-      'failed).',
+      'Report which backing store the copilot is using and, in mirror mode, its ' +
+      'freshness. ALWAYS call this before generating answers that claim to cover ' +
+      '"today" or "this week". In mirror mode, warn the user if staleMinutes is ' +
+      'unexpectedly large (> 90 usually means the hourly sync failed). In direct ' +
+      'mode the data is live production, so freshness fields are not applicable.',
     inputSchema: {},
   },
   async () => {
     const status = await db.getMirrorStatus();
-    const lines = [
-      `lastSyncedAt: ${status.lastSyncedAt ?? 'never'}`,
-      `staleMinutes: ${status.staleMinutes ?? 'n/a'}`,
-      `tablesTracked: ${status.tablesTracked}`,
-      `totalRowsSynced: ${status.totalRowsSynced}`,
-    ];
-    if (status.staleMinutes != null && status.staleMinutes > 90) {
-      lines.push('', 'WARNING: mirror is unusually stale — hourly sync may have failed.');
+    const lines = [`dbMode: ${dbMode}`];
+    if (dbMode === 'direct') {
+      lines.push(
+        'source: live production database (direct, read-only) — data is real-time; mirror freshness fields are N/A.'
+      );
+    } else {
+      lines.push(
+        `lastSyncedAt: ${status.lastSyncedAt ?? 'never'}`,
+        `staleMinutes: ${status.staleMinutes ?? 'n/a'}`,
+        `tablesTracked: ${status.tablesTracked}`,
+        `totalRowsSynced: ${status.totalRowsSynced}`
+      );
+      if (status.staleMinutes != null && status.staleMinutes > 90) {
+        lines.push('', 'WARNING: mirror is unusually stale — hourly sync may have failed.');
+      }
     }
     return {
       content: [{ type: 'text', text: lines.join('\n') }],
