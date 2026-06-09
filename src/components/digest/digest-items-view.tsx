@@ -3,7 +3,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import ItemCard from '@/src/components/feeds/item-card';
-import { FileHeart, RefreshCw, CheckSquare, Square, Trash2, X } from 'lucide-react';
+import { FileHeart, RefreshCw, CheckSquare, Square, Trash2, X, Send, Loader2 } from 'lucide-react';
+
+// This control shells out to the sibling website repo, so it only works locally.
+const IS_LOCAL = process.env.NODE_ENV === 'development';
 
 interface DigestScores {
   relevance: number;
@@ -51,6 +54,26 @@ export function DigestItemsView() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendMsg, setSendMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const handleSendToWebsite = async () => {
+    if (!confirm(`Generate a newsletter + ~30-min podcast from these ${items.length} tagged items and send them to the website? It commits locally for your review (no push).`)) {
+      return;
+    }
+    setSending(true);
+    setSendMsg(null);
+    try {
+      const response = await fetch('/api/send-to-website', { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? 'Failed to start generation');
+      setSendMsg({ kind: 'ok', text: data.message ?? 'Generation started.' });
+    } catch (err) {
+      setSendMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Failed to send to website' });
+    } finally {
+      setSending(false);
+    }
+  };
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -346,6 +369,17 @@ export function DigestItemsView() {
                 Clear All
               </button>
             )}
+            {IS_LOCAL && !selectMode && items.length > 0 && (
+              <button
+                onClick={handleSendToWebsite}
+                disabled={sending || deleting}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors bg-black border border-black text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+                title="Generate a newsletter + ~30-min podcast from these items and send to the website (local only)"
+              >
+                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {sending ? 'Sending…' : 'Send to website'}
+              </button>
+            )}
             <button
               onClick={handleRefresh}
               disabled={refreshing || loading || deleting}
@@ -357,6 +391,17 @@ export function DigestItemsView() {
             </button>
           </div>
         </div>
+        {sendMsg && (
+          <div
+            className={`mt-2 rounded-md border p-3 text-sm ${
+              sendMsg.kind === 'ok'
+                ? 'border-green-300 bg-green-50 text-green-900'
+                : 'border-red-300 bg-red-50 text-red-900'
+            }`}
+          >
+            {sendMsg.text}
+          </div>
+        )}
         <p className="text-sm text-muted">
           {selectMode
             ? `Select items to delete. ${selectedIds.size} of ${items.length} selected.`
