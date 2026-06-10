@@ -32,6 +32,10 @@ export interface UsageQuota {
 
 // Rate limit configurations per endpoint
 const RATE_LIMITS: Record<string, { hourly: number; daily: number; maxRequestSize?: number }> = {
+  '/api/items': {
+    hourly: 600, // re-ranks on every call; generous for human browsing, blocks hammering
+    daily: 5000,
+  },
   '/api/newsletter/generate': {
     hourly: 10, // 10 newsletters per hour
     daily: 50, // 50 newsletters per day

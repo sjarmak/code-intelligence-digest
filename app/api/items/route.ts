@@ -286,6 +286,23 @@ const PERIOD_DAYS: Record<string, number> = {
 };
 
 export async function GET(request: NextRequest) {
+  // Rate limit before any ranking work; fail open if the check itself errors
+  // (e.g., DB hiccup) so the main read path stays available.
+  try {
+    const { enforceRateLimit, recordUsage } = await import("@/src/lib/rate-limit");
+    const rateLimitResponse = await enforceRateLimit(request, "/api/items");
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+    // Count the request now rather than on success so expensive failing
+    // requests still consume quota.
+    await recordUsage(request, "/api/items");
+  } catch (rateLimitError) {
+    logger.warn("[API] Rate limit check failed, continuing without rate limit", {
+      error: rateLimitError,
+    });
+  }
+
   // Extract parameters early so they're available in error handler
   const searchParams = request.nextUrl.searchParams;
   const category = searchParams.get("category") as Category | null;

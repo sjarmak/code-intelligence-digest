@@ -112,6 +112,17 @@ CREATE TABLE IF NOT EXISTS sync_state (
   error TEXT
 );
 
+-- Per-endpoint per-IP rate-limit quotas (see src/lib/rate-limit.ts)
+CREATE TABLE IF NOT EXISTS usage_quota (
+  key TEXT PRIMARY KEY,
+  endpoint TEXT NOT NULL,
+  client_ip TEXT NOT NULL,
+  window_type TEXT NOT NULL,
+  used INTEGER DEFAULT 0,
+  reset_at INTEGER NOT NULL,
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
+);
+
 -- Global API budget table
 CREATE TABLE IF NOT EXISTS global_api_budget (
   date TEXT PRIMARY KEY,
