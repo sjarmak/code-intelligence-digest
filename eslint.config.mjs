@@ -17,6 +17,8 @@ const eslintConfig = defineConfig([
     "scripts/**",
     "__tests__/**",
     "__mocks__/**",
+    // Stray local worker clone — not part of this repo
+    "code-intel-digest-worker-1/**",
   ]),
   {
     // Apply targeted rule overrides for the app/src code we care about

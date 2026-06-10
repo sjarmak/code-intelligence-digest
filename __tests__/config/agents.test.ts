@@ -33,7 +33,9 @@ describe("agents config", () => {
   it("content_ideas config emphasizes format and ICP", () => {
     const config = AGENT_GOAL_CONFIGS.content_ideas;
     expect(config.rankingProfile.formatTypeWeight).toBeGreaterThan(config.rankingProfile.competitorMatchWeight);
-    expect(config.postgresQueryTerms.some((t) => t.toLowerCase().includes("webinar"))).toBe(true);
+    expect(config.rankingProfile.icpMatchWeight).toBeGreaterThan(config.rankingProfile.competitorMatchWeight);
+    // bd-l4b tightened source quality: terms are coding-workflow signals, not content formats
+    expect(config.postgresQueryTerms.some((t) => t.toLowerCase().includes("code search"))).toBe(true);
   });
 
   it("market_brief config has trend/landscape weight", () => {

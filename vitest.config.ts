@@ -10,6 +10,8 @@ export default defineConfig({
     environment: 'node',
     // Keep tests fast + deterministic in CI/agents
     passWithNoTests: true,
+    // Stray local worker clone — not part of this repo's suite
+    exclude: ['**/node_modules/**', 'code-intel-digest-worker-1/**'],
     server: {
       deps: {
         // Next.js + next-auth pull in packages that need to be pre-bundled for Vitest's SSR transform pipeline
