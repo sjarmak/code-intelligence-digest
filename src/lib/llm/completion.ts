@@ -31,6 +31,8 @@ export interface CreateChatCompletionResult {
   model: string;
   provider: "anthropic" | "openai";
   finish_reason?: string;
+  /** True when a claude-* model was requested but OpenAI served the request. */
+  fallback?: boolean;
 }
 
 const DEFAULT_ANTHROPIC_PROVIDER_TIMEOUT_MS = 300000;
@@ -247,7 +249,14 @@ async function createChatCompletionImpl(
   const effectiveModel = isClaudeModel(model)
     ? "gpt-4o-mini"
     : model;
-  return runProviderCompletion({
+  const usedFallback = isClaudeModel(model);
+  if (usedFallback) {
+    logger.warn("LLM degraded: claude model requested but OpenAI is serving the request", {
+      requestedModel: model,
+      effectiveModel,
+    });
+  }
+  const result = await runProviderCompletion({
     provider: "openai",
     model: effectiveModel,
     operation: () =>
@@ -259,6 +268,7 @@ async function createChatCompletionImpl(
         options.response_format,
       ),
   });
+  return usedFallback ? { ...result, fallback: true } : result;
 }
 
 export const createChatCompletion = isLangSmithLlmTracingEnabled()

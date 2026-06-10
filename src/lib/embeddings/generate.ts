@@ -15,6 +15,17 @@ function getOpenAIClient(): OpenAI | null {
   return getOpenAICompatibleClient();
 }
 
+// Pseudo-embeddings are hash-based, not semantic — storing them silently
+// degrades search quality, so warn loudly (once per process, not per item).
+let warnedPseudoEmbeddings = false;
+function warnPseudoEmbeddingsOnce(): void {
+  if (warnedPseudoEmbeddings) return;
+  warnedPseudoEmbeddings = true;
+  logger.warn(
+    "EMBEDDINGS DEGRADED: OPENAI_API_KEY not set — storing non-semantic pseudo-embeddings. Semantic search will not work for these items."
+  );
+}
+
 /**
  * Generate embedding for text
  * Uses OpenAI text-embedding-3-small (1536 dimensions) if available
@@ -50,7 +61,7 @@ export async function generateEmbedding(text: string): Promise<number[]> {
         // Fall through to pseudo-embeddings
       }
     } else {
-      logger.debug("OPENAI_API_KEY not set, using pseudo-embeddings");
+      warnPseudoEmbeddingsOnce();
     }
 
     // Fallback to pseudo-embeddings (pad to 1536 dimensions for consistency)

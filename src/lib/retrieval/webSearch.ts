@@ -23,6 +23,17 @@ export interface WebSearchOptions {
 const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 const PARALLEL_SEARCH_URL = "https://api.parallel.ai/v1beta/search";
 
+// Agents silently lose all web context when no search provider is
+// configured — warn loudly, but once per process rather than per query.
+let warnedNoProvider = false;
+function warnNoWebSearchProviderOnce(): void {
+  if (warnedNoProvider) return;
+  warnedNoProvider = true;
+  logger.warn(
+    "WEB SEARCH DEGRADED: neither PARALLEL_API_KEY nor TAVILY_API_KEY is set — agent jobs will run without web context."
+  );
+}
+
 function parseLikelyDate(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   const parsed = new Date(raw);
@@ -156,7 +167,13 @@ export async function searchWeb(
 
   const tavilyApiKey = process.env.TAVILY_API_KEY;
   if (!tavilyApiKey?.trim()) {
-    logger.debug("Parallel returned no results and TAVILY_API_KEY not set");
+    if (!process.env.PARALLEL_API_KEY?.trim()) {
+      warnNoWebSearchProviderOnce();
+    } else {
+      logger.warn("Web search degraded: Parallel returned no results and TAVILY_API_KEY not set", {
+        query: query.slice(0, 60),
+      });
+    }
     return [];
   }
 
