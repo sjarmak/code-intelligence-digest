@@ -5,6 +5,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { PublishToWebsite } from "./publish-to-website";
 
 /**
  * Parse markdown formatting in summary text
@@ -248,6 +249,13 @@ export function NewsletterViewer({
           >
             Download PDF
           </button>
+          <PublishToWebsite
+            kind="newsletter"
+            defaultTitle={title}
+            defaultSummary={summary}
+            defaultTopics={themes}
+            bodyMarkdown={markdown}
+          />
         </div>
       </div>
 

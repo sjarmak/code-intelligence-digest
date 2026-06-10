@@ -5,6 +5,7 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
+import { PublishToWebsite } from "./publish-to-website";
 
 /**
  * Render markdown text as formatted HTML
@@ -361,6 +362,19 @@ export function PodcastViewer({
           >
             {audioState.isLoading ? "Rendering Audio..." : audioState.audioUrl ? "Re-render Audio" : "Render Audio"}
           </button>
+          <PublishToWebsite
+            kind="podcast"
+            defaultTitle={title}
+            defaultSummary=""
+            defaultTopics={categories}
+            bodyMarkdown={showNotes}
+            items={segments.flatMap((s) =>
+              s.itemsReferenced.map((i) => ({ title: i.title, url: i.url, source: i.sourceTitle })),
+            )}
+            highlights={segments.flatMap((s) => s.highlights ?? [])}
+            audioUrl={audioState.audioUrl}
+            durationStr={duration}
+          />
         </div>
 
         {/* Audio Error */}
