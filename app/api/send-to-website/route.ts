@@ -57,6 +57,9 @@ export async function POST(request: NextRequest) {
       source: it.sourceTitle,
       category: it.category,
       summary: it.summary ?? it.contentSnippet ?? "",
+      // publishedAt lets the curated generator derive the issue's cadence
+      // (daily/weekly/monthly) from the date spread of the picked items.
+      publishedAt: it.publishedAt.toISOString(),
       fullText: it.fullText ?? "",
     }));
 
