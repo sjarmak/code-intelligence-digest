@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminToken } from '@/src/lib/auth/admin-token';
 import { logger } from '@/src/lib/logger';
 import { loadItemsByCategory, saveFullText, getFullTextCacheStats } from '@/src/lib/db/items';
 import { fetchFullText, fetchFullTextBatch } from '@/src/lib/pipeline/fulltext';
@@ -183,6 +184,9 @@ async function populateOtherCategories(
  * Populate full text for high-priority categories after sync
  */
 export async function POST(request: NextRequest) {
+  const unauthorized = requireAdminToken(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const body = (await request.json()) as { adsToken?: string; skipResearch?: boolean; skipWeb?: boolean } | null;
     const adsToken = body?.adsToken || process.env.ADS_API_TOKEN;

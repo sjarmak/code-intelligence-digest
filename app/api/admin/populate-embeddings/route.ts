@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdminToken } from '@/src/lib/auth/admin-token';
 import { initializeDatabase } from '@/src/lib/db/index';
 import { loadAllItems, loadItemsByCategory } from '@/src/lib/db/items';
 import { getEmbeddingsBatch } from '@/src/lib/db/embeddings';
@@ -21,8 +22,10 @@ interface PopulateRequest {
 }
 
 export async function POST(request: NextRequest) {
-  // Allow in production (needed to generate embeddings)
-  // Could add ADMIN_API_TOKEN check here if desired
+  // Callable in production (embeddings must be generable there), but only
+  // with a valid ADMIN_API_TOKEN bearer header.
+  const unauthorized = requireAdminToken(request);
+  if (unauthorized) return unauthorized;
 
   try {
     await initializeDatabase();

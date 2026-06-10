@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { auth } from "@/src/auth";
+import { isValidAdminToken } from "@/src/lib/auth/admin-token";
 
 // Paths that do not require authentication
 const PUBLIC_PATHS = [
@@ -11,8 +12,6 @@ const PUBLIC_PATHS = [
 ];
 const PUBLIC_PREFIXES = [
   "/api/auth/",
-  "/api/admin/populate-embeddings",
-  "/api/admin/refresh-feeds",
 ];
 
 function isPublic(pathname: string): boolean {
@@ -21,9 +20,25 @@ function isPublic(pathname: string): boolean {
   return false;
 }
 
+// Local-dev convenience: skip the auth gate when LOCAL_NO_AUTH=true.
+// Hard-guarded to non-production so it can never disable auth on a deployment.
+const LOCAL_NO_AUTH =
+  process.env.LOCAL_NO_AUTH === "true" && process.env.NODE_ENV !== "production";
+
 export default auth((req: NextRequest & { auth: unknown }) => {
   const { pathname } = req.nextUrl;
+  if (LOCAL_NO_AUTH) return NextResponse.next();
   if (isPublic(pathname)) return NextResponse.next();
+
+  // Admin endpoints accept a bearer token so external cron/curl callers can
+  // reach them without a browser session. Routes still apply their own
+  // guards (blockInProduction / requireAdminToken).
+  if (
+    pathname.startsWith("/api/admin/") &&
+    isValidAdminToken(req.headers.get("authorization"))
+  ) {
+    return NextResponse.next();
+  }
 
   const session = req.auth as { user?: { email?: string } } | null;
   const legacyCookie = req.cookies.get("ui-auth")?.value === "authenticated";

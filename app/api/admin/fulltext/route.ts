@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdminToken } from "@/src/lib/auth/admin-token";
 import { logger } from "@/src/lib/logger";
 import { loadItemsByCategory } from "@/src/lib/db/items";
 import { saveFullText, getFullTextCacheStats, saveExtractedUrl } from "@/src/lib/db/items";
@@ -55,6 +56,9 @@ export async function GET(request: NextRequest) {
  * Fetch full text for items
  */
 export async function POST(request: NextRequest) {
+  const unauthorized = requireAdminToken(request);
+  if (unauthorized) return unauthorized;
+
   try {
     const body = await request.json();
 
