@@ -30,6 +30,11 @@ import { getCachedUserId, setCachedUserId } from "../db/index";
 import { incrementApiCalls } from "../db/api-budget";
 import { syncResearchFromADS } from "./ads-research-sync";
 import { findUnknownFeeds, forceRefreshFeedsCache } from "../../config/feeds";
+import {
+  getCircuitState,
+  recordSyncFailure,
+  resetSyncBackoff,
+} from "./sync-backoff";
 
 interface SyncStateRow {
   id: string;
@@ -200,6 +205,27 @@ export async function runDailySync(options?: {
       }
     }
 
+    // Circuit breaker: after repeated Inoreader failures (auth/config or 429),
+    // back off instead of hammering the API every hour. Auto-recovers once the
+    // backoff window elapses (see ./sync-backoff). ADS research above runs
+    // independently and is unaffected by the Inoreader circuit.
+    const circuit = await getCircuitState(SYNC_ID);
+    if (circuit.open) {
+      const retryAtIso = new Date(circuit.nextRetryAt * 1000).toISOString();
+      logger.warn(
+        `[DAILY-SYNC] Circuit open after ${circuit.attempts} consecutive failure(s); skipping Inoreader fetch until ${retryAtIso}`,
+      );
+      return {
+        success: false,
+        itemsAdded: totalItemsAdded + researchItemsAdded,
+        apiCallsUsed: callsUsed,
+        categoriesProcessed,
+        resumed,
+        paused: true,
+        error: `Sync backing off after ${circuit.attempts} consecutive failure(s); next attempt at ${retryAtIso}`,
+      };
+    }
+
     // Get user ID (cached, no API call if available)
     let userId: string | null = await getCachedUserId();
 
@@ -233,11 +259,12 @@ export async function runDailySync(options?: {
           errorMsg.includes("Too Many Requests");
 
         if (isRateLimit) {
-          // For rate limits: Don't pause (which requires manual recovery)
-          // Instead, exit cleanly and let hourly cron retry automatically
-          // This is better because rate limits are transient
+          // Rate limits are transient: record a failure (exponential backoff via
+          // the circuit breaker) and exit cleanly. The hourly cron retries once
+          // the backoff window elapses — no manual recovery needed.
+          await recordSyncFailure(SYNC_ID, "429 (user-info)");
           logger.warn(
-            `[DAILY-SYNC] Rate limit hit (429). Exiting cleanly for hourly retry. Attempt ${totalItemsAdded > 0 ? "had some progress" : "was fresh"}.`,
+            `[DAILY-SYNC] Rate limit hit (429). Exiting cleanly; circuit breaker governs retry. Attempt ${totalItemsAdded > 0 ? "had some progress" : "was fresh"}.`,
           );
           return {
             success: false,
@@ -245,19 +272,22 @@ export async function runDailySync(options?: {
             apiCallsUsed: callsUsed,
             categoriesProcessed,
             resumed,
-            paused: false, // Don't pause - let hourly cron retry
-            error: `Rate limit (429). Will retry in next hourly cycle (~1 hour).`,
+            paused: false, // Don't pause - circuit breaker governs retry timing
+            error: `Rate limit (429). Backing off before next attempt.`,
           };
         }
 
-        // For permanent errors (auth, config, etc), pause to prevent retry loop
-        logger.error(`[DAILY-SYNC] Permanent error, pausing sync: ${errorMsg}`);
+        // For permanent errors (auth, config, etc), record a failure so the
+        // circuit breaker backs off; recovery is automatic once the backoff
+        // window elapses (no manual clear required).
+        await recordSyncFailure(SYNC_ID, `user-info: ${errorMsg}`);
+        logger.error(`[DAILY-SYNC] Permanent error, backing off sync: ${errorMsg}`);
         await saveSyncState({
           continuationToken: continuation,
           itemsProcessed: totalItemsAdded,
           callsUsed,
           status: "paused",
-          error: `Failed to fetch user info: ${errorMsg}. Requires manual investigation.`,
+          error: `Failed to fetch user info: ${errorMsg}. Backing off; will retry automatically.`,
         });
         return {
           success: false,
@@ -481,23 +511,24 @@ export async function runDailySync(options?: {
           errorMsg.includes("Too Many Requests");
 
         if (isRateLimit) {
-          // For rate limits: Don't pause (which requires manual recovery)
-          // Instead, exit cleanly and let hourly cron retry automatically
+          // Rate limits are transient: record a failure (exponential backoff via
+          // the circuit breaker) and exit cleanly. The persisted continuation
+          // token lets the next run resume mid-stream rather than restart.
+          await recordSyncFailure(SYNC_ID, "429 (stream)");
           logger.warn(
-            `[DAILY-SYNC] Rate limit reached (429). Exiting cleanly. Will retry in next hourly cycle.`,
+            `[DAILY-SYNC] Rate limit reached (429). Exiting cleanly; circuit breaker governs retry.`,
           );
           logger.info(
             `[DAILY-SYNC] Made progress: ${totalItemsAdded} items added, ${callsUsed} API calls used`,
           );
 
-          // Save progress so far (don't pause, just mark as exit)
+          // Persist the continuation token so the next run resumes mid-stream.
           if (continuation) {
-            // If we have a continuation token, save it for later retry
             await saveSyncState({
               continuationToken: continuation,
               itemsProcessed: totalItemsAdded,
               callsUsed,
-              status: "in_progress", // Mark as paused progress, not as failed
+              status: "in_progress",
               error: "Rate limited - will resume from continuation token",
             });
           }
@@ -508,8 +539,8 @@ export async function runDailySync(options?: {
             apiCallsUsed: callsUsed,
             categoriesProcessed,
             resumed,
-            paused: false, // Don't pause - let hourly cron retry
-            error: `Rate limit (429) after ${totalItemsAdded} items. Will retry in next hourly cycle.`,
+            paused: false, // Don't pause - circuit breaker governs retry timing
+            error: `Rate limit (429) after ${totalItemsAdded} items. Backing off before next attempt.`,
           };
         }
 
@@ -542,6 +573,8 @@ export async function runDailySync(options?: {
       );
     }
 
+    // Sync completed: close the circuit breaker and clear continuation state.
+    await resetSyncBackoff(SYNC_ID);
     await clearSyncState();
 
     const avgItemsPerCall =
@@ -573,6 +606,9 @@ export async function runDailySync(options?: {
       ? "Rate limit reached (429). Will resume automatically."
       : errorMsg;
 
+    // Record the failure so the circuit breaker backs off; the persisted
+    // continuation token (saved below) lets the next run resume mid-stream.
+    await recordSyncFailure(SYNC_ID, isRateLimit ? "429 (unhandled)" : errorMsg);
     await saveSyncState({
       continuationToken: continuation,
       itemsProcessed: totalItemsAdded,
