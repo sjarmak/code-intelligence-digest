@@ -14,6 +14,7 @@ import {
   getProductById,
   getCompetitorProducts,
 } from "../../config/products";
+import { shouldFilterNonEnglish } from "../utils/language-detection";
 
 /**
  * Compute recency score with exponential decay
@@ -215,8 +216,6 @@ export async function rankCategory(
     }
 
     // Filter out non-English articles
-    // Use dynamic import at top level to avoid async in filter
-    const { shouldFilterNonEnglish } = require("@/src/lib/utils/language-detection");
     if (shouldFilterNonEnglish(item)) {
       logger.debug(`Filtering out non-English item: "${item.title}"`);
       return false;
@@ -623,7 +622,6 @@ export async function rankCategoryWithoutRecency(
       return false;
     }
 
-    const { shouldFilterNonEnglish } = require("@/src/lib/utils/language-detection");
     if (shouldFilterNonEnglish(item)) {
       logger.debug(`Filtering out non-English item: "${item.title}"`);
       return false;
