@@ -431,6 +431,7 @@ Replace heuristic scoring in `src/lib/pipeline/llmScore.ts`:
 1. Check `.env.local` has valid `INOREADER_CLIENT_ID`, `INOREADER_CLIENT_SECRET`, and `INOREADER_REFRESH_TOKEN`
 2. Verify feeds are configured in `src/config/feeds.ts`
 3. Check server logs: `npm run dev`
+4. If logs show `invalid_grant` / `Refresh failed — manual re-auth may be required`, follow [docs/ops/inoreader-reauth.md](docs/ops/inoreader-reauth.md)
 
 ### Type errors during build
 
