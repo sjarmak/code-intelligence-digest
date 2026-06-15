@@ -1,17 +1,14 @@
 /**
  * Consolidated domain term configuration
  *
- * This module provides a single source of truth for domain-specific terms
- * used in BM25 scoring and relevance calculations. Terms are categorized
- * and weighted to boost relevance when they appear in content.
+ * Single source of truth for the domain vocabulary used to build per-category
+ * BM25 query term lists. Terms are grouped into categories.
  *
- * Weight tiers:
- * - 1.6x: Code Search - primary focus area
- * - 1.5x: Information Retrieval & Context Management - core AI/ML concepts
- * - 1.4x: Agentic Workflows - emerging paradigm
- * - 1.3x: Enterprise Codebases - scale and complexity
- * - 1.2x: Developer Tools & LLM Architecture - supporting topics
- * - 1.0x: SDLC Processes - general development
+ * The BM25 scorer (src/lib/pipeline/bm25.ts) is a unigram lexical scorer that
+ * applies NO per-term weighting — every query term contributes via IDF/TF only.
+ * There are intentionally no per-term or per-category weights here: relevance
+ * weighting is handled downstream by the LLM scorer and the category-level
+ * llm/bm25 blend (see src/config/categories.ts).
  */
 
 /**
@@ -29,227 +26,212 @@ export type DomainCategory =
   | "sdlc";
 
 /**
- * A domain term with its weight and category
+ * A domain term and the category it belongs to
  */
 export interface DomainTerm {
   term: string;
-  weight: number;
   category: DomainCategory;
 }
 
 /**
- * Category metadata including description and default weight
+ * Category metadata
  */
 export interface DomainCategoryConfig {
   category: DomainCategory;
   description: string;
-  weight: number;
 }
 
 /**
- * Domain category configurations with descriptions and weights
+ * Domain category configurations with descriptions
  */
 export const DOMAIN_CATEGORIES: readonly DomainCategoryConfig[] = [
   {
     category: "code_search",
     description: "Code search and navigation capabilities",
-    weight: 1.6,
   },
   {
     category: "ir",
     description: "Information retrieval and vector search",
-    weight: 1.5,
   },
   {
     category: "context",
     description: "Context window and token management",
-    weight: 1.5,
   },
   {
     category: "agentic",
     description: "Agentic workflows and tool use",
-    weight: 1.4,
   },
   {
     category: "enterprise",
     description: "Enterprise codebase patterns",
-    weight: 1.3,
   },
   {
     category: "devtools",
     description: "Developer tools and productivity",
-    weight: 1.2,
   },
   {
     category: "llm_code",
     description: "LLM architecture for code",
-    weight: 1.2,
   },
   {
     category: "control_plane",
     description: "Control plane within software development: code review, documentation, onboarding, vulnerability tracing, batch changes, monitoring",
-    weight: 1.2,
   },
   {
     category: "sdlc",
     description: "Software development lifecycle",
-    weight: 1.0,
   },
 ] as const;
 
 /**
- * Consolidated domain terms from bm25.ts and categories.ts
- *
- * Terms are merged from both sources with weights resolved to a single value.
- * When conflicts exist, the higher weight is used (more specific term).
+ * Consolidated domain terms, grouped by category.
  */
 export const DOMAIN_TERMS: readonly DomainTerm[] = [
-  // Code Search (1.6x) - Primary focus area
-  { term: "code search", weight: 1.6, category: "code_search" },
-  { term: "symbol search", weight: 1.6, category: "code_search" },
-  { term: "codebase search", weight: 1.6, category: "code_search" },
-  { term: "code navigation", weight: 1.6, category: "code_search" },
-  { term: "cross-reference", weight: 1.6, category: "code_search" },
-  { term: "cross-references", weight: 1.6, category: "code_search" },
-  { term: "symbol indexing", weight: 1.6, category: "code_search" },
-  { term: "code indexing", weight: 1.6, category: "code_search" },
-  { term: "codebase indexing", weight: 1.6, category: "code_search" },
-  { term: "indexing", weight: 1.6, category: "code_search" },
-  { term: "function lookup", weight: 1.6, category: "code_search" },
-  { term: "variable tracking", weight: 1.6, category: "code_search" },
-  { term: "semantic code", weight: 1.6, category: "code_search" },
-  { term: "symbols", weight: 1.6, category: "code_search" },
-  { term: "code understanding", weight: 1.6, category: "code_search" },
-  { term: "codebase understanding", weight: 1.6, category: "code_search" },
-  { term: "code graph", weight: 1.6, category: "code_search" },
+  // Code Search - Primary focus area
+  { term: "code search", category: "code_search" },
+  { term: "symbol search", category: "code_search" },
+  { term: "codebase search", category: "code_search" },
+  { term: "code navigation", category: "code_search" },
+  { term: "cross-reference", category: "code_search" },
+  { term: "cross-references", category: "code_search" },
+  { term: "symbol indexing", category: "code_search" },
+  { term: "code indexing", category: "code_search" },
+  { term: "codebase indexing", category: "code_search" },
+  { term: "indexing", category: "code_search" },
+  { term: "function lookup", category: "code_search" },
+  { term: "variable tracking", category: "code_search" },
+  { term: "semantic code", category: "code_search" },
+  { term: "symbols", category: "code_search" },
+  { term: "code understanding", category: "code_search" },
+  { term: "codebase understanding", category: "code_search" },
+  { term: "code graph", category: "code_search" },
 
-  // Information Retrieval (1.5x) - Core AI/ML concepts
-  { term: "semantic search", weight: 1.5, category: "ir" },
-  { term: "rag", weight: 1.5, category: "ir" },
-  { term: "RAG", weight: 1.5, category: "ir" },
-  { term: "retrieval augmented", weight: 1.5, category: "ir" },
-  { term: "vector database", weight: 1.5, category: "ir" },
-  { term: "vector databases", weight: 1.5, category: "ir" },
-  { term: "vector search", weight: 1.5, category: "ir" },
-  { term: "embeddings", weight: 1.5, category: "ir" },
-  { term: "similarity search", weight: 1.5, category: "ir" },
-  { term: "dense retrieval", weight: 1.5, category: "ir" },
-  { term: "information retrieval", weight: 1.5, category: "ir" },
-  { term: "relevance ranking", weight: 1.5, category: "ir" },
-  { term: "corpus", weight: 1.5, category: "ir" },
+  // Information Retrieval - Core AI/ML concepts
+  { term: "semantic search", category: "ir" },
+  { term: "rag", category: "ir" },
+  { term: "RAG", category: "ir" },
+  { term: "retrieval augmented", category: "ir" },
+  { term: "vector database", category: "ir" },
+  { term: "vector databases", category: "ir" },
+  { term: "vector search", category: "ir" },
+  { term: "embeddings", category: "ir" },
+  { term: "similarity search", category: "ir" },
+  { term: "dense retrieval", category: "ir" },
+  { term: "information retrieval", category: "ir" },
+  { term: "relevance ranking", category: "ir" },
+  { term: "corpus", category: "ir" },
 
-  // Context Management (1.5x) - Context window handling
-  { term: "context window", weight: 1.5, category: "context" },
-  { term: "context management", weight: 1.5, category: "context" },
-  { term: "token budget", weight: 1.5, category: "context" },
-  { term: "context length", weight: 1.5, category: "context" },
-  { term: "compression", weight: 1.5, category: "context" },
-  { term: "summarization", weight: 1.5, category: "context" },
-  { term: "chunking", weight: 1.5, category: "context" },
-  { term: "prompt optimization", weight: 1.5, category: "context" },
-  { term: "long context", weight: 1.5, category: "context" },
-  { term: "token limit", weight: 1.5, category: "context" },
-  { term: "memory", weight: 1.5, category: "context" },
-  { term: "persistent context", weight: 1.5, category: "context" },
-  { term: "context retrieval", weight: 1.5, category: "context" },
-  { term: "context injection", weight: 1.5, category: "context" },
+  // Context Management - Context window handling
+  { term: "context window", category: "context" },
+  { term: "context management", category: "context" },
+  { term: "token budget", category: "context" },
+  { term: "context length", category: "context" },
+  { term: "compression", category: "context" },
+  { term: "summarization", category: "context" },
+  { term: "chunking", category: "context" },
+  { term: "prompt optimization", category: "context" },
+  { term: "long context", category: "context" },
+  { term: "token limit", category: "context" },
+  { term: "memory", category: "context" },
+  { term: "persistent context", category: "context" },
+  { term: "context retrieval", category: "context" },
+  { term: "context injection", category: "context" },
 
-  // Agentic Workflows (1.4x) - Emerging paradigm
-  { term: "agent", weight: 1.4, category: "agentic" },
-  { term: "agents", weight: 1.4, category: "agentic" },
-  { term: "agentic", weight: 1.4, category: "agentic" },
-  { term: "tool use", weight: 1.4, category: "agentic" },
-  { term: "planning", weight: 1.4, category: "agentic" },
-  { term: "orchestration", weight: 1.4, category: "agentic" },
-  { term: "workflow", weight: 1.4, category: "agentic" },
-  { term: "multi-step", weight: 1.4, category: "agentic" },
-  { term: "reasoning loop", weight: 1.4, category: "agentic" },
-  { term: "agent framework", weight: 1.4, category: "agentic" },
-  { term: "tool calling", weight: 1.4, category: "agentic" },
-  { term: "mcp", weight: 1.4, category: "agentic" },
-  { term: "model context protocol", weight: 1.4, category: "agentic" },
-  { term: "computer use", weight: 1.4, category: "agentic" },
-  { term: "browser automation", weight: 1.4, category: "agentic" },
-  { term: "coding agent", weight: 1.4, category: "agentic" },
-  { term: "ai coding", weight: 1.4, category: "agentic" },
-  { term: "vibe coding", weight: 1.4, category: "agentic" },
-  { term: "ai pair programming", weight: 1.4, category: "agentic" },
+  // Agentic Workflows - Emerging paradigm
+  { term: "agent", category: "agentic" },
+  { term: "agents", category: "agentic" },
+  { term: "agentic", category: "agentic" },
+  { term: "tool use", category: "agentic" },
+  { term: "planning", category: "agentic" },
+  { term: "orchestration", category: "agentic" },
+  { term: "workflow", category: "agentic" },
+  { term: "multi-step", category: "agentic" },
+  { term: "reasoning loop", category: "agentic" },
+  { term: "agent framework", category: "agentic" },
+  { term: "tool calling", category: "agentic" },
+  { term: "mcp", category: "agentic" },
+  { term: "model context protocol", category: "agentic" },
+  { term: "computer use", category: "agentic" },
+  { term: "browser automation", category: "agentic" },
+  { term: "coding agent", category: "agentic" },
+  { term: "ai coding", category: "agentic" },
+  { term: "vibe coding", category: "agentic" },
+  { term: "ai pair programming", category: "agentic" },
 
-  // Enterprise Codebases (1.3x) - Scale and complexity
-  { term: "monorepo", weight: 1.3, category: "enterprise" },
-  { term: "monolithic", weight: 1.3, category: "enterprise" },
-  { term: "dependency management", weight: 1.3, category: "enterprise" },
-  { term: "modularization", weight: 1.3, category: "enterprise" },
-  { term: "enterprise scale", weight: 1.3, category: "enterprise" },
-  { term: "scale", weight: 1.3, category: "enterprise" },
-  { term: "large codebase", weight: 1.3, category: "enterprise" },
-  { term: "legacy system", weight: 1.3, category: "enterprise" },
-  { term: "legacy systems", weight: 1.3, category: "enterprise" },
-  { term: "refactoring", weight: 1.3, category: "enterprise" },
-  { term: "migration", weight: 1.3, category: "enterprise" },
-  { term: "scalability", weight: 1.3, category: "enterprise" },
+  // Enterprise Codebases - Scale and complexity
+  { term: "monorepo", category: "enterprise" },
+  { term: "monolithic", category: "enterprise" },
+  { term: "dependency management", category: "enterprise" },
+  { term: "modularization", category: "enterprise" },
+  { term: "enterprise scale", category: "enterprise" },
+  { term: "scale", category: "enterprise" },
+  { term: "large codebase", category: "enterprise" },
+  { term: "legacy system", category: "enterprise" },
+  { term: "legacy systems", category: "enterprise" },
+  { term: "refactoring", category: "enterprise" },
+  { term: "migration", category: "enterprise" },
+  { term: "scalability", category: "enterprise" },
 
-  // Developer Tools (1.2x) - Supporting topics
-  { term: "ide", weight: 1.2, category: "devtools" },
-  { term: "IDE", weight: 1.2, category: "devtools" },
-  { term: "debugging", weight: 1.2, category: "devtools" },
-  { term: "profiling", weight: 1.2, category: "devtools" },
-  { term: "linter", weight: 1.2, category: "devtools" },
-  { term: "formatter", weight: 1.2, category: "devtools" },
-  { term: "test framework", weight: 1.2, category: "devtools" },
-  { term: "ci/cd", weight: 1.2, category: "devtools" },
-  { term: "CI/CD", weight: 1.2, category: "devtools" },
-  { term: "devops", weight: 1.2, category: "devtools" },
-  { term: "automation", weight: 1.2, category: "devtools" },
-  { term: "developer experience", weight: 1.2, category: "devtools" },
-  { term: "dev productivity", weight: 1.2, category: "devtools" },
+  // Developer Tools - Supporting topics
+  { term: "ide", category: "devtools" },
+  { term: "IDE", category: "devtools" },
+  { term: "debugging", category: "devtools" },
+  { term: "profiling", category: "devtools" },
+  { term: "linter", category: "devtools" },
+  { term: "formatter", category: "devtools" },
+  { term: "test framework", category: "devtools" },
+  { term: "ci/cd", category: "devtools" },
+  { term: "CI/CD", category: "devtools" },
+  { term: "devops", category: "devtools" },
+  { term: "automation", category: "devtools" },
+  { term: "developer experience", category: "devtools" },
+  { term: "dev productivity", category: "devtools" },
 
-  // LLM Code Architecture (1.2x) - Model internals
-  { term: "llm", weight: 1.2, category: "llm_code" },
-  { term: "transformer", weight: 1.2, category: "llm_code" },
-  { term: "transformers", weight: 1.2, category: "llm_code" },
-  { term: "fine-tuning", weight: 1.2, category: "llm_code" },
-  { term: "function calling", weight: 1.2, category: "llm_code" },
-  { term: "code generation", weight: 1.2, category: "llm_code" },
-  { term: "code completion", weight: 1.2, category: "llm_code" },
-  { term: "neural", weight: 1.2, category: "llm_code" },
-  { term: "reasoning pattern", weight: 1.2, category: "llm_code" },
-  { term: "reasoning", weight: 1.2, category: "llm_code" },
-  { term: "training data", weight: 1.2, category: "llm_code" },
-  { term: "model architecture", weight: 1.2, category: "llm_code" },
+  // LLM Code Architecture - Model internals
+  { term: "llm", category: "llm_code" },
+  { term: "transformer", category: "llm_code" },
+  { term: "transformers", category: "llm_code" },
+  { term: "fine-tuning", category: "llm_code" },
+  { term: "function calling", category: "llm_code" },
+  { term: "code generation", category: "llm_code" },
+  { term: "code completion", category: "llm_code" },
+  { term: "neural", category: "llm_code" },
+  { term: "reasoning pattern", category: "llm_code" },
+  { term: "reasoning", category: "llm_code" },
+  { term: "training data", category: "llm_code" },
+  { term: "model architecture", category: "llm_code" },
 
-  // Control Plane (1.2x) - Code review, documentation, onboarding, vulnerability, batch changes, monitoring
-  { term: "code review", weight: 1.2, category: "control_plane" },
-  { term: "pr review", weight: 1.2, category: "control_plane" },
-  { term: "pull request review", weight: 1.2, category: "control_plane" },
-  { term: "documentation", weight: 1.2, category: "control_plane" },
-  { term: "code documentation", weight: 1.2, category: "control_plane" },
-  { term: "runbook", weight: 1.2, category: "control_plane" },
-  { term: "onboarding", weight: 1.2, category: "control_plane" },
-  { term: "ramp-up", weight: 1.2, category: "control_plane" },
-  { term: "knowledge transfer", weight: 1.2, category: "control_plane" },
-  { term: "institutional knowledge", weight: 1.2, category: "control_plane" },
-  { term: "vulnerability", weight: 1.2, category: "control_plane" },
-  { term: "vulnerability tracing", weight: 1.2, category: "control_plane" },
-  { term: "vulnerability remediation", weight: 1.2, category: "control_plane" },
-  { term: "remediation", weight: 1.2, category: "control_plane" },
-  { term: "batch changes", weight: 1.2, category: "control_plane" },
-  { term: "bulk change", weight: 1.2, category: "control_plane" },
-  { term: "monitoring", weight: 1.2, category: "control_plane" },
-  { term: "observability", weight: 1.2, category: "control_plane" },
+  // Control Plane - Code review, documentation, onboarding, vulnerability, batch changes, monitoring
+  { term: "code review", category: "control_plane" },
+  { term: "pr review", category: "control_plane" },
+  { term: "pull request review", category: "control_plane" },
+  { term: "documentation", category: "control_plane" },
+  { term: "code documentation", category: "control_plane" },
+  { term: "runbook", category: "control_plane" },
+  { term: "onboarding", category: "control_plane" },
+  { term: "ramp-up", category: "control_plane" },
+  { term: "knowledge transfer", category: "control_plane" },
+  { term: "institutional knowledge", category: "control_plane" },
+  { term: "vulnerability", category: "control_plane" },
+  { term: "vulnerability tracing", category: "control_plane" },
+  { term: "vulnerability remediation", category: "control_plane" },
+  { term: "remediation", category: "control_plane" },
+  { term: "batch changes", category: "control_plane" },
+  { term: "bulk change", category: "control_plane" },
+  { term: "monitoring", category: "control_plane" },
+  { term: "observability", category: "control_plane" },
 
-  // SDLC Processes (1.0x) - General development
-  { term: "testing", weight: 1.0, category: "sdlc" },
-  { term: "testing", weight: 1.0, category: "sdlc" },
-  { term: "test suite", weight: 1.0, category: "sdlc" },
-  { term: "unit test", weight: 1.0, category: "sdlc" },
-  { term: "integration test", weight: 1.0, category: "sdlc" },
-  { term: "deployment", weight: 1.0, category: "sdlc" },
-  { term: "release", weight: 1.0, category: "sdlc" },
-  { term: "version control", weight: 1.0, category: "sdlc" },
-  { term: "git", weight: 1.0, category: "sdlc" },
-  { term: "pull request", weight: 1.0, category: "sdlc" },
-  { term: "change management", weight: 1.0, category: "sdlc" },
+  // SDLC Processes - General development
+  { term: "testing", category: "sdlc" },
+  { term: "test suite", category: "sdlc" },
+  { term: "unit test", category: "sdlc" },
+  { term: "integration test", category: "sdlc" },
+  { term: "deployment", category: "sdlc" },
+  { term: "release", category: "sdlc" },
+  { term: "version control", category: "sdlc" },
+  { term: "git", category: "sdlc" },
+  { term: "pull request", category: "sdlc" },
+  { term: "change management", category: "sdlc" },
 ] as const;
 
 /**
@@ -260,47 +242,20 @@ export function getTermsForCategory(category: DomainCategory): readonly DomainTe
 }
 
 /**
- * Get term weight by term string (case-insensitive lookup)
- * Returns 1.0 if term not found
+ * Group terms by category for BM25 query construction.
+ * Returns unique terms per category (plural/duplicate forms collapsed).
  */
-export function getTermWeight(term: string): number {
-  const lowerTerm = term.toLowerCase();
-  const found = DOMAIN_TERMS.find((t) => t.term.toLowerCase() === lowerTerm);
-  return found?.weight ?? 1.0;
-}
-
-/**
- * Build a term-to-weight lookup map for efficient scoring
- * Keys are lowercase for case-insensitive matching
- */
-export function buildTermWeightMap(): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const { term, weight } of DOMAIN_TERMS) {
-    const key = term.toLowerCase();
-    // Keep the higher weight if duplicate
-    const existing = map.get(key);
-    if (!existing || weight > existing) {
-      map.set(key, weight);
-    }
-  }
-  return map;
-}
-
-/**
- * Group terms by category for BM25 query construction
- * Returns the same structure as the original DOMAIN_TERMS in bm25.ts
- */
-export function getTermsByCategory(): Record<DomainCategory, { weight: number; terms: string[] }> {
-  const result: Record<DomainCategory, { weight: number; terms: string[] }> = {
-    code_search: { weight: 1.6, terms: [] },
-    ir: { weight: 1.5, terms: [] },
-    context: { weight: 1.5, terms: [] },
-    agentic: { weight: 1.4, terms: [] },
-    enterprise: { weight: 1.3, terms: [] },
-    devtools: { weight: 1.2, terms: [] },
-    llm_code: { weight: 1.2, terms: [] },
-    control_plane: { weight: 1.2, terms: [] },
-    sdlc: { weight: 1.0, terms: [] },
+export function getTermsByCategory(): Record<DomainCategory, { terms: string[] }> {
+  const result: Record<DomainCategory, { terms: string[] }> = {
+    code_search: { terms: [] },
+    ir: { terms: [] },
+    context: { terms: [] },
+    agentic: { terms: [] },
+    enterprise: { terms: [] },
+    devtools: { terms: [] },
+    llm_code: { terms: [] },
+    control_plane: { terms: [] },
+    sdlc: { terms: [] },
   };
 
   // Build unique terms per category (avoid duplicates from plural forms)

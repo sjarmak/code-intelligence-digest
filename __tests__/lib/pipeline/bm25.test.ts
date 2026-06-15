@@ -73,6 +73,23 @@ describe("BM25Index.score", () => {
     expect(rareScore).toBeGreaterThan(commonScore);
   });
 
+  it("applies no per-term domain weighting (equal IDF/TF/length terms score identically)", () => {
+    // "indexing" and "testing" were formerly weighted 1.6x and 1.0x in the
+    // domain-term config (bd-2gp). With those phantom weights removed, the
+    // scorer treats them equally: each appears in exactly one equal-length doc
+    // (equal IDF), once (equal TF). If per-term weighting is ever reintroduced,
+    // these scores diverge and this test fails.
+    const idx = indexOf([
+      { id: "a", title: "indexing foo bar" },
+      { id: "b", title: "testing foo bar" },
+    ]);
+
+    const indexingScore = idx.score(["indexing"]).get("a")!;
+    const testingScore = idx.score(["testing"]).get("b")!;
+
+    expect(indexingScore).toBeCloseTo(testingScore, 10);
+  });
+
   it("increases score with term frequency but sub-linearly (K1 saturation)", () => {
     // Equal-length docs isolate the TF effect from length normalization.
     const idx = indexOf([

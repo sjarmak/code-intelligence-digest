@@ -4,7 +4,6 @@
  */
 
 import { Category } from "../lib/model";
-import { buildTermWeightMap } from "./domain-terms";
 import type { AgentGoal } from "./agents";
 import { getAgentGoalConfig } from "./agents";
 import { getCompetitorKeywords } from "./competitors";
@@ -188,12 +187,3 @@ export function getCategoryQuery(category: Category, goal?: AgentGoal): string {
   const unique = Array.from(new Set(extraTerms));
   return [base, ...unique].join(" ");
 }
-
-/**
- * Domain term categories and weights for BM25 query construction
- * These are used to boost relevance when domain-specific terms appear
- *
- * Generated from the shared domain-terms.ts module
- */
-export const DOMAIN_TERM_WEIGHTS: Record<string, number> =
-  Object.fromEntries(buildTermWeightMap());

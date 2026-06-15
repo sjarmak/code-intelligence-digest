@@ -7,73 +7,68 @@ import { Category } from "../model";
 import { getTermsByCategory } from "../../config/domain-terms";
 
 /**
- * Domain term categories with weights
- * Uses shared domain terms configuration from domain-terms.ts
+ * Domain term groups per category, from the shared domain-terms.ts config.
  */
 const DOMAIN_TERMS = getTermsByCategory();
 
 /**
- * Category-specific BM25 queries built from domain terms
- * Each category gets a weighted combination of relevant domain terms
+ * Category-specific BM25 query vocabularies built from domain terms.
+ * Each category maps to the domain-term groups relevant to it. The scorer is a
+ * unigram lexical scorer with no per-term weighting, so these are flat term
+ * lists — relevance weighting is applied downstream (LLM + llm/bm25 blend).
  */
-const CATEGORY_QUERIES: Record<
-  Category,
-  { terms: string[]; weight: number }[]
-> = {
+const CATEGORY_QUERIES: Record<Category, string[][]> = {
   newsletters: [
-    { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
-    { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
-    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
+    DOMAIN_TERMS.code_search.terms,
+    DOMAIN_TERMS.ir.terms,
+    DOMAIN_TERMS.control_plane.terms,
+    DOMAIN_TERMS.devtools.terms,
   ],
   podcasts: [
-    { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
-    { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
-    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
+    DOMAIN_TERMS.agentic.terms,
+    DOMAIN_TERMS.code_search.terms,
+    DOMAIN_TERMS.control_plane.terms,
+    DOMAIN_TERMS.devtools.terms,
   ],
   tech_articles: [
-    { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
-    { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
-    { terms: DOMAIN_TERMS.context.terms, weight: 1.5 },
-    { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
-    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
+    DOMAIN_TERMS.code_search.terms,
+    DOMAIN_TERMS.ir.terms,
+    DOMAIN_TERMS.context.terms,
+    DOMAIN_TERMS.agentic.terms,
+    DOMAIN_TERMS.control_plane.terms,
   ],
   ai_news: [
-    { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
-    { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
+    DOMAIN_TERMS.llm_code.terms,
+    DOMAIN_TERMS.agentic.terms,
+    DOMAIN_TERMS.ir.terms,
   ],
   ai_dev: [
-    { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
-    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.3 },
-    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.context.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.ir.terms, weight: 1.2 },
+    DOMAIN_TERMS.agentic.terms,
+    DOMAIN_TERMS.devtools.terms,
+    DOMAIN_TERMS.control_plane.terms,
+    DOMAIN_TERMS.llm_code.terms,
+    DOMAIN_TERMS.context.terms,
+    DOMAIN_TERMS.ir.terms,
   ],
   product_news: [
-    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
-    { terms: DOMAIN_TERMS.enterprise.terms, weight: 1.3 },
-    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
+    DOMAIN_TERMS.devtools.terms,
+    DOMAIN_TERMS.code_search.terms,
+    DOMAIN_TERMS.enterprise.terms,
+    DOMAIN_TERMS.control_plane.terms,
   ],
   community: [
-    { terms: DOMAIN_TERMS.code_search.terms, weight: 1.6 },
-    { terms: DOMAIN_TERMS.agentic.terms, weight: 1.4 },
-    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
+    DOMAIN_TERMS.code_search.terms,
+    DOMAIN_TERMS.agentic.terms,
+    DOMAIN_TERMS.control_plane.terms,
+    DOMAIN_TERMS.devtools.terms,
   ],
   research: [
-    { terms: DOMAIN_TERMS.ir.terms, weight: 1.5 },
-    { terms: DOMAIN_TERMS.context.terms, weight: 1.5 },
-    { terms: DOMAIN_TERMS.control_plane.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.llm_code.terms, weight: 1.2 },
+    DOMAIN_TERMS.ir.terms,
+    DOMAIN_TERMS.context.terms,
+    DOMAIN_TERMS.control_plane.terms,
+    DOMAIN_TERMS.llm_code.terms,
   ],
-  marketing: [
-    { terms: DOMAIN_TERMS.devtools.terms, weight: 1.2 },
-    { terms: DOMAIN_TERMS.enterprise.terms, weight: 1.3 },
-  ],
+  marketing: [DOMAIN_TERMS.devtools.terms, DOMAIN_TERMS.enterprise.terms],
 };
 
 /**
@@ -232,6 +227,6 @@ export class BM25Index {
  * Get domain term query for a category
  */
 export function getQueryForCategory(category: Category): string[] {
-  const queries = CATEGORY_QUERIES[category] || [];
-  return queries.flatMap((q) => q.terms);
+  const groups = CATEGORY_QUERIES[category] || [];
+  return groups.flat();
 }
