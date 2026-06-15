@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { formatMarketBriefMarkdown, formatContentIdeasMarkdown } from "../../../src/lib/agents/format-structured-reports";
+import { AGENT_PAYLOAD_SCHEMA_VERSION } from "../../../src/lib/agents/payload-schema";
 
 describe("format-structured-reports", () => {
   describe("period label", () => {
     it("includes Period: last N days in market brief when periodDays is set", () => {
       const md = formatMarketBriefMarkdown("Market Brief", {
+        schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
         brief_date: "2026-03-01",
         playbook_version: "2026-02-15",
         periodDays: 14,
@@ -18,6 +20,7 @@ describe("format-structured-reports", () => {
 
     it("omits period line in market brief when periodDays is undefined", () => {
       const md = formatMarketBriefMarkdown("Market Brief", {
+        schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
         brief_date: "2026-03-01",
         playbook_version: "2026-02-15",
         executive_delta: [],
@@ -30,6 +33,7 @@ describe("format-structured-reports", () => {
 
     it("includes Period: last N days in content ideas when periodDays is set", () => {
       const md = formatContentIdeasMarkdown("Content Ideas", {
+        schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
         generated_at: "2026-03-01",
         playbook_version: "2026-02-15",
         periodDays: 30,
@@ -40,6 +44,7 @@ describe("format-structured-reports", () => {
 
     it("omits period line in content ideas when periodDays is undefined", () => {
       const md = formatContentIdeasMarkdown("Content Ideas", {
+        schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
         generated_at: "2026-03-01",
         playbook_version: "2026-02-15",
         ideas: [],

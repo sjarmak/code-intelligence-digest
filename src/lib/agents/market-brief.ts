@@ -20,6 +20,7 @@ import {
   type AgentRankingTrace,
   type CuratorTraceStep,
 } from "../retrieval/curator-trace";
+import { AGENT_PAYLOAD_SCHEMA_VERSION } from "./payload-schema";
 
 export interface MarketBriefEvidence {
   source: string;
@@ -49,6 +50,8 @@ export interface MarketBriefDelta {
 }
 
 export interface MarketBriefOutput {
+  /** Persisted-payload schema version (bd-225). See `payload-schema.ts`. */
+  schemaVersion: typeof AGENT_PAYLOAD_SCHEMA_VERSION;
   brief_date: string;
   playbook_version: string;
   /** When set, rendered as "Period: last N days" in the report body. */
@@ -743,6 +746,7 @@ async function generateMarketBriefImpl(options: {
   }
 
   return postProcessMarketBriefOutput({
+    schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
     brief_date: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
     periodDays,

@@ -13,6 +13,7 @@ import {
   type CuratorTraceStep,
 } from "../retrieval/curator-trace";
 import { loadPlaybookState, type PlaybookState } from "./playbook-state";
+import { AGENT_PAYLOAD_SCHEMA_VERSION } from "./payload-schema";
 import { classifySourceTypeByDomain, getDomainFromUrl as getDomainFromUrlCompetitor } from "../../config/competitor-intel";
 import {
   classifySourcegraphIntegrationOpportunity,
@@ -87,6 +88,8 @@ export interface ContentIdea {
 }
 
 export interface ContentIdeasOutput {
+  /** Persisted-payload schema version (bd-225). See `payload-schema.ts`. */
+  schemaVersion: typeof AGENT_PAYLOAD_SCHEMA_VERSION;
   generated_at: string;
   playbook_version: string;
   /** When set, rendered as "Period: last N days" in the report body. */
@@ -4946,6 +4949,7 @@ async function generateContentIdeasImpl(options: {
       : undefined;
 
   return postProcessContentIdeasOutput({
+    schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
     generated_at: new Date().toISOString().slice(0, 10),
     playbook_version: state.playbook_version,
     periodDays,

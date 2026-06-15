@@ -18,6 +18,7 @@ import {
   CURATOR_TRACE_SCHEMA_VERSION,
   type CuratorTraceStep,
 } from "../retrieval/curator-trace";
+import { AGENT_PAYLOAD_SCHEMA_VERSION } from "./payload-schema";
 
 export interface RankedCompetitorIntelItem {
   competitor: string;
@@ -96,6 +97,8 @@ export interface CompetitorIntelPipelineTrace {
 }
 
 export interface CompetitorIntelOutput {
+  /** Persisted-payload schema version (bd-225). See `payload-schema.ts`. */
+  schemaVersion: typeof AGENT_PAYLOAD_SCHEMA_VERSION;
   generatedAt: string;
   periodDays: number;
   topPerCompetitor: number;
@@ -2026,6 +2029,7 @@ async function gatherCompetitorIntelDetailedImpl(
   ];
 
   return {
+    schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     periodDays,
     topPerCompetitor,

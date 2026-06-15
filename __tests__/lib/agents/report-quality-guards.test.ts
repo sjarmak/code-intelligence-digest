@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { postProcessMarketBriefOutput, type MarketBriefOutput } from "../../../src/lib/agents/market-brief";
 import { postProcessContentIdeasOutput, type ContentIdeasOutput } from "../../../src/lib/agents/content-ideas";
+import { AGENT_PAYLOAD_SCHEMA_VERSION } from "../../../src/lib/agents/payload-schema";
 
 describe("market brief quality guards", () => {
   it("removes low-quality deltas and preserves unknown alignment", () => {
     const payload: MarketBriefOutput = {
+      schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
       brief_date: "2026-02-28",
       playbook_version: "2026.02.15.1",
       executive_delta: [
@@ -71,6 +73,7 @@ describe("market brief quality guards", () => {
 describe("content ideas quality guards", () => {
   it("drops tracking/generic source links and keeps canonical source URLs", () => {
     const payload: ContentIdeasOutput = {
+      schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
       generated_at: "2026-02-28",
       playbook_version: "2026.02.15.1",
       ideas: [
@@ -151,6 +154,7 @@ describe("content ideas quality guards", () => {
 
   it("prefers distinct short-window topics over duplicate format variants", () => {
     const payload: ContentIdeasOutput = {
+      schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
       generated_at: "2026-02-28",
       playbook_version: "2026.02.15.1",
       periodDays: 14,
@@ -266,6 +270,7 @@ describe("content ideas quality guards", () => {
 
   it("demotes single-source heavyweight competitor hooks in favor of corroborated Sourcegraph-ownable ideas", () => {
     const payload: ContentIdeasOutput = {
+      schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
       generated_at: "2026-04-06",
       playbook_version: "2026.02.15.1",
       periodDays: 14,
@@ -365,6 +370,7 @@ describe("content ideas quality guards", () => {
 
   it("uses portfolio-aware ordering so the top short-window slate is not one narrative cluster", () => {
     const payload: ContentIdeasOutput = {
+      schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
       generated_at: "2026-04-06",
       playbook_version: "2026.02.15.1",
       periodDays: 14,
@@ -501,6 +507,7 @@ describe("content ideas quality guards", () => {
 
   it("penalizes low-authority lead sources even when the idea is otherwise corroborated", () => {
     const payload: ContentIdeasOutput = {
+      schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
       generated_at: "2026-04-07",
       playbook_version: "2026.02.15.1",
       periodDays: 14,
@@ -596,6 +603,7 @@ describe("content ideas quality guards", () => {
 
   it("keeps single-source short-window ideas out of the top three when corroborated alternatives exist", () => {
     const payload: ContentIdeasOutput = {
+      schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
       generated_at: "2026-04-07",
       playbook_version: "2026.02.15.1",
       periodDays: 14,

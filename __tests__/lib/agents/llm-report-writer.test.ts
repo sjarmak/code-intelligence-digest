@@ -17,11 +17,13 @@ import {
 import type { MarketBriefOutput } from "../../../src/lib/agents/market-brief";
 import type { ContentIdeasOutput } from "../../../src/lib/agents/content-ideas";
 import type { RankedCompetitorIntelItem } from "../../../src/lib/agents/competitor-intel";
+import { AGENT_PAYLOAD_SCHEMA_VERSION } from "../../../src/lib/agents/payload-schema";
 
 const mockCreate = vi.mocked(createChatCompletion);
 const mockHasLLM = vi.mocked(hasLLMConfigured);
 
 const minimalMarketBriefPayload: MarketBriefOutput = {
+  schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
   brief_date: "2026-03-02",
   playbook_version: "2026-02-15",
   periodDays: 7,
@@ -48,6 +50,7 @@ const minimalMarketBriefPayload: MarketBriefOutput = {
 };
 
 const minimalContentIdeasPayload: ContentIdeasOutput = {
+  schemaVersion: AGENT_PAYLOAD_SCHEMA_VERSION,
   generated_at: "2026-03-02",
   playbook_version: "2026-02-15",
   periodDays: 7,
