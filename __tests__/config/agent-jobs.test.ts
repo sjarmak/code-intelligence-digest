@@ -13,6 +13,7 @@ import {
   type JobId,
   type AgentJobConfig,
 } from "../../src/config/agent-jobs";
+import { resolveAgentPrompt, type AgentPromptId } from "../../src/lib/agents/prompt-store";
 
 describe("agent-jobs", () => {
   it("returns job config for known agent and job", () => {
@@ -72,5 +73,20 @@ describe("agent-jobs", () => {
     const job = getJobConfig("gtm_content" as AgentId, "daily_content_ideas" as JobId);
     expect(job).not.toBeNull();
     expect(job?.periodDays).toBe(30);
+  });
+
+  // bd-53z: each job's system prompt is now resolved from the versioned store
+  // (prompt-store.ts), not an inline string. Guards against a revert to inline.
+  it("buildPrompt resolves each job's system prompt from the versioned store", () => {
+    const jobPromptIds: Record<JobId, AgentPromptId> = {
+      daily_competitor_report: "daily_competitor_report_system",
+      weekly_competitor_summary: "weekly_competitor_summary_system",
+      daily_icp_brief: "daily_icp_brief_system",
+      daily_content_ideas: "daily_content_ideas_system",
+    };
+    for (const job of AGENT_JOBS) {
+      const { system } = job.buildPrompt("ctx", "2025-02-23");
+      expect(system).toBe(resolveAgentPrompt(jobPromptIds[job.jobId]).system);
+    }
   });
 });

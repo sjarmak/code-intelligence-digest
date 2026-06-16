@@ -9,6 +9,7 @@ import { createChatCompletion } from "../llm/completion";
 import { hasLLMConfigured } from "../llm/config";
 import { logger } from "../logger";
 import { isAgentLlmTimeoutError, withAgentLlmTimeout } from "./llm-timeout";
+import { resolveAgentPrompt } from "./prompt-store";
 import type { MarketBriefOutput } from "./market-brief";
 import type { ContentIdeasOutput } from "./content-ideas";
 import type { RankedCompetitorIntelItem } from "./competitor-intel";
@@ -61,20 +62,6 @@ function buildMarketBriefContext(payload: MarketBriefOutput): string {
   );
 }
 
-const MARKET_BRIEF_SYSTEM = `You are a GTM and technical landscape analyst for a developer tools company (code search, code intelligence, AI-assisted development). Your job is to write a Market Brief report in markdown.
-
-Rules:
-- The JSON includes two buckets: items with bucket="executive" (pre-selected Executive Delta candidates) and bucket="watch" (pre-selected Watch Items).
-- Treat bucket="executive" items as the Executive Delta set and render ALL of them in the ## Executive Delta section (you may reorder and rewrite, but do not move them to Watch Items).
-- Treat bucket="watch" items as the Watch list and render ALL of them in the ## Watch Items section (you may shorten or drop only clearly off-topic items).
-- Include ONLY items that are clearly relevant to developer tools, code intelligence, AI coding assistants, enterprise SDLC, or our ICP. DROP off-topic items (e.g. Outlook/calendar features, Discord moderation drama, consumer mobile OS, one-off library releases with no GTM angle, spammy comments, generic infra news with no code/AI relevance).
-- Start with a short technical landscape summary section: ## Landscape Themes, listing 2–4 bullets that synthesize the *overall* technical and adoption landscape for AI/dev tools from ALL items (executive + watch), even if some are not immediate GTM moves.
-- Do NOT mention "Cody" anywhere in the report. When relevant, reference Sourcegraph product surfaces explicitly: Code Search, Deep Search, Batch Changes, MCP context, Code Insights, and Code Monitoring.
-- After that, output these exact section headers: ## Executive Delta, ## Watch Items, and if needed ## Invalidations To Monitor.
-- For each Executive Delta item use: ### N. Title, then bullet lines for Segment impact, Persona impact, Why it matters, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Recommended owner/action, Sources (links).
-- For Watch Items use: ### N. Title, summary, Sources.
-- Do not invent sources or URLs; use only those provided in the context. Preserve links from the context when possible.`;
-
 function buildContentIdeasContext(payload: ContentIdeasOutput): string {
   const period = payload.periodDays != null ? `Period: last ${payload.periodDays} days` : "";
   const ideas = payload.ideas.slice(0, MAX_CONTENT_IDEAS).map((d, i) => ({
@@ -108,21 +95,6 @@ function buildContentIdeasContext(payload: ContentIdeasOutput): string {
     0
   );
 }
-
-const CONTENT_IDEAS_SYSTEM = `You are a content strategist for a developer tools company (code search, code intelligence, AI-assisted development). Your job is to write a Content Ideas report in markdown.
-
-Rules:
-- Source-first: ideas must be driven by the provided sources and evidence, not by forcing a pre-set narrative.
-- Include ONLY ideas that are clearly relevant to developer tools, code intelligence, AI coding assistants, or enterprise engineering audiences. DROP off-topic or generic ideas (e.g. calendar/meeting features, consumer apps, unrelated library releases, spam or low-signal comments).
-- Render one output idea per input idea. Do NOT split/remix one candidate into multiple ideas and do NOT invent extra ideas.
-- Preserve source fidelity: include only URLs from the input JSON and keep source/date details aligned to those URLs.
-- Keep variety across domains when the input already contains domain-diverse ideas.
-- Preserve concrete distinctions between ideas. Do not flatten multiple ideas into the same "context layer/governance" language if their evidence points to different failure modes.
-- Avoid repetitive sales phrasing. The report should read like a strategist explaining concrete market hooks, not a recycled positioning doc.
-- Output valid markdown with this exact section header: ## Prioritized Ideas.
-- For each idea use: ### N. Title, then bullet lines for Segment/persona, Stage, Thesis, Why now, Core claim, Evidence quality (if present), Sourcegraph opportunity, Sourcegraph integration play (bullets), Primary format, Recommended venue, Channel strategy, Setup plan (bullets), Key insights (bullets), Content outline (bullets), Sources (links).
-- Do NOT include a "Dropped ideas" section or prose about excluded ideas in the final report; keep exclusions in internal/debug metadata only.
-- Do not invent sources or URLs; use only those provided. Preserve links from the context when possible.`;
 
 function stripDroppedIdeasSection(markdown: string): string {
   if (!markdown) return markdown;
@@ -168,14 +140,6 @@ function buildCompetitorIntelContext(items: RankedCompetitorIntelItem[], periodD
   return JSON.stringify({ periodDays, items: list }, null, 0);
 }
 
-const COMPETITOR_INTEL_SYSTEM = `You are a competitive intelligence analyst for a developer tools company (Sourcegraph: code search, code intelligence, AI-assisted development). Your job is to write a Competitor Intel report in markdown.
-
-Rules:
-- Group items by competitor (use ## CompetitorName section headers). For each item use: ### Title, then bullets for Date/source, Link, Confidence, Update type, Overlap with Sourcegraph, Summary, Why it matters, Sourcegraph opportunity, Sourcegraph integration play, Actionability, and optionally Evidence notes in a collapsible detail.
-- Include only items that are clearly about competitors or the ecosystem relevant to code search / code intelligence / AI coding. Drop off-topic or spam.
-- Do not overstate minor releases. Treat patch-version release notes, changelog entries, and routine repo releases as product updates unless the input explicitly says a new product, preview, beta, or GA launched.
-- Do not invent URLs; use only those provided. Preserve links from the context.`;
-
 /**
  * Call the quality model to synthesize the Market Brief markdown. Returns null if LLM is not configured or the call fails.
  */
@@ -203,12 +167,14 @@ ${payload.periodDays != null ? `Period: last ${payload.periodDays} days` : ""}
 
 Then write ## Executive Delta, ## Watch Items, and if applicable ## Invalidations To Monitor. Use only the information from the JSON above; do not invent items or links.`;
 
+  const { system } = resolveAgentPrompt("market_brief_system");
+
   try {
     const res = await withAgentLlmTimeout(
       "market brief report writer",
       createChatCompletion({
         messages: [
-          { role: "system", content: MARKET_BRIEF_SYSTEM },
+          { role: "system", content: system },
           { role: "user", content: user },
         ],
         max_tokens: 4000,
@@ -275,12 +241,14 @@ ${payload.periodDays != null ? `Period: last ${payload.periodDays} days` : ""}
 
 Then write ## Prioritized Ideas. Use only the information from the JSON above; do not invent items or links.`;
 
+  const { system } = resolveAgentPrompt("content_ideas_system");
+
   try {
     const res = await withAgentLlmTimeout(
       "content ideas report writer",
       createChatCompletion({
         messages: [
-          { role: "system", content: CONTENT_IDEAS_SYSTEM },
+          { role: "system", content: system },
           { role: "user", content: user },
         ],
         model: getContentIdeasLlmModel(),
@@ -356,12 +324,14 @@ Window: last ${periodDays} days
 
 Then write one ## CompetitorName section per competitor, with ### Title and bullets for each item. Use only the information from the JSON above; do not invent items or links.`;
 
+  const { system } = resolveAgentPrompt("competitor_intel_system");
+
   try {
     const res = await withAgentLlmTimeout(
       "competitor intel report writer",
       createChatCompletion({
         messages: [
-          { role: "system", content: COMPETITOR_INTEL_SYSTEM },
+          { role: "system", content: system },
           { role: "user", content: user },
         ],
         max_tokens: 4500,

@@ -4,6 +4,7 @@
  */
 
 import type { Category } from "../lib/model";
+import { resolveAgentPrompt } from "../lib/agents/prompt-store";
 
 export type AgentId = "competitive_intel" | "icp_market" | "gtm_content";
 export type JobId =
@@ -54,7 +55,7 @@ const COMPETITIVE_INTEL_REPORT_PROMPT = (
   context: string,
   date: string
 ): { system: string; user: string } => ({
-  system: `You are a competitive intelligence retrieval and triage analyst focused on Sourcegraph and its competitors. Prioritize evidence-first updates that materially change competitive positioning.`,
+  system: resolveAgentPrompt("daily_competitor_report_system").system,
   user: `Based on the following recent items (from ${date}), write a concise competitor intel report in markdown.
 
 Priorities:
@@ -81,7 +82,7 @@ const COMPETITIVE_INTEL_WEEKLY_PROMPT = (
   context: string,
   date: string
 ): { system: string; user: string } => ({
-  system: `You are a competitive intelligence analyst for leadership. Produce a strict weekly summary of Sourcegraph-relevant competitor developments.`,
+  system: resolveAgentPrompt("weekly_competitor_summary_system").system,
   user: `Based on the following items from the past week (through ${date}), write a short weekly competitive summary in markdown:
 - key themes (2-4)
 - top 3-5 developments with explicit Sourcegraph overlap
@@ -93,7 +94,7 @@ ${context}`,
 });
 
 const ICP_BRIEF_PROMPT = (context: string, date: string): { system: string; user: string } => ({
-  system: `You are an ICP and market analyst for a developer tools company. Your audience is marketing and revenue. Focus on demand signals, pain points, and messaging angles.`,
+  system: resolveAgentPrompt("daily_icp_brief_system").system,
   user: `Using the following recent content (from ${date}), write a daily ICP/market brief in markdown.
 
 Include:
@@ -108,7 +109,7 @@ ${context}`,
 });
 
 const CONTENT_IDEAS_PROMPT = (context: string, date: string): { system: string; user: string } => ({
-  system: `You are a content strategist for a developer tools company. Generate concrete content ideas grounded in current trends and discussions.`,
+  system: resolveAgentPrompt("daily_content_ideas_system").system,
   user: `Based on the following recent items (from ${date}), produce a list of content ideas in markdown.
 
 Format:
