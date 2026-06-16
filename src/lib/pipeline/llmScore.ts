@@ -8,6 +8,7 @@ import { logger } from "../logger";
 import { getCompetitorProducts } from "../../config/products";
 import { createChatCompletion } from "../llm/completion";
 import { getQualityModel, hasLLMConfigured } from "../llm/config";
+import { recordDegradation } from "../observability/degradation";
 import type { AgentGoal } from "../../config/agents";
 import { getAgentGoalConfig } from "../../config/agents";
 
@@ -308,6 +309,10 @@ function parseGPTResponse(
         `LLM returned ${actualCount} results for ${expectedCount} items. Using available results and assigning neutral scores to missing items.`,
       );
     }
+    // Items beyond what the LLM returned fall back to neutral (5,5) scores below.
+    if (actualCount < expectedCount) {
+      recordDegradation("neutral_score", expectedCount - actualCount);
+    }
 
     // Map results back to item IDs
     for (let i = 0; i < items.length; i++) {
@@ -350,6 +355,7 @@ function parseGPTResponse(
       response: response.substring(0, 500),
     });
     // Fallback: return neutral scores for all items
+    recordDegradation("neutral_score", items.length);
     return items.reduce(
       (acc, item) => {
         acc[item.id] = {
@@ -392,6 +398,7 @@ async function scoreItemsBatch(
     );
 
     if (!hasLLMConfigured()) {
+      recordDegradation("neutral_score", items.length);
       return items.reduce(
         (acc, item) => {
           acc[item.id] = { id: item.id, relevance: 5, usefulness: 5, tags: [] };
@@ -422,6 +429,7 @@ async function scoreItemsBatch(
     logger.error("LLM scoring API error", { error, itemCount: items.length });
 
     // Fallback: return neutral scores
+    recordDegradation("neutral_score", items.length);
     return items.reduce(
       (acc, item) => {
         acc[item.id] = {

@@ -23,6 +23,10 @@ import { categorizeItems } from "../pipeline/categorize";
 import { decomposeFeedItems } from "../pipeline/decompose";
 import { saveItems, getNewestItemTimestamp } from "../db/items";
 import { computeAndSaveScoresForItems } from "../pipeline/compute-scores";
+import {
+  mergeDegradationSummaries,
+  type DegradationSummary,
+} from "../observability/degradation";
 import { logger } from "../logger";
 import { Category, FeedItem } from "../model";
 import { getDbClient } from "../db/driver";
@@ -382,6 +386,10 @@ export async function runDailySync(options?: {
     let hasMoreItems = true;
     const allItemsToScore: FeedItem[] = [];
     let totalScoresComputed = 0;
+    // Per-scoring-call degradation summaries (bd-sgo), rolled up into the
+    // completion summary so a degraded daily sync is visible at a glance rather
+    // than only as scattered per-batch warns.
+    const scoringDegradations: DegradationSummary[] = [];
 
     while (hasMoreItems) {
       batchNumber++;
@@ -480,6 +488,7 @@ export async function runDailySync(options?: {
               const batchScoreResult =
                 await computeAndSaveScoresForItems(categoryItems);
               totalScoresComputed += batchScoreResult.totalScored;
+              scoringDegradations.push(batchScoreResult.degradation);
             } catch (scoreError) {
               logger.error(
                 `[DAILY-SYNC] Batch ${batchNumber}: Failed to score items (will retry at end)`,
@@ -558,6 +567,7 @@ export async function runDailySync(options?: {
       try {
         const scoreResult = await computeAndSaveScoresForItems(allItemsToScore);
         scoresComputed += scoreResult.totalScored;
+        scoringDegradations.push(scoreResult.degradation);
         logger.info(
           `[DAILY-SYNC] Computed and saved scores for ${scoreResult.totalScored} remaining items across ${scoreResult.categoriesScored.length} categories`,
         );
@@ -585,6 +595,19 @@ export async function runDailySync(options?: {
     logger.info(
       `[DAILY-SYNC] Complete: ${totalItemsIncludingResearch} items (${totalItemsAdded} from Inoreader, ${researchItemsAdded} from ADS), ${totalScoresIncludingResearch} scored, ${categoriesProcessed.length} categories, ${callsUsed} API calls (${avgItemsPerCall} items/call)`,
     );
+
+    // Sync-level rollup of silent scoring fallbacks (bd-sgo). Each scoring call
+    // already warns per batch; this surfaces the aggregate so an operator sees
+    // how many items got non-semantic (pseudo-embedding / neutral) scores.
+    const scoringDegradation = mergeDegradationSummaries(scoringDegradations);
+    if (scoringDegradation.degraded) {
+      logger.warn(
+        `[DAILY-SYNC] Scoring degraded: ${scoringDegradation.total} fallback(s) — ` +
+          `${scoringDegradation.pseudoEmbedding} pseudo-embedding, ` +
+          `${scoringDegradation.neutralScore} neutral-score`,
+        { degradation: scoringDegradation },
+      );
+    }
 
     return {
       success: true,

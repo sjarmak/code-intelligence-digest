@@ -10,6 +10,11 @@ import { scoreWithLLM } from "./llmScore";
 import { saveItemScores } from "../db/scores";
 import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
+import {
+  withDegradationTracking,
+  getDegradationSummary,
+  type DegradationSummary,
+} from "../observability/degradation";
 import { computeProductBoost, findProductMentions } from "../../config/products";
 import { computeWatchlistBoost } from "../../config/watchlist";
 import { detectCompetitorSignals } from "../../config/competitor-intel";
@@ -198,40 +203,67 @@ export async function computeAndSaveScoresForCategory(
   return totalScored;
 }
 
+export interface ComputeScoresResult {
+  totalScored: number;
+  categoriesScored: Category[];
+  /**
+   * Degradation seen while scoring this batch (bd-sgo): pseudo-embeddings and
+   * neutral (5,5) LLM scores caused by a missing key, a batch-size mismatch, or
+   * a scoring failure. Always present so the caller can persist or inspect it;
+   * branch on `.degraded`. This is the "pipeline output" half of surfacing
+   * silent fallbacks — agent runs surface the same summary in agent_runs
+   * metadata via persistAgentRun.
+   */
+  degradation: DegradationSummary;
+}
+
 /**
- * Compute and save scores for all items, grouped by category
+ * Compute and save scores for all items, grouped by category.
+ *
+ * The whole batch runs inside a degradation-tracking context so the neutral-score
+ * and pseudo-embedding fallbacks reached during scoring are accumulated and
+ * returned in `degradation` — queryable by the caller, not just logged.
  */
 export async function computeAndSaveScoresForItems(
   items: FeedItem[]
-): Promise<{ totalScored: number; categoriesScored: Category[] }> {
-  if (items.length === 0) {
-    return { totalScored: 0, categoriesScored: [] };
-  }
+): Promise<ComputeScoresResult> {
+  return withDegradationTracking(async () => {
+    let totalScored = 0;
+    const categoriesScored: Category[] = [];
 
-  logger.info(`[SCORE-COMPUTE] Computing scores for ${items.length} items across all categories`);
+    if (items.length > 0) {
+      logger.info(`[SCORE-COMPUTE] Computing scores for ${items.length} items across all categories`);
 
-  // Group items by category
-  const itemsByCategory = new Map<Category, FeedItem[]>();
-  for (const item of items) {
-    if (!itemsByCategory.has(item.category)) {
-      itemsByCategory.set(item.category, []);
+      // Group items by category
+      const itemsByCategory = new Map<Category, FeedItem[]>();
+      for (const item of items) {
+        if (!itemsByCategory.has(item.category)) {
+          itemsByCategory.set(item.category, []);
+        }
+        itemsByCategory.get(item.category)!.push(item);
+      }
+
+      // Compute scores for each category
+      for (const [category, categoryItems] of itemsByCategory.entries()) {
+        const scored = await computeAndSaveScoresForCategory(categoryItems, category);
+        totalScored += scored;
+        if (scored > 0) {
+          categoriesScored.push(category);
+        }
+      }
+
+      logger.info(`[SCORE-COMPUTE] Complete: ${totalScored} items scored across ${categoriesScored.length} categories`);
     }
-    itemsByCategory.get(item.category)!.push(item);
-  }
 
-  // Compute scores for each category
-  let totalScored = 0;
-  const categoriesScored: Category[] = [];
-
-  for (const [category, categoryItems] of itemsByCategory.entries()) {
-    const scored = await computeAndSaveScoresForCategory(categoryItems, category);
-    totalScored += scored;
-    if (scored > 0) {
-      categoriesScored.push(category);
+    // Inside withDegradationTracking the summary is always established.
+    const degradation = getDegradationSummary()!;
+    if (degradation.degraded) {
+      logger.warn(
+        "[SCORE-COMPUTE] Scoring degraded: some items received non-semantic fallback scores",
+        { degradation },
+      );
     }
-  }
 
-  logger.info(`[SCORE-COMPUTE] Complete: ${totalScored} items scored across ${categoriesScored.length} categories`);
-
-  return { totalScored, categoriesScored };
+    return { totalScored, categoriesScored, degradation };
+  });
 }

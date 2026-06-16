@@ -13,6 +13,10 @@ import {
   evaluateTokenBudget,
   type LlmUsageSummary,
 } from "../llm/usage-accounting";
+import {
+  withDegradationTracking,
+  getDegradationSummary,
+} from "../observability/degradation";
 import { webSearchForAgentContext } from "../search/url-finder";
 import { saveAgentRun } from "../db/agent-runs";
 import { logger } from "../logger";
@@ -87,9 +91,13 @@ async function loadItemsForScope(
 
 /**
  * Persist an agent run, attaching the job's accumulated LLM token/cost usage
- * (bd-zso) under `llmUsage`. Reads the ambient accounting context established by
- * runAgentJobImpl; since the save is the last step of each path, the summary
- * reflects every LLM call made during the run.
+ * (bd-zso) under `llmUsage` and, when the run hit a silent fallback, a
+ * `degradation` summary (bd-sgo) — completion fallback, pseudo-embeddings, or
+ * missing web context. Both read the ambient contexts established by
+ * runAgentJobImpl; since the save is the last step of each path, the summaries
+ * reflect every LLM call and degradation seen during the run. `degradation` is
+ * only attached when something degraded, so a healthy run's metadata stays
+ * clean and "has a degradation field" is itself the query for degraded runs.
  */
 async function persistAgentRun(
   agentId: AgentId,
@@ -99,13 +107,11 @@ async function persistAgentRun(
   metadata: Record<string, unknown>
 ): Promise<string> {
   const llmUsage = getLlmUsageSummary();
-  return saveAgentRun(
-    agentId,
-    jobId,
-    title,
-    outputMarkdown,
-    llmUsage ? { ...metadata, llmUsage } : metadata
-  );
+  const degradation = getDegradationSummary();
+  const enriched: Record<string, unknown> = { ...metadata };
+  if (llmUsage) enriched.llmUsage = llmUsage;
+  if (degradation?.degraded) enriched.degradation = degradation;
+  return saveAgentRun(agentId, jobId, title, outputMarkdown, enriched);
 }
 
 /**
@@ -335,14 +341,19 @@ async function runAgentJobImpl(
   agentId: AgentId,
   jobId: JobId
 ): Promise<{ runId: string; title: string } | null> {
-  return withLlmUsageAccounting(async () => {
-    const result = await runAgentJobBody(agentId, jobId);
-    const usage = getLlmUsageSummary();
-    if (usage) {
-      checkAgentTokenBudget(agentId, jobId, usage);
-    }
-    return result;
-  });
+  return withLlmUsageAccounting(async () =>
+    // Establish the degradation context for the whole run so the recordDegradation
+    // calls in completion/embeddings/web-search/scoring (reached transitively) are
+    // captured and persistAgentRun can attach the summary to agent_runs metadata.
+    withDegradationTracking(async () => {
+      const result = await runAgentJobBody(agentId, jobId);
+      const usage = getLlmUsageSummary();
+      if (usage) {
+        checkAgentTokenBudget(agentId, jobId, usage);
+      }
+      return result;
+    })
+  );
 }
 
 export const runAgentJob = withLangSmithTraceable(runAgentJobImpl, {

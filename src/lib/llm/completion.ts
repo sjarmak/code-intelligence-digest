@@ -11,6 +11,7 @@ import { getQualityModel, isClaudeModel, getAnthropicApiKey } from "./config";
 import { logger } from "../logger";
 import { isLangSmithLlmTracingEnabled, withLangSmithTraceable } from "../langsmith";
 import { recordLlmUsage, type LlmTokenUsage } from "./usage-accounting";
+import { recordDegradation } from "../observability/degradation";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -274,6 +275,7 @@ async function createChatCompletionImpl(
       requestedModel: model,
       effectiveModel,
     });
+    recordDegradation("completion_fallback");
   }
   const result = await runProviderCompletion({
     provider: "openai",

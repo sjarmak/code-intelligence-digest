@@ -22,6 +22,16 @@ import { scoreWithLLM } from "../../../src/lib/pipeline/llmScore";
 import { computeProductBoost, findProductMentions } from "../../../src/config/products";
 import { computeWatchlistBoost } from "../../../src/config/watchlist";
 import { detectCompetitorSignals } from "../../../src/config/competitor-intel";
+import { recordDegradation } from "../../../src/lib/observability/degradation";
+
+const NO_DEGRADATION = {
+  degraded: false,
+  total: 0,
+  completionFallback: 0,
+  pseudoEmbedding: 0,
+  webSearchMissing: 0,
+  neutralScore: 0,
+};
 
 vi.mock("../../../src/lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
@@ -218,9 +228,13 @@ describe("computeAndSaveScoresForCategory", () => {
 });
 
 describe("computeAndSaveScoresForItems", () => {
-  it("returns zero totals for empty input", async () => {
+  it("returns zero totals and a non-degraded summary for empty input", async () => {
     const result = await computeAndSaveScoresForItems([]);
-    expect(result).toEqual({ totalScored: 0, categoriesScored: [] });
+    expect(result).toEqual({
+      totalScored: 0,
+      categoriesScored: [],
+      degradation: NO_DEGRADATION,
+    });
   });
 
   it("groups by category and aggregates the scored count", async () => {
@@ -236,5 +250,37 @@ describe("computeAndSaveScoresForItems", () => {
     expect(result.categoriesScored).toEqual(
       expect.arrayContaining(["newsletters", "ai_news"]),
     );
+  });
+
+  it("reports a non-degraded summary when scoring uses no fallbacks", async () => {
+    mockLLM.mockResolvedValue({
+      "n1": { id: "n1", relevance: 8, usefulness: 6, tags: [] },
+    });
+
+    const result = await computeAndSaveScoresForItems([
+      feedItem({ id: "n1", category: "newsletters" }),
+    ]);
+
+    expect(result.degradation).toEqual(NO_DEGRADATION);
+  });
+
+  it("returns degradation recorded during scoring in the pipeline output", async () => {
+    // Stand in for the real llmScore fallback: every scored item gets a
+    // neutral (5,5) score, which the production code records as a degradation.
+    // This guards the withDegradationTracking wrap — without it, the
+    // recordDegradation calls are no-ops and the summary would be empty.
+    mockLLM.mockImplementation(async (items: FeedItem[]) => {
+      recordDegradation("neutral_score", items.length);
+      return {};
+    });
+
+    const result = await computeAndSaveScoresForItems([
+      feedItem({ id: "n1", category: "newsletters" }),
+      feedItem({ id: "n2", category: "newsletters" }),
+    ]);
+
+    expect(result.degradation.degraded).toBe(true);
+    expect(result.degradation.neutralScore).toBe(2);
+    expect(result.degradation.total).toBe(2);
   });
 });

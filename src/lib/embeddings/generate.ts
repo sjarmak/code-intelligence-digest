@@ -7,6 +7,7 @@
 import OpenAI from "openai";
 import { logger } from "../logger";
 import { getOpenAICompatibleClient } from "../llm/client";
+import { recordDegradation } from "../observability/degradation";
 
 /**
  * Get or create OpenAI client for embeddings (uses server env)
@@ -64,7 +65,10 @@ export async function generateEmbedding(text: string): Promise<number[]> {
       warnPseudoEmbeddingsOnce();
     }
 
-    // Fallback to pseudo-embeddings (pad to 1536 dimensions for consistency)
+    // Fallback to pseudo-embeddings (pad to 1536 dimensions for consistency).
+    // Reached both when no OpenAI client is available and when the OpenAI call
+    // failed above — either way the stored vector is non-semantic, so flag it.
+    recordDegradation("pseudo_embedding");
     const pseudoEmbedding = generatePseudoEmbedding(text);
     // Pad from 768 to 1536 dimensions by duplicating and scaling
     const paddedEmbedding = new Array(1536);

@@ -4,6 +4,7 @@
  */
 
 import { logger } from "../logger";
+import { recordDegradation } from "../observability/degradation";
 
 export interface WebResult {
   title: string;
@@ -168,7 +169,11 @@ export async function searchWeb(
   const tavilyApiKey = process.env.TAVILY_API_KEY;
   if (!tavilyApiKey?.trim()) {
     if (!process.env.PARALLEL_API_KEY?.trim()) {
+      // No provider configured at all: the query silently returns no web
+      // context. (A configured-but-empty Parallel result is "no results
+      // found", not a missing provider, so it is intentionally not flagged.)
       warnNoWebSearchProviderOnce();
+      recordDegradation("web_search_missing");
     } else {
       logger.warn("Web search degraded: Parallel returned no results and TAVILY_API_KEY not set", {
         query: query.slice(0, 60),
