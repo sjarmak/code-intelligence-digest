@@ -10,6 +10,7 @@ import { getOpenAICompatibleClient } from "./client";
 import { getQualityModel, isClaudeModel, getAnthropicApiKey } from "./config";
 import { logger } from "../logger";
 import { isLangSmithLlmTracingEnabled, withLangSmithTraceable } from "../langsmith";
+import { recordLlmUsage, type LlmTokenUsage } from "./usage-accounting";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -33,6 +34,8 @@ export interface CreateChatCompletionResult {
   finish_reason?: string;
   /** True when a claude-* model was requested but OpenAI served the request. */
   fallback?: boolean;
+  /** Token usage reported by the provider, when available. */
+  usage?: LlmTokenUsage;
 }
 
 const DEFAULT_ANTHROPIC_PROVIDER_TIMEOUT_MS = 300000;
@@ -164,6 +167,10 @@ async function completeWithAnthropic(
     model: response.model,
     provider: "anthropic",
     finish_reason: response.stop_reason ?? undefined,
+    usage: {
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    },
   };
 }
 
@@ -188,11 +195,21 @@ async function completeWithOpenAI(
   const response = await client.chat.completions.create(body);
   const choice = response.choices?.[0];
   const content = choice?.message?.content ?? "";
+  // OpenAI types usage as optional (absent for streaming); non-streaming
+  // responses include it. Omit usage entirely when absent rather than reporting
+  // fabricated zeros.
+  const usage: LlmTokenUsage | undefined = response.usage
+    ? {
+        inputTokens: response.usage.prompt_tokens,
+        outputTokens: response.usage.completion_tokens,
+      }
+    : undefined;
   return {
     content,
     model: response.model,
     provider: "openai",
     finish_reason: choice?.finish_reason ?? undefined,
+    usage,
   };
 }
 
@@ -210,7 +227,7 @@ async function createChatCompletionImpl(
     const key = getAnthropicApiKey();
     if (key) {
       try {
-        return await runProviderCompletion({
+        const result = await runProviderCompletion({
           provider: "anthropic",
           model,
           operation: () =>
@@ -220,6 +237,8 @@ async function createChatCompletionImpl(
               maxTokens,
             ),
         });
+        recordLlmUsage(result);
+        return result;
       } catch (error) {
         logger.warn("Anthropic completion failed, falling back to OpenAI if available", {
           error: error instanceof Error ? error.message : String(error),
@@ -268,7 +287,9 @@ async function createChatCompletionImpl(
         options.response_format,
       ),
   });
-  return usedFallback ? { ...result, fallback: true } : result;
+  const finalResult = usedFallback ? { ...result, fallback: true } : result;
+  recordLlmUsage(finalResult);
+  return finalResult;
 }
 
 export const createChatCompletion = isLangSmithLlmTracingEnabled()

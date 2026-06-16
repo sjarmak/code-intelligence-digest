@@ -42,6 +42,12 @@ export interface AgentConfig {
   name: string;
   description: string;
   jobs: AgentJobConfig[];
+  /**
+   * Optional soft cap on LLM tokens per run (bd-zso). When set, a run whose
+   * total token usage exceeds it logs a warning — observability, not
+   * enforcement; a completed run is never discarded. Unset means no budget.
+   */
+  tokenBudgetPerRun?: number;
 }
 
 const COMPETITIVE_INTEL_REPORT_PROMPT = (

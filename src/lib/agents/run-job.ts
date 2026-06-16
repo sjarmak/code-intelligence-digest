@@ -4,9 +4,15 @@
 
 import type { FeedItem } from "../model";
 import { loadItemsByCategory } from "../db/items";
-import { getJobConfig, type AgentId, type JobId } from "../../config/agent-jobs";
+import { getJobConfig, getAgentConfig, type AgentId, type JobId } from "../../config/agent-jobs";
 import { mentionsCompetitor } from "../../config/products";
 import { createChatCompletion } from "../llm/completion";
+import {
+  withLlmUsageAccounting,
+  getLlmUsageSummary,
+  evaluateTokenBudget,
+  type LlmUsageSummary,
+} from "../llm/usage-accounting";
 import { webSearchForAgentContext } from "../search/url-finder";
 import { saveAgentRun } from "../db/agent-runs";
 import { logger } from "../logger";
@@ -80,10 +86,56 @@ async function loadItemsForScope(
 }
 
 /**
+ * Persist an agent run, attaching the job's accumulated LLM token/cost usage
+ * (bd-zso) under `llmUsage`. Reads the ambient accounting context established by
+ * runAgentJobImpl; since the save is the last step of each path, the summary
+ * reflects every LLM call made during the run.
+ */
+async function persistAgentRun(
+  agentId: AgentId,
+  jobId: JobId,
+  title: string,
+  outputMarkdown: string | null,
+  metadata: Record<string, unknown>
+): Promise<string> {
+  const llmUsage = getLlmUsageSummary();
+  return saveAgentRun(
+    agentId,
+    jobId,
+    title,
+    outputMarkdown,
+    llmUsage ? { ...metadata, llmUsage } : metadata
+  );
+}
+
+/**
+ * Warn when a run's token usage exceeds the agent's optional soft budget
+ * (bd-zso). Observability only — the completed run is never discarded.
+ */
+function checkAgentTokenBudget(
+  agentId: AgentId,
+  jobId: JobId,
+  usage: LlmUsageSummary
+): void {
+  const budget = getAgentConfig(agentId)?.tokenBudgetPerRun;
+  const evaluation = evaluateTokenBudget(usage.totalTokens, budget);
+  if (evaluation?.exceeded) {
+    logger.warn("Agent run exceeded its LLM token budget", {
+      agentId,
+      jobId,
+      totalTokens: usage.totalTokens,
+      budget: evaluation.budget,
+      overBy: evaluation.overBy,
+      estimatedCostUsd: usage.estimatedCostUsd,
+    });
+  }
+}
+
+/**
  * Run one agent job and persist the result.
  * Returns the agent run id, or null if job config not found or LLM unavailable.
  */
-async function runAgentJobImpl(
+async function runAgentJobBody(
   agentId: AgentId,
   jobId: JobId
 ): Promise<{ runId: string; title: string } | null> {
@@ -117,7 +169,7 @@ async function runAgentJobImpl(
     const llmMarkdown = await writeCompetitorIntelWithLLM(items, periodDays, title, generatedAt);
     const markdown = llmMarkdown ?? formatCompetitorIntelMarkdown(title, payload);
 
-    const runId = await saveAgentRun(agentId, jobId, title, markdown, {
+    const runId = await persistAgentRun(agentId, jobId, title, markdown, {
       itemCount: items.length,
       periodDays,
       topPerCompetitor,
@@ -142,7 +194,7 @@ async function runAgentJobImpl(
     const title = `${job.name} (${dateStr})`;
     const llmMarkdown = await writeMarketBriefWithLLM(payload, title);
     const markdown = llmMarkdown ?? formatMarketBriefMarkdown(title, payload);
-    const runId = await saveAgentRun(agentId, jobId, title, markdown, {
+    const runId = await persistAgentRun(agentId, jobId, title, markdown, {
       itemCount: payload.executive_delta.length + payload.watch_items.length,
       periodDays,
       structuredOutput: true,
@@ -177,7 +229,7 @@ async function runAgentJobImpl(
       final_output: llmMarkdown ? "llm_report_writer" : "template_markdown",
     };
     const markdown = llmMarkdown ?? formatContentIdeasMarkdown(title, payload);
-    const runId = await saveAgentRun(agentId, jobId, title, markdown, {
+    const runId = await persistAgentRun(agentId, jobId, title, markdown, {
       itemCount: payload.ideas.length,
       periodDays,
       structuredOutput: true,
@@ -212,7 +264,7 @@ async function runAgentJobImpl(
     });
     const dateStr = new Date().toISOString().slice(0, 10);
     const title = `${job.name} (${dateStr}) – no sources`;
-    const runId = await saveAgentRun(
+    const runId = await persistAgentRun(
       agentId,
       jobId,
       title,
@@ -257,7 +309,7 @@ async function runAgentJobImpl(
     const content = result.content.trim() || "_Model returned empty response._";
 
     const title = `${job.name} (${dateStr})`;
-    const runId = await saveAgentRun(agentId, jobId, title, content, {
+    const runId = await persistAgentRun(agentId, jobId, title, content, {
       itemCount: items.length,
       periodDays,
     });
@@ -277,6 +329,20 @@ async function runAgentJobImpl(
     });
     throw error;
   }
+}
+
+async function runAgentJobImpl(
+  agentId: AgentId,
+  jobId: JobId
+): Promise<{ runId: string; title: string } | null> {
+  return withLlmUsageAccounting(async () => {
+    const result = await runAgentJobBody(agentId, jobId);
+    const usage = getLlmUsageSummary();
+    if (usage) {
+      checkAgentTokenBudget(agentId, jobId, usage);
+    }
+    return result;
+  });
 }
 
 export const runAgentJob = withLangSmithTraceable(runAgentJobImpl, {
