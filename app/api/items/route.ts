@@ -22,6 +22,7 @@ import {
   getAllProductIds,
 } from "@/src/config/products";
 import { looksLikeHtml, stripHtmlFromText } from "@/src/lib/pipeline/fulltext";
+import { itemsListSelectColumns } from "./select-columns";
 
 /**
  * Decode tracking URLs to get the real destination URL
@@ -557,12 +558,13 @@ export async function GET(request: NextRequest) {
         limitClause = " LIMIT 1000";
       }
 
-      // For research, include full_text in query so we can check if it exists (but don't return it in response)
-      // This allows the frontend to know which items have full_text available
-      const selectColumns =
-        category === "research"
-          ? "id, stream_id, source_title, title, url, author, published_at, summary, content_snippet, categories, category, created_at, updated_at, extracted_url, full_text, full_text_fetched_at, full_text_source"
-          : "*";
+      // Project columns explicitly. Non-research categories omit the heavy
+      // `full_text` blob (never returned to the client) to cap the per-request
+      // allocation spike that caused silent cgroup OOM-kills on the 512 MB
+      // container — see ./select-columns.ts (bd code-intel-digest-n0m,
+      // oom_investigation_2026_04 §5 #1). Research keeps full_text so it can
+      // flag which papers have full text available.
+      const selectColumns = itemsListSelectColumns(category);
 
       const sqlQuery = `SELECT ${selectColumns} FROM items WHERE ${whereClause} ORDER BY ${dateColumn} DESC${limitClause}`;
       logger.info(
