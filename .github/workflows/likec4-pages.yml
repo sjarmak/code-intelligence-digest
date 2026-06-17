@@ -1,0 +1,48 @@
+name: Architecture (LikeC4) → Pages
+on:
+  push:
+    branches: [main]
+    paths: ['architecture/**', '.github/workflows/likec4-pages.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export view figures (PNG)
+        uses: likec4/actions@v1
+        with:
+          export: png
+          path: architecture
+          output: _site/figures
+      - name: Build interactive explorer
+        uses: likec4/actions@v1
+        with:
+          action: build
+          path: architecture
+          output: _site/explore
+          base: /code-intelligence-digest/explore/
+          use-hash-history: 'true'
+      - name: Assemble landing page
+        run: |
+          cp architecture/site/index.html architecture/site/styles.css architecture/site/favicon.svg _site/
+          cp -r architecture/site/fonts _site/fonts
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

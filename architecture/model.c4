@@ -1,0 +1,493 @@
+// Code Intelligence Digest — an Inoreader-fed content curation pipeline that
+// scores, ranks, and packages "code intelligence" content (code search, agents,
+// retrieval, dev tools) into weekly/monthly digests, GTM agent reports,
+// newsletters, and podcasts, served by a Next.js app and an MCP copilot.
+//
+// Five containers: ingestion/sync, the scoring & ranking pipeline, Postgres
+// storage, the GTM agent layer, and the Next.js web + API surface — plus the
+// LLM provider gateway, the media renderers, and the MCP copilot. Delivery
+// state is tagged so stubs and research tracks render distinctly from what is
+// already exercised on the `production` branch (see spec.c4 for the legend).
+//
+// Every element carries a `link` to the source path that implements it, so any
+// box in the explorer is one click from the code behind it.
+
+model {
+
+  reader = actor 'Reader' {
+    description 'Consumes the curated digest, library, newsletters, and podcasts through the web UI'
+  }
+
+  operator = actor 'Operator / GTM owner' {
+    description 'Tunes source relevance, triggers agent reports, and runs syncs from the admin surface'
+  }
+
+  copilotAgent = actor 'Coding agent (MCP client)' {
+    description 'Claude Code or another MCP client that queries the digest corpus through the copilot server'
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // External systems — the content source, inference/search/delivery services,
+  // and the hosting platform.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  inoreader = externalSystem 'Inoreader' {
+    description 'RSS aggregator and source of truth for feed items; OAuth2 API with a ~1000 calls/day quota'
+    link https://www.inoreader.com/reader/api/ 'Inoreader API'
+  }
+
+  ads = externalSystem 'NASA ADS' {
+    description 'Astrophysics Data System — source of academic research papers for the research category'
+  }
+
+  anthropic = externalSystem 'Anthropic API' {
+    description 'Claude models — the default quality model for LLM scoring and agent report writing'
+  }
+
+  openai = externalSystem 'OpenAI API' {
+    description 'GPT models (scoring fallback), text-embedding-3-small for semantic search, and OpenAI TTS for audio'
+  }
+
+  webSearchProviders = externalSystem 'Web search (Parallel / Tavily)' {
+    description 'Live web search that enriches GTM agent context beyond the stored corpus'
+  }
+
+  ttsProviders = externalSystem 'TTS (ElevenLabs / NeMo)' {
+    description 'Alternate text-to-speech back-ends for podcast audio, behind a common provider interface'
+  }
+
+  resend = externalSystem 'Resend' {
+    description 'Transactional email delivery used to send agent reports and digests'
+  }
+
+  langsmith = externalSystem 'LangSmith' {
+    description 'Trace capture and offline eval datasets/scorers for the content-ideas and market-brief agents'
+  }
+
+  render = externalSystem 'Render' {
+    description 'PaaS hosting the web service, the managed Postgres database, and the scheduled cron jobs'
+    link ../render.yaml 'render.yaml'
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // The code-intel-digest system.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  digest = system 'Code Intelligence Digest' {
+    description 'Fetch → normalize → categorize → score → rank → package code-intelligence content into digests, reports, newsletters, and podcasts'
+    link ../README.md 'README'
+    link ../AGENTS.md 'AGENTS.md — architecture & rules'
+
+    // ── Ingestion / sync ────────────────────────────────────────────────────
+    sync = container 'Ingestion & sync' {
+      description 'src/lib/sync + src/lib/inoreader — pulls feed items and research papers in, with quota + resumability guards'
+      technology 'TypeScript / Node'
+      link ../src/lib/sync 'src/lib/sync/'
+
+      inoreaderClient = component 'Inoreader client' {
+        #built
+        #risk
+        description 'OAuth2 token refresh, rate-limit header parsing, and backoff against the Inoreader API. RISK: token refresh depends on a stored/env refresh token; on invalid_grant it needs manual re-auth (see docs/ops/inoreader-reauth.md)'
+        link ../src/lib/inoreader/client.ts 'client.ts'
+        link ../docs/ops/inoreader-reauth.md 'inoreader-reauth runbook'
+      }
+      dailySync = component 'Daily sync orchestrator' {
+        #built
+        description 'Rolling-window pull → normalize → categorize → decompose → persist, resumable via the sync_state row when the quota is hit'
+        link ../src/lib/sync/daily-sync.ts 'daily-sync.ts'
+      }
+      syncState = component 'Sync state & circuit breaker' {
+        #built
+        description 'Continuation token + calls-used tracking and a 429 circuit breaker so a throttled run pauses instead of failing'
+        link ../src/lib/sync/sync-state.ts 'sync-state.ts'
+        link ../src/lib/sync/sync-backoff.ts 'sync-backoff.ts'
+      }
+      adsSync = component 'ADS research sync' {
+        #evolving
+        description 'Parallel pull of academic papers from NASA ADS into the research category, with section extraction'
+        link ../src/lib/sync/ads-research-sync.ts 'ads-research-sync.ts'
+        link ../src/lib/ads/client.ts 'ads/client.ts'
+      }
+      budgetGuard = component 'API budget guard' {
+        #built
+        description 'Caps daily external API spend across sync runs so a single day cannot exhaust the Inoreader quota'
+        link ../src/lib/sync/budget-guard.ts 'budget-guard.ts'
+      }
+    }
+
+    // ── Scoring & ranking pipeline ──────────────────────────────────────────
+    pipeline = container 'Scoring & ranking pipeline' {
+      description 'src/lib/pipeline — the hybrid LLM + BM25 + recency scorer and the diversity-aware ranker that produce a digest'
+      technology 'TypeScript'
+      link ../src/lib/pipeline 'src/lib/pipeline/'
+      link ../docs/conventions/scoring.md 'scoring convention'
+
+      normalize = component 'normalize + categorize + decompose' {
+        #built
+        description 'Raw Inoreader payloads → typed FeedItems, assigned to one of 9 categories, with HTML decomposed to clean summary/snippet text'
+        link ../src/lib/pipeline/normalize.ts 'normalize.ts'
+        link ../src/lib/pipeline/categorize.ts 'categorize.ts'
+        link ../src/lib/pipeline/decompose.ts 'decompose.ts'
+      }
+      fulltext = component 'fulltext fetch' {
+        #built
+        description 'JSDOM + Mozilla Readability extraction of full article text, batched small (8/run) to fit the Render heap'
+        link ../src/lib/pipeline/fulltext.ts 'fulltext.ts'
+      }
+      bm25 = component 'BM25 index' {
+        #built
+        description 'From-scratch Okapi BM25 scoring of each item against the category-specific domain-term query'
+        link ../src/lib/pipeline/bm25.ts 'bm25.ts'
+        link ../src/config/domain-terms.ts 'domain-terms.ts'
+      }
+      llmScore = component 'LLM scorer' {
+        #built
+        description 'Per-item relevance + usefulness + tags from a quality LLM (Claude by default), with conservative scoring for thin content'
+        link ../src/lib/pipeline/llmScore.ts 'llmScore.ts'
+      }
+      computeScores = component 'compute-scores (combiner)' {
+        #built
+        description 'finalScore = w_llm * llm + w_bm25 * bm25, multiplied by product/watchlist/competitor boosts; persisted to item_scores so items are not rescored'
+        link ../src/lib/pipeline/compute-scores.ts 'compute-scores.ts'
+        link ../src/config/categories.ts 'categories.ts — per-category weights'
+      }
+      engagement = component 'engagement and citations scoring' {
+        #planned
+        description 'PLANNED. Categories declare engagement (community) and citations/reads (research) weights, but those signals are not yet computed; the slots exist in the config and schema only'
+        link ../src/config/categories.ts 'categories.ts engagement and citations weights'
+      }
+      ranker = component 'rank + select' {
+        #built
+        description 'Loads precomputed scores, applies recency (subtle, all-time only), filters by min-relevance, then diversity-samples a per-source-capped digest'
+        link ../src/lib/pipeline/rank.ts 'rank.ts'
+        link ../src/lib/pipeline/select.ts 'select.ts'
+      }
+    }
+
+    // ── Storage (Postgres) ──────────────────────────────────────────────────
+    store = datastore 'Postgres store' {
+      #built
+      description 'src/lib/db — items, item_scores, item_embeddings (pgvector), agent_runs, generated media, sync_state, oauth_tokens, and source/relevance tuning tables'
+      technology 'PostgreSQL 16 + pgvector + pg_trgm'
+      link ../src/lib/db 'src/lib/db/'
+      link ../src/lib/db/schema-postgres.ts 'schema-postgres.ts'
+
+      driver = component 'DB driver / pool' {
+        #built
+        description 'Postgres connection pool with local-vs-production selection (USE_LOCAL_DB / LOCAL_DATABASE_URL / DATABASE_URL)'
+        link ../src/lib/db/driver.ts 'driver.ts'
+      }
+      itemsRepo = component 'items + scores repos' {
+        #built
+        description 'Read/write access to items and their precomputed item_scores, plus full-text (tsvector) search'
+        link ../src/lib/db/items.ts 'items.ts'
+        link ../src/lib/db/scores.ts 'scores.ts'
+        link ../src/lib/db/search.ts 'db/search.ts'
+      }
+      embeddingsRepo = component 'embeddings (pgvector)' {
+        #built
+        description 'Stores and batch-reads OpenAI text-embedding-3-small vectors for semantic search'
+        link ../src/lib/db/embeddings.ts 'embeddings.ts'
+        link ../src/lib/embeddings/generate.ts 'embeddings/generate.ts'
+      }
+      agentRunsRepo = component 'agent runs + generated media' {
+        #built
+        description 'Persists each agent report (output + llmUsage + degradation metadata), generated newsletters, and cached podcast audio'
+        link ../src/lib/db/agent-runs.ts 'agent-runs.ts'
+        link ../src/lib/db/generated-newsletters.ts 'generated-newsletters.ts'
+        link ../src/lib/db/podcast-audio.ts 'podcast-audio.ts'
+      }
+      tuningRepo = component 'source / item relevance' {
+        #built
+        description 'Operator-supplied per-feed and per-item relevance ratings that bias scoring and ranking'
+        link ../src/lib/db/sourceRelevance.ts 'sourceRelevance.ts'
+        link ../src/lib/db/item-relevance.ts 'item-relevance.ts'
+      }
+      oauthRepo = component 'oauth tokens + budget' {
+        #built
+        description 'Persisted Inoreader refresh token plus daily API-budget accounting shared across runs'
+        link ../src/lib/db/oauth-tokens.ts 'oauth-tokens.ts'
+        link ../src/lib/db/api-budget.ts 'api-budget.ts'
+      }
+    }
+
+    // ── LLM provider gateway ────────────────────────────────────────────────
+    llm = container 'LLM provider gateway' {
+      description 'src/lib/llm — routes completions to Anthropic or OpenAI by model id, with timeouts, usage accounting, and a quality-model resolver'
+      technology 'TypeScript'
+      link ../src/lib/llm 'src/lib/llm/'
+
+      completion = component 'completion router' {
+        #built
+        #risk
+        description 'Routes claude-* → Anthropic, else → OpenAI, enforcing per-provider timeouts. RISK: no cross-provider fallback — a primary-provider timeout records a degradation and the run continues without that LLM output'
+        link ../src/lib/llm/completion.ts 'completion.ts'
+        link ../src/lib/observability/degradation.ts 'degradation.ts'
+      }
+      llmConfig = component 'quality-model resolver' {
+        #built
+        description 'Picks the model from DIGEST_QUALITY_MODEL, else claude-sonnet (Anthropic key) or gpt-4o-mini (OpenAI key)'
+        link ../src/lib/llm/config.ts 'config.ts'
+      }
+      usage = component 'usage accounting' {
+        #built
+        description 'Per-call token + estimated-cost accounting, surfaced into agent-run metadata and token-budget checks'
+        link ../src/lib/llm/usage-accounting.ts 'usage-accounting.ts'
+        link ../src/lib/llm/pricing.ts 'pricing.ts'
+      }
+    }
+
+    // ── GTM agents ──────────────────────────────────────────────────────────
+    agents = container 'GTM agent layer' {
+      description 'src/lib/agents + src/lib/retrieval — retrieve from corpus + live web, rank for a goal, and write competitive-intel / market-brief / content-ideas reports'
+      technology 'TypeScript'
+      link ../src/lib/agents 'src/lib/agents/'
+      link ../docs/conventions/gtm-agents.md 'gtm-agents convention'
+
+      runJob = component 'agent job runner' {
+        #built
+        description 'runAgentJob: load scope → retrieve → rank → assemble context → call the LLM → persist the run; wrapped for LangSmith tracing'
+        link ../src/lib/agents/run-job.ts 'run-job.ts'
+        link ../src/config/agent-jobs.ts 'agent-jobs.ts'
+        link ../src/config/agents.ts 'agents.ts'
+      }
+      retrieval = component 'agent retrieval (corpus + web)' {
+        #built
+        description 'Multi-source retrieval that merges Postgres items with live web-search results, deduped and domain-filtered, for a given goal'
+        link ../src/lib/pipeline/agentRetrieval.ts 'agentRetrieval.ts'
+        link ../src/lib/retrieval/webSearch.ts 'webSearch.ts'
+      }
+      agentRank = component 'goal-aware ranker' {
+        #built
+        description 'Re-ranks retrieved items by goal-specific features (competitor match, ICP fit, recency, format) before they enter the prompt'
+        link ../src/lib/pipeline/agentRank.ts 'agentRank.ts'
+        link ../src/lib/pipeline/goalFeatures.ts 'goalFeatures.ts'
+      }
+      trace = component 'curator trace (audit)' {
+        #built
+        #risk
+        description 'Versioned snapshot of config + retrieval + ranking that powers /reports/[id] and ?trace=1. RISK: changing the trace shapes without bumping CURATOR_TRACE_SCHEMA_VERSION silently breaks the report viewer'
+        link ../src/lib/retrieval/curator-trace.ts 'curator-trace.ts'
+      }
+      reportWriters = component 'report writers' {
+        #built
+        description 'Goal-specific writers — competitive intel, market brief, content ideas — that turn ranked context into structured Markdown reports'
+        link ../src/lib/agents/competitor-intel.ts 'competitor-intel.ts'
+        link ../src/lib/agents/market-brief.ts 'market-brief.ts'
+        link ../src/lib/agents/content-ideas.ts 'content-ideas.ts'
+      }
+      sourcegraphPlay = component 'Sourcegraph integration scorer' {
+        #evolving
+        description 'Heuristic detector that flags items as integration opportunities (workflow fit, failure modes, integration surface) — a GTM signal still being shaped'
+        link ../src/lib/agents/sourcegraph-integration-opportunity.ts 'sourcegraph-integration-opportunity.ts'
+      }
+    }
+
+    // ── Media renderers ─────────────────────────────────────────────────────
+    media = container 'Media renderers' {
+      description 'src/lib/audio + pipeline media stages + src/lib/pdf — turn a digest into newsletters, podcasts/audio, and PDF exports'
+      technology 'TypeScript'
+      link ../src/lib/audio 'src/lib/audio/'
+
+      newsletter = component 'newsletter builder' {
+        #evolving
+        description 'Composes and review-passes a Markdown/HTML newsletter from selected items'
+        link ../src/lib/pipeline/newsletter.ts 'newsletter.ts'
+        link ../src/lib/pipeline/reviewNewsletter.ts 'reviewNewsletter.ts'
+      }
+      podcastScript = component 'podcast script + rundown' {
+        #evolving
+        description 'Builds a podcast script and rundown from a digest, then verifies it before audio rendering'
+        link ../src/lib/pipeline/podcastScript.ts 'podcastScript.ts'
+        link ../src/lib/pipeline/podcastRundown.ts 'podcastRundown.ts'
+        link ../src/lib/pipeline/podcastVerify.ts 'podcastVerify.ts'
+      }
+      audioRender = component 'audio renderer (TTS)' {
+        #built
+        description 'Sanitizes a transcript, chunks it, renders speech via a TTS provider, and caches by transcript hash'
+        link ../src/lib/audio/render.ts 'render.ts'
+        link ../src/lib/audio/sanitize.ts 'sanitize.ts'
+      }
+      ttsProviderAdapters = component 'TTS provider adapters' {
+        #evolving
+        description 'OpenAI TTS (primary) plus ElevenLabs and NeMo behind one interface; the alternates are wired but lightly exercised'
+        link ../src/lib/audio/providers/openaiTts.ts 'openaiTts.ts'
+        link ../src/lib/audio/providers/elevenlabsTts.ts 'elevenlabsTts.ts'
+        link ../src/lib/audio/providers/nemoTts.ts 'nemoTts.ts'
+      }
+      pdf = component 'PDF export' {
+        #built
+        description 'Renders a report/digest to a downloadable PDF'
+        link ../src/lib/pdf/simple-report-pdf.ts 'simple-report-pdf.ts'
+      }
+    }
+
+    // ── Web + API surface (Next.js) ─────────────────────────────────────────
+    web = container 'Next.js web + API' {
+      description 'app/ — the React reader/admin UI plus the REST API; auth via next-auth + middleware, with admin/debug routes blocked in production'
+      technology 'Next.js 16 / React 19'
+      link ../app 'app/'
+
+      itemsApi = component 'items / digest / search API' {
+        #built
+        description 'GET /api/items, /api/digest, /api/search, /api/ask — the read surface that ranks and serves items on demand'
+        link ../app/api/items/route.ts 'api/items'
+        link ../app/api/search/route.ts 'api/search'
+      }
+      agentsApi = component 'agents / reports API' {
+        #built
+        description 'Report CRUD, per-goal report endpoints, manual generation, and email send (via Resend)'
+        link ../app/api/reports 'api/reports'
+        link ../app/api/agents 'api/agents'
+      }
+      mediaApi = component 'newsletter / podcast / audio API' {
+        #evolving
+        description 'Generates and serves newsletters, podcast scripts, and rendered audio for the synthesis surface'
+        link ../app/api/podcast 'api/podcast'
+        link ../app/api/newsletter 'api/newsletter'
+        link ../app/api/audio-digest 'api/audio-digest'
+      }
+      adminApi = component 'admin / debug API' {
+        #built
+        description 'Sync triggers, fulltext/embedding population, ranking debug, and relevance tuning — guarded by blockInProduction so they are dev/operator-only'
+        link ../app/api/admin 'api/admin'
+        link ../src/lib/auth/guards.ts 'guards.ts — blockInProduction'
+      }
+      health = component 'health endpoint' {
+        #built
+        description 'GET /api/health — the Render health-check that confirms the DB is reachable'
+        link ../app/api/health/route.ts 'api/health'
+      }
+      auth = component 'auth + middleware' {
+        #built
+        description 'next-auth session enforcement plus an admin bearer token for cron, applied in middleware across all non-public routes'
+        link ../middleware.ts 'middleware.ts'
+        link ../src/lib/auth/admin-token.ts 'admin-token.ts'
+      }
+      ui = component 'React UI' {
+        #built
+        description 'Reader pages (home, digest, libraries), the synthesis builder, the reports viewer, and the admin dashboard'
+        link ../app/page.tsx 'page.tsx'
+        link ../app/reports/page.tsx 'reports'
+        link ../app/synthesis 'synthesis/'
+        link ../src/components 'src/components/'
+      }
+    }
+
+    // ── MCP copilot ─────────────────────────────────────────────────────────
+    mcp = container 'MCP copilot server' {
+      description 'src/mcp/server.ts — read-only MCP tools over the local production mirror, so a coding agent can query the digest corpus'
+      technology 'TypeScript / MCP stdio'
+      link ../src/mcp/server.ts 'server.ts'
+
+      searchTools = component 'search_items / get_item' {
+        #built
+        description 'Phase A: full-text keyword search over items and full single-item detail (incl. cached full_text)'
+        link ../src/mcp/server.ts 'server.ts'
+      }
+      semanticTools = component 'semantic_search_items / aggregate_items' {
+        #evolving
+        description 'Phase B: pgvector semantic search and group-by-source/author/category aggregation — registered and live, but newer than the Phase A tools'
+        link ../src/mcp/server.ts 'server.ts'
+      }
+      mirrorStatus = component 'mirror_status' {
+        #built
+        description 'Reports backing-store mode and mirror freshness so the agent warns when the hourly sync is stale'
+        link ../src/lib/copilot/mirror-context.ts 'mirror-context.ts'
+      }
+    }
+
+    // ── Research track ────────────────────────────────────────────────────
+    researchTrack = container 'Research deep-dives' {
+      #research
+      description 'research/ — literature reviews and brainstorms on agentic memory, enterprise code retrieval, and multi-agent orchestration; informs domain terms, not wired into the pipeline'
+      link ../research 'research/'
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Relationships.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Ingestion (external → store)
+  digest.sync.inoreaderClient -> inoreader 'OAuth2 fetch of stream items (quota-bounded)'
+  digest.sync.adsSync -> ads 'fetches research papers'
+  digest.sync.dailySync -> digest.sync.inoreaderClient 'rolling-window pull'
+  digest.sync.dailySync -> digest.sync.syncState 'continuation token + circuit breaker'
+  digest.sync.dailySync -> digest.sync.budgetGuard 'checks daily API budget'
+  digest.sync.budgetGuard -> digest.store.oauthRepo 'reads / increments API budget'
+  digest.sync.inoreaderClient -> digest.store.oauthRepo 'reads refresh token'
+  digest.sync.dailySync -> digest.pipeline.normalize 'raw items → typed FeedItems'
+  digest.sync.dailySync -> digest.store.itemsRepo 'upserts items (dedup on id)'
+
+  // Pipeline (score → store)
+  digest.pipeline.normalize -> digest.pipeline.fulltext 'enrich with full article text'
+  digest.pipeline.computeScores -> digest.pipeline.bm25 'BM25 vs domain-term query'
+  digest.pipeline.computeScores -> digest.pipeline.llmScore 'relevance + usefulness'
+  digest.pipeline.llmScore -> digest.llm 'quality-model completion'
+  digest.pipeline.computeScores -> digest.store.itemsRepo 'persists item_scores'
+  digest.pipeline.fulltext -> digest.store.embeddingsRepo 'embed full text'
+  digest.store.embeddingsRepo -> openai 'text-embedding-3-small'
+  digest.pipeline.ranker -> digest.store.itemsRepo 'loads items + precomputed scores'
+  digest.pipeline.engagement -> digest.store.itemsRepo 'planned engagement / citation signals' {
+    #planned
+  }
+
+  // LLM gateway
+  digest.llm.completion -> digest.llm.llmConfig 'resolve quality model'
+  digest.llm.completion -> anthropic 'claude-* completions'
+  digest.llm.completion -> openai 'gpt-* completions (fallback)'
+  digest.llm.completion -> digest.llm.usage 'records tokens + cost'
+
+  // GTM agents
+  digest.agents.runJob -> digest.agents.retrieval 'retrieve for goal'
+  digest.agents.retrieval -> digest.store.itemsRepo 'corpus items'
+  digest.agents.retrieval -> webSearchProviders 'live web search'
+  digest.agents.runJob -> digest.agents.agentRank 'rank for goal'
+  digest.agents.runJob -> digest.agents.reportWriters 'write structured report'
+  digest.agents.reportWriters -> digest.llm 'report-writing completion'
+  digest.agents.runJob -> digest.agents.trace 'captures config + ranking trace'
+  digest.agents.runJob -> digest.store.agentRunsRepo 'persists run + usage + degradation'
+  digest.agents.runJob -> langsmith 'traces the run (when enabled)'
+  digest.agents.reportWriters -> digest.agents.sourcegraphPlay 'integration-opportunity signal'
+
+  // Media
+  digest.media.newsletter -> digest.pipeline.ranker 'selected items → newsletter'
+  digest.media.podcastScript -> digest.pipeline.ranker 'selected items → script'
+  digest.media.podcastScript -> digest.llm 'script generation'
+  digest.media.audioRender -> digest.media.ttsProviderAdapters 'render speech'
+  digest.media.ttsProviderAdapters -> openai 'OpenAI TTS (primary)'
+  digest.media.ttsProviderAdapters -> ttsProviders 'ElevenLabs / NeMo'
+  digest.media.audioRender -> digest.store.agentRunsRepo 'caches audio by transcript hash'
+
+  // Web + API surface
+  reader -> digest.web 'browses digests, library, newsletters, podcasts'
+  operator -> digest.web 'tunes relevance, runs syncs, triggers reports'
+  digest.web.itemsApi -> digest.pipeline.ranker 'rank items on demand'
+  digest.web.itemsApi -> digest.store.itemsRepo 'reads items + scores'
+  digest.web.agentsApi -> digest.store.agentRunsRepo 'reads / writes reports'
+  digest.web.agentsApi -> digest.agents.runJob 'generates a report (dev / operator)'
+  digest.web.agentsApi -> resend 'emails reports'
+  digest.web.mediaApi -> digest.media.newsletter 'build newsletter'
+  digest.web.mediaApi -> digest.media.audioRender 'render podcast audio'
+  digest.web.adminApi -> digest.sync.dailySync 'triggers sync (dev / operator)'
+  digest.web.adminApi -> digest.store.tuningRepo 'updates source / item relevance'
+  digest.web.health -> digest.store.driver 'confirms DB reachable'
+  digest.web.ui -> digest.web.itemsApi 'fetches ranked items'
+  digest.web.auth -> digest.web.ui 'session / admin-token guard'
+
+  // MCP copilot
+  copilotAgent -> digest.mcp 'MCP tool calls over stdio'
+  digest.mcp.searchTools -> digest.store.itemsRepo 'full-text search / fetch'
+  digest.mcp.semanticTools -> digest.store.embeddingsRepo 'pgvector similarity'
+  digest.mcp.semanticTools -> openai 'embeds the query'
+  digest.mcp.mirrorStatus -> digest.store.driver 'reports mirror freshness'
+
+  // Research informs the domain vocabulary (not a runtime dependency)
+  digest.researchTrack -> digest.pipeline.bm25 'informs domain terms' {
+    #research
+  }
+
+  // Hosting
+  digest -> render 'web service + Postgres + cron'
+}

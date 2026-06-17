@@ -1,0 +1,95 @@
+// Deployment model — where each piece runs at review time.
+//
+// Production is a single Render region (oregon): one Node web service plus a
+// managed Postgres, with cron jobs running the sync and agent entrypoints on a
+// schedule. Local development mirrors production from an hourly prod→local
+// Postgres copy, which is also what the MCP copilot reads. This is the "what
+// runs where / what's the process & data boundary" view a review always asks.
+
+deployment {
+
+  renderHost = host 'Render (oregon)' {
+    description 'PaaS hosting the production web service, managed Postgres, and scheduled cron jobs (branch: production)'
+
+    webProc = proc 'Node web service — Next.js app + API' {
+      description 'npm start, NODE_OPTIONS max-old-space-size 448; health-checked at /api/health'
+      instanceOf digest.web
+    }
+    mediaProc = proc 'Media + LLM + agents (in-process)' {
+      description 'Newsletter / podcast / audio rendering, the LLM gateway, and GTM agents run inside the web service and cron processes'
+      instanceOf digest.media
+      instanceOf digest.llm
+    }
+    syncCron = proc 'Cron — daily sync' {
+      description 'npm run cron:daily, heap-tuned for the 512MB container (8 fulltext items/run, 100 embeddings/run, 1 concurrent fetch)'
+      instanceOf digest.sync
+      instanceOf digest.pipeline
+    }
+    agentsCron = proc 'Cron — agent jobs' {
+      description 'npm run cron:agents — daily/weekly GTM report generation'
+      instanceOf digest.agents
+    }
+    prodDb = proc 'Postgres 16 (managed, free plan)' {
+      description 'pgvector + pg_trgm; single instance, no HA. RISK: free-tier storage/row limits cap how much corpus can be retained'
+      instanceOf digest.store
+    }
+  }
+
+  devHost = host 'Developer host' {
+    description 'Local toolchain — Docker Postgres on 5433, the MCP copilot, and an hourly mirror of production'
+
+    localDb = proc 'Local Postgres (Docker, :5433)' {
+      description 'docker-compose Postgres, refreshed from production by the hourly mirror job'
+    }
+    mirrorJob = proc 'Mirror job — prod → local' {
+      description 'scripts/mirror-from-production.ts, one-way copy so local dev and the copilot never touch production'
+    }
+    mcpProc = proc 'MCP copilot server (stdio)' {
+      description 'src/mcp/server.ts — spawned by Claude Code, reads the local mirror'
+      instanceOf digest.mcp
+    }
+  }
+
+  inoreaderHost = host 'Inoreader' {
+    description 'External RSS aggregator and feed-item source'
+    instanceOf inoreader
+  }
+  adsHost = host 'NASA ADS' {
+    description 'External academic-paper source'
+    instanceOf ads
+  }
+  inferenceHost = host 'LLM / embeddings / TTS / web search' {
+    description 'Anthropic, OpenAI (chat + embeddings + TTS), ElevenLabs/NeMo, and Parallel/Tavily search'
+    instanceOf anthropic
+    instanceOf openai
+    instanceOf ttsProviders
+    instanceOf webSearchProviders
+  }
+  deliveryHost = host 'Email + eval' {
+    description 'Resend (email delivery) and LangSmith (trace + eval datasets)'
+    instanceOf resend
+    instanceOf langsmith
+  }
+
+  // Runtime data & control flow between processes/hosts.
+  syncCron -> inoreaderHost 'pulls feed items'
+  syncCron -> adsHost 'pulls research papers'
+  syncCron -> prodDb 'upserts items + scores'
+  syncCron -> inferenceHost 'LLM scoring + embeddings'
+  agentsCron -> prodDb 'reads corpus, writes agent_runs'
+  agentsCron -> inferenceHost 'report writing + web search'
+  webProc -> prodDb 'reads items / scores / reports'
+  webProc -> inferenceHost 'on-demand LLM (ask, synthesis)'
+  webProc -> deliveryHost 'emails reports / traces runs'
+  mirrorJob -> prodDb 'one-way read'
+  mirrorJob -> localDb 'writes mirror'
+  mcpProc -> localDb 'read-only tool queries'
+}
+
+views {
+
+  deployment view deployment {
+    title 'Deployment — where each piece runs'
+    include *
+  }
+}

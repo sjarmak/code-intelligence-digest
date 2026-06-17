@@ -1,0 +1,226 @@
+// Views over the code-intel-digest model. Planned (#planned) and research
+// (#research) elements/relationships are dimmed + dashed so "what runs in
+// production vs what is proposed" reads at a glance.
+
+views {
+
+  // Landscape — the whole system in context.
+  view index {
+    title 'Code Intelligence Digest — system landscape'
+    include *
+
+    style * {
+      opacity 25%
+    }
+    style element.tag == #built, element.tag == #evolving {
+      opacity 100%
+    }
+    style element.tag == #planned {
+      color muted
+      border dashed
+    }
+    style element.tag == #research {
+      color indigo
+      border dashed
+    }
+  }
+
+  // The digest system, decomposed into its containers.
+  view digestSystem of digest {
+    title 'Containers (built vs evolving vs research)'
+    include *
+
+    style element.tag == #evolving {
+      color amber
+    }
+    style element.tag == #research {
+      color indigo
+      border dashed
+    }
+  }
+
+  // Per-container component views.
+  view syncContainer of digest.sync {
+    title 'Ingestion & sync — components'
+    include *
+  }
+
+  view pipelineContainer of digest.pipeline {
+    title 'Scoring & ranking pipeline — components'
+    include *
+
+    style element.tag == #planned {
+      color muted
+      border dashed
+    }
+  }
+
+  view storeContainer of digest.store {
+    title 'Postgres store — repositories'
+    include *
+  }
+
+  view llmContainer of digest.llm {
+    title 'LLM provider gateway — components'
+    include *
+  }
+
+  view agentsContainer of digest.agents {
+    title 'GTM agent layer — components'
+    include *
+
+    style element.tag == #evolving {
+      color amber
+    }
+  }
+
+  view mediaContainer of digest.media {
+    title 'Media renderers — newsletter / podcast / audio / PDF'
+    include *
+
+    style element.tag == #evolving {
+      color amber
+    }
+  }
+
+  view webContainer of digest.web {
+    title 'Next.js web + API — components'
+    include *
+
+    style element.tag == #evolving {
+      color amber
+    }
+  }
+
+  view mcpContainer of digest.mcp {
+    title 'MCP copilot server — tools'
+    include *
+
+    style element.tag == #evolving {
+      color amber
+    }
+  }
+
+  // Risks & open questions — the #risk-flagged elements, each carrying its open
+  // question in-box. The things a reviewer should probe, surfaced up front.
+  view risks {
+    title 'Risks & open questions'
+    include
+      digest,
+      element.tag == #risk,
+      digest.sync,
+      digest.llm,
+      digest.agents
+
+    style * {
+      opacity 30%
+    }
+    style element.tag == #risk {
+      opacity 100%
+      color red
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Walkthrough flows (dynamic views) — the narrative spine of the review.
+  // ───────────────────────────────────────────────────────────────────────
+
+  // Flow 1 — daily sync + scoring, the pipeline that fills the store.
+  dynamic view syncFlow {
+    title 'Walkthrough — daily sync & scoring'
+    description 'Runs as the Render cron job, tuned for the 512MB container (8 fulltext items/run, 100 embeddings/run). A throttled run pauses on the sync_state row rather than failing, and resumes from the continuation token.'
+
+    digest.sync.dailySync -> digest.sync.budgetGuard 'check daily API budget'
+    digest.sync.dailySync -> digest.sync.inoreaderClient 'OAuth2 pull (rolling window)'
+    digest.sync.inoreaderClient -> inoreader 'fetch stream items'
+    digest.sync.dailySync -> digest.sync.syncState 'persist continuation token'
+    digest.sync.dailySync -> digest.pipeline.normalize 'normalize → categorize → decompose'
+    digest.pipeline.normalize -> digest.store.itemsRepo 'upsert items'
+    digest.pipeline.fulltext -> digest.store.embeddingsRepo 'fulltext + embeddings (small batch)'
+    digest.pipeline.computeScores -> digest.pipeline.bm25 'BM25 vs domain terms'
+    digest.pipeline.computeScores -> digest.pipeline.llmScore 'relevance + usefulness'
+    digest.pipeline.llmScore -> digest.llm 'quality-model completion'
+    digest.pipeline.computeScores -> digest.store.itemsRepo 'persist item_scores'
+  }
+
+  // Flow 2 — a reader requesting a ranked digest.
+  dynamic view readFlow {
+    title 'Walkthrough — serving a ranked digest'
+    description 'Ranking is on-demand and stateless: the API loads precomputed scores, applies the subtle recency term (all-time only), filters by min-relevance, then diversity-samples a per-source-capped digest.'
+
+    reader -> digest.web.ui 'open a category / period'
+    digest.web.ui -> digest.web.itemsApi 'GET /api/items'
+    digest.web.auth -> digest.web.itemsApi 'session guard'
+    digest.web.itemsApi -> digest.pipeline.ranker 'rank for category + period'
+    digest.pipeline.ranker -> digest.store.itemsRepo 'load items + precomputed scores'
+    digest.pipeline.ranker -> digest.web.itemsApi 'diversity-capped, sorted items'
+    digest.web.itemsApi -> digest.web.ui 'JSON → rendered grid'
+  }
+
+  // Flow 3 — a GTM agent report, end to end.
+  dynamic view agentFlow {
+    title 'Walkthrough — a GTM agent report'
+    description 'Runs on cron or from the Reports UI (direct POST is blocked in production). The curator trace is persisted with the run so /reports/[id] can replay the config, retrieval, and ranking that produced the report.'
+
+    operator -> digest.web.agentsApi 'trigger report (Reports UI)'
+    digest.web.agentsApi -> digest.agents.runJob 'runAgentJob(goal)'
+    digest.agents.runJob -> digest.agents.retrieval 'retrieve for goal'
+    digest.agents.retrieval -> digest.store.itemsRepo 'corpus items'
+    digest.agents.retrieval -> webSearchProviders 'live web search'
+    digest.agents.runJob -> digest.agents.agentRank 'goal-aware re-rank'
+    digest.agents.runJob -> digest.agents.reportWriters 'write structured report'
+    digest.agents.reportWriters -> digest.llm 'report-writing completion'
+    digest.agents.runJob -> digest.agents.trace 'capture curator trace'
+    digest.agents.runJob -> digest.store.agentRunsRepo 'persist run + usage'
+    digest.web.agentsApi -> resend 'email the report'
+  }
+
+  // Flow 4 — an MCP coding agent querying the corpus.
+  dynamic view mcpFlow {
+    title 'Walkthrough — MCP copilot query'
+    description 'Read-only tools over the hourly production mirror. The agent should call mirror_status before any "today / this week" claim so it can warn when the mirror is stale (> ~90 min usually means the hourly sync failed).'
+
+    copilotAgent -> digest.mcp.mirrorStatus 'mirror_status (freshness check)'
+    digest.mcp.mirrorStatus -> digest.store.driver 'read sync freshness'
+    copilotAgent -> digest.mcp.searchTools 'search_items (keyword)'
+    digest.mcp.searchTools -> digest.store.itemsRepo 'full-text search'
+    copilotAgent -> digest.mcp.semanticTools 'semantic_search_items (conceptual)'
+    digest.mcp.semanticTools -> openai 'embed query'
+    digest.mcp.semanticTools -> digest.store.embeddingsRepo 'pgvector similarity'
+    copilotAgent -> digest.mcp.searchTools 'get_item (full detail)'
+  }
+
+  // Planned / evolving lens — the slots that are designed but not yet wired,
+  // plus the research track, with built dependencies dimmed.
+  view planned {
+    title 'Planned, evolving & research work'
+    include
+      digest,
+      digest.pipeline,
+      digest.pipeline.engagement,
+      digest.pipeline.computeScores,
+      digest.agents.sourcegraphPlay,
+      digest.mcp.semanticTools,
+      digest.media.newsletter,
+      digest.media.podcastScript,
+      digest.researchTrack
+
+    style * {
+      opacity 30%
+    }
+    style element.tag == #evolving {
+      opacity 100%
+      color amber
+    }
+    style element.tag == #planned {
+      opacity 100%
+      color muted
+      border dashed
+    }
+    style element.tag == #research {
+      opacity 100%
+      color indigo
+      border dashed
+    }
+  }
+}
