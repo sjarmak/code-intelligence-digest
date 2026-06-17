@@ -32,6 +32,7 @@ jobs:
           use-hash-history: 'true'
       - name: Assemble landing page
         run: |
+          sudo chown -R "$USER":"$USER" _site
           cp architecture/site/index.html architecture/site/styles.css architecture/site/favicon.svg _site/
           cp -r architecture/site/fonts _site/fonts
       - uses: actions/upload-pages-artifact@v3
