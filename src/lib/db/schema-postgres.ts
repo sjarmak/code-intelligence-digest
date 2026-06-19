@@ -108,6 +108,31 @@ CREATE TABLE IF NOT EXISTS item_embeddings (
   generated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 
+-- Multi-model (blue-green) embedding store (dv0.5).
+-- Coexists with item_embeddings: a pgvector column is fixed-dimension, so the
+-- OpenAI 1536d corpus and the local nomic 768d corpus cannot share one column —
+-- this is a SEPARATE table keyed by (item_id, model_name) so multiple models
+-- live side by side during the migration. source_hash (sha256 of the exact
+-- encoder input, model-scoped) drives idempotent resume. embedding_normalized
+-- is derived from the measured L2 norm at write time; the eventual serve query
+-- (dv0.5.4) MUST exclude out-of-band vectors so they never poison cosine —
+-- embedding_normalized = true here (this column is NOT NULL, unlike the nullable
+-- item_embeddings.embedding_normalized whose serve filter uses IS NOT FALSE).
+-- The HNSW index is deliberately NOT created here: building it on the empty
+-- table then bulk-loading pays per-row maintenance. It is created post-backfill
+-- in dv0.5.3 (see INDEXES_SQL note below).
+CREATE TABLE IF NOT EXISTS item_model_embeddings (
+  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  model_name TEXT NOT NULL,
+  embedding vector(768) NOT NULL,
+  source_hash TEXT NOT NULL,
+  embedding_dimensions INTEGER NOT NULL DEFAULT 768,
+  embedding_version TEXT NOT NULL DEFAULT 'nomic-v1.5',
+  embedding_normalized BOOLEAN NOT NULL DEFAULT true,
+  generated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  PRIMARY KEY (item_id, model_name)
+);
+
 -- Sync state table for resumable syncs
 CREATE TABLE IF NOT EXISTS sync_state (
   id TEXT PRIMARY KEY,
@@ -315,8 +340,14 @@ CREATE INDEX IF NOT EXISTS idx_podcast_audio_created_at ON "generated_podcast_au
 --   USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- HNSW index alternative (faster queries, slower builds)
-CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings 
+CREATE INDEX IF NOT EXISTS idx_embeddings_hnsw ON item_embeddings
   USING hnsw (embedding vector_cosine_ops);
+
+-- Multi-model embedding store: only the model_name btree here (cheap, used by
+-- coverage counts). The HNSW vector index is created post-backfill in dv0.5.3,
+-- NOT at init — building HNSW on an empty table then bulk-loading is the slowest
+-- way to populate it. (Same reasoning as the IVFFlat note above.)
+CREATE INDEX IF NOT EXISTS idx_item_model_embeddings_model ON item_model_embeddings(model_name);
 
 -- Saved/digest items indexes
 CREATE INDEX IF NOT EXISTS idx_saved_items_user_id ON saved_items(user_id);

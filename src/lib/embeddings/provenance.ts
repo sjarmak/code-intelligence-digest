@@ -39,6 +39,20 @@ export const CURRENT_EMBEDDING: EmbeddingProvenance = {
   normalized: true,
 };
 
+/**
+ * The local open-weight encoder the blue-green migration (dv0.5) backfills
+ * ALONGSIDE the OpenAI corpus, into item_model_embeddings. nomic-embed-text-v1.5
+ * is L2-normalized (unit norm) like OpenAI, so the same NORM_MIN/NORM_MAX band
+ * classifies it; only the dimension (768) and labels differ. Additive only — the
+ * live serve guards stay locked to CURRENT_EMBEDDING until dv0.5.4 flips them.
+ */
+export const NOMIC_EMBED: EmbeddingProvenance = {
+  model: "nomic-embed-text-v1.5",
+  dimensions: 768,
+  version: "nomic-v1.5",
+  normalized: true,
+};
+
 /** Label applied to vectors detected as non-semantic hash pseudo-embeddings. */
 export const PSEUDO_FALLBACK_MODEL = "pseudo-fallback";
 

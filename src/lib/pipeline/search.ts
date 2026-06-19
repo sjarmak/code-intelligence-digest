@@ -151,19 +151,12 @@ async function computeSemanticScores(
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
-        // Ensure embedding is 1536 dimensions (pad if needed)
+        // Only accept genuine 1536d OpenAI vectors. Never pad a smaller vector
+        // up to 1536 — a padded vector is non-unit-norm garbage that still
+        // passes the serve-path normalized filter and poisons cosine results.
         if (embedding.length === 1536) {
           newEmbeddings.push({ itemId, embedding });
           cachedEmbeddings.set(itemId, embedding);
-        } else if (embedding.length === 768) {
-          // Pad 768-dim embeddings to 1536
-          logger.warn(`Padding 768-dim embedding to 1536 for item ${itemId}`);
-          const padded = new Array(1536);
-          for (let i = 0; i < 1536; i++) {
-            padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
-          }
-          newEmbeddings.push({ itemId, embedding: padded });
-          cachedEmbeddings.set(itemId, padded);
         } else {
           logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, using zero vector`);
           const zeroVector = Array(1536).fill(0);
@@ -265,19 +258,12 @@ export async function semanticSearch(
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
-        // Ensure embedding is 1536 dimensions (pad if needed)
+        // Only accept genuine 1536d OpenAI vectors. Never pad a smaller vector
+        // up to 1536 — a padded vector is non-unit-norm garbage that still
+        // passes the serve-path normalized filter and poisons cosine results.
         if (embedding.length === 1536) {
           newEmbeddings.push({ itemId, embedding });
           cachedEmbeddings.set(itemId, embedding);
-        } else if (embedding.length === 768) {
-          // Pad 768-dim embeddings to 1536
-          logger.warn(`Padding 768-dim embedding to 1536 for item ${itemId}`);
-          const padded = new Array(1536);
-          for (let i = 0; i < 1536; i++) {
-            padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
-          }
-          newEmbeddings.push({ itemId, embedding: padded });
-          cachedEmbeddings.set(itemId, padded);
         } else {
           logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, using zero vector`);
           const zeroVector = Array(1536).fill(0);

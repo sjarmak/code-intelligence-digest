@@ -4,7 +4,6 @@
  */
 
 import { getDbClient } from "./driver";
-import { encodeEmbedding, decodeEmbedding } from "../embeddings";
 import { logger } from "../logger";
 
 /**
@@ -27,20 +26,18 @@ export async function saveEmbeddingsBatch(
       const client = await getDbClient();
 
       for (const item of itemsToSave) {
-        // Validate and normalize dimensions
-        let embedding = item.embedding;
+        // item_embeddings is the OpenAI 1536d lane. Reject anything else rather
+        // than fabricating a 1536d vector by padding — a padded vector is
+        // non-unit-norm garbage that would still pass the serve-path
+        // `embedding_normalized IS NOT FALSE` filter and poison cosine results.
+        // Local-model (e.g. nomic 768d) vectors belong in item_model_embeddings
+        // (src/lib/db/embeddings-models.ts), never here.
+        const embedding = item.embedding;
         if (embedding.length !== 1536) {
-          if (embedding.length === 768) {
-            // Pad 768-dim embeddings to 1536
-            logger.warn(`Padding 768-dim embedding to 1536 for item ${item.itemId}`);
-            embedding = new Array(1536);
-            for (let i = 0; i < 1536; i++) {
-              embedding[i] = item.embedding[i % 768] * (i < 768 ? 1 : 0.5);
-            }
-          } else {
-            logger.error(`Invalid embedding dimension (${embedding.length}) for item ${item.itemId}, skipping`);
-            continue;
-          }
+          logger.error(
+            `Refusing to store ${embedding.length}-dim embedding in item_embeddings (1536d only) for item ${item.itemId}; skipping`,
+          );
+          continue;
         }
 
         // Format vector as string for Postgres: "[0.1,0.2,...]"

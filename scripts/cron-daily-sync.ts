@@ -179,17 +179,14 @@ async function populateEmbeddingsForRecentItems(): Promise<Stats['embeddings']> 
       const embeddings = await generateEmbeddingsBatch(itemsForEmbedding);
       const embeddingsToSave = Array.from(embeddings.entries())
         .map(([itemId, embedding]) => {
+          // Only accept genuine 1536d OpenAI vectors — never pad a smaller
+          // vector up to 1536 (that fabricates non-unit-norm garbage that
+          // poisons cosine results). Local 768d nomic vectors go to
+          // item_model_embeddings via a separate job, not here.
           if (embedding.length === 1536) {
             return { itemId, embedding };
           }
-          if (embedding.length === 768) {
-            const padded = new Array(1536);
-            for (let i = 0; i < 1536; i++) {
-              padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
-            }
-            return { itemId, embedding: padded };
-          }
-          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}`);
+          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, skipping`);
           return null;
         })
         .filter((item): item is { itemId: string; embedding: number[] } => item !== null);
