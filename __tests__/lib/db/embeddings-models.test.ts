@@ -36,6 +36,7 @@ import {
   computeSourceHash,
   saveModelEmbeddingsBatch,
   getModelEmbeddingsCount,
+  getModelSourceHashes,
 } from "@/src/lib/db/embeddings-models";
 import { NOMIC_EMBED } from "@/src/lib/embeddings/provenance";
 import { TABLES_SQL, INDEXES_SQL } from "@/src/lib/db/schema-postgres";
@@ -178,6 +179,42 @@ describe("getModelEmbeddingsCount", () => {
     expect(sql).toContain("FROM item_model_embeddings");
     expect(sql).toContain("WHERE model_name = $1");
     expect(params).toEqual([NOMIC_EMBED.model]);
+  });
+});
+
+describe("getModelSourceHashes (resume read, dv0.5.2)", () => {
+  it("returns a map of stored hashes, excluding non-normalized (poisoned) rows", async () => {
+    queryMock.mockResolvedValue({
+      rows: [
+        { item_id: "a", source_hash: "ha" },
+        { item_id: "b", source_hash: "hb" },
+      ],
+      rowCount: 2,
+    });
+    const map = await getModelSourceHashes(NOMIC_EMBED.model, ["a", "b", "c"]);
+    expect(map.get("a")).toBe("ha");
+    expect(map.get("b")).toBe("hb");
+    expect(map.has("c")).toBe(false);
+
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).toContain("FROM item_model_embeddings");
+    expect(sql).toContain("model_name = $1");
+    // poisoned rows must be excluded so they re-embed (architect C2); the
+    // column is NOT NULL so = TRUE is exact (vs IS NOT FALSE on the nullable old table)
+    expect(sql).toContain("embedding_normalized = TRUE");
+    expect(sql).toContain("item_id = ANY($2)");
+    expect(params).toEqual([NOMIC_EMBED.model, ["a", "b", "c"]]);
+  });
+
+  it("no-ops on empty itemIds (no DB call)", async () => {
+    const map = await getModelSourceHashes(NOMIC_EMBED.model, []);
+    expect(map.size).toBe(0);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates DB errors (a swallowed read would re-embed the whole corpus)", async () => {
+    queryMock.mockRejectedValueOnce(new Error("read failed"));
+    await expect(getModelSourceHashes(NOMIC_EMBED.model, ["a"])).rejects.toThrow("read failed");
   });
 });
 

@@ -89,6 +89,36 @@ export async function saveModelEmbeddingsBatch(
   return { saved };
 }
 
+/**
+ * Stored source hashes for the given items under a model — the resume key for
+ * the encoder job (dv0.5.2). Rows with embedding_normalized = false are
+ * DELIBERATELY excluded: those are poisoned (a prior bad encoder run) and must
+ * be re-embedded, so their absence from this map causes the job to redo them.
+ *
+ * Errors propagate — a swallowed read returning an empty map would make the job
+ * conclude "nothing embedded yet" and re-embed the entire corpus.
+ */
+export async function getModelSourceHashes(
+  modelName: string,
+  itemIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (itemIds.length === 0) {
+    return out;
+  }
+  const client = await getDbClient();
+  const result = await client.query(
+    `SELECT item_id, source_hash FROM item_model_embeddings
+     WHERE model_name = $1 AND embedding_normalized = TRUE
+       AND item_id = ANY($2)`,
+    [modelName, itemIds],
+  );
+  for (const row of result.rows) {
+    out.set(row.item_id as string, row.source_hash as string);
+  }
+  return out;
+}
+
 /** Count stored embeddings for a single model — used by the backfill coverage report. */
 export async function getModelEmbeddingsCount(modelName: string): Promise<number> {
   const client = await getDbClient();
