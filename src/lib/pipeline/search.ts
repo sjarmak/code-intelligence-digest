@@ -12,7 +12,7 @@
  */
 
 import { FeedItem, RankedItem } from "../model";
-import { generateEmbedding, generateEmbeddingsBatch, topKSimilar, cosineSimilarity } from "../embeddings";
+import { generateEmbedding, generateEmbeddingsBatch, topKSimilar, cosineSimilarity, EmbeddingUnavailableError } from "../embeddings";
 import { getEmbeddingsBatch, saveEmbeddingsBatch } from "../db/embeddings";
 import { logger } from "../logger";
 import { decodeHtmlEntities } from "../utils/html-entities";
@@ -151,17 +151,15 @@ async function computeSemanticScores(
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
-        // Only accept genuine 1536d OpenAI vectors. Never pad a smaller vector
-        // up to 1536 — a padded vector is non-unit-norm garbage that still
-        // passes the serve-path normalized filter and poisons cosine results.
-        if (embedding.length === 1536) {
-          newEmbeddings.push({ itemId, embedding });
-          cachedEmbeddings.set(itemId, embedding);
-        } else {
-          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, using zero vector`);
-          const zeroVector = Array(1536).fill(0);
-          cachedEmbeddings.set(itemId, zeroVector);
+        // generateEmbeddingsBatch returns only genuine 1536d vectors (it omits
+        // anything it could not embed), so anything else is unexpected — skip
+        // it, never fabricate a zero/padded vector that poisons cosine results.
+        if (embedding.length !== 1536) {
+          logger.warn(`Unexpected embedding dimension (${embedding.length}) for item ${itemId}, skipping`);
+          continue;
         }
+        newEmbeddings.push({ itemId, embedding });
+        cachedEmbeddings.set(itemId, embedding);
       }
 
       // Save newly generated embeddings
@@ -170,12 +168,12 @@ async function computeSemanticScores(
         logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
       }
 
-      // For remaining items (if we hit the limit), use zero vectors
+      // Items beyond the per-request cap stay un-embedded this run — excluded
+      // from semantic scoring (the missing-vector guard scores them 0), never
+      // assigned a fabricated zero vector.
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
-        const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);
-        for (const item of remaining) {
-          cachedEmbeddings.set(item.id, Array(1536).fill(0));
-        }
+        const skipped = itemsNeedingEmbeddings.length - MAX_EMBEDDINGS_PER_REQUEST;
+        logger.warn(`${skipped} items exceed the per-request cap; excluded from semantic scoring this run`);
       }
     }
 
@@ -258,17 +256,15 @@ export async function semanticSearch(
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
-        // Only accept genuine 1536d OpenAI vectors. Never pad a smaller vector
-        // up to 1536 — a padded vector is non-unit-norm garbage that still
-        // passes the serve-path normalized filter and poisons cosine results.
-        if (embedding.length === 1536) {
-          newEmbeddings.push({ itemId, embedding });
-          cachedEmbeddings.set(itemId, embedding);
-        } else {
-          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, using zero vector`);
-          const zeroVector = Array(1536).fill(0);
-          cachedEmbeddings.set(itemId, zeroVector);
+        // generateEmbeddingsBatch returns only genuine 1536d vectors (it omits
+        // anything it could not embed), so anything else is unexpected — skip
+        // it, never fabricate a zero/padded vector that poisons cosine results.
+        if (embedding.length !== 1536) {
+          logger.warn(`Unexpected embedding dimension (${embedding.length}) for item ${itemId}, skipping`);
+          continue;
         }
+        newEmbeddings.push({ itemId, embedding });
+        cachedEmbeddings.set(itemId, embedding);
       }
 
       // Save newly generated embeddings
@@ -277,12 +273,12 @@ export async function semanticSearch(
         logger.info(`Generated and cached ${newEmbeddings.length} new embeddings`);
       }
 
-      // For remaining items (if we hit the limit), use zero vectors
+      // Items beyond the per-request cap stay un-embedded this run — excluded
+      // from semantic scoring (the missing-vector guard scores them 0), never
+      // assigned a fabricated zero vector.
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
-        const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);
-        for (const item of remaining) {
-          cachedEmbeddings.set(item.id, Array(1536).fill(0));
-        }
+        const skipped = itemsNeedingEmbeddings.length - MAX_EMBEDDINGS_PER_REQUEST;
+        logger.warn(`${skipped} items exceed the per-request cap; excluded from semantic scoring this run`);
       }
     }
 
@@ -343,6 +339,13 @@ export async function semanticSearch(
     logger.info(`Semantic search returned ${results.length} results`);
     return results;
   } catch (error) {
+    if (error instanceof EmbeddingUnavailableError) {
+      // No query vector (no key / API outage) — keyword search still works.
+      logger.warn(`Query embedding unavailable — term-based search fallback for "${query}"`, {
+        error: error.message,
+      });
+      return termBasedSearch(query, items, limit);
+    }
     logger.error(`Semantic search failed for query: "${query}"`, error);
     throw error;
   }

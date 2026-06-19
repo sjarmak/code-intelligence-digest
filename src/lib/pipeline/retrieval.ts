@@ -5,6 +5,7 @@
 
 import { FeedItem, RankedItem, Category } from "../model";
 import { generateEmbedding, generateEmbeddingsBatch } from "../embeddings/generate";
+import { EmbeddingUnavailableError } from "../embeddings/provenance";
 import { getEmbeddingsBatch, saveEmbeddingsBatch } from "../db/embeddings";
 import { topKSimilar } from "../embeddings";
 import { rankCategory } from "./rank";
@@ -34,9 +35,24 @@ export async function retrieveRelevantItems(
   );
 
   try {
-    // Step 1: Generate query embedding
+    // Step 1: Generate query embedding. If embeddings are unavailable (no key /
+    // API outage), degrade to standard ranking rather than 500 — semantic
+    // rerank is a boost, not a hard dependency.
     logger.info(`Generating embedding for query: "${query}"`);
-    const queryEmbedding = await generateEmbedding(query);
+    let queryEmbedding: number[];
+    try {
+      queryEmbedding = await generateEmbedding(query);
+    } catch (error) {
+      if (error instanceof EmbeddingUnavailableError) {
+        logger.warn(
+          `Query embedding unavailable — falling back to standard ranking for "${query}"`,
+          { error: error.message },
+        );
+        const ranked = await rankCategory(items, category, periodDays, "day");
+        return ranked.slice(0, limit);
+      }
+      throw error;
+    }
 
     // Step 2: Get cached embeddings or generate new ones
     const itemIds = items.map((item) => item.id);
@@ -78,17 +94,15 @@ export async function retrieveRelevantItems(
       // Convert to array format and validate dimensions
       const newEmbeddings: Array<{ itemId: string; embedding: number[] }> = [];
       for (const [itemId, embedding] of newEmbeddingsMap.entries()) {
-        // Only accept genuine 1536d OpenAI vectors. Never pad a smaller vector
-        // up to 1536 — a padded vector is non-unit-norm garbage that still
-        // passes the serve-path normalized filter and poisons cosine results.
-        if (embedding.length === 1536) {
-          newEmbeddings.push({ itemId, embedding });
-          cachedEmbeddings.set(itemId, embedding);
-        } else {
-          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, using zero vector`);
-          const zeroVector = Array(1536).fill(0);
-          cachedEmbeddings.set(itemId, zeroVector);
+        // generateEmbeddingsBatch returns only genuine 1536d vectors (it omits
+        // anything it could not embed), so anything else is unexpected — skip
+        // it, never fabricate a zero/padded vector that poisons cosine results.
+        if (embedding.length !== 1536) {
+          logger.warn(`Unexpected embedding dimension (${embedding.length}) for item ${itemId}, skipping`);
+          continue;
         }
+        newEmbeddings.push({ itemId, embedding });
+        cachedEmbeddings.set(itemId, embedding);
       }
 
       // Save newly generated embeddings
@@ -97,13 +111,12 @@ export async function retrieveRelevantItems(
         logger.info(`Generated and saved ${newEmbeddings.length} embeddings`);
       }
 
-      // For remaining items (if we hit the limit), use zero vectors
+      // Items beyond the per-request cap stay un-embedded this run — they are
+      // simply excluded from semantic ranking (the !vector guard below skips
+      // them), never assigned a fabricated zero vector.
       if (itemsNeedingEmbeddings.length > MAX_EMBEDDINGS_PER_REQUEST) {
-        const remaining = itemsNeedingEmbeddings.slice(MAX_EMBEDDINGS_PER_REQUEST);
-        logger.warn(`Using zero vectors for ${remaining.length} items (limit exceeded)`);
-        for (const item of remaining) {
-          cachedEmbeddings.set(item.id, Array(1536).fill(0));
-        }
+        const skipped = itemsNeedingEmbeddings.length - MAX_EMBEDDINGS_PER_REQUEST;
+        logger.warn(`${skipped} items exceed the per-request cap; excluded from semantic ranking this run`);
       }
     }
 

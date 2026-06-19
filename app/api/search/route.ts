@@ -240,7 +240,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         error: errorMsg || "Search failed",
-        details: error instanceof Error ? error.stack : undefined,
+        // Don't leak stack traces (file paths / internal structure) in prod.
+        details:
+          process.env.NODE_ENV === "development" && error instanceof Error
+            ? error.stack
+            : undefined,
       },
       { status: 500 },
     );

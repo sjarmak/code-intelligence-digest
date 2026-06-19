@@ -79,13 +79,15 @@ async function populateEmbeddings(
   logger.info(`Generating embeddings in batches...`);
   const embeddings = await generateEmbeddingsBatch(itemsForEmbedding);
 
-  // Convert to format for saving
+  // Convert to format for saving. Only genuine 1536d OpenAI vectors are
+  // persisted — generateEmbeddingsBatch omits anything it could not embed, and
+  // a non-1536d vector here would be fabricated garbage (matches the cron guard).
   const embeddingsToSave = Array.from(embeddings.entries())
     .map(([itemId, embedding]) => ({
       itemId,
       embedding,
     }))
-    .filter(item => item.embedding.length > 0); // Filter out zero vectors
+    .filter(item => item.embedding.length === 1536);
 
   stats.generated = embeddingsToSave.length;
   stats.failed = itemsToProcess.length - embeddingsToSave.length;

@@ -108,23 +108,16 @@ export async function POST(request: NextRequest) {
     // Generate embeddings using batch API
     const embeddings = await generateEmbeddingsBatch(itemsForBatch);
 
-    // Convert to format for saving and validate dimensions
+    // Only persist genuine 1536d OpenAI vectors. Never pad a smaller vector up
+    // to 1536 — that fabricates a non-unit-norm vector that poisons cosine
+    // results (dv0.5.5). 768d nomic vectors belong in item_model_embeddings.
     const embeddingsToSave = Array.from(embeddings.entries())
       .map(([itemId, embedding]) => {
-        // Ensure 1536 dimensions
         if (embedding.length === 1536) {
           return { itemId, embedding };
-        } else if (embedding.length === 768) {
-          // Pad 768-dim to 1536
-          const padded = new Array(1536);
-          for (let i = 0; i < 1536; i++) {
-            padded[i] = embedding[i % 768] * (i < 768 ? 1 : 0.5);
-          }
-          return { itemId, embedding: padded };
-        } else {
-          logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}`);
-          return null;
         }
+        logger.warn(`Invalid embedding dimension (${embedding.length}) for item ${itemId}, skipping`);
+        return null;
       })
       .filter((item): item is { itemId: string; embedding: number[] } => item !== null);
 

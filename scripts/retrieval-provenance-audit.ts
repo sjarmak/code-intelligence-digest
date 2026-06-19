@@ -41,6 +41,7 @@ dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
 import { getDbClient } from "../src/lib/db/driver";
 import { loadItem } from "../src/lib/db/items";
 import { generateEmbedding } from "../src/lib/embeddings/generate";
+import { EmbeddingUnavailableError } from "../src/lib/embeddings/provenance";
 
 // ‖v‖ via pgvector: (v <#> v) = -‖v‖²  →  ‖v‖ = sqrt(-(v <#> v)).
 const NORM = "sqrt(GREATEST(-(embedding <#> embedding), 0))";
@@ -322,9 +323,19 @@ async function main(): Promise<void> {
       const text =
         `${item.title} ${item.summary || ""} ${item.contentSnippet || ""} ${fullText}`.trim() ||
         item.title;
-      const fresh = await generateEmbedding(text);
+      let fresh: number[];
+      try {
+        fresh = await generateEmbedding(text);
+      } catch (error) {
+        if (error instanceof EmbeddingUnavailableError) {
+          liveKeyOk = false; // dead key / API outage — live re-embed impossible
+          selfSims.push({ itemId, selfSim: null, freshNorm: 0 });
+          continue;
+        }
+        throw error;
+      }
       const freshNorm = Math.sqrt(fresh.reduce((s, x) => s + x * x, 0));
-      if (freshNorm > 2) liveKeyOk = false; // pseudo-fallback signature
+      if (freshNorm > 2) liveKeyOk = false; // legacy pseudo-fallback signature (defense)
       const vectorStr = `[${fresh.join(",")}]`;
       const sim = await client.query(
         "SELECT 1 - (embedding <=> $1::vector) AS cos FROM item_embeddings WHERE item_id = $2",

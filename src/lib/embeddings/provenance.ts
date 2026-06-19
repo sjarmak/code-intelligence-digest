@@ -1,12 +1,13 @@
 /**
  * Embedding provenance + metric-space guards (PRD M0).
  *
- * The stored `embedding_model` column records INTENT, not reality:
- * `generateEmbedding` silently falls back to a hash-based pseudo-embedding
- * (L2 norm ≈ 22) on a missing/expired key or an API outage, and to a zero
- * vector on empty text — both written under the default `text-embedding-3-small`
- * label. A pseudo query vector cosined against the real corpus returns ranked
- * garbage with no error. These guards make provenance trustworthy:
+ * The stored `embedding_model` column records INTENT, not reality. Before
+ * dv0.5.5 `generateEmbedding` silently fell back to a hash-based pseudo-embedding
+ * (L2 norm ≈ 22) on a missing/expired key or an API outage, and to a zero vector
+ * on empty text — both written under the default `text-embedding-3-small` label.
+ * `generateEmbedding` now throws instead, but legacy rows written before that fix
+ * still carry pseudo/zero vectors, so these guards remain load-bearing — a pseudo
+ * vector cosined against the real corpus returns ranked garbage with no error:
  *
  *  - `classifyEmbeddingProvenance(norm, dims)` derives true provenance from the
  *    measured L2 norm (used by the backfill — norm is the only honest signal).
@@ -91,6 +92,20 @@ export function classifyEmbeddingProvenance(
     version: norm < NORM_MIN ? "zero-vector" : "hash-pseudo",
     normalized: false,
   };
+}
+
+/**
+ * Thrown when a real embedding cannot be produced (no OpenAI client, API
+ * failure, or empty text). The write path used to swallow this and persist a
+ * hash-pseudo or zero vector — non-semantic garbage that still passed the
+ * serve-path filters and poisoned cosine results (dv0.5.5). Callers must now
+ * skip the item (ingest) or fall back to keyword search (query) instead.
+ */
+export class EmbeddingUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "EmbeddingUnavailableError";
+  }
 }
 
 /** Typed error so callers can distinguish a provenance abort from an empty result. */

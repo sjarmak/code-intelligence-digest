@@ -6,6 +6,7 @@
 import { getDbClient } from "./driver";
 import { logger } from '../logger';
 import { generateEmbedding } from '../embeddings/generate';
+import { EmbeddingUnavailableError } from '../embeddings/provenance';
 
 export interface PaperSectionSummary {
   id: string;
@@ -213,8 +214,21 @@ export async function findRelevantSections(
     return [];
   }
 
-  // Generate query embedding
-  const queryEmbedding = await generateEmbedding(query);
+  // Generate query embedding. Without it there is no semantic ranking — return
+  // empty rather than 500 (no key / API outage).
+  let queryEmbedding: number[];
+  try {
+    queryEmbedding = await generateEmbedding(query);
+  } catch (error) {
+    if (error instanceof EmbeddingUnavailableError) {
+      logger.warn('Query embedding unavailable — no relevant sections', {
+        bibcode,
+        error: error.message,
+      });
+      return [];
+    }
+    throw error;
+  }
 
   // Compute cosine similarity for each section
   const scoredSections = sections

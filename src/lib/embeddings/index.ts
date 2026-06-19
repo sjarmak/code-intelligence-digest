@@ -8,6 +8,7 @@ export {
   CURRENT_EMBEDDING,
   PSEUDO_FALLBACK_MODEL,
   EmbeddingProvenanceError,
+  EmbeddingUnavailableError,
   embeddingNorm,
   classifyEmbeddingProvenance,
   isQueryEmbeddingValid,
