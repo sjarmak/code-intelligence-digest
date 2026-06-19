@@ -17,11 +17,50 @@
  */
 import * as dotenv from "dotenv";
 import * as path from "path";
+import * as fs from "fs";
 
 // Load env before the driver resolves DATABASE_URL (driver reads it lazily at
 // getDbClient, so config-after-import is fine).
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+
+// Cursor checkpoint: persisted after every page so a killed run (CPU onnxruntime
+// can OOM / hit a runner cap after a few hundred inferences) RESUMES where it
+// died instead of re-scanning from the start. Run under a shell `while` loop to
+// converge: `while ! npx tsx scripts/model-embedding-coverage.ts; do npx tsx \
+// scripts/populate-model-embeddings.ts --since-days 30; done`.
+const CURSOR_FILE = path.resolve(process.cwd(), ".data", "nomic-backfill-cursor.json");
+
+interface CursorState {
+  sinceDays: number | null;
+  cursor: string;
+}
+
+function readCursor(sinceDays: number | null): string {
+  try {
+    const state = JSON.parse(fs.readFileSync(CURSOR_FILE, "utf8")) as CursorState;
+    // Only resume if the window matches — a different --since-days is a different run.
+    if (state.sinceDays === sinceDays && typeof state.cursor === "string") {
+      return state.cursor;
+    }
+  } catch {
+    // No checkpoint yet (or unreadable) — start from the beginning.
+  }
+  return "";
+}
+
+function writeCursor(sinceDays: number | null, cursor: string): void {
+  fs.mkdirSync(path.dirname(CURSOR_FILE), { recursive: true });
+  fs.writeFileSync(CURSOR_FILE, JSON.stringify({ sinceDays, cursor } satisfies CursorState));
+}
+
+function clearCursor(): void {
+  try {
+    fs.rmSync(CURSOR_FILE);
+  } catch {
+    // already gone
+  }
+}
 
 import { initializeDatabase } from "../src/lib/db/index";
 import { loadItemsPage } from "../src/lib/db/items";
@@ -34,15 +73,24 @@ interface CliOptions {
   batchSize: number;
   pageSize: number;
   sinceDays: number | null;
+  restart: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
   // Page is a small multiple of a batch (full_text is unbounded TEXT, so a huge
   // page can OOM — defeating the point of paginating).
-  const opts: CliOptions = { limit: null, batchSize: 32, pageSize: 256, sinceDays: null };
+  const opts: CliOptions = {
+    limit: null,
+    batchSize: 32,
+    pageSize: 256,
+    sinceDays: null,
+    restart: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--limit" && i + 1 < argv.length) {
+    if (arg === "--restart") {
+      opts.restart = true;
+    } else if (arg === "--limit" && i + 1 < argv.length) {
       const n = parseInt(argv[++i], 10);
       if (Number.isNaN(n) || n <= 0) throw new Error("--limit must be a positive number");
       opts.limit = n;
@@ -86,7 +134,9 @@ async function main(): Promise<void> {
   const encoder = new NomicEncoder();
 
   const totals: EmbedJobStats = { total: 0, skipped: 0, emptySkipped: 0, embedded: 0 };
-  let cursor = "";
+  if (opts.restart) clearCursor();
+  let cursor = opts.limit !== null ? "" : readCursor(opts.sinceDays);
+  if (cursor) logger.info(`resuming from checkpoint cursor …${cursor.slice(-16)}`);
   let processed = 0;
 
   for (;;) {
@@ -109,8 +159,14 @@ async function main(): Promise<void> {
       `page done (raw=${processed}): embedded=${totals.embedded}, skipped=${totals.skipped}`,
     );
 
-    if (nextCursor === null) break; // corpus exhausted
+    if (nextCursor === null) {
+      // Window fully scanned — clear the checkpoint so the next run starts fresh.
+      if (opts.limit === null) clearCursor();
+      break;
+    }
     cursor = nextCursor;
+    // Checkpoint AFTER the page's writes committed, so a kill resumes past it.
+    if (opts.limit === null) writeCursor(opts.sinceDays, cursor);
   }
 
   logger.info(`nomic backfill done: ${JSON.stringify(totals)}`);
