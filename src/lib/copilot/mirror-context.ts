@@ -174,6 +174,7 @@ export class MirrorCopilotDbContext implements CopilotDbContext {
       `SELECT ${ITEM_COLUMNS.split(', ').map((c) => `i.${c}`).join(', ')}
        FROM item_embeddings e
        JOIN items i ON i.id = e.item_id
+       WHERE e.embedding_normalized IS NOT FALSE  -- M0: exclude pseudo/zero-vector rows
        ORDER BY e.embedding <=> $1::vector
        LIMIT $2`,
       [vecStr, capped]

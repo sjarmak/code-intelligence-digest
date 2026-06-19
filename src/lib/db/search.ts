@@ -10,6 +10,7 @@
 
 import { getDbClient } from './driver';
 import { logger } from '../logger';
+import { assertQueryEmbeddingProvenance } from '../embeddings/provenance';
 
 export interface DbSearchResult {
   id: string;
@@ -136,6 +137,9 @@ export async function dbVectorSearch(
     limit?: number;
   } = {}
 ): Promise<DbSearchResult[]> {
+  // M0 guard: refuse to cosine a pseudo/zero/wrong-dim query vector into the
+  // corpus (throws EmbeddingProvenanceError — caller falls back to FTS).
+  assertQueryEmbeddingProvenance(queryEmbedding);
   const client = await getDbClient();
   const limit = options.limit ?? 20;
 
@@ -171,6 +175,7 @@ export async function dbVectorSearch(
     FROM item_embeddings e
     JOIN items i ON e.item_id = i.id
     WHERE e.embedding IS NOT NULL
+      AND e.embedding_normalized IS NOT FALSE  -- M0: exclude pseudo/zero-vector rows
     ${whereClause}
     ORDER BY e.embedding <=> $1::vector
     LIMIT ${limit}

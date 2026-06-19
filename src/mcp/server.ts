@@ -34,7 +34,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import { resolveCopilotDbContext } from '../lib/copilot';
-import { generateEmbedding } from '../lib/embeddings/generate';
+import { generateQueryEmbedding } from '../lib/embeddings/generate';
+import { EmbeddingProvenanceError } from '../lib/embeddings/provenance';
 import type { Category } from '../lib/model';
 
 const VALID_CATEGORIES = [
@@ -208,7 +209,28 @@ server.registerTool(
     },
   },
   async ({ query, limit }) => {
-    const vec = await generateEmbedding(query);
+    let vec: number[];
+    try {
+      // Guarded: throws if the query vector is a pseudo/zero fallback (dead
+      // OPENAI_API_KEY) rather than silently cosining garbage into the corpus.
+      vec = await generateQueryEmbedding(query);
+    } catch (err) {
+      if (err instanceof EmbeddingProvenanceError) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text',
+              text:
+                'Semantic search unavailable: could not generate a valid query ' +
+                `embedding (${err.message}). The OpenAI embedding key is likely ` +
+                'invalid. Use keyword search (search_items) instead.',
+            },
+          ],
+        };
+      }
+      throw err;
+    }
     const items = await db.semanticSearchByVector(vec, limit);
 
     const summary = items.map((it) => ({

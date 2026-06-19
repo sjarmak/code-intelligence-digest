@@ -53,6 +53,11 @@ export async function initializeDatabase() {
     const schema = getPostgresSchema();
     await client.exec(schema);
 
+    // M0: fail fast if pgvector is missing — every cosine path depends on it,
+    // and a silent absence would degrade the whole vector lane to errors at
+    // query time instead of one clear startup failure.
+    await assertPgvectorInstalled(client);
+
     // Items search_vector trigger only when column is not generated (PG 12+ GENERATED STORED; PG 11 nullable)
     try {
       const check = await client.query(
@@ -125,6 +130,24 @@ export async function initializeDatabase() {
       // Ignore migration failures; routes fall back to legacy behavior if needed.
     }
 
+    // M0: embedding provenance columns for existing databases (no-op on fresh
+    // DBs — the baseline already includes them). Backfill of the actual values
+    // is a separate bounded job (scripts/backfill-embedding-provenance.ts), not
+    // run here: deriving norms for 116K vectors at boot would exceed the timeout.
+    try {
+      await client.run(`
+        ALTER TABLE item_embeddings ADD COLUMN IF NOT EXISTS embedding_dimensions INTEGER;
+      `);
+      await client.run(`
+        ALTER TABLE item_embeddings ADD COLUMN IF NOT EXISTS embedding_version TEXT;
+      `);
+      await client.run(`
+        ALTER TABLE item_embeddings ADD COLUMN IF NOT EXISTS embedding_normalized BOOLEAN;
+      `);
+    } catch {
+      // Columns may already exist.
+    }
+
     await ensurePostgresUserIdColumns(client);
     logger.info("PostgreSQL schema initialized successfully");
   } catch (error) {
@@ -133,6 +156,27 @@ export async function initializeDatabase() {
   }
 
   initialized = true;
+}
+
+/**
+ * Assert the pgvector extension is installed (M0 startup gate). Throws a clear
+ * error naming the fix rather than letting every `<=>` query fail later.
+ */
+export async function assertPgvectorInstalled(
+  client: DatabaseClient,
+): Promise<string> {
+  const res = await client.query(
+    `SELECT extversion FROM pg_extension WHERE extname = 'vector'`,
+  );
+  const version = res.rows[0]?.extversion as string | undefined;
+  if (!version) {
+    throw new Error(
+      "pgvector extension is not installed — run `CREATE EXTENSION vector;`. " +
+        "Vector search and embeddings cannot operate without it.",
+    );
+  }
+  logger.info(`pgvector extension present (version ${version})`);
+  return version;
 }
 
 /**

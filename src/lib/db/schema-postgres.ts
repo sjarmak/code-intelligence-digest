@@ -92,11 +92,19 @@ CREATE TABLE IF NOT EXISTS digest_selections (
   selected_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 
--- Item embeddings table with pgvector
+-- Item embeddings table with pgvector.
+-- Provenance columns (M0) record what each vector ACTUALLY is, derived from its
+-- measured L2 norm by scripts/backfill-embedding-provenance.ts — NOT from the
+-- embedding_model default, which lies for the ~1.5% pseudo-fallback rows written
+-- when OPENAI_API_KEY was unavailable. The cosine guard rejects query vectors
+-- whose provenance does not match, and the vector lane excludes embedding_normalized = FALSE.
 CREATE TABLE IF NOT EXISTS item_embeddings (
   item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
   embedding vector(1536) NOT NULL,  -- OpenAI ada-002 / text-embedding-3-small dimension
   embedding_model TEXT DEFAULT 'text-embedding-3-small',
+  embedding_dimensions INTEGER DEFAULT 1536,
+  embedding_version TEXT DEFAULT 'openai-v3-small',
+  embedding_normalized BOOLEAN DEFAULT true,
   generated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
 );
 

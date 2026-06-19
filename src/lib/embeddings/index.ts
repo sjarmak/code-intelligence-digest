@@ -3,7 +3,17 @@
  * Re-exports generate function and provides vector math utilities
  */
 
-export { generateEmbedding, generateEmbeddingsBatch } from "./generate";
+export { generateEmbedding, generateEmbeddingsBatch, generateQueryEmbedding } from "./generate";
+export {
+  CURRENT_EMBEDDING,
+  PSEUDO_FALLBACK_MODEL,
+  EmbeddingProvenanceError,
+  embeddingNorm,
+  classifyEmbeddingProvenance,
+  isQueryEmbeddingValid,
+  assertQueryEmbeddingProvenance,
+  type EmbeddingProvenance,
+} from "./provenance";
 
 /**
  * Compute cosine similarity between two vectors

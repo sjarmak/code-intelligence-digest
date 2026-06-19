@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { logger } from "../logger";
 import { getOpenAICompatibleClient } from "../llm/client";
 import { recordDegradation } from "../observability/degradation";
+import { assertQueryEmbeddingProvenance } from "./provenance";
 
 /**
  * Get or create OpenAI client for embeddings (uses server env)
@@ -81,6 +82,22 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     // Return zero vector on error
     return Array(1536).fill(0);
   }
+}
+
+/**
+ * Generate an embedding for a SEARCH QUERY, asserting it shares the corpus
+ * metric space before it can be used in a cosine search.
+ *
+ * Unlike `generateEmbedding` (which silently degrades to a pseudo-embedding so
+ * ingest never blocks), a query vector that fell back to pseudo/zero would cosine
+ * into ranked garbage. This throws `EmbeddingProvenanceError` instead, so the
+ * caller falls back to keyword/FTS search and records a distinct degradation —
+ * never returning silent nonsense (PRD M0, premortem Theme C).
+ */
+export async function generateQueryEmbedding(text: string): Promise<number[]> {
+  const vec = await generateEmbedding(text);
+  assertQueryEmbeddingProvenance(vec); // throws on pseudo/zero/wrong-dim
+  return vec;
 }
 
 /**
