@@ -11,6 +11,13 @@ import { NOMIC_EMBED, embeddingNorm, NORM_MIN, NORM_MAX } from "./provenance";
 
 const MODEL_ID = "nomic-ai/nomic-embed-text-v1.5";
 
+// Pin the model revision for reproducibility: a re-download of a changed `main`
+// would produce different vectors while source_hash (over the same input) still
+// matches, so resume would silently SKIP re-embedding the drifted rows. The ops
+// backfill (dv0.5.8) sets NOMIC_MODEL_REVISION to a specific commit SHA before
+// the real run; unset = `main` (acceptable only for local experimentation).
+const MODEL_REVISION = process.env.NOMIC_MODEL_REVISION || "main";
+
 export class NomicEncoder implements Encoder {
   readonly modelName = NOMIC_EMBED.model;
   readonly version = NOMIC_EMBED.version;
@@ -22,7 +29,9 @@ export class NomicEncoder implements Encoder {
 
   private getExtractor(): Promise<FeatureExtractionPipeline> {
     if (!this.extractorPromise) {
-      this.extractorPromise = pipeline("feature-extraction", MODEL_ID);
+      this.extractorPromise = pipeline("feature-extraction", MODEL_ID, {
+        revision: MODEL_REVISION,
+      });
     }
     return this.extractorPromise;
   }

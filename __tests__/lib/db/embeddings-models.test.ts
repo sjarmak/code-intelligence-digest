@@ -37,6 +37,7 @@ import {
   saveModelEmbeddingsBatch,
   getModelEmbeddingsCount,
   getModelSourceHashes,
+  getModelEmbeddingCoverage,
 } from "@/src/lib/db/embeddings-models";
 import { NOMIC_EMBED } from "@/src/lib/embeddings/provenance";
 import { TABLES_SQL, INDEXES_SQL } from "@/src/lib/db/schema-postgres";
@@ -215,6 +216,50 @@ describe("getModelSourceHashes (resume read, dv0.5.2)", () => {
   it("propagates DB errors (a swallowed read would re-embed the whole corpus)", async () => {
     queryMock.mockRejectedValueOnce(new Error("read failed"));
     await expect(getModelSourceHashes(NOMIC_EMBED.model, ["a"])).rejects.toThrow("read failed");
+  });
+});
+
+describe("getModelEmbeddingCoverage (dv0.5.3)", () => {
+  it("reports totals + per-period coverage; completeness is embedded vs expected", async () => {
+    // 1st call: totals; then one call per period (last_7d, last_30d).
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [{ total_items: 100, expected: 95, embedded: 90, not_normalized: 0 }],
+      })
+      .mockResolvedValueOnce({ rows: [{ items: 20, embedded: 19 }] })
+      .mockResolvedValueOnce({ rows: [{ items: 50, embedded: 48 }] });
+
+    const cov = await getModelEmbeddingCoverage(NOMIC_EMBED.model);
+
+    expect(cov.totalItems).toBe(100);
+    expect(cov.expected).toBe(95); // empty-text items excluded — the real denominator
+    expect(cov.embedded).toBe(90);
+    expect(cov.notNormalized).toBe(0);
+    expect(cov.periods).toEqual([
+      { label: "last_7d", items: 20, embedded: 19 },
+      { label: "last_30d", items: 50, embedded: 48 },
+    ]);
+
+    const totalsSql = queryMock.mock.calls[0][0];
+    expect(totalsSql).toContain("FROM items");
+    expect(totalsSql).toContain("item_model_embeddings");
+    expect(totalsSql).toContain("embedding_normalized = TRUE"); // embedded counts only good rows
+    expect(queryMock.mock.calls[0][1]).toEqual([NOMIC_EMBED.model]);
+
+    // per-period query uses LEFT JOIN so un-embedded items are not dropped
+    const periodSql = queryMock.mock.calls[1][0];
+    expect(periodSql).toContain("LEFT JOIN item_model_embeddings");
+    expect(periodSql).toContain("published_at >= $2");
+    expect(periodSql).toContain("FILTER (WHERE");
+    expect(queryMock.mock.calls[1][1][0]).toBe(NOMIC_EMBED.model);
+    expect(typeof queryMock.mock.calls[1][1][1]).toBe("number"); // epoch cutoff
+  });
+
+  it("propagates DB errors (coverage is a gate, not a best-effort number)", async () => {
+    queryMock.mockRejectedValueOnce(new Error("coverage query failed"));
+    await expect(getModelEmbeddingCoverage(NOMIC_EMBED.model)).rejects.toThrow(
+      "coverage query failed",
+    );
   });
 });
 

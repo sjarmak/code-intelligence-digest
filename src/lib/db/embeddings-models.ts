@@ -128,3 +128,90 @@ export async function getModelEmbeddingsCount(modelName: string): Promise<number
   );
   return parseInt(result.rows[0]?.count as string) || 0;
 }
+
+export interface ModelCoveragePeriod {
+  label: string;
+  items: number;
+  embedded: number;
+}
+
+export interface ModelEmbeddingCoverage {
+  modelName: string;
+  totalItems: number;
+  /**
+   * Items that CAN be embedded (non-blank text). The completeness denominator —
+   * empty-text items are skipped by the job, so `embedded == totalItems` is
+   * unreachable; the gate is `embedded >= expected`.
+   */
+  expected: number;
+  /** Items with a usable (normalized) vector for this model. */
+  embedded: number;
+  /** Stored rows that failed the norm check — a transient signal, should be 0 at convergence. */
+  notNormalized: number;
+  periods: ModelCoveragePeriod[];
+}
+
+const COVERAGE_PERIODS: ReadonlyArray<{ label: string; days: number }> = [
+  { label: "last_7d", days: 7 },
+  { label: "last_30d", days: 30 },
+];
+
+const SECONDS_PER_DAY = 86_400;
+
+/**
+ * Coverage of a model's embeddings over the corpus — the backfill health/gate
+ * report. Errors propagate: coverage gates the serve flip, so a failed query
+ * must not be reported as a best-effort number.
+ */
+export async function getModelEmbeddingCoverage(
+  modelName: string,
+): Promise<ModelEmbeddingCoverage> {
+  const client = await getDbClient();
+
+  const totals = await client.query(
+    `SELECT
+       (SELECT COUNT(*) FROM items) AS total_items,
+       -- full_text is intentionally excluded: concatenating TOASTed full_text
+       -- over all rows is a multi-hundred-MB scan that can hit statement_timeout.
+       -- title/summary/snippet decide blankness for ~all items; the rare
+       -- full_text-only item just makes expected a slight undercount (the gate
+       -- stays lenient, never falsely red).
+       (SELECT COUNT(*) FROM items
+          WHERE btrim(coalesce(title,'') || ' ' || coalesce(summary,'') || ' ' ||
+                      coalesce(content_snippet,'')) <> '') AS expected,
+       (SELECT COUNT(*) FROM item_model_embeddings
+          WHERE model_name = $1 AND embedding_normalized = TRUE) AS embedded,
+       (SELECT COUNT(*) FROM item_model_embeddings
+          WHERE model_name = $1 AND embedding_normalized = FALSE) AS not_normalized`,
+    [modelName],
+  );
+  const t = totals.rows[0];
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Periods are independent — run them concurrently.
+  const periods: ModelCoveragePeriod[] = await Promise.all(
+    COVERAGE_PERIODS.map(async (period) => {
+      const cutoff = nowSec - period.days * SECONDS_PER_DAY;
+      const res = await client.query(
+        `SELECT COUNT(*) AS items,
+                COUNT(ime.item_id) FILTER (WHERE ime.embedding_normalized) AS embedded
+         FROM items i
+         LEFT JOIN item_model_embeddings ime
+           ON ime.item_id = i.id AND ime.model_name = $1
+         WHERE i.published_at >= $2`,
+        [modelName, cutoff],
+      );
+      const r = res.rows[0];
+      return { label: period.label, items: Number(r.items), embedded: Number(r.embedded) };
+    }),
+  );
+
+  return {
+    modelName,
+    totalItems: Number(t.total_items),
+    expected: Number(t.expected),
+    embedded: Number(t.embedded),
+    notNormalized: Number(t.not_normalized),
+    periods,
+  };
+}

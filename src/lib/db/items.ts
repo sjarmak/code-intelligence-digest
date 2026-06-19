@@ -38,6 +38,54 @@ function articleUrlForDisplay(url: string | undefined): string | null {
   return tryResolveToArticleUrl(url);
 }
 
+/** Shape of an `items` row as selected by the loaders below. */
+export interface ItemRow {
+  id: string;
+  stream_id: string;
+  source_title: string;
+  title: string;
+  url: string;
+  author: string | null;
+  published_at: number;
+  summary: string | null;
+  content_snippet: string | null;
+  categories: string;
+  category: string;
+  full_text: string | null;
+  extracted_url: string | null;
+}
+
+/**
+ * Map a DB row to a FeedItem, resolving the display/article URL. Returns null
+ * when the URL cannot be resolved to a real article (the caller filters those
+ * out). Single source of truth for the row->FeedItem shape used by every loader.
+ */
+export function mapItemRow(row: ItemRow): FeedItem | null {
+  const finalUrl =
+    row.url && !row.url.includes("inoreader.com") ? row.url : row.extracted_url || row.url;
+  const articleUrl = articleUrlForDisplay(finalUrl);
+  if (!articleUrl) return null;
+  return {
+    id: row.id,
+    streamId: row.stream_id,
+    sourceTitle: row.source_title,
+    title: row.title,
+    url: articleUrl,
+    author: row.author ?? undefined,
+    publishedAt: new Date(row.published_at * 1000),
+    summary: row.summary ?? undefined,
+    contentSnippet: row.content_snippet ?? undefined,
+    categories: JSON.parse(row.categories),
+    category: row.category as Category,
+    raw: {},
+    fullText: row.full_text ?? undefined,
+  };
+}
+
+/** SELECT column list shared by the loaders (matches ItemRow). */
+const ITEM_COLUMNS = `id, stream_id, source_title, title, url, author, published_at,
+       summary, content_snippet, categories, category, full_text, extracted_url`;
+
 /**
  * Save items to database.
  * Only items with a valid article URL are stored; subscription/plan-only URLs are skipped.
@@ -113,14 +161,12 @@ export async function loadItemsByCategory(
 
     const client = await getDbClient();
     const sql = typeof limit === "number" && limit > 0
-      ? `SELECT id, stream_id, source_title, title, url, author, published_at,
-                summary, content_snippet, categories, category, full_text, extracted_url
+      ? `SELECT ${ITEM_COLUMNS}
          FROM items
          WHERE category = $1 AND published_at >= $2
          ORDER BY published_at DESC
          LIMIT $3`
-      : `SELECT id, stream_id, source_title, title, url, author, published_at,
-                summary, content_snippet, categories, category, full_text, extracted_url
+      : `SELECT ${ITEM_COLUMNS}
          FROM items
          WHERE category = $1 AND published_at >= $2
          ORDER BY published_at DESC`;
@@ -128,48 +174,10 @@ export async function loadItemsByCategory(
       ? [category, cutoffTime, limit]
       : [category, cutoffTime];
     const result = await client.query(sql, args);
-    const rows = result.rows as Array<{
-      id: string;
-      stream_id: string;
-      source_title: string;
-      title: string;
-      url: string;
-      author: string | null;
-      published_at: number;
-      summary: string | null;
-      content_snippet: string | null;
-      categories: string;
-      category: string;
-      full_text: string | null;
-      extracted_url: string | null;
-    }>;
-
+    const rows = result.rows as unknown as ItemRow[];
 
     const items = rows
-      .map((row) => {
-        const cat = row.category as Category;
-        const finalUrl =
-          row.url && !row.url.includes("inoreader.com")
-            ? row.url
-            : row.extracted_url || row.url;
-        const articleUrl = articleUrlForDisplay(finalUrl);
-        if (!articleUrl) return null;
-        return {
-          id: row.id,
-          streamId: row.stream_id,
-          sourceTitle: row.source_title,
-          title: row.title,
-          url: articleUrl,
-          author: row.author ?? undefined,
-          publishedAt: new Date(row.published_at * 1000),
-          summary: row.summary ?? undefined,
-          contentSnippet: row.content_snippet ?? undefined,
-          categories: JSON.parse(row.categories),
-          category: cat,
-          raw: {},
-          fullText: row.full_text ?? undefined,
-        } as FeedItem;
-      })
+      .map(mapItemRow)
       .filter((item): item is FeedItem => item != null);
 
     return items;
@@ -196,55 +204,16 @@ export async function loadItemsByCategoryWithDateRange(
 
     const client = await getDbClient();
     const result = await client.query(
-      `SELECT id, stream_id, source_title, title, url, author, published_at,
-              summary, content_snippet, categories, category, full_text, extracted_url
+      `SELECT ${ITEM_COLUMNS}
        FROM items
        WHERE category = $1 AND published_at >= $2 AND published_at <= $3
        ORDER BY published_at DESC`,
       [category, startTime, endTime],
     );
-    const rows = result.rows as Array<{
-      id: string;
-      stream_id: string;
-      source_title: string;
-      title: string;
-      url: string;
-      author: string | null;
-      published_at: number;
-      summary: string | null;
-      content_snippet: string | null;
-      categories: string;
-      category: string;
-      full_text: string | null;
-      extracted_url: string | null;
-    }>;
-
+    const rows = result.rows as unknown as ItemRow[];
 
     const items = rows
-      .map((row) => {
-        const cat = row.category as Category;
-        const finalUrl =
-          row.url && !row.url.includes("inoreader.com")
-            ? row.url
-            : row.extracted_url || row.url;
-        const articleUrl = articleUrlForDisplay(finalUrl);
-        if (!articleUrl) return null;
-        return {
-          id: row.id,
-          streamId: row.stream_id,
-          sourceTitle: row.source_title,
-          title: row.title,
-          url: articleUrl,
-          author: row.author ?? undefined,
-          publishedAt: new Date(row.published_at * 1000),
-          summary: row.summary ?? undefined,
-          contentSnippet: row.content_snippet ?? undefined,
-          categories: JSON.parse(row.categories),
-          category: cat,
-          raw: {},
-          fullText: row.full_text ?? undefined,
-        } as FeedItem;
-      })
+      .map(mapItemRow)
       .filter((item): item is FeedItem => item != null);
 
     return items;
@@ -262,59 +231,17 @@ export async function loadItemsByCategoryWithDateRange(
  */
 export async function loadItem(itemId: string): Promise<FeedItem | null> {
   try {
-
-    type ItemRow = {
-      id: string;
-      stream_id: string;
-      source_title: string;
-      title: string;
-      url: string;
-      author: string | null;
-      published_at: number;
-      summary: string | null;
-      content_snippet: string | null;
-      categories: string;
-      category: string;
-      full_text: string | null;
-      extracted_url: string | null;
-    };
-
     const client = await getDbClient();
     const result = await client.query(
-      `SELECT id, stream_id, source_title, title, url, author, published_at,
-              summary, content_snippet, categories, category, full_text, extracted_url
+      `SELECT ${ITEM_COLUMNS}
        FROM items WHERE id = $1`,
       [itemId],
     );
-    const row = result.rows[0] as ItemRow | undefined;
-
-
+    const row = result.rows[0] as unknown as ItemRow | undefined;
     if (!row) {
       return null;
     }
-
-    const category = row.category as Category;
-    const finalUrl =
-      row.url && !row.url.includes("inoreader.com")
-        ? row.url
-        : row.extracted_url || row.url;
-    const articleUrl = articleUrlForDisplay(finalUrl);
-    if (!articleUrl) return null;
-    return {
-      id: row.id,
-      streamId: row.stream_id,
-      sourceTitle: row.source_title,
-      title: row.title,
-      url: articleUrl,
-      author: row.author || undefined,
-      publishedAt: new Date(row.published_at * 1000),
-      summary: row.summary || undefined,
-      contentSnippet: row.content_snippet || undefined,
-      categories: JSON.parse(row.categories),
-      category,
-      raw: {},
-      fullText: row.full_text ?? undefined,
-    };
+    return mapItemRow(row);
   } catch (error) {
     logger.error(`Failed to load item ${itemId} from database`, error);
     throw error;
@@ -326,58 +253,14 @@ export async function loadItem(itemId: string): Promise<FeedItem | null> {
  */
 export async function loadAllItems(): Promise<FeedItem[]> {
   try {
-
-    type ItemRow = {
-      id: string;
-      stream_id: string;
-      source_title: string;
-      title: string;
-      url: string;
-      author: string | null;
-      published_at: number;
-      summary: string | null;
-      content_snippet: string | null;
-      categories: string;
-      category: string;
-      full_text: string | null;
-      extracted_url: string | null;
-    };
-
     const client = await getDbClient();
     const result = await client.query(
-      `SELECT id, stream_id, source_title, title, url, author, published_at,
-              summary, content_snippet, categories, category, full_text, extracted_url
+      `SELECT ${ITEM_COLUMNS}
        FROM items
        ORDER BY published_at DESC`,
     );
-    const rows = result.rows as ItemRow[];
-
-
-    const items = rows
-      .map((row) => {
-        const cat = row.category as Category;
-        const finalUrl =
-          row.url && !row.url.includes("inoreader.com")
-            ? row.url
-            : row.extracted_url || row.url;
-        const articleUrl = articleUrlForDisplay(finalUrl);
-        if (!articleUrl) return null;
-        return {
-          id: row.id,
-          streamId: row.stream_id,
-          sourceTitle: row.source_title,
-          title: row.title,
-          url: articleUrl,
-          author: row.author ?? undefined,
-          publishedAt: new Date(row.published_at * 1000),
-          summary: row.summary ?? undefined,
-          contentSnippet: row.content_snippet ?? undefined,
-          categories: JSON.parse(row.categories),
-          category: cat,
-          raw: {},
-          fullText: row.full_text ?? undefined,
-        } as FeedItem;
-      })
+    const items = (result.rows as unknown as ItemRow[])
+      .map(mapItemRow)
       .filter((item): item is FeedItem => item != null);
 
     logger.info(`Loaded ${items.length} items from database`);
@@ -386,6 +269,46 @@ export async function loadAllItems(): Promise<FeedItem[]> {
     logger.error("Failed to load all items from database", error);
     throw error;
   }
+}
+
+export interface ItemsPage {
+  items: FeedItem[];
+  /** Raw rows returned (before mapItemRow filtering) — for limit/progress accounting. */
+  rawCount: number;
+  /** Cursor for the next page (the last RAW row's id), or null when exhausted. */
+  nextCursor: string | null;
+}
+
+/**
+ * Keyset-paginated item loader, ordered by the `id` PK. Bounded memory: callers
+ * page through the full corpus (`afterId = ""` to start, then `nextCursor`)
+ * instead of `loadAllItems()`, which materializes all ~116K items at once.
+ * Ordering by the PK gives a stable, total cursor (published_at is not unique).
+ *
+ * `nextCursor` is derived from the last RAW row, NOT the last mapped item — rows
+ * dropped by mapItemRow (unresolvable URL) must still advance the cursor, or a
+ * fully-filtered page would stall paging.
+ *
+ * Assumptions: (1) the `id > $1` ordering relies on the cluster's default TEXT
+ * collation being stable across the run (true for a single backfill). (2) NOT
+ * snapshot-consistent — the live cron writes items concurrently, and Inoreader
+ * ids are not time-monotonic, so a single pass can miss late arrivals; re-run to
+ * convergence and verify with getModelEmbeddingCoverage.
+ */
+export async function loadItemsPage(afterId: string, limit: number): Promise<ItemsPage> {
+  const client = await getDbClient();
+  const result = await client.query(
+    `SELECT ${ITEM_COLUMNS}
+     FROM items
+     WHERE id > $1
+     ORDER BY id
+     LIMIT $2`,
+    [afterId, limit],
+  );
+  const rows = result.rows as unknown as ItemRow[];
+  const items = rows.map(mapItemRow).filter((item): item is FeedItem => item != null);
+  const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null;
+  return { items, rawCount: rows.length, nextCursor };
 }
 
 /**
