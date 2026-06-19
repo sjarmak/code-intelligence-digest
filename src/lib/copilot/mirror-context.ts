@@ -13,6 +13,7 @@
 
 import { Pool, type PoolClient } from 'pg';
 import type { Category, FeedItem } from '../model';
+import { NOMIC_EMBED } from '../embeddings/provenance';
 import type {
   AggregateBucket,
   AggregateDimension,
@@ -27,8 +28,6 @@ const AGGREGATE_COL: Record<AggregateDimension, string> = {
   author: 'author',
   category: 'category',
 };
-
-const EMBEDDING_DIM = 1536;
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 20;
@@ -162,9 +161,12 @@ export class MirrorCopilotDbContext implements CopilotDbContext {
   }
 
   async semanticSearchByVector(vec: number[], limit: number): Promise<FeedItem[]> {
-    if (vec.length !== EMBEDDING_DIM) {
+    // Curation path (dv0.5): local nomic 768d vectors from the blue-green
+    // item_model_embeddings table. The hosted web serve path still reads the
+    // OpenAI item_embeddings(1536d) table — this is curation-only.
+    if (vec.length !== NOMIC_EMBED.dimensions) {
       throw new Error(
-        `semanticSearchByVector expects ${EMBEDDING_DIM}-dim vector, got ${vec.length}`
+        `semanticSearchByVector expects ${NOMIC_EMBED.dimensions}-dim vector, got ${vec.length}`
       );
     }
     const capped = Math.min(Math.max(limit, 1), MAX_LIMIT);
@@ -172,12 +174,12 @@ export class MirrorCopilotDbContext implements CopilotDbContext {
     const vecStr = `[${vec.join(',')}]`;
     const r = await this.pool.query<ItemRow>(
       `SELECT ${ITEM_COLUMNS.split(', ').map((c) => `i.${c}`).join(', ')}
-       FROM item_embeddings e
+       FROM item_model_embeddings e
        JOIN items i ON i.id = e.item_id
-       WHERE e.embedding_normalized IS NOT FALSE  -- M0: exclude pseudo/zero-vector rows
-       ORDER BY e.embedding <=> $1::vector
-       LIMIT $2`,
-      [vecStr, capped]
+       WHERE e.model_name = $1 AND e.embedding_normalized = TRUE
+       ORDER BY e.embedding <=> $2::vector
+       LIMIT $3`,
+      [NOMIC_EMBED.model, vecStr, capped]
     );
     return r.rows.map(rowToFeedItem);
   }

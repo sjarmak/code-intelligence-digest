@@ -15,6 +15,14 @@
  * Usage:
  *   npx tsx scripts/populate-model-embeddings.ts [--limit <n>] [--batch-size <n>] [--page-size <n>]
  */
+import * as dotenv from "dotenv";
+import * as path from "path";
+
+// Load env before the driver resolves DATABASE_URL (driver reads it lazily at
+// getDbClient, so config-after-import is fine).
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+
 import { initializeDatabase } from "../src/lib/db/index";
 import { loadItemsPage } from "../src/lib/db/items";
 import { NomicEncoder } from "../src/lib/embeddings/nomic-encoder";
@@ -25,18 +33,23 @@ interface CliOptions {
   limit: number | null;
   batchSize: number;
   pageSize: number;
+  sinceDays: number | null;
 }
 
 function parseArgs(argv: string[]): CliOptions {
   // Page is a small multiple of a batch (full_text is unbounded TEXT, so a huge
   // page can OOM — defeating the point of paginating).
-  const opts: CliOptions = { limit: null, batchSize: 32, pageSize: 256 };
+  const opts: CliOptions = { limit: null, batchSize: 32, pageSize: 256, sinceDays: null };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--limit" && i + 1 < argv.length) {
       const n = parseInt(argv[++i], 10);
       if (Number.isNaN(n) || n <= 0) throw new Error("--limit must be a positive number");
       opts.limit = n;
+    } else if (arg === "--since-days" && i + 1 < argv.length) {
+      const n = parseInt(argv[++i], 10);
+      if (Number.isNaN(n) || n <= 0) throw new Error("--since-days must be a positive number");
+      opts.sinceDays = n;
     } else if (arg === "--batch-size" && i + 1 < argv.length) {
       const n = parseInt(argv[++i], 10);
       if (Number.isNaN(n) || n <= 0) throw new Error("--batch-size must be a positive number");
@@ -54,9 +67,15 @@ async function main(): Promise<void> {
   const opts = parseArgs(process.argv.slice(2));
   await initializeDatabase();
 
+  const sinceEpoch =
+    opts.sinceDays !== null
+      ? Math.floor(Date.now() / 1000) - opts.sinceDays * 24 * 60 * 60
+      : undefined;
+
   logger.info(
     `nomic backfill starting (batchSize=${opts.batchSize}, pageSize=${opts.pageSize}` +
-      `${opts.limit !== null ? `, limit=${opts.limit}` : ""}); ` +
+      `${opts.limit !== null ? `, limit=${opts.limit}` : ""}` +
+      `${opts.sinceDays !== null ? `, sinceDays=${opts.sinceDays}` : ""}); ` +
       `HF_HOME=${process.env.HF_HOME ?? "(default ~/.cache/huggingface)"}, ` +
       `revision=${process.env.NOMIC_MODEL_REVISION ?? "main"}, ` +
       `offline=${process.env.TRANSFORMERS_OFFLINE ?? "0"}`,
@@ -75,7 +94,7 @@ async function main(): Promise<void> {
     if (remaining <= 0) break;
     const pageLimit = opts.limit !== null ? Math.min(opts.pageSize, remaining) : opts.pageSize;
 
-    const { items, rawCount, nextCursor } = await loadItemsPage(cursor, pageLimit);
+    const { items, rawCount, nextCursor } = await loadItemsPage(cursor, pageLimit, sinceEpoch);
     if (items.length > 0) {
       const stats = await embedAndStoreItems(items, encoder, { batchSize: opts.batchSize });
       totals.total += stats.total;

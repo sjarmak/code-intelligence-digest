@@ -34,8 +34,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 
 import { resolveCopilotDbContext } from '../lib/copilot';
-import { generateQueryEmbedding } from '../lib/embeddings/generate';
-import { EmbeddingProvenanceError } from '../lib/embeddings/provenance';
+import { NomicEncoder } from '../lib/embeddings/nomic-encoder';
+import { QUERY_PREFIX } from '../lib/embeddings/encoder';
 import type { Category } from '../lib/model';
 
 const VALID_CATEGORIES = [
@@ -51,6 +51,10 @@ const VALID_CATEGORIES = [
 ] as const satisfies readonly Category[];
 
 const { db, mode: dbMode } = resolveCopilotDbContext();
+
+// Local nomic encoder for semantic queries (dv0.5 curation path). Lazy-loads the
+// ONNX model once on first semantic_search_items call; shared for the process.
+const queryEncoder = new NomicEncoder();
 
 const server = new McpServer(
   { name: 'code-intel-copilot', version: '0.1.0' },
@@ -187,13 +191,13 @@ server.registerTool(
   {
     description:
       'Semantic search for items using vector similarity (pgvector). ' +
-      'The query string is embedded server-side with OpenAI ' +
-      'text-embedding-3-small; results are items whose embedding is closest ' +
-      'by cosine distance. Use this for conceptual queries where keyword ' +
+      'The query string is embedded locally with the open-weight ' +
+      'nomic-embed-text-v1.5 model (768d); results are items whose embedding is ' +
+      'closest by cosine distance. Use this for conceptual queries where keyword ' +
       'matching underperforms — e.g. "how are people thinking about codebase ' +
-      'understanding and agent context". Only items that have been embedded ' +
-      'are returned (most items in item_embeddings; ads_papers/paper_sections ' +
-      'are NOT currently embedded).',
+      'understanding and agent context". Only items that have been embedded with ' +
+      'nomic are returned (item_model_embeddings; ads_papers/paper_sections are ' +
+      'NOT currently embedded).',
     inputSchema: {
       query: z
         .string()
@@ -211,25 +215,27 @@ server.registerTool(
   async ({ query, limit }) => {
     let vec: number[];
     try {
-      // Guarded: throws if the query vector is a pseudo/zero fallback (dead
-      // OPENAI_API_KEY) rather than silently cosining garbage into the corpus.
-      vec = await generateQueryEmbedding(query);
-    } catch (err) {
-      if (err instanceof EmbeddingProvenanceError) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: 'text',
-              text:
-                'Semantic search unavailable: could not generate a valid query ' +
-                `embedding (${err.message}). The OpenAI embedding key is likely ` +
-                'invalid. Use keyword search (search_items) instead.',
-            },
-          ],
-        };
+      // Embed the query locally with nomic + the 'search_query:' task prefix
+      // (must match the 'search_document:' prefix used when documents were
+      // embedded). The encoder asserts unit-norm/768d at the source.
+      const [queryVec] = await queryEncoder.embedDocuments([QUERY_PREFIX + query]);
+      if (!queryVec) {
+        throw new Error("encoder returned no vector for the query");
       }
-      throw err;
+      vec = queryVec;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text:
+              'Semantic search unavailable: could not generate a query embedding ' +
+              `(${message}). Use keyword search (search_items) instead.`,
+          },
+        ],
+      };
     }
     const items = await db.semanticSearchByVector(vec, limit);
 

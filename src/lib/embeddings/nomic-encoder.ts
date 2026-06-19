@@ -31,6 +31,12 @@ export class NomicEncoder implements Encoder {
     if (!this.extractorPromise) {
       this.extractorPromise = pipeline("feature-extraction", MODEL_ID, {
         revision: MODEL_REVISION,
+      }).catch((err) => {
+        // Don't cache a rejected load — a transient HF/network failure would
+        // otherwise permanently break a long-running process (e.g. the MCP
+        // daemon). Reset so the next call retries the download.
+        this.extractorPromise = null;
+        throw err;
       });
     }
     return this.extractorPromise;

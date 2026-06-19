@@ -93,6 +93,23 @@ describe("loadItemsPage", () => {
     expect(page.nextCursor).toBe("i3");
   });
 
+  it("applies a recency filter when sinceEpoch is given", async () => {
+    queryMock.mockResolvedValue({ rows: [row({ id: "i2" })], rowCount: 1 });
+    await loadItemsPage("i1", 100, 1_700_000_000);
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).toContain("published_at >= $2");
+    expect(sql).toContain("LIMIT $3");
+    expect(params).toEqual(["i1", 1_700_000_000, 100]);
+  });
+
+  it("omits the recency filter when sinceEpoch is undefined", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    await loadItemsPage("i1", 50);
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).not.toContain("published_at >="); // no recency filter in WHERE
+    expect(params).toEqual(["i1", 50]);
+  });
+
   it("nextCursor is null on a partial page (corpus exhausted)", async () => {
     queryMock.mockResolvedValue({ rows: [row({ id: "i2" })], rowCount: 1 });
     const page = await loadItemsPage("i1", 100);

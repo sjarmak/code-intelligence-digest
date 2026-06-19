@@ -295,15 +295,28 @@ export interface ItemsPage {
  * ids are not time-monotonic, so a single pass can miss late arrivals; re-run to
  * convergence and verify with getModelEmbeddingCoverage.
  */
-export async function loadItemsPage(afterId: string, limit: number): Promise<ItemsPage> {
+export async function loadItemsPage(
+  afterId: string,
+  limit: number,
+  sinceEpoch?: number,
+): Promise<ItemsPage> {
   const client = await getDbClient();
+  // Optional recency filter (published_at >= cutoff) for windowed backfills.
+  // Still keyset-ordered by the id PK so paging stays stable.
+  const params: unknown[] = [afterId];
+  let recencyClause = "";
+  if (sinceEpoch !== undefined) {
+    params.push(sinceEpoch);
+    recencyClause = ` AND published_at >= $${params.length}`;
+  }
+  params.push(limit);
   const result = await client.query(
     `SELECT ${ITEM_COLUMNS}
      FROM items
-     WHERE id > $1
+     WHERE id > $1${recencyClause}
      ORDER BY id
-     LIMIT $2`,
-    [afterId, limit],
+     LIMIT $${params.length}`,
+    params,
   );
   const rows = result.rows as unknown as ItemRow[];
   const items = rows.map(mapItemRow).filter((item): item is FeedItem => item != null);
