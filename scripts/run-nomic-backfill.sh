@@ -32,9 +32,12 @@ exec > >(tee -a .data/nomic-backfill-manual.log) 2>&1
 if [ -d .gpu-libs ] && command -v nvidia-smi >/dev/null 2>&1; then
   export LD_LIBRARY_PATH="$(find "$PWD/.gpu-libs/nvidia" -name lib -type d | tr '\n' ':')${LD_LIBRARY_PATH:-}"
   export NOMIC_DEVICE="${NOMIC_DEVICE:-cuda}"
-  # On the GPU, big batches win; on CPU keep them small to bound attention memory.
+  # Attention memory is batch x seq^2; items run up to MAX_INPUT_TOKENS (2048),
+  # and the batch pads to the longest item, so batch 16 -> ~3GB/alloc (safe in
+  # 32GB VRAM). Bigger batches OOM the GPU on a long item. Larger DB page just
+  # means fewer round-trips; it's still embedded in batch-size chunks.
   PAGE_SIZE="${PAGE_SIZE:-256}"
-  BATCH_SIZE="${BATCH_SIZE:-64}"
+  BATCH_SIZE="${BATCH_SIZE:-16}"
   echo "GPU mode: NOMIC_DEVICE=$NOMIC_DEVICE page=$PAGE_SIZE batch=$BATCH_SIZE"
 else
   PAGE_SIZE="${PAGE_SIZE:-64}"
