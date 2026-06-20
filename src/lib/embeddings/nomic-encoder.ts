@@ -39,6 +39,14 @@ interface TruncatingTokenizer {
 // the real run; unset = `main` (acceptable only for local experimentation).
 const MODEL_REVISION = process.env.NOMIC_MODEL_REVISION || "main";
 
+// Optional execution device. Default (unset) = CPU, which is mandatory on the
+// 512MB Render container and the safe default for the MCP daemon. The dv0.5.8
+// backfill sets NOMIC_DEVICE=cuda (with the CUDA-12 runtime libs on
+// LD_LIBRARY_PATH — see scripts/run-nomic-backfill.sh) to run on the GPU,
+// ~1000x faster. Passed straight to transformers.js, which maps it to the
+// matching onnxruntime execution provider.
+const DEVICE = process.env.NOMIC_DEVICE?.trim() || undefined;
+
 export class NomicEncoder implements Encoder {
   readonly modelName = NOMIC_EMBED.model;
   readonly version = NOMIC_EMBED.version;
@@ -52,6 +60,9 @@ export class NomicEncoder implements Encoder {
     if (!this.extractorPromise) {
       this.extractorPromise = pipeline("feature-extraction", MODEL_ID, {
         revision: MODEL_REVISION,
+        // `device` is a transformers.js DeviceType union; NOMIC_DEVICE is an
+        // opt-in escape hatch, so cast the validated env string through.
+        ...(DEVICE ? { device: DEVICE as "cpu" } : {}),
       }).catch((err) => {
         // Don't cache a rejected load — a transient HF/network failure would
         // otherwise permanently break a long-running process (e.g. the MCP

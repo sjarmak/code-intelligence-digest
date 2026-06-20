@@ -78,3 +78,4 @@ config.private.json
 # bd config — branch-independent, managed locally per-host
 /.beads/metadata.json
 /.beads/config.yaml
+.gpu-libs/

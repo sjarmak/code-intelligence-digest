@@ -24,8 +24,23 @@ cd "$(dirname "$0")/.."
 mkdir -p .data
 exec > >(tee -a .data/nomic-backfill-manual.log) 2>&1
 
-PAGE_SIZE="${PAGE_SIZE:-64}"
-BATCH_SIZE="${BATCH_SIZE:-16}"
+# GPU mode: if the CUDA-12 runtime libs are present (.gpu-libs/, installed via
+#   pip3 install --target .gpu-libs nvidia-cublas-cu12 nvidia-cudnn-cu12 \
+#       nvidia-cuda-runtime-cu12 nvidia-cufft-cu12 nvidia-curand-cu12
+# ) and a GPU is visible, run the encoder on it (~1000x faster than CPU). The
+# libs bridge the gap between onnxruntime's CUDA-12 provider and a CUDA-13 host.
+if [ -d .gpu-libs ] && command -v nvidia-smi >/dev/null 2>&1; then
+  export LD_LIBRARY_PATH="$(find "$PWD/.gpu-libs/nvidia" -name lib -type d | tr '\n' ':')${LD_LIBRARY_PATH:-}"
+  export NOMIC_DEVICE="${NOMIC_DEVICE:-cuda}"
+  # On the GPU, big batches win; on CPU keep them small to bound attention memory.
+  PAGE_SIZE="${PAGE_SIZE:-256}"
+  BATCH_SIZE="${BATCH_SIZE:-64}"
+  echo "GPU mode: NOMIC_DEVICE=$NOMIC_DEVICE page=$PAGE_SIZE batch=$BATCH_SIZE"
+else
+  PAGE_SIZE="${PAGE_SIZE:-64}"
+  BATCH_SIZE="${BATCH_SIZE:-16}"
+  echo "CPU mode: page=$PAGE_SIZE batch=$BATCH_SIZE (no .gpu-libs / no GPU)"
+fi
 
 pass=0
 while true; do
