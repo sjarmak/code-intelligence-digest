@@ -18,6 +18,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Self-log: mirror ALL output to .data/nomic-backfill-manual.log so you never
+# have to type a fragile `> file 2>&1` redirect (which keeps getting split by
+# multi-line terminal pastes). Just run `bash scripts/run-nomic-backfill.sh`.
+mkdir -p .data
+exec > >(tee -a .data/nomic-backfill-manual.log) 2>&1
+
 PAGE_SIZE="${PAGE_SIZE:-64}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 
