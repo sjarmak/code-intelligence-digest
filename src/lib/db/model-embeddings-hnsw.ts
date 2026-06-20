@@ -29,8 +29,13 @@ export const HNSW_TABLE = "item_model_embeddings";
 export const HNSW_COLUMN = "embedding";
 export const HNSW_INDEX_NAME = "idx_item_model_embeddings_hnsw";
 
-/** Default server-side build memory; raise via env for a larger Postgres. */
-export const DEFAULT_MAINTENANCE_WORK_MEM = "256MB";
+// Default server-side build memory. Deliberately CONSERVATIVE: prod is a nano
+// Render Postgres (shared_buffers=64MB, ~256-512MB RAM), and raising this above
+// what the instance has OOM-kills the backend (a 256MB setting crashed it +
+// forced a restart). A small value makes pgvector use its on-disk HNSW build
+// path — slower, but it completes instead of OOMing. Raise via
+// MODEL_EMBEDDINGS_HNSW_MAINTENANCE_WORK_MEM only on an instance with the RAM.
+export const DEFAULT_MAINTENANCE_WORK_MEM = "32MB";
 
 export function createIndexSql(): string {
   return (
