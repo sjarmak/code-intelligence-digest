@@ -1,0 +1,18 @@
+[Unit]
+# bead code-intel-digest-06d / P2.1
+Description=Code Intelligence Digest — daily ingestion into the local-primary Postgres
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ds/projects/code-intelligence-digest
+# systemd user units start with a minimal PATH; node/npm/npx live in ~/.local/bin.
+Environment=PATH=/home/ds/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env bash /home/ds/projects/code-intelligence-digest/scripts/run-local-cron.sh
+# A daily ingest can run several minutes; don't let systemd kill it early.
+TimeoutStartSec=1800
+Nice=10
+
+[Install]
+WantedBy=default.target

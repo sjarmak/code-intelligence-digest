@@ -1,0 +1,13 @@
+[Unit]
+# bead code-intel-digest-06d / P2.1
+Description=Daily trigger for Code Intelligence Digest local ingestion
+
+[Timer]
+# 06:00 local time daily. Persistent=true runs a missed job on next boot
+# (linger is enabled for this user, so it also fires without an active login).
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
