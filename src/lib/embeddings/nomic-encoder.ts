@@ -11,6 +11,12 @@ import { NOMIC_EMBED, embeddingNorm, NORM_MIN, NORM_MAX } from "./provenance";
 
 const MODEL_ID = "nomic-ai/nomic-embed-text-v1.5";
 
+// Per-input char cap (~2048 tokens). nomic's context is 8192 tokens; anything
+// near that, batched, OOMs the O(n^2) attention. Slightly above buildItemText's
+// 8000-char doc cap so the normal doc path is never double-trimmed — this only
+// bites a direct/query caller that bypassed buildItemText.
+const MAX_ENCODER_INPUT_CHARS = 8192;
+
 // Pin the model revision for reproducibility: a re-download of a changed `main`
 // would produce different vectors while source_hash (over the same input) still
 // matches, so resume would silently SKIP re-embedding the drifted rows. The ops
@@ -47,9 +53,14 @@ export class NomicEncoder implements Encoder {
       return [];
     }
     const extractor = await this.getExtractor();
+    // Cap each input before tokenizing. The pipeline doesn't expose truncation,
+    // so an oversized string (e.g. a ~50K-char summary) would tokenize to ~13K
+    // tokens and OOM the O(n^2) attention when batched (the dv0.5.8 stall). This
+    // backstop protects every caller, not just the buildItemText doc path.
+    const capped = texts.map((t) => (t.length > MAX_ENCODER_INPUT_CHARS ? t.substring(0, MAX_ENCODER_INPUT_CHARS) : t));
     // nomic is natively 768d, so mean-pooling + L2-normalize yields the final
     // unit vector with no Matryoshka truncation needed.
-    const output = await extractor(texts, { pooling: "mean", normalize: true });
+    const output = await extractor(capped, { pooling: "mean", normalize: true });
     // Boundary cast: Tensor.tolist() is typed any[]; for a [batch, 768] pooled
     // tensor it is number[][]. The per-vector dim/norm checks below validate it.
     const vectors = output.tolist() as unknown as number[][];

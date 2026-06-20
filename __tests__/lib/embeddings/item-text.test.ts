@@ -44,6 +44,14 @@ describe("buildItemText", () => {
     expect(text).toBe(`T ${"x".repeat(2000)}`);
   });
 
+  it("caps total length so a pathological summary/snippet can't OOM the encoder", () => {
+    // A ~50K-char summary (the dv0.5.8 stall) becomes a ~13K-token sequence;
+    // O(n^2) attention then OOMs the batch. The total must stay bounded.
+    const text = buildItemText(item({ title: "T", summary: "s".repeat(50_000) }));
+    expect(text.length).toBe(8000);
+    expect(text.startsWith("T sss")).toBe(true);
+  });
+
   it("handles missing optional fields without leaking undefined", () => {
     expect(buildItemText(item({ title: "Only Title" }))).toBe("Only Title");
   });
