@@ -14,6 +14,7 @@
 import { Pool, type PoolClient } from 'pg';
 import type { Category, FeedItem } from '../model';
 import { NOMIC_EMBED } from '../embeddings/provenance';
+import { logger } from '../logger';
 import type {
   AggregateBucket,
   AggregateDimension,
@@ -31,6 +32,37 @@ const AGGREGATE_COL: Record<AggregateDimension, string> = {
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 20;
+
+/**
+ * Resolve the HNSW recall knob (pgvector `hnsw.ef_search`, default 40) from env.
+ * The nomic vector store is small (~140K rows) so we default higher for better
+ * recall on `semanticSearchByVector`. Returns null for invalid/disabled input
+ * (the caller then leaves the pgvector default in place).
+ */
+export function resolveHnswEfSearch(
+  raw: string | undefined = process.env.MODEL_EMBEDDINGS_HNSW_EF_SEARCH,
+): number | null {
+  if (raw === undefined || raw.trim() === '') return 100;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(Math.floor(n), 1000);
+}
+
+/**
+ * Apply the recall knob to every physical connection in a pool. SET persists for
+ * the session, so all semantic searches on the pool use it; it is a no-op for
+ * non-vector queries. A failure must not take the connection down — log and
+ * fall back to the pgvector default.
+ */
+function configureVectorRecall(pool: Pool): void {
+  const ef = resolveHnswEfSearch();
+  if (ef === null) return;
+  pool.on('connect', (client) => {
+    client.query(`SET hnsw.ef_search = ${ef}`).catch((err) => {
+      logger.warn('failed to set hnsw.ef_search on copilot connection', err);
+    });
+  });
+}
 
 function assertLocalUrl(url: string): void {
   const parsed = new URL(url);
@@ -306,6 +338,7 @@ export function createMirrorCopilotDbContext(): CopilotDbContext {
     max: 4,
     idleTimeoutMillis: 30_000,
   });
+  configureVectorRecall(pool);
 
   return new MirrorCopilotDbContext(pool);
 }
@@ -335,6 +368,7 @@ export function createDirectCopilotDbContext(): CopilotDbContext {
     max: 4,
     idleTimeoutMillis: 30_000,
   });
+  configureVectorRecall(pool);
 
   return new MirrorCopilotDbContext(pool);
 }
