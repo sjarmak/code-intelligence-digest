@@ -27,11 +27,20 @@ export interface ADSPaperSearchResult {
 
 /**
  * Initialize ADS tables in database (PostgreSQL)
+ *
+ * Idempotent and guarded: now called eagerly from initializeDatabase() at
+ * startup AND lazily by ADS API routes per request. The in-memory flag skips
+ * the redundant DDL round-trips once the tables are known to exist (mirrors the
+ * `initialized` guard in db/index.ts); the DDL itself is IF NOT EXISTS, so the
+ * flag is an optimization, not a correctness requirement.
  */
+let adsTablesInitialized = false;
+
 export async function initializeADSTables() {
+  if (adsTablesInitialized) return;
 
   try {
-    
+
 
       const client = await getDbClient();
 
@@ -89,6 +98,7 @@ export async function initializeADSTables() {
 
       // Create indexes
       await client.exec(`
+        CREATE INDEX IF NOT EXISTS idx_ads_papers_updated_at ON ads_papers(updated_at);
         CREATE INDEX IF NOT EXISTS idx_ads_papers_year ON ads_papers(year);
         CREATE INDEX IF NOT EXISTS idx_ads_papers_journal ON ads_papers(journal);
         CREATE INDEX IF NOT EXISTS idx_ads_library_papers_library ON ads_library_papers(library_id);
@@ -98,8 +108,9 @@ export async function initializeADSTables() {
           USING GIN (to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(abstract, '') || ' ' || COALESCE(authors, '')));
       `);
 
+      adsTablesInitialized = true;
       logger.info('ADS database tables initialized (PostgreSQL)');
-    
+
 
   } catch (error) {
     logger.error('Failed to initialize ADS tables', {

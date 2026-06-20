@@ -19,6 +19,7 @@ import {
   ITEMS_SEARCH_TRIGGER_CREATE_SQL,
 } from "./schema-postgres";
 import { ensurePostgresUserIdColumns } from "./ensure-user-id";
+import { initializeADSTables } from "./ads-papers";
 
 export { getDbClient, resetDbClient, detectDriver, getFreshPostgresConnection };
 export type { DatabaseClient };
@@ -57,6 +58,12 @@ export async function initializeDatabase() {
     // and a silent absence would degrade the whole vector lane to errors at
     // query time instead of one clear startup failure.
     await assertPgvectorInstalled(client);
+
+    // ADS paper tables (ads_papers / ads_library_papers / ads_libraries) are
+    // owned by initializeADSTables(), not the base schema. Ensure them here so a
+    // fresh DB has them eagerly instead of only when an ADS API route first runs
+    // — the base schema's paper_sections + sync paths assume they exist.
+    await initializeADSTables();
 
     // Items search_vector trigger only when column is not generated (PG 12+ GENERATED STORED; PG 11 nullable)
     try {

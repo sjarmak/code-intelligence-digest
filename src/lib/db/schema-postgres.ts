@@ -369,13 +369,36 @@ CREATE INDEX IF NOT EXISTS idx_user_paper_favorites_user_id ON user_paper_favori
 -- Agent reports list by goal and recency
 CREATE INDEX IF NOT EXISTS idx_agent_reports_goal_generated ON agent_reports(goal, generated_at DESC);
 
+-- Paper sections (ADS full-text section summaries + embeddings). Owned by the
+-- schema (see src/lib/db/paper-sections.ts), unlike the ads_papers family which
+-- is owned by initializeADSTables(). The bibcode FK to ads_papers is added
+-- conditionally by scripts/sync-paper-sections-to-prod.ts, not inline here, so
+-- this table has no creation-order dependency on the ADS tables.
+CREATE TABLE IF NOT EXISTS paper_sections (
+  id TEXT PRIMARY KEY,
+  bibcode TEXT NOT NULL,
+  section_id TEXT NOT NULL,
+  section_title TEXT NOT NULL,
+  level INTEGER NOT NULL,
+  summary TEXT NOT NULL,
+  full_text TEXT NOT NULL,
+  char_start INTEGER NOT NULL,
+  char_end INTEGER NOT NULL,
+  embedding vector(1536),
+  created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
+  UNIQUE(bibcode, section_id)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode ON paper_sections(bibcode);
+
 -- Watermark indexes for hourly production → local mirror (incremental sync)
 -- See scripts/mirror-from-production.ts; without these, sync does seq scans.
+-- idx_ads_papers_updated_at lives in initializeADSTables() (ads_papers' owner),
+-- so the base schema never references a table it does not create.
 CREATE INDEX IF NOT EXISTS idx_items_updated_at ON items(updated_at);
 CREATE INDEX IF NOT EXISTS idx_paper_sections_updated_at ON paper_sections(updated_at);
 CREATE INDEX IF NOT EXISTS idx_item_embeddings_generated_at ON item_embeddings(generated_at);
 CREATE INDEX IF NOT EXISTS idx_item_scores_scored_at ON item_scores(scored_at);
-CREATE INDEX IF NOT EXISTS idx_ads_papers_updated_at ON ads_papers(updated_at);
 `;
 
 /**
