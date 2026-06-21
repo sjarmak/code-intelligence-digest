@@ -62,21 +62,30 @@ function clearCursor(): void {
   }
 }
 
+import { fileURLToPath } from "node:url";
+
 import { initializeDatabase } from "../src/lib/db/index";
-import { loadItemsPage } from "../src/lib/db/items";
+import { loadItemsPage, loadUnembeddedItemsPage } from "../src/lib/db/items";
 import { NomicEncoder } from "../src/lib/embeddings/nomic-encoder";
 import { embedAndStoreItems, type EmbedJobStats } from "../src/lib/embeddings/model-embed-job";
 import { logger } from "../src/lib/logger";
 
-interface CliOptions {
+export interface CliOptions {
   limit: number | null;
   batchSize: number;
   pageSize: number;
   sinceDays: number | null;
   restart: boolean;
+  /**
+   * Scheduled "keep current" mode (i4t.3): select ONLY items missing a
+   * normalized nomic embedding (no published_at window), via
+   * loadUnembeddedItemsPage. Mutually exclusive with --since-days; ignores the
+   * persisted checkpoint cursor (see main()).
+   */
+  missing: boolean;
 }
 
-function parseArgs(argv: string[]): CliOptions {
+export function parseArgs(argv: string[]): CliOptions {
   // Page is a small multiple of a batch (full_text is unbounded TEXT, so a huge
   // page can OOM — defeating the point of paginating).
   const opts: CliOptions = {
@@ -85,11 +94,14 @@ function parseArgs(argv: string[]): CliOptions {
     pageSize: 256,
     sinceDays: null,
     restart: false,
+    missing: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--restart") {
       opts.restart = true;
+    } else if (arg === "--missing") {
+      opts.missing = true;
     } else if (arg === "--limit" && i + 1 < argv.length) {
       const n = parseInt(argv[++i], 10);
       if (Number.isNaN(n) || n <= 0) throw new Error("--limit must be a positive number");
@@ -108,6 +120,12 @@ function parseArgs(argv: string[]): CliOptions {
       opts.pageSize = n;
     }
   }
+  // --missing selects the anti-join of un-embedded items, which deliberately
+  // ignores published_at; a recency window would re-introduce the bug it fixes
+  // (newly-ingested items with old publish dates slipping through).
+  if (opts.missing && opts.sinceDays !== null) {
+    throw new Error("--missing cannot be combined with --since-days (it selects all un-embedded items)");
+  }
   return opts;
 }
 
@@ -122,6 +140,7 @@ async function main(): Promise<void> {
 
   logger.info(
     `nomic backfill starting (batchSize=${opts.batchSize}, pageSize=${opts.pageSize}` +
+      `${opts.missing ? ", mode=missing" : ""}` +
       `${opts.limit !== null ? `, limit=${opts.limit}` : ""}` +
       `${opts.sinceDays !== null ? `, sinceDays=${opts.sinceDays}` : ""}); ` +
       `HF_HOME=${process.env.HF_HOME ?? "(default ~/.cache/huggingface)"}, ` +
@@ -135,7 +154,12 @@ async function main(): Promise<void> {
 
   const totals: EmbedJobStats = { total: 0, skipped: 0, emptySkipped: 0, embedded: 0 };
   if (opts.restart) clearCursor();
-  let cursor = opts.limit !== null ? "" : readCursor(opts.sinceDays);
+  // --missing pages from the corpus head every run and never persists a cursor:
+  // the anti-join already excludes embedded items, and a stale cross-run cursor
+  // would skip newly-missing LOW-id items (the very bug this mode fixes). The
+  // checkpoint cursor stays exclusive to the windowed/full backfill path.
+  const useCheckpoint = !opts.missing && opts.limit === null;
+  let cursor = useCheckpoint ? readCursor(opts.sinceDays) : "";
   if (cursor) logger.info(`resuming from checkpoint cursor …${cursor.slice(-16)}`);
   let processed = 0;
 
@@ -144,7 +168,9 @@ async function main(): Promise<void> {
     if (remaining <= 0) break;
     const pageLimit = opts.limit !== null ? Math.min(opts.pageSize, remaining) : opts.pageSize;
 
-    const { items, rawCount, nextCursor } = await loadItemsPage(cursor, pageLimit, sinceEpoch);
+    const { items, rawCount, nextCursor } = opts.missing
+      ? await loadUnembeddedItemsPage(encoder.modelName, cursor, pageLimit)
+      : await loadItemsPage(cursor, pageLimit, sinceEpoch);
     if (items.length > 0) {
       const stats = await embedAndStoreItems(items, encoder, { batchSize: opts.batchSize });
       totals.total += stats.total;
@@ -161,18 +187,24 @@ async function main(): Promise<void> {
 
     if (nextCursor === null) {
       // Window fully scanned — clear the checkpoint so the next run starts fresh.
-      if (opts.limit === null) clearCursor();
+      if (useCheckpoint) clearCursor();
       break;
     }
     cursor = nextCursor;
     // Checkpoint AFTER the page's writes committed, so a kill resumes past it.
-    if (opts.limit === null) writeCursor(opts.sinceDays, cursor);
+    if (useCheckpoint) writeCursor(opts.sinceDays, cursor);
   }
 
   logger.info(`nomic backfill done: ${JSON.stringify(totals)}`);
 }
 
-main().catch((error) => {
-  logger.error("populate-model-embeddings failed", error);
-  process.exit(1);
-});
+// Run only when invoked directly (tsx scripts/...), not when imported by a test.
+// fileURLToPath normalizes both sides (vs a raw `file://${argv[1]}` compare,
+// which silently skips main() on a symlinked or space-containing path — a
+// scheduled job that "runs, does nothing, exits 0" is a nasty silent failure).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    logger.error("populate-model-embeddings failed", error);
+    process.exit(1);
+  });
+}

@@ -20,7 +20,12 @@ vi.mock("@/src/lib/logger", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { mapItemRow, loadItemsPage, type ItemRow } from "@/src/lib/db/items";
+import {
+  mapItemRow,
+  loadItemsPage,
+  loadUnembeddedItemsPage,
+  type ItemRow,
+} from "@/src/lib/db/items";
 
 function row(over: Partial<ItemRow> = {}): ItemRow {
   return {
@@ -126,5 +131,57 @@ describe("loadItemsPage", () => {
     expect(page.items.map((i) => i.id)).toEqual(["ok"]); // bad URL dropped
     expect(page.nextCursor).toBe("zlast"); // ...but cursor still advances past it
     expect(page.rawCount).toBe(2); // raw rows counted before filtering (for --limit budget)
+  });
+});
+
+describe("loadUnembeddedItemsPage", () => {
+  it("anti-joins item_model_embeddings (no published_at filter), keyset by id", async () => {
+    queryMock.mockResolvedValue({ rows: [row({ id: "i2" }), row({ id: "i3" })], rowCount: 2 });
+    const page = await loadUnembeddedItemsPage("nomic-embed-text-v1.5", "i1", 2);
+
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(sql).toContain("FROM items i");
+    expect(sql).toContain("WHERE i.id > $1");
+    // anti-join against the model's NORMALIZED rows only (poisoned rows are redone)
+    expect(sql).toContain("NOT EXISTS");
+    expect(sql).toContain("ime.item_id = i.id");
+    expect(sql).toContain("ime.model_name = $2");
+    expect(sql).toContain("ime.embedding_normalized = TRUE");
+    // non-blank predicate mirrors getModelEmbeddingCoverage's `expected`
+    expect(sql).toContain("btrim(");
+    // recency must NOT bound the selection — old-publish-date new items must be
+    // caught (published_at appears in the SELECT column list, never as a filter)
+    expect(sql).not.toContain("published_at >=");
+    expect(sql).not.toContain("published_at <");
+    expect(sql).toContain("ORDER BY i.id");
+    expect(sql).toContain("LIMIT $3");
+    expect(params).toEqual(["i1", "nomic-embed-text-v1.5", 2]);
+    expect(page.items.map((i) => i.id)).toEqual(["i2", "i3"]);
+    expect(page.nextCursor).toBe("i3"); // full page → more may exist
+  });
+
+  it("starts from the corpus head when afterId is empty", async () => {
+    queryMock.mockResolvedValue({ rows: [row({ id: "a" })], rowCount: 1 });
+    await loadUnembeddedItemsPage("nomic-embed-text-v1.5", "", 100);
+    const [, params] = queryMock.mock.calls[0];
+    expect(params).toEqual(["", "nomic-embed-text-v1.5", 100]);
+  });
+
+  it("nextCursor is null on a partial page (no more missing items)", async () => {
+    queryMock.mockResolvedValue({ rows: [row({ id: "i2" })], rowCount: 1 });
+    const page = await loadUnembeddedItemsPage("nomic-embed-text-v1.5", "i1", 100);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("advances the cursor by the last RAW row even when rows are filtered out", async () => {
+    resolveMock.mockImplementation((u: string) => (u.includes("bad") ? null : u));
+    queryMock.mockResolvedValue({
+      rows: [row({ id: "ok", url: "https://good.com" }), row({ id: "zlast", url: "https://bad.com" })],
+      rowCount: 2,
+    });
+    const page = await loadUnembeddedItemsPage("nomic-embed-text-v1.5", "", 2);
+    expect(page.items.map((i) => i.id)).toEqual(["ok"]);
+    expect(page.nextCursor).toBe("zlast");
+    expect(page.rawCount).toBe(2);
   });
 });

@@ -1,0 +1,24 @@
+[Unit]
+# bead code-intel-digest-i4t.3
+Description=Code Intelligence Digest — nomic embedding refresh (missing items -> item_model_embeddings)
+# Activated by code-intel-daily.service's Wants= and ordered AFTER it, so it runs
+# once the daily ingest finishes (no separate timer, no wall-clock guess). It can
+# also be run on demand: `systemctl --user start code-intel-embed.service`.
+After=code-intel-daily.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ds/projects/code-intelligence-digest
+# systemd user units start with a minimal PATH; node/npm/npx live in ~/.local/bin.
+Environment=PATH=/home/ds/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env bash /home/ds/projects/code-intelligence-digest/scripts/run-local-embed.sh
+# A GPU pass over the missing set is fast, but allow headroom for a cold model
+# load or a large backlog after downtime.
+TimeoutStartSec=3600
+Nice=10
+
+# No [Install] section: this unit is dependency-activated by code-intel-daily
+# (Wants=). Enabling it standalone would start it once at boot, which is not the
+# intent — it should fire on the daily ingest's completion.

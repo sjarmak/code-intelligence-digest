@@ -325,6 +325,59 @@ export async function loadItemsPage(
 }
 
 /**
+ * Keyset-paginated loader for items MISSING a usable model embedding (i4t.3).
+ *
+ * Unlike loadItemsPage, this selects ONLY items without a normalized
+ * `item_model_embeddings` row for `modelName`, and applies NO recency filter —
+ * so newly-INGESTED items with OLD `published_at` (which a `--since-days` window
+ * silently skips) are still caught. It also loads `full_text` for the missing
+ * set only, not the whole ~116K corpus, so the scheduled "keep current" job
+ * stays within the memory budget instead of OOM-killing on a full-corpus scan.
+ *
+ * Selection rests on the PK `(item_id, model_name)`: the `NOT EXISTS` correlated
+ * subquery probes it by `item_id` equality, so this is a nested-loop anti-join,
+ * not a full-table hash anti-join (idx_item_model_embeddings_model is single-
+ * column on model_name and does NOT serve this query).
+ *
+ * The non-blank `title/summary/content_snippet` predicate mirrors
+ * getModelEmbeddingCoverage's `expected` denominator so the candidate set
+ * shrinks toward empty as coverage climbs. It does NOT subtract items that the
+ * encoder job later drops anyway (URL-unresolvable rows filtered by mapItemRow,
+ * empty-under-buildItemText rows, persistently norm-poisoned rows); those few
+ * re-appear in every pass. Keyset paging steps OVER them (id > cursor), so they
+ * never block embedding the genuinely-missing tail — but the caller must NOT
+ * treat "candidate set empty" as the loop's termination signal (see
+ * scripts/run-local-embed.sh, which gates on the encoder process exit code).
+ */
+export async function loadUnembeddedItemsPage(
+  modelName: string,
+  afterId: string,
+  limit: number,
+): Promise<ItemsPage> {
+  const client = await getDbClient();
+  const result = await client.query(
+    `SELECT ${ITEM_COLUMNS}
+     FROM items i
+     WHERE i.id > $1
+       AND btrim(coalesce(i.title, '') || ' ' || coalesce(i.summary, '') || ' ' ||
+                 coalesce(i.content_snippet, '')) <> ''
+       AND NOT EXISTS (
+         SELECT 1 FROM item_model_embeddings ime
+         WHERE ime.item_id = i.id
+           AND ime.model_name = $2
+           AND ime.embedding_normalized = TRUE
+       )
+     ORDER BY i.id
+     LIMIT $3`,
+    [afterId, modelName, limit],
+  );
+  const rows = result.rows as unknown as ItemRow[];
+  const items = rows.map(mapItemRow).filter((item): item is FeedItem => item != null);
+  const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null;
+  return { items, rawCount: rows.length, nextCursor };
+}
+
+/**
  * Get the earliest published date in the database
  */
 export async function getEarliestPublishedDate(): Promise<Date | null> {

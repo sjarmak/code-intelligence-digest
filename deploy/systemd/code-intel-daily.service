@@ -3,6 +3,11 @@
 Description=Code Intelligence Digest — daily ingestion into the local-primary Postgres
 After=network-online.target
 Wants=network-online.target
+# Pull in the nomic embedding refresh after this ingest completes (bead i4t.3).
+# code-intel-embed.service declares After=code-intel-daily.service, so it runs
+# on ingest COMPLETION rather than a fragile wall-clock offset — no race with a
+# long-running sync.
+Wants=code-intel-embed.service
 
 [Service]
 Type=oneshot
