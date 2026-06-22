@@ -73,93 +73,68 @@ async function syncPaperSections() {
     await prodPool.query('SELECT 1');
     console.log('  ✅ Connected to local + production PostgreSQL\n');
 
-    // Ensure paper_sections table exists in prod (mirrors prior script behavior)
-    console.log('🔧 Ensuring paper_sections table exists in production...');
+    // Rely on the app-applied schema instead of re-declaring tables here.
+    // paper_sections is owned by schema-postgres.ts and ads_papers by
+    // initializeADSTables(); both are created by the running app against
+    // DATABASE_URL. Re-creating them inline drifts from the canonical schema
+    // (the prior inline ads_papers copy was already missing ~8 columns), and a
+    // `CREATE TABLE IF NOT EXISTS` on a fresh DB would permanently lock in the
+    // narrow version. So assert the tables exist and fail loudly if not.
+    console.log('🔧 Verifying production schema is applied...');
 
-    const adsPapersCheck = await prodPool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = 'ads_papers'
-      ) AS exists;
+    const schemaCheck = await prodPool.query(`
+      SELECT
+        to_regclass('public.paper_sections') IS NOT NULL AS paper_sections,
+        to_regclass('public.ads_papers')     IS NOT NULL AS ads_papers
     `);
-
-    if (!adsPapersCheck.rows[0].exists) {
-      console.log('  ⚠️  ads_papers table does not exist, creating it first...');
-      await prodPool.query(`
-        CREATE TABLE IF NOT EXISTS ads_papers (
-          bibcode TEXT PRIMARY KEY,
-          title TEXT,
-          authors TEXT,
-          pubdate TEXT,
-          abstract TEXT,
-          body TEXT,
-          year INTEGER,
-          journal TEXT,
-          ads_url TEXT,
-          arxiv_url TEXT,
-          fulltext_source TEXT,
-          fetched_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-          created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-          updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER
-        );
-      `);
-    }
-
-    await prodPool.query(`
-      CREATE TABLE IF NOT EXISTS paper_sections (
-        id TEXT PRIMARY KEY,
-        bibcode TEXT NOT NULL,
-        section_id TEXT NOT NULL,
-        section_title TEXT NOT NULL,
-        level INTEGER NOT NULL,
-        summary TEXT NOT NULL,
-        full_text TEXT NOT NULL,
-        char_start INTEGER NOT NULL,
-        char_end INTEGER NOT NULL,
-        embedding vector(1536),
-        created_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-        updated_at INTEGER DEFAULT EXTRACT(EPOCH FROM NOW())::INTEGER,
-        UNIQUE(bibcode, section_id)
+    const { paper_sections: hasPaperSections, ads_papers: hasAdsPapers } = schemaCheck.rows[0];
+    if (!hasPaperSections || !hasAdsPapers) {
+      const missing = [
+        !hasPaperSections ? 'paper_sections' : null,
+        !hasAdsPapers ? 'ads_papers' : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      throw new Error(
+        `Production schema not initialized (missing: ${missing}). These tables are owned by ` +
+          `the app schema (schema-postgres.ts / initializeADSTables) — apply it first by booting ` +
+          `the web app or running initializeDatabase() against DATABASE_URL, then re-run this sync.`,
       );
-    `);
-
-    try {
-      const fkCheck = await prodPool.query(`
-        SELECT constraint_name
-        FROM information_schema.table_constraints
-        WHERE table_schema = 'public'
-          AND table_name = 'paper_sections'
-          AND constraint_type = 'FOREIGN KEY'
-          AND constraint_name LIKE '%bibcode%'
-      `);
-
-      if (fkCheck.rows.length === 0 && adsPapersCheck.rows[0].exists) {
-        await prodPool.query(`
-          ALTER TABLE paper_sections
-          ADD CONSTRAINT paper_sections_bibcode_fkey
-          FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE;
-        `);
-      }
-    } catch {
-      console.log('  ℹ️  Foreign key constraint skipped (may already exist or ads_papers missing)');
     }
 
-    await prodPool.query(`
-      CREATE INDEX IF NOT EXISTS idx_paper_sections_bibcode
-      ON paper_sections(bibcode);
+    // Script-owned constraint (deferred to this script by schema-postgres.ts's
+    // paper_sections comment): the bibcode -> ads_papers FK. Both tables are
+    // guaranteed to exist by the guard above, so add it only when absent. A real
+    // failure here (e.g. orphan bibcodes) must surface — do NOT swallow it.
+    const fkCheck = await prodPool.query(`
+      SELECT constraint_name
+      FROM information_schema.table_constraints
+      WHERE table_schema = 'public'
+        AND table_name = 'paper_sections'
+        AND constraint_type = 'FOREIGN KEY'
+        AND constraint_name LIKE '%bibcode%'
     `);
+    if (fkCheck.rows.length === 0) {
+      await prodPool.query(`
+        ALTER TABLE paper_sections
+        ADD CONSTRAINT paper_sections_bibcode_fkey
+        FOREIGN KEY (bibcode) REFERENCES ads_papers(bibcode) ON DELETE CASCADE;
+      `);
+    }
 
+    // Script-owned index (not in the canonical schema): the HNSW vector index
+    // for section embeddings. Skipped gracefully if pgvector lacks hnsw support.
     try {
       await prodPool.query(`
         CREATE INDEX IF NOT EXISTS idx_paper_sections_embedding
         ON paper_sections USING hnsw (embedding vector_cosine_ops);
       `);
-      console.log('  ✅ Vector index created\n');
+      console.log('  ✅ Vector index ready\n');
     } catch {
       console.log('  ⚠️  Vector index creation skipped (pgvector may not be enabled)\n');
     }
 
-    console.log('  ✅ Table schema ready\n');
+    console.log('  ✅ Production schema verified\n');
 
     const sectionsResult = await localPool.query(`
       SELECT id, bibcode, section_id, section_title, level, summary,
