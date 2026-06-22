@@ -318,15 +318,16 @@ async function main() {
     await initializeDatabase();
     logger.info('✅ Database initialized');
 
-    // Check if sync is paused and clear it to retry
-    // (Paused syncs don't auto-recover without this - see investigation notes)
-    const { loadSyncState, clearSyncState } = await import('../src/lib/sync/daily-sync');
+    // A previously-paused sync resumes from its persisted continuation token
+    // inside runDailySync. We intentionally do NOT clear it here: clearing would
+    // discard the continuation and restart pagination from page 1 (bd-kc1).
+    // Retry timing is now governed by the sync circuit breaker
+    // (src/lib/sync/sync-backoff), which backs off and auto-recovers.
+    const { loadSyncState } = await import('../src/lib/sync/daily-sync');
     const existingState = await loadSyncState();
     if (existingState?.status === 'paused') {
       logger.warn(`⚠️  Previous sync was paused: ${existingState.error}`);
-      logger.info(`🔄 Clearing paused state to allow retry...`);
-      await clearSyncState();
-      logger.info(`✅ Paused state cleared, will retry sync`);
+      logger.info(`🔄 Will resume from saved continuation token (no page-1 restart).`);
     }
 
     // Step 2: Run hourly sync (fetches last 4 hours)
