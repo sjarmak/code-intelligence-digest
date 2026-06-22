@@ -57,9 +57,17 @@ history/
 # generated audio files
 .data/audio/
 
-# Claude Code local state (skills under .claude/skills/ ARE tracked)
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
+# Internal / agent / personal state — NOT for the public repo.
+# (.github stays tracked — it drives CI + the GitHub Pages site.)
+AGENTS.md
+.claude/
+.codex/
+.gc/
+.ace/
+.ace.json
+.brainstorm/
+.codegraph/
+.reports/
 
 # local database and cache
 .data/
@@ -75,7 +83,6 @@ history/
 secrets.json
 config.private.json
 
-# bd config — branch-independent, managed locally per-host
-/.beads/metadata.json
-/.beads/config.yaml
+# bd / beads issue store — local + Dolt-backed, not for the public repo
+.beads/
 .gpu-libs/
