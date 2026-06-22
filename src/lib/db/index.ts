@@ -20,6 +20,7 @@ import {
 } from "./schema-postgres";
 import { ensurePostgresUserIdColumns } from "./ensure-user-id";
 import { initializeADSTables } from "./ads-papers";
+import { initializeAnnotationTables } from "./paper-annotations";
 
 export { getDbClient, resetDbClient, detectDriver, getFreshPostgresConnection };
 export type { DatabaseClient };
@@ -64,6 +65,15 @@ export async function initializeDatabase() {
     // fresh DB has them eagerly instead of only when an ADS API route first runs
     // — the base schema's paper_sections + sync paths assume they exist.
     await initializeADSTables();
+
+    // Annotation tables (paper_annotations / paper_tags / paper_tag_links +
+    // user_paper_favorites) are owned by initializeAnnotationTables(), not the
+    // base schema, because they FK to ads_papers (and the initializer also
+    // widens ads_papers + runs the favorites migration). Eager-init here, AFTER
+    // initializeADSTables(), so a fresh local-primary DB has them up front —
+    // otherwise mirror-from-production errors ("no columns in common") until the
+    // annotation feature first runs (bead i4t.2).
+    await initializeAnnotationTables();
 
     // Items search_vector trigger only when column is not generated (PG 12+ GENERATED STORED; PG 11 nullable)
     try {
