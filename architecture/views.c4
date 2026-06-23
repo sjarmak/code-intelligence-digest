@@ -92,6 +92,15 @@ views {
     }
   }
 
+  view integrationsContainer of digest.integrations {
+    title 'Integrations — Slack / ar5iv / URL discovery'
+    include *
+
+    style element.tag == #evolving {
+      color amber
+    }
+  }
+
   view mcpContainer of digest.mcp {
     title 'MCP copilot server — tools'
     include *

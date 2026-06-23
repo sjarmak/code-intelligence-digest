@@ -60,6 +60,10 @@ model {
     description 'Transactional email delivery used to send agent reports and digests'
   }
 
+  slackExt = externalSystem 'Slack' {
+    description 'Workspace channel where agent reports are posted and cleaned up'
+  }
+
   langsmith = externalSystem 'LangSmith' {
     description 'Trace capture and offline eval datasets/scorers for the content-ideas and market-brief agents'
   }
@@ -167,7 +171,7 @@ model {
     // ── Storage (Postgres) ──────────────────────────────────────────────────
     store = datastore 'Postgres store' {
       #built
-      description 'src/lib/db — items, item_scores, item_embeddings (pgvector), agent_runs, generated media, sync_state, oauth_tokens, and source/relevance tuning tables'
+      description 'src/lib/db — items, item_scores, item_embeddings (pgvector), agent_runs, generated media, sync_state, oauth_tokens, source/relevance tuning, per-user library tables (saved_items, digest_items, user_paper_favorites, user_podcast_audio), and paper sections/annotations'
       technology 'PostgreSQL 16 + pgvector + pg_trgm'
       link ../src/lib/db 'src/lib/db/'
       link ../src/lib/db/schema-postgres.ts 'schema-postgres.ts'
@@ -196,6 +200,19 @@ model {
         link ../src/lib/db/agent-runs.ts 'agent-runs.ts'
         link ../src/lib/db/generated-newsletters.ts 'generated-newsletters.ts'
         link ../src/lib/db/podcast-audio.ts 'podcast-audio.ts'
+      }
+      userLibraryRepo = component 'user library (saved / digest / podcast)' {
+        #built
+        description 'Per-user persistence: saved items, the personal digest library, and the saved podcast-audio list — the multi-user layer behind the reader’s library'
+        link ../src/lib/db/savedItems.ts 'savedItems.ts'
+        link ../src/lib/db/digestItems.ts 'digestItems.ts'
+        link ../src/lib/db/user-podcast-audio.ts 'user-podcast-audio.ts'
+      }
+      paperRepo = component 'paper sections + annotations' {
+        #built
+        description 'Structured research-paper extracts (sections, embeddings) and user annotations backing the papers surface'
+        link ../src/lib/db/paper-sections.ts 'paper-sections.ts'
+        link ../src/lib/db/paper-annotations.ts 'paper-annotations.ts'
       }
       tuningRepo = component 'source / item relevance' {
         #built
@@ -322,6 +339,29 @@ model {
       }
     }
 
+    // ── Integrations ──────────────────────────────────────────────────────
+    integrations = container 'Integrations' {
+      description 'src/lib/integrations + src/lib/ar5iv + src/lib/search — outbound Slack report delivery, inbound ar5iv/arXiv HTML paper parsing, and search-based URL discovery'
+      technology 'TypeScript'
+      link ../src/lib/integrations 'src/lib/integrations/'
+
+      slack = component 'Slack delivery' {
+        #built
+        description 'Posts agent reports to Slack and cleans up prior messages, behind /api/agents/reports/send-slack'
+        link ../src/lib/integrations/slack.ts 'slack.ts'
+      }
+      ar5iv = component 'ar5iv paper parser' {
+        #built
+        description 'Fetches and parses ar5iv.org HTML renderings of arXiv papers into structured, readable content for the research surface'
+        link ../src/lib/ar5iv 'src/lib/ar5iv/'
+      }
+      urlFinder = component 'URL discovery' {
+        #built
+        description 'Search-based discovery of canonical article URLs for newsletter links'
+        link ../src/lib/search/url-finder.ts 'url-finder.ts'
+      }
+    }
+
     // ── Web + API surface (Next.js) ─────────────────────────────────────────
     web = container 'Next.js web + API' {
       description 'app/ — the React reader/admin UI plus the REST API; auth via next-auth + middleware, with admin/debug routes blocked in production'
@@ -347,9 +387,33 @@ model {
         link ../app/api/newsletter 'api/newsletter'
         link ../app/api/audio-digest 'api/audio-digest'
       }
+      libraryApi = component 'user library API' {
+        #built
+        description 'Per-user library surface: GET/POST/DELETE /api/saved-items, /api/digest-items, /api/libraries, /api/tags, /api/user-podcast-audio'
+        link ../app/api/saved-items 'api/saved-items'
+        link ../app/api/digest-items 'api/digest-items'
+        link ../app/api/libraries 'api/libraries'
+      }
+      papersApi = component 'papers / research API' {
+        #built
+        description 'GET /api/papers, /api/papers/[bibcode]/content (ar5iv), and POST /api/papers/ask — list, fetch, and Q&A over research papers'
+        link ../app/api/papers 'api/papers'
+      }
+      sessionApi = component 'session / config API' {
+        #built
+        description 'GET /api/me (current user + LLM config) and /api/auth-config (configured sign-in methods)'
+        link ../app/api/me 'api/me'
+        link ../app/api/auth-config 'api/auth-config'
+      }
+      publishApi = component 'publish / handoff API' {
+        #built
+        description 'POST /api/publish-digest and /api/send-to-website — hand a digest/items off to the personal website pipeline (local-only)'
+        link ../app/api/publish-digest 'api/publish-digest'
+        link ../app/api/send-to-website 'api/send-to-website'
+      }
       adminApi = component 'admin / debug API' {
         #built
-        description 'Sync triggers, fulltext/embedding population, ranking debug, and relevance tuning — guarded by blockInProduction so they are dev/operator-only'
+        description 'Sync triggers, fulltext/embedding population, ranking debug, analytics, cache, and relevance tuning across ~20 /api/admin/* routes — guarded by blockInProduction so they are dev/operator-only'
         link ../app/api/admin 'api/admin'
         link ../src/lib/auth/guards.ts 'guards.ts — blockInProduction'
       }
@@ -475,6 +539,16 @@ model {
   digest.web.health -> digest.store.driver 'confirms DB reachable'
   digest.web.ui -> digest.web.itemsApi 'fetches ranked items'
   digest.web.auth -> digest.web.ui 'session / admin-token guard'
+  digest.web.libraryApi -> digest.store.userLibraryRepo 'reads / writes per-user library'
+  digest.web.papersApi -> digest.store.paperRepo 'reads paper sections + annotations'
+  digest.web.papersApi -> digest.integrations.ar5iv 'fetches paper HTML content'
+  digest.web.sessionApi -> digest.web.auth 'resolves current session / config'
+  digest.web.agentsApi -> digest.integrations.slack 'posts reports to Slack'
+
+  // Integrations
+  digest.integrations.ar5iv -> ads 'fetches ar5iv / arXiv paper HTML'
+  digest.integrations.slack -> slackExt 'posts / cleans up report messages'
+  digest.media.newsletter -> digest.integrations.urlFinder 'resolves article URLs'
 
   // MCP copilot
   copilotAgent -> digest.mcp 'MCP tool calls over stdio'
