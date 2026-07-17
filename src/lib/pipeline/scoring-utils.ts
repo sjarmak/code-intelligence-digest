@@ -67,6 +67,7 @@ export const CORE_TERMS = [
  * - At age=0: score = 1.0 (maximum freshness)
  * - At age=halfLifeDays: score ≈ 0.6 (half-way point)
  * - At age=∞: score approaches 0.2 (floor, never goes to zero)
+ * - Future-dated (age<0): treated as age=0, so score is capped at 1.0
  *
  * @param publishedAt - The publication date of the content
  * @param halfLifeDays - The number of days until score decays to ~0.6
@@ -84,7 +85,13 @@ export function computeRecencyScore(
   halfLifeDays: number
 ): number {
   const ageMs = Date.now() - publishedAt.getTime();
-  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  // Floor the age at 0 so a future-dated publishedAt (a common feed/RSS bug
+  // where the source timestamp is ahead of now) is treated as maximally fresh
+  // (score 1.0) rather than scoring ABOVE 1.0. Without this floor the exponent
+  // goes positive, 2^positive > 1, and that unclamped value flows straight into
+  // rank finalScore and agentRank goalScore (neither re-clamps recency), letting
+  // mis-dated items out-rank genuinely fresh ones — a ranking inversion.
+  const ageDays = Math.max(0, ageMs / (1000 * 60 * 60 * 24));
 
   // Exponential decay with floor: score ranges from 0.2 to 1.0
   // At age=0, score=1.0; at age=halfLife, score≈0.6; approaches 0.2 as age→∞

@@ -9,6 +9,19 @@ import {
   getDirectCompetitorKeywords,
 } from "../../config/competitors";
 import type { RetrievedDoc } from "./agentRetrieval";
+import { computeRecencyScore } from "./scoring-utils";
+
+/**
+ * Half-life (days) for the goal-feature recency signal. Routes goal-feature
+ * recency through the single canonical scoring source (computeRecencyScore)
+ * instead of a private step function. hl=20 tracks the prior day-bucket ladder
+ * (<=1d -> 1.0, <=7d -> 0.85, <=14d -> 0.7, <=30d -> 0.5) closely at those
+ * early boundary values; note the exponential is smooth, so mid-bucket and
+ * post-boundary values differ, and for content older than ~30 days it keeps
+ * decaying toward the 0.2 floor rather than holding flat at the old 0.3
+ * bucket. Accepted shift (arch-review 2026-07-10 finding #1).
+ */
+export const RECENCY_HALF_LIFE_DAYS = 20;
 
 export interface GoalFeatures {
   competitorMatch: number;
@@ -123,15 +136,9 @@ export function computeGoalFeatures(doc: RetrievedDoc, goal: AgentGoal): GoalFea
     }
   }
 
-  let recency = 0.5;
-  if (doc.publishedAt) {
-    const ageDays = (Date.now() - doc.publishedAt.getTime()) / (24 * 60 * 60 * 1000);
-    if (ageDays <= 1) recency = 1;
-    else if (ageDays <= 7) recency = 0.85;
-    else if (ageDays <= 14) recency = 0.7;
-    else if (ageDays <= 30) recency = 0.5;
-    else recency = 0.3;
-  }
+  const recency = doc.publishedAt
+    ? computeRecencyScore(doc.publishedAt, RECENCY_HALF_LIFE_DAYS)
+    : 0.5;
 
   let trendLandscape = 0;
   for (const term of TREND_LANDSCAPE_TERMS) {

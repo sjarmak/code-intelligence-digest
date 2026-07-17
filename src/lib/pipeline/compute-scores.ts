@@ -18,23 +18,7 @@ import {
 import { computeProductBoost, findProductMentions } from "../../config/products";
 import { computeWatchlistBoost } from "../../config/watchlist";
 import { detectCompetitorSignals } from "../../config/competitor-intel";
-
-/**
- * Compute recency score with exponential decay
- */
-function computeRecencyScore(
-  publishedAt: Date,
-  halfLifeDays: number
-): number {
-  const now = Date.now();
-  const ageMs = now - publishedAt.getTime();
-  const halfLifeMs = halfLifeDays * 24 * 60 * 60 * 1000;
-
-  // Exponential decay: score = 0.2 + 0.8 * e^(-ln(2) * age / halfLife)
-  // This gives us a score that decays from 1.0 to 0.2 over the half-life period
-  const decayFactor = Math.exp(-Math.log(2) * (ageMs / halfLifeMs));
-  return 0.2 + 0.8 * decayFactor;
-}
+import { computeRecencyScore } from "./scoring-utils";
 
 /**
  * Compute and save scores for items in a category

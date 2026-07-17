@@ -9,6 +9,7 @@ import { loadScoresForItems } from "../db/items";
 import { logger } from "../logger";
 import type { RetrievedDoc } from "./agentRetrieval";
 import { computeGoalFeatures, type GoalFeatures } from "./goalFeatures";
+import { computeRecencyScore } from "./scoring-utils";
 import {
   CURATOR_TRACE_SCHEMA_VERSION,
   type AgentRankingTrace,
@@ -37,7 +38,7 @@ function heuristicBaseScore(doc: RetrievedDoc, goal: AgentGoal): number {
   }
   const raw = 0.3 + Math.min(0.6, (hits / Math.max(1, terms.length)) * 0.6);
   const recency = doc.publishedAt
-    ? Math.pow(2, -(Date.now() - doc.publishedAt.getTime()) / (DEFAULT_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000))
+    ? computeRecencyScore(doc.publishedAt, DEFAULT_HALF_LIFE_DAYS)
     : 0.5;
   return Math.min(1, raw * 0.7 + recency * 0.3);
 }

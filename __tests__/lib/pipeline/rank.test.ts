@@ -162,9 +162,11 @@ describe("rankCategory", () => {
     const thirtyDaysAgo = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000);
     const item = feedItem({ id: "old", publishedAt: thirtyDaysAgo, createdAt: thirtyDaysAgo });
 
-    // newsletters half-life is 3 days; 30 days old -> decay clamps to the 0.2 floor.
+    // newsletters half-life is 3 days; 30 days old = 10 half-lives. The canonical
+    // formula (scoring-utils.computeRecencyScore) approaches the 0.2 floor
+    // asymptotically: 0.2 + 0.8 * 2^(-10) ~= 0.2008 (not a hard clamp to 0.2).
     const [ranked] = await rankCategory([item], "newsletters", 90, "all");
-    expect(ranked.recencyScore).toBeCloseTo(0.2, 6);
+    expect(ranked.recencyScore).toBeCloseTo(0.2 + 0.8 * Math.pow(2, -10), 6);
   });
 });
 

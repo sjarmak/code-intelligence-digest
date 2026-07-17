@@ -140,13 +140,21 @@ describe("computeRecencyScore", () => {
       }
     });
 
-    it("should handle future dates (negative age) by returning score > 1.0", () => {
-      // Future dates will have negative age, resulting in score > 1.0
-      // This is expected behavior based on the formula
-      const tomorrow = new Date(Date.now() + 1 * 24 * 60 * 60 * 1000);
-      const score = computeRecencyScore(tomorrow, 7);
-      // Formula: 0.2 + 0.8 * 2^(-(-1/7)) = 0.2 + 0.8 * 2^(1/7) ≈ 0.2 + 0.88 ≈ 1.08
-      expect(score).toBeGreaterThan(1.0);
+    it("caps future-dated content (negative age) at 1.0, never above", () => {
+      // A future publishedAt (feed/RSS timestamp bug) must not score ABOVE 1.0.
+      // Uncapped, the formula returns e.g. ~1.08 at +1 day and ~3.4 at +40 days,
+      // which flows unclamped into rank finalScore / agentRank goalScore and
+      // inverts ranking (mis-dated items out-rank genuinely fresh ones).
+      const futureOffsetsDays = [1, 7, 40, 365];
+      for (const offset of futureOffsetsDays) {
+        const future = new Date(Date.now() + offset * 24 * 60 * 60 * 1000);
+        for (const halfLife of [1, 7, 30, 365]) {
+          const score = computeRecencyScore(future, halfLife);
+          expect(score).toBeLessThanOrEqual(1.0);
+          // Floored to age 0 → exactly the max-freshness score.
+          expect(score).toBeCloseTo(1.0, 5);
+        }
+      }
     });
   });
 
