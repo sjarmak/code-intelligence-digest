@@ -66,22 +66,98 @@ const RATE_LIMITS: Record<string, { hourly: number; daily: number; maxRequestSiz
 };
 
 /**
+ * Shared quota bucket for requests whose client IP cannot be attributed to a
+ * trusted proxy hop. These requests contend for one bucket instead of each
+ * minting a private one, so an unattributable flood exhausts a single quota.
+ */
+export const UNATTRIBUTED_CLIENT_IP = 'unattributed';
+
+/**
+ * Number of proxies between this app and the client that we trust to have
+ * appended to X-Forwarded-For. On Render the platform load balancer is the
+ * only such hop, so the default is 1. Set to 0 when the app is exposed
+ * directly and no forwarding header should be believed.
+ *
+ * A blank value means "unset", not 0: `??` does not catch the empty string
+ * that an env UI writes for a cleared field, and Number('') is a valid 0 that
+ * would silently funnel every client into the shared bucket.
+ *
+ * Exported for tests; callers should use getClientIP.
+ */
+export function trustedProxyHops(): number {
+  const configured = process.env.TRUSTED_PROXY_HOPS?.trim();
+  return configured ? Number(configured) : 1;
+}
+
+/**
+ * Structural check that a hop is an IP literal, so a bucket key is never built
+ * out of free-form text. Deliberately loose about IPv6 shape: the value comes
+ * from a trusted hop, and the key is opaque, so rejecting non-IP junk is the
+ * whole requirement.
+ */
+function isIPLiteral(value: string): boolean {
+  if (value.includes(':')) {
+    return /^[0-9a-fA-F:.]+$/.test(value) && (value.match(/:/g)?.length ?? 0) >= 2;
+  }
+  const octets = value.split('.');
+  return (
+    octets.length === 4 &&
+    octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255)
+  );
+}
+
+/**
+ * Strip the port a proxy may append: `1.2.3.4:41234` or `[2001:db8::1]:41234`.
+ */
+function stripPort(hop: string): string {
+  const bracketed = hop.match(/^\[(.+)\](?::\d+)?$/);
+  if (bracketed) {
+    return bracketed[1];
+  }
+  // A bare IPv6 literal has many colons; only a single trailing one is a port.
+  const parts = hop.split(':');
+  return parts.length === 2 ? parts[0] : hop;
+}
+
+/**
+ * Resolve the client IP a quota bucket is keyed on.
+ *
+ * X-Forwarded-For is client-supplied up to the point a trusted proxy appends
+ * to it, so only the hop `trustedHops` from the right can be believed. Taking
+ * index 0 instead let a client mint a fresh bucket per request by rotating its
+ * own prefix, bypassing the caps entirely. Anything we cannot attribute falls
+ * back to the shared conservative bucket.
+ *
+ * Exported for tests; callers should use the request-scoped helpers below.
+ */
+export function resolveClientIP(request: NextRequest, trustedHops: number): string {
+  const hops = Number.isInteger(trustedHops) && trustedHops >= 0 ? trustedHops : 1;
+  if (hops === 0) {
+    return UNATTRIBUTED_CLIENT_IP;
+  }
+
+  const forwarded = request.headers.get('x-forwarded-for');
+  if (!forwarded) {
+    return UNATTRIBUTED_CLIENT_IP;
+  }
+
+  const chain = forwarded
+    .split(',')
+    .map((hop) => hop.trim())
+    .filter(Boolean);
+  if (chain.length < hops) {
+    return UNATTRIBUTED_CLIENT_IP;
+  }
+
+  const candidate = stripPort(chain[chain.length - hops]);
+  return isIPLiteral(candidate) ? candidate : UNATTRIBUTED_CLIENT_IP;
+}
+
+/**
  * Get client IP address from request
  */
 function getClientIP(request: NextRequest): string {
-  // Check various headers for IP
-  const forwarded = request.headers.get('x-forwarded-for');
-  if (forwarded) {
-    return forwarded.split(',')[0].trim();
-  }
-
-  const realIP = request.headers.get('x-real-ip');
-  if (realIP) {
-    return realIP;
-  }
-
-  // Fallback to connection remote address (may not work in all environments)
-  return 'unknown';
+  return resolveClientIP(request, trustedProxyHops());
 }
 
 /**
