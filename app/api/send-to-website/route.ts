@@ -21,6 +21,11 @@ import { LEGACY_USER_ID } from "@/src/lib/db/constants";
 import { getDigestItems } from "@/src/lib/db/digestItems";
 import { initializeDatabase } from "@/src/lib/db/index";
 import { logger } from "@/src/lib/logger";
+import {
+  buildCuratedHandoff,
+  parseCuratedHandoffBody,
+  type DigestTrack,
+} from "@/src/lib/publish/curated-handoff";
 
 const WEBSITE_DIR = process.env.WEBSITE_DIR ?? "/home/ds/projects/website";
 
@@ -37,6 +42,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // The button posts without a body, so treat an empty one as "use the defaults".
+  let track: DigestTrack;
+  try {
+    const rawBody = await request.text();
+    ({ track } = parseCuratedHandoffBody(rawBody === "" ? undefined : JSON.parse(rawBody)));
+  } catch (error) {
+    logger.warn("send-to-website: rejected malformed body", {
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+
   try {
     await initializeDatabase();
     const session = await auth();
@@ -51,23 +68,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Shape the handoff exactly as scripts/digest/generate-curated.md expects.
-    const items = feedItems.map((it) => ({
-      title: it.title,
-      url: it.url,
-      source: it.sourceTitle,
-      category: it.category,
-      summary: it.summary ?? it.contentSnippet ?? "",
-      // publishedAt lets the curated generator derive the issue's cadence
-      // (daily/weekly/monthly) from the date spread of the picked items.
-      publishedAt: it.publishedAt.toISOString(),
-      fullText: it.fullText ?? "",
-    }));
+    const handoff = buildCuratedHandoff(feedItems, track);
+    const items = handoff.items;
 
     const runsDir = path.join(WEBSITE_DIR, ".digest-runs");
     await mkdir(runsDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const handoffPath = path.join(runsDir, `curated-handoff-${stamp}.json`);
-    await writeFile(handoffPath, JSON.stringify({ items }, null, 2), "utf8");
+    await writeFile(handoffPath, JSON.stringify(handoff, null, 2), "utf8");
 
     // Generation takes minutes (claude -p + TTS), so run detached and return now.
     const logPath = path.join(runsDir, `curated-${stamp}.log`);
@@ -81,14 +89,18 @@ export async function POST(request: NextRequest) {
     child.unref();
     await logFd.close();
 
-    logger.info(`send-to-website: launched curated run for ${items.length} items → ${logPath}`);
+    logger.info(
+      `send-to-website: launched curated run for ${items.length} items (track=${track}) → ${logPath}`,
+    );
     return NextResponse.json({
       started: true,
       itemCount: items.length,
+      track,
       logPath,
       message:
-        `Generating a newsletter + ~30-min podcast from ${items.length} tagged items in the ` +
-        `website repo. It commits (no push) when done — review, then push. Tail ${logPath} for progress.`,
+        `Generating a newsletter + ~30-min podcast from ${items.length} tagged items as a ` +
+        `${track} issue in the website repo. It commits (no push) when done — review, then ` +
+        `push. Tail ${logPath} for progress.`,
     });
   } catch (error) {
     logger.error("send-to-website failed", error);

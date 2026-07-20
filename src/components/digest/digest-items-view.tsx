@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import ItemCard from '@/src/components/feeds/item-card';
 import { FileHeart, RefreshCw, CheckSquare, Square, Trash2, X, Send, Loader2 } from 'lucide-react';
+import { DIGEST_TRACKS, type DigestTrack } from '@/src/lib/publish/curated-handoff';
 
 // This control shells out to the sibling website repo, so it only works locally.
 const IS_LOCAL = process.env.NODE_ENV === 'development';
@@ -56,15 +57,20 @@ export function DigestItemsView() {
   const [deleting, setDeleting] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendMsg, setSendMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [track, setTrack] = useState<DigestTrack>('specialized');
 
   const handleSendToWebsite = async () => {
-    if (!confirm(`Generate a newsletter + ~30-min podcast from these ${items.length} tagged items and send them to the website? It commits locally for your review (no push).`)) {
+    if (!confirm(`Generate a newsletter + ~30-min podcast from these ${items.length} tagged items as a ${track} issue and send them to the website? It commits locally for your review (no push).`)) {
       return;
     }
     setSending(true);
     setSendMsg(null);
     try {
-      const response = await fetch('/api/send-to-website', { method: 'POST' });
+      const response = await fetch('/api/send-to-website', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ track }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? 'Failed to start generation');
       setSendMsg({ kind: 'ok', text: data.message ?? 'Generation started.' });
@@ -368,6 +374,22 @@ export function DigestItemsView() {
                 <Trash2 className="w-4 h-4" />
                 Clear All
               </button>
+            )}
+            {IS_LOCAL && !selectMode && items.length > 0 && (
+              <select
+                value={track}
+                onChange={(e) => setTrack(e.target.value as DigestTrack)}
+                disabled={sending || deleting}
+                className="px-2 py-1.5 text-sm font-medium bg-white border border-gray-300 text-black rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Editorial track: specialized goes deep on core topics, general is a field-wide roundup"
+                aria-label="Digest track"
+              >
+                {DIGEST_TRACKS.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
             )}
             {IS_LOCAL && !selectMode && items.length > 0 && (
               <button
