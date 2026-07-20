@@ -1,0 +1,21 @@
+[Unit]
+# bead code-intel-digest-b1l
+Description=Code Intelligence Digest — audio orphan sweep (stored objects with no podcast_audio row)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ds/projects/code-intelligence-digest
+# systemd user units start with a minimal PATH; node/npm/npx live in ~/.local/bin.
+Environment=PATH=/home/ds/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Dry-run until explicitly promoted. Flip to true (and daemon-reload) once the
+# logged orphaned/reclaimable counts look right — see deploy/systemd/README.md.
+Environment=RECONCILE_AUDIO_APPLY=false
+ExecStart=/usr/bin/env bash /home/ds/projects/code-intelligence-digest/scripts/reconcile-audio-daily.sh
+# A sweep walks the store and issues deletes; minutes, not seconds, on a large store.
+TimeoutStartSec=900
+Nice=10
+
+[Install]
+WantedBy=default.target

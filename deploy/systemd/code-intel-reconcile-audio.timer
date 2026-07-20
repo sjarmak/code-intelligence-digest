@@ -1,0 +1,19 @@
+[Unit]
+# bead code-intel-digest-b1l
+Description=Daily trigger for the Code Intelligence Digest audio orphan sweep
+
+[Timer]
+# 04:30 local time daily — clear of the 06:00 ingest. The sweep's 24h grace
+# window means nothing recently written is eligible, so the hour is not load-
+# bearing; it only needs to not contend with the ingest.
+#
+# Deliberately its own timer rather than a Wants= off code-intel-daily.service
+# (the pattern code-intel-embed.service uses): the embed step consumes what the
+# ingest produced, so completion-chaining is right there. Storage GC does not —
+# chaining it would mean a failing ingest silently stops orphan collection.
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
