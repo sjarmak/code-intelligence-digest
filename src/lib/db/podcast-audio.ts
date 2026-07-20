@@ -4,6 +4,7 @@
 
 import { getDbClient } from "./driver";
 import { SegmentAudioMetadata } from "../audio/types";
+import { audioUrlToKey } from "../storage/local";
 
 export interface PodcastAudioRecord {
   id: string;
@@ -176,6 +177,60 @@ export async function podcastAudioExists(transcriptHash: string): Promise<boolea
     return result.rows.length > 0;
   
 
+}
+
+/**
+ * Every storage key the audio table still references.
+ *
+ * A row references its own audio_url plus one URL per entry in segment_audio.
+ * Both must be collected: an orphan sweep that joined on audio_url alone would
+ * delete every per-segment file.
+ *
+ * A row whose segment_audio will not parse throws rather than being skipped —
+ * we cannot tell which keys it protects, and guessing means deleting live audio.
+ */
+export async function listReferencedAudioKeys(): Promise<Set<string>> {
+  const client = await getDbClient();
+  const result = await client.query(
+    `SELECT id, audio_url, segment_audio FROM "generated_podcast_audio"`
+  );
+  const rows = result.rows as unknown as Array<
+    Pick<PodcastAudioRow, "id" | "audio_url" | "segment_audio">
+  >;
+
+  const keys = new Set<string>();
+
+  for (const row of rows) {
+    const mainKey = audioUrlToKey(row.audio_url);
+    if (mainKey) keys.add(mainKey);
+
+    if (!row.segment_audio) continue;
+
+    let segments: SegmentAudioMetadata[];
+    try {
+      segments = JSON.parse(row.segment_audio) as SegmentAudioMetadata[];
+    } catch (error) {
+      throw new Error(
+        `generated_podcast_audio row ${row.id} has unparseable segment_audio, ` +
+          `cannot determine which audio files it references: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    if (!Array.isArray(segments)) {
+      throw new Error(
+        `generated_podcast_audio row ${row.id} has non-array segment_audio, ` +
+          `cannot determine which audio files it references`
+      );
+    }
+
+    for (const segment of segments) {
+      const segmentKey = audioUrlToKey(segment?.audioUrl ?? "");
+      if (segmentKey) keys.add(segmentKey);
+    }
+  }
+
+  return keys;
 }
 
 /**

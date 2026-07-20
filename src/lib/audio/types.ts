@@ -75,7 +75,29 @@ export interface TtsProvider {
   getName(): string;
 }
 
-export interface StorageAdapter {
+export interface StoredObject {
+  key: string;
+  bytes: number;
+  modifiedAtMs: number;
+}
+
+/**
+ * The slice of a storage adapter the orphan sweep needs. Kept separate so the
+ * reconciler can be exercised without a full adapter.
+ */
+export interface ReconcilableStorage {
+  /**
+   * List every stored object with its size and last-modified time
+   */
+  listObjects(): Promise<StoredObject[]>;
+
+  /**
+   * Delete a stored object. Returns false if it was already gone.
+   */
+  deleteObject(key: string): Promise<boolean>;
+}
+
+export interface StorageAdapter extends ReconcilableStorage {
   /**
    * Store audio bytes and return public/signed URL
    */
