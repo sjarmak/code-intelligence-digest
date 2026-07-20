@@ -45,16 +45,7 @@ log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG_FILE"
 }
 
-# Preflight: assert LOCAL_DATABASE_URL is a local postgres URL. Uses dotenv so
-# the .env.local format is parsed exactly as the app parses it.
-if ! npx tsx -e "
-require('dotenv').config({ path: '.env.local', quiet: true });
-const u = process.env.LOCAL_DATABASE_URL || '';
-if (!/^postgres(ql)?:\/\/.*@(localhost|127\.0\.0\.1):/.test(u)) {
-  console.error('reconcile-audio-daily: LOCAL_DATABASE_URL is not a local postgres URL; refusing to run.');
-  process.exit(1);
-}
-" >> "$LOG_FILE" 2>&1; then
+if ! bash scripts/lib/assert-local-db.sh reconcile-audio-daily >> "$LOG_FILE" 2>&1; then
   log "=== audio sweep ABORTED: LOCAL_DATABASE_URL preflight failed ==="
   exit 1
 fi

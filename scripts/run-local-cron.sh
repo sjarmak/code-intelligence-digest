@@ -16,16 +16,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
-# Preflight: assert LOCAL_DATABASE_URL is a local postgres URL. Uses dotenv so
-# the .env.local format is parsed exactly as the app parses it.
-npx tsx -e "
-require('dotenv').config({ path: '.env.local', quiet: true });
-const u = process.env.LOCAL_DATABASE_URL || '';
-if (!/^postgres(ql)?:\/\/.*@(localhost|127\.0\.0\.1):/.test(u)) {
-  console.error('run-local-cron: LOCAL_DATABASE_URL is not a local postgres URL; refusing to run.');
-  process.exit(1);
-}
-"
+bash scripts/lib/assert-local-db.sh run-local-cron
 
 export USE_LOCAL_DB=true
 exec npm run cron:daily

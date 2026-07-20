@@ -17,6 +17,7 @@ import * as path from "node:path";
 
 const REPO = path.resolve(__dirname, "../..");
 const SCRIPT = path.join(REPO, "scripts", "reconcile-audio-daily.sh");
+const GUARD = path.join(REPO, "scripts", "lib", "assert-local-db.sh");
 
 let tmp: string;
 
@@ -108,15 +109,15 @@ describe("reconcile-audio-daily.sh", () => {
 });
 
 /**
- * Lifts the preflight's inline JS out of a wrapper and runs it for real against
- * a supplied LOCAL_DATABASE_URL, so these assert the guard's actual accept/
- * reject behavior rather than a restatement of the regex. dotenv does not
+ * Lifts the preflight's inline JS out of the shared helper and runs it for real
+ * against a supplied LOCAL_DATABASE_URL, so these assert the guard's actual
+ * accept/reject behavior rather than a restatement of the regex. dotenv does not
  * override an already-set process.env key, so the injected URL wins.
  */
-function runPreflight(scriptPath: string, url: string): number {
-  const src = fs.readFileSync(scriptPath, "utf8");
+function runPreflight(url: string): number {
+  const src = fs.readFileSync(GUARD, "utf8");
   const guard = src.match(/npx tsx -e "([\s\S]*?)\n"/);
-  if (!guard) throw new Error(`no preflight found in ${scriptPath}`);
+  if (!guard) throw new Error(`no preflight found in ${GUARD}`);
 
   // Must live inside the repo tree: `require('dotenv')` resolves by walking up
   // from the file, and in a git worktree the local node_modules is empty, so
@@ -147,22 +148,53 @@ const REJECTED = [
   ["an empty URL", ""],
 ] as const;
 
-// Both wrappers pair a local store with an env-chosen DB, so the guard has to
-// hold in each. reconcile-audio is the destructive one: a DB it cannot see rows
-// in makes the entire store look unreferenced.
-const WRAPPERS = ["reconcile-audio-daily.sh", "run-local-cron.sh"] as const;
-
-describe.each(WRAPPERS)("local-DB preflight guard (%s)", (wrapper) => {
-  const script = path.join(REPO, "scripts", wrapper);
-
+describe("local-DB preflight guard", () => {
   it.each(REJECTED)("rejects %s", (_label, url) => {
-    expect(runPreflight(script, url)).not.toBe(0);
+    expect(runPreflight(url)).not.toBe(0);
   });
 
   it.each([
     ["localhost", "postgresql://u:p@localhost:5432/code_intel"],
     ["127.0.0.1", "postgres://u:p@127.0.0.1:5432/code_intel"],
   ])("accepts %s", (_label, url) => {
-    expect(runPreflight(script, url)).toBe(0);
+    expect(runPreflight(url)).toBe(0);
+  });
+
+  it("names the caller in its refusal, so a failing timer says which job", () => {
+    let stderr = "";
+    try {
+      execFileSync("bash", [GUARD, "some-caller"], {
+        cwd: REPO,
+        env: {
+          ...process.env,
+          LOCAL_DATABASE_URL: "postgres://u:p@db.example.com:5432/d",
+        },
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+      throw new Error("guard accepted a remote URL");
+    } catch (e) {
+      stderr = String((e as { stderr?: string }).stderr ?? "");
+    }
+    expect(stderr).toContain("some-caller");
+  });
+});
+
+// Both wrappers pair a local store with an env-chosen DB, so the guard has to
+// hold in each. reconcile-audio is the destructive one: a DB it cannot see rows
+// in makes the entire store look unreferenced. The guard now lives in one place;
+// what can still drift is a wrapper quietly dropping the call or growing its own
+// copy, so that is what these assert.
+const WRAPPERS = ["reconcile-audio-daily.sh", "run-local-cron.sh"] as const;
+
+describe.each(WRAPPERS)("%s", (wrapper) => {
+  const src = () => fs.readFileSync(path.join(REPO, "scripts", wrapper), "utf8");
+
+  it("delegates its preflight to the shared guard", () => {
+    expect(src()).toContain("lib/assert-local-db.sh");
+  });
+
+  it("carries no inline copy of the guard", () => {
+    expect(src()).not.toMatch(/npx tsx -e "/);
   });
 });
