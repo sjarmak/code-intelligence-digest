@@ -6,7 +6,7 @@
 # around scripts/reconcile-audio-storage.ts, which deletes stored audio objects
 # that no generated_podcast_audio row references.
 #
-# Two guards matter here, because the sweep compares LOCAL DISK against DB ROWS:
+# Three guards matter here, because the sweep compares LOCAL DISK against DB ROWS:
 #
 #   1. USE_LOCAL_DB=true, preflight-asserted. The driver otherwise falls back to
 #      LOCAL_DATABASE_URL || DATABASE_URL, so a missing or misconfigured
@@ -18,6 +18,13 @@
 #      bd-b1l calls for reading orphaned/reclaimable counts for a few runs
 #      before arming it; making that the default means an un-promoted job is
 #      inert rather than destructive.
+#
+#   3. The empty-reference-set interlock, in the sweep itself (bd-jow). Guard 1
+#      proves this URL is *a* local postgres; it cannot prove it is the instance
+#      whose rows back this store, and a second local instance reads as "nothing
+#      is referenced" rather than as an error. The sweep refuses to delete when
+#      it resolves zero references against a non-empty store. Override with
+#      --allow-empty-reference-set once the store is confirmed all-orphan.
 #
 # Manual invocation (for testing):
 #   bash scripts/reconcile-audio-daily.sh                        # report only

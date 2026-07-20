@@ -18,6 +18,7 @@ import {
 } from "../../src/lib/storage/local";
 import {
   reconcileAudioStorage,
+  EmptyReferenceSetError,
   DEFAULT_GRACE_MS,
 } from "../../src/lib/storage/reconcile-audio";
 import type { StoredObject, ReconcilableStorage } from "../../src/lib/audio/types";
@@ -96,11 +97,18 @@ describe("audioUrlToKey", () => {
 
 describe("reconcileAudioStorage", () => {
   it("deletes an unreferenced object older than the grace window", async () => {
-    const storage = fakeStorage([obj("podcasts/orphan.mp3", 48 * HOUR, 500)]);
+    // Paired with a live object so the reference set is non-empty: a sweep that
+    // resolves zero references is the wrong-DB signature and is refused below.
+    const storage = fakeStorage([
+      obj("podcasts/orphan.mp3", 48 * HOUR, 500),
+      obj("podcasts/live.mp3", 48 * HOUR),
+    ]);
 
-    const result = await reconcileAudioStorage(storage, async () => new Set(), {
-      now: NOW,
-    });
+    const result = await reconcileAudioStorage(
+      storage,
+      async () => new Set(["podcasts/live.mp3"]),
+      { now: NOW }
+    );
 
     expect(storage.deleted).toEqual(["podcasts/orphan.mp3"]);
     expect(result.deleted).toBe(1);
@@ -189,6 +197,7 @@ describe("reconcileAudioStorage", () => {
     const storage = fakeStorage([
       obj("podcasts/a.mp3", 48 * HOUR),
       obj("podcasts/b.mp3", 48 * HOUR),
+      obj("podcasts/live.mp3", 48 * HOUR),
     ]);
     const realDelete = storage.deleteObject.bind(storage);
     storage.deleteObject = async (key: string) => {
@@ -196,9 +205,11 @@ describe("reconcileAudioStorage", () => {
       return realDelete(key);
     };
 
-    const result = await reconcileAudioStorage(storage, async () => new Set(), {
-      now: NOW,
-    });
+    const result = await reconcileAudioStorage(
+      storage,
+      async () => new Set(["podcasts/live.mp3"]),
+      { now: NOW }
+    );
 
     expect(result.orphaned).toBe(2);
     expect(result.deleted).toBe(1);
@@ -233,6 +244,88 @@ describe("reconcileAudioStorage", () => {
 
   it("defaults to a grace window long enough to outlast a render flight", () => {
     expect(DEFAULT_GRACE_MS).toBeGreaterThanOrEqual(60 * 60 * 1000);
+  });
+});
+
+describe("reconcileAudioStorage wrong-database interlock", () => {
+  // The host preflight proves LOCAL_DATABASE_URL points at *a* local postgres.
+  // It cannot prove it is the instance whose rows back this store. Read the
+  // wrong local instance and listReferencedAudioKeys returns nothing, so every
+  // object looks orphaned and the whole store becomes eligible for deletion.
+  // Zero references against a non-empty store is that read's exact signature.
+
+  it("refuses to delete when the store is non-empty but nothing is referenced", async () => {
+    const storage = fakeStorage([
+      obj("podcasts/a.mp3", 48 * HOUR),
+      obj("podcasts/b.mp3", 48 * HOUR),
+    ]);
+
+    await expect(
+      reconcileAudioStorage(storage, async () => new Set(), { now: NOW })
+    ).rejects.toThrow(EmptyReferenceSetError);
+
+    expect(storage.deleted).toEqual([]);
+  });
+
+  it("names the counts that tripped it, so the operator can tell which DB it read", async () => {
+    const storage = fakeStorage([obj("podcasts/a.mp3", 48 * HOUR)]);
+
+    await expect(
+      reconcileAudioStorage(storage, async () => new Set(), { now: NOW })
+    ).rejects.toThrow(/scanned=1 referenced=0 orphaned=1/);
+  });
+
+  it("proceeds when the operator has confirmed the store is genuinely all-orphan", async () => {
+    // The legitimate empty-reference case — every row deleted, files left over.
+    // Rare enough to be worth an explicit opt-in on a destructive pass.
+    const storage = fakeStorage([obj("podcasts/a.mp3", 48 * HOUR)]);
+
+    const result = await reconcileAudioStorage(storage, async () => new Set(), {
+      now: NOW,
+      allowEmptyReferenceSet: true,
+    });
+
+    expect(storage.deleted).toEqual(["podcasts/a.mp3"]);
+    expect(result.deleted).toBe(1);
+  });
+
+  it("still reports the orphans in dry-run mode, which deletes nothing", async () => {
+    // Dry-run is how an operator diagnoses this in the first place; failing it
+    // closed would hide the counts that distinguish wrong-DB from all-orphan.
+    const storage = fakeStorage([obj("podcasts/a.mp3", 48 * HOUR, 300)]);
+
+    const result = await reconcileAudioStorage(storage, async () => new Set(), {
+      now: NOW,
+      dryRun: true,
+    });
+
+    expect(storage.deleted).toEqual([]);
+    expect(result.orphaned).toBe(1);
+    expect(result.reclaimedBytes).toBe(300);
+  });
+
+  it("does not trip on an empty store, which has nothing to lose", async () => {
+    const storage = fakeStorage([]);
+
+    const result = await reconcileAudioStorage(storage, async () => new Set(), {
+      now: NOW,
+    });
+
+    expect(result.scanned).toBe(0);
+    expect(result.deleted).toBe(0);
+  });
+
+  it("does not trip when every unreferenced object is still within grace", async () => {
+    // Nothing would be deleted, so there is no destructive act to interlock.
+    // Tripping here would fail a fresh store where no row has landed yet.
+    const storage = fakeStorage([obj("podcasts/inflight.mp3", 1000)]);
+
+    const result = await reconcileAudioStorage(storage, async () => new Set(), {
+      now: NOW,
+    });
+
+    expect(result.withinGrace).toBe(1);
+    expect(result.orphaned).toBe(0);
   });
 });
 

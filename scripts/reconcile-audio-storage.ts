@@ -13,10 +13,15 @@
  *
  * Run daily. Start with --dry-run when pointing it at a new store.
  *
+ * Refuses to run when the database resolves no references against a non-empty
+ * store — see EmptyReferenceSetError. That is what pointing at the wrong local
+ * postgres looks like, and it would otherwise delete everything.
+ *
  * Usage:
  *   npx tsx scripts/reconcile-audio-storage.ts             # sweep
  *   npx tsx scripts/reconcile-audio-storage.ts --dry-run   # report, no deletes
  *   npx tsx scripts/reconcile-audio-storage.ts --grace-hours=72
+ *   npx tsx scripts/reconcile-audio-storage.ts --allow-empty-reference-set
  */
 
 import * as dotenv from 'dotenv';
@@ -44,12 +49,13 @@ function parseGraceMs(argv: string[]): number {
 
 async function main() {
   const dryRun = process.argv.includes('--dry-run');
+  const allowEmptyReferenceSet = process.argv.includes('--allow-empty-reference-set');
   const graceMs = parseGraceMs(process.argv);
 
   const result = await reconcileAudioStorage(
     getLocalStorage(),
     listReferencedAudioKeys,
-    { graceMs, dryRun }
+    { graceMs, dryRun, allowEmptyReferenceSet }
   );
 
   const mb = (result.reclaimedBytes / 1024 / 1024).toFixed(1);

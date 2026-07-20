@@ -28,6 +28,39 @@ export interface ReconcileOptions {
   dryRun?: boolean;
   /** Injectable clock for tests */
   now?: number;
+  /**
+   * Delete orphans even when the reference set came back empty. That
+   * combination is the wrong-database signature, so the sweep refuses it by
+   * default; set this only for a store confirmed to be genuinely all-orphan.
+   */
+  allowEmptyReferenceSet?: boolean;
+}
+
+/**
+ * Raised when the sweep would delete a whole non-empty store because the
+ * database resolved zero references.
+ *
+ * The wrapper preflight proves LOCAL_DATABASE_URL points at *a* local postgres.
+ * It cannot prove it is the instance whose generated_podcast_audio rows back
+ * this store. Point the sweep at a second local instance and the reference read
+ * succeeds, returns nothing, and every stored object looks orphaned — a silent
+ * total deletion rather than an error. Zero references against a non-empty
+ * store is that read's exact signature, and is never a steady state once any
+ * audio row exists.
+ */
+export class EmptyReferenceSetError extends Error {
+  constructor(
+    readonly scanned: number,
+    readonly orphaned: number
+  ) {
+    super(
+      `Refusing to sweep: the database resolved no audio references against a non-empty store ` +
+        `(scanned=${scanned} referenced=0 orphaned=${orphaned}). This is what reading the wrong ` +
+        `database looks like. Confirm LOCAL_DATABASE_URL points at the instance backing this ` +
+        `store; pass allowEmptyReferenceSet if the store really is all-orphan.`
+    );
+    this.name = "EmptyReferenceSetError";
+  }
 }
 
 export interface ReconcileResult {
@@ -73,6 +106,9 @@ export async function reconcileAudioStorage(
     failures: [],
   };
 
+  // Classify everything before deleting anything: the wrong-database interlock
+  // below needs the final counts, and it has to run while the store is intact.
+  const orphans: typeof objects = [];
   for (const object of objects) {
     if (referencedKeys.has(object.key)) {
       result.referenced++;
@@ -84,9 +120,28 @@ export async function reconcileAudioStorage(
       continue;
     }
 
+    orphans.push(object);
     result.orphaned++;
     result.reclaimedBytes += object.bytes;
+  }
 
+  // Gate on orphaned, not scanned: with nothing to delete there is no
+  // destructive act to interlock, and a fresh store whose first row has not
+  // landed yet would otherwise fail every run.
+  if (
+    !dryRun &&
+    result.orphaned > 0 &&
+    result.referenced === 0 &&
+    !(options.allowEmptyReferenceSet ?? false)
+  ) {
+    logger.error("Refusing audio sweep: no references resolved against a non-empty store", {
+      scanned: result.scanned,
+      orphaned: result.orphaned,
+    });
+    throw new EmptyReferenceSetError(result.scanned, result.orphaned);
+  }
+
+  for (const object of orphans) {
     if (dryRun) continue;
 
     // One unlink failure (permissions, a racing delete) must not abandon the
