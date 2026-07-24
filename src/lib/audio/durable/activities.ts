@@ -31,7 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import { Context } from "@temporalio/activity";
 import { ApplicationFailure } from "@temporalio/common";
-import { AudioFormat, AudioProvider, StorageAdapter } from "../types";
+import { AudioFormat, RenderAudioResult, StorageAdapter } from "../types";
 import { getProvider } from "../render";
 import { getLocalStorage } from "../../storage/local";
 import { savePodcastAudio, PodcastAudioRecord } from "../../db/podcast-audio";
@@ -39,6 +39,7 @@ import { logger } from "../../logger";
 import {
   ChunkMetadata,
   ChunkPlan,
+  DurableProvider,
   PlannedChunk,
   ProviderCommitEvent,
   PublishResult,
@@ -53,6 +54,7 @@ import {
   DETERMINISTIC_MODEL,
   DeterministicTtsProvider,
 } from "./providers/deterministicTts";
+import { KOKORO_MODEL, KokoroTtsProvider } from "./providers/kokoroTts";
 import { StitchInputError, stitchChunks as runStitcher } from "./stitcher";
 import { appendLedgerEvent, readLedger } from "./ledger";
 import { checkFaultGate, GateCheckOptions } from "./faultGates";
@@ -327,6 +329,23 @@ export function createActivities(deps: ActivityDeps = {}) {
       };
     }
 
+    if (config.provider === "kokoro") {
+      if (config.providerModel !== KOKORO_MODEL) {
+        throw ApplicationFailure.create({
+          message: `kokoro provider only serves model ${KOKORO_MODEL}, got ${config.providerModel}`,
+          type: "UnsupportedProviderModel",
+          nonRetryable: true,
+        });
+      }
+      if (config.format !== "wav") {
+        throw ApplicationFailure.create({
+          message: `kokoro provider renders wav only; identity pinned format ${config.format}`,
+          type: "UnsupportedProviderFormat",
+          nonRetryable: true,
+        });
+      }
+    }
+
     return renderWithRealProvider(input, config.provider, text, attempt);
   }
 
@@ -337,7 +356,7 @@ export function createActivities(deps: ActivityDeps = {}) {
    */
   async function renderWithRealProvider(
     input: RenderChunkInput,
-    provider: AudioProvider,
+    provider: Exclude<DurableProvider, "demo">,
     text: string,
     attempt: number
   ): Promise<ProviderRenderResult> {
@@ -358,12 +377,19 @@ export function createActivities(deps: ActivityDeps = {}) {
       },
       gates.ledgerPath
     );
-    const rendered = await getProvider(provider).render({
-      transcript: text,
-      provider,
-      format: config.format,
-      voice: config.voice,
-    });
+    const rendered: RenderAudioResult =
+      provider === "kokoro"
+        ? await new KokoroTtsProvider().render({
+            text,
+            voice: config.voice,
+            format: config.format,
+          })
+        : await getProvider(provider).render({
+            transcript: text,
+            provider,
+            format: config.format,
+            voice: config.voice,
+          });
     await checkFaultGate(
       {
         renderKey,

@@ -16,9 +16,11 @@ import { AudioFormat, AudioProvider } from "../types";
 /**
  * Providers usable by the durable path. "demo" is the deterministic
  * rehearsal adapter (`deterministic-v1`): byte-for-byte stable output,
- * no network, no provider cost.
+ * no network, no provider cost. "kokoro" is the real local provider
+ * (Kokoro-82M, the engine the digest product uses in production): real
+ * synthesized speech, no network, no provider cost.
  */
-export type DurableProvider = AudioProvider | "demo";
+export type DurableProvider = AudioProvider | "demo" | "kokoro";
 
 /**
  * Every input that can change rendered bytes or chunk boundaries.

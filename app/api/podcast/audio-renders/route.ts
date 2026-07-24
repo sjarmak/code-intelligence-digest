@@ -49,7 +49,7 @@ import {
 } from "@/src/lib/audio/durable/types";
 import { logger } from "@/src/lib/logger";
 
-const ALLOWED_PROVIDERS: DurableProvider[] = ["demo", "openai", "elevenlabs", "nemo"];
+const ALLOWED_PROVIDERS: DurableProvider[] = ["demo", "kokoro", "openai", "elevenlabs", "nemo"];
 const ALLOWED_FORMATS: AudioFormat[] = ["mp3", "wav"];
 
 const transcriptStore = new TranscriptStore();
