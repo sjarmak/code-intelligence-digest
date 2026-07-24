@@ -31,7 +31,9 @@
     "clear-audio-cache": "bash -lc 'test -n \"${LOCAL_DATABASE_URL:-${DATABASE_URL:-}}\" && psql \"${LOCAL_DATABASE_URL:-$DATABASE_URL}\" -v ON_ERROR_STOP=1 -c \"DELETE FROM \\\"generated_podcast_audio\\\";\" && rm -rf .data/audio/* && echo \"Audio cache cleared\" || (echo \"Set LOCAL_DATABASE_URL or DATABASE_URL\" && exit 1)'",
     "reconcile:audio": "npx tsx scripts/reconcile-audio-storage.ts",
     "reconcile:audio:dry-run": "npx tsx scripts/reconcile-audio-storage.ts --dry-run",
-    "playbook:ensure": "npx tsx scripts/ensure-playbook-state.ts"
+    "playbook:ensure": "npx tsx scripts/ensure-playbook-state.ts",
+    "demo:invariants": "npx tsx scripts/render-invariants.ts",
+    "durable:worker": "npx tsx scripts/durable-worker.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
