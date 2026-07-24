@@ -57,6 +57,9 @@ history/
 # generated audio files
 .data/audio/
 
+# durable-render demo capture artifacts (fault gates, provider ledger)
+.demo/
+
 # Internal / agent / personal state — NOT for the public repo.
 # (.github stays tracked — it drives CI + the GitHub Pages site.)
 AGENTS.md
