@@ -310,16 +310,40 @@ function accountChunks(
         `chunk ${index}: expected exactly 1 provider_commit, found ${chunkCommits.length}`
       );
     }
-    if (chunkAttempts.length !== chunkCommits.length + chunkInjected.length) {
+    // Every attempt must be accounted for: a commit, an injected failure, or a
+    // kill-interrupted attempt. At-least-once execution means a worker can die
+    // between provider_attempt and provider_commit, leaving an attempt with no
+    // outcome record -- that is legitimate ONLY when a higher-numbered attempt
+    // exists for the same chunk (Temporal redelivered the activity). An
+    // outcome-less attempt that was never superseded has no explanation and is
+    // still a violation.
+    const outcomeAttemptNumbers = new Set([
+      ...chunkCommits.map((e) => e.attempt),
+      ...chunkInjected.map((e) => e.attempt),
+    ]);
+    const allAttemptNumbers = chunkAttempts.map((e) => e.attempt);
+    const maxAttempt = allAttemptNumbers.length > 0 ? Math.max(...allAttemptNumbers) : 0;
+    const unsuperseded = allAttemptNumbers.filter(
+      (n) => !outcomeAttemptNumbers.has(n) && n >= maxAttempt
+    );
+    if (unsuperseded.length > 0) {
       violations.push(
         `chunk ${index}: ${chunkAttempts.length} provider_attempt(s) inconsistent with ` +
-          `${chunkCommits.length} commit(s) + ${chunkInjected.length} injected failure(s)`
+          `${chunkCommits.length} commit(s) + ${chunkInjected.length} injected failure(s)` +
+          ` (attempt(s) [${unsuperseded.join(", ")}] have no outcome and no later redelivery)`
       );
     }
-    const attemptNumbers = chunkAttempts.map((e) => e.attempt);
-    if (new Set(attemptNumbers).size !== attemptNumbers.length) {
+    const attemptNumberSet = new Set(allAttemptNumbers);
+    const orphanOutcomes = [...outcomeAttemptNumbers].filter((n) => !attemptNumberSet.has(n));
+    if (orphanOutcomes.length > 0) {
       violations.push(
-        `chunk ${index}: duplicate provider_attempt attempt numbers [${attemptNumbers.join(", ")}]`
+        `chunk ${index}: outcome(s) on attempt(s) [${orphanOutcomes.sort((a, b) => a - b).join(", ")}] ` +
+          `have no matching provider_attempt`
+      );
+    }
+    if (new Set(allAttemptNumbers).size !== allAttemptNumbers.length) {
+      violations.push(
+        `chunk ${index}: duplicate provider_attempt attempt numbers [${allAttemptNumbers.join(", ")}]`
       );
     }
 

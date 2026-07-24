@@ -236,6 +236,90 @@ describe("checkInvariants: chunk accounting violations", () => {
     expect(report.violations.join("\n")).toMatch(/chunk 5: expected exactly 1 provider_commit, found 0/);
   });
 
+  it("accepts a kill-interrupted attempt that a later redelivered attempt superseded", () => {
+    // The demo's worker-loss scenario: attempt 1 on chunk 6 logs
+    // provider_attempt, the worker is SIGKILLed before provider_commit, and
+    // Temporal redelivers as attempt 2 (injected 503) then attempt 3 (commit).
+    // Attempt 1 has no outcome record and that is legitimate at-least-once
+    // evidence, not an inconsistency.
+    const evidence = happyEvidence();
+    evidence.events = evidence.events.filter(
+      (e) => !("chunkIndex" in e && e.chunkIndex === INJECTED_CHUNK)
+    );
+    evidence.events.push(
+      {
+        type: "provider_attempt",
+        ts: TS,
+        renderKey: RENDER_KEY,
+        chunkIndex: INJECTED_CHUNK,
+        attempt: 1,
+        provider: "demo",
+        providerModel: "deterministic-v1",
+      },
+      {
+        type: "provider_attempt",
+        ts: TS,
+        renderKey: RENDER_KEY,
+        chunkIndex: INJECTED_CHUNK,
+        attempt: 2,
+        provider: "demo",
+        providerModel: "deterministic-v1",
+      },
+      {
+        type: "injected_failure",
+        ts: TS,
+        renderKey: RENDER_KEY,
+        phase: "render_chunk",
+        boundary: "before_provider_commit",
+        chunkIndex: INJECTED_CHUNK,
+        attempt: 2,
+        message: "injected 503",
+      },
+      {
+        type: "provider_attempt",
+        ts: TS,
+        renderKey: RENDER_KEY,
+        chunkIndex: INJECTED_CHUNK,
+        attempt: 3,
+        provider: "demo",
+        providerModel: "deterministic-v1",
+      },
+      {
+        type: "provider_commit",
+        ts: TS,
+        renderKey: RENDER_KEY,
+        chunkIndex: INJECTED_CHUNK,
+        attempt: 3,
+        providerRequestId: `req-${INJECTED_CHUNK}`,
+        checksumSha256: chunkChecksum(INJECTED_CHUNK),
+        byteCount: 1000 + INJECTED_CHUNK,
+      }
+      // chunk 6's object_write carries no chunkIndex, so the filter above
+      // retained the original; no replacement write is needed.
+    );
+    const report = checkInvariants(evidence);
+    expect(report.violations).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.chunks.find((c) => c.chunkIndex === INJECTED_CHUNK)).toEqual({
+      chunkIndex: INJECTED_CHUNK,
+      attempts: 3,
+      commits: 1,
+      injectedFailures: 1,
+    });
+  });
+
+  it("flags a commit whose attempt number has no matching provider_attempt", () => {
+    const evidence = happyEvidence();
+    evidence.events = evidence.events.filter(
+      (e) => !(e.type === "provider_attempt" && e.chunkIndex === 4)
+    );
+    const report = checkInvariants(evidence);
+    expect(report.ok).toBe(false);
+    expect(report.violations.join("\n")).toMatch(
+      /chunk 4: outcome\(s\) on attempt\(s\) \[1\] have no matching provider_attempt/
+    );
+  });
+
   it("flags an extra attempt with no injected failure to explain it", () => {
     const evidence = happyEvidence();
     evidence.events.push({
