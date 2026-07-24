@@ -119,7 +119,7 @@ export class LocalStorageAdapter implements StorageAdapter {
   }
 
   async getObject(key: string): Promise<Buffer> {
-    const filePath = path.join(AUDIO_DIR, key);
+    const filePath = this.resolveKey(key);
     try {
       return fs.readFileSync(filePath);
     } catch (error) {

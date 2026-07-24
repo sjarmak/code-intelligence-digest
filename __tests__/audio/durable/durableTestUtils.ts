@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { StorageAdapter } from "../../../src/lib/audio/types";
+import { StorageAdapter, StoredObject } from "../../../src/lib/audio/types";
 import { computeRenderKey } from "../../../src/lib/audio/durable/keys";
 import { TranscriptStore } from "../../../src/lib/audio/durable/transcriptStore";
 import { ActivityDb } from "../../../src/lib/audio/durable/activities";
@@ -59,6 +59,42 @@ export class TmpObjectStore implements StorageAdapter {
 
   getUrl(key: string): string {
     return `/api/audio/${key}`;
+  }
+
+  async listObjects(): Promise<StoredObject[]> {
+    const out: StoredObject[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+        } else {
+          const stat = await fs.stat(full);
+          out.push({
+            key: path.relative(this.root, full).split(path.sep).join("/"),
+            bytes: stat.size,
+            modifiedAtMs: stat.mtimeMs,
+          });
+        }
+      }
+    };
+    await walk(this.root);
+    return out;
+  }
+
+  async deleteObject(key: string): Promise<boolean> {
+    try {
+      await fs.unlink(this.filePath(key));
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
