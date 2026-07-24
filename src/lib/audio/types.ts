@@ -108,6 +108,11 @@ export interface StorageAdapter extends ReconcilableStorage {
   ): Promise<{ url: string; bytes: number }>;
 
   /**
+   * Read stored object bytes. Throws if the object does not exist.
+   */
+  getObject(key: string): Promise<Buffer>;
+
+  /**
    * Check if object exists
    */
   exists(key: string): Promise<boolean>;

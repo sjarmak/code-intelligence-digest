@@ -118,6 +118,19 @@ export class LocalStorageAdapter implements StorageAdapter {
     }
   }
 
+  async getObject(key: string): Promise<Buffer> {
+    const filePath = path.join(AUDIO_DIR, key);
+    try {
+      return fs.readFileSync(filePath);
+    } catch (error) {
+      logger.error("Failed to read audio object", {
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
   async exists(key: string): Promise<boolean> {
     return fs.existsSync(this.resolveKey(key));
   }
