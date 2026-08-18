@@ -300,6 +300,73 @@ export class InoreaderClient {
       throw error;
     }
   }
+
+  /**
+   * Fetch a fresh POST action token. Inoreader mirrors the Google Reader API
+   * it's modeled on: every state-changing call (subscription/edit, edit-tag,
+   * ...) requires this anti-CSRF token as a `T` form field.
+   */
+  private async getActionToken(): Promise<string> {
+    const token = await this.getAccessToken();
+    const response = await fetch("https://www.inoreader.com/reader/api/0/token", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Failed to fetch action token: ${response.status} ${response.statusText} - ${errorText}`
+      );
+    }
+
+    return response.text();
+  }
+
+  /**
+   * Subscribe to a feed and file it under an Inoreader folder/label.
+   * @param feedUrl The feed's own URL (bare, not streamId-prefixed)
+   * @param folderLabel Folder to file the subscription under (e.g. "Tech Articles")
+   * @param title Optional display title override
+   */
+  async subscribeFeed(feedUrl: string, folderLabel: string, title?: string): Promise<void> {
+    const token = await this.getAccessToken();
+    const actionToken = await this.getActionToken();
+    const streamId = feedUrl.startsWith("feed/") ? feedUrl : `feed/${feedUrl}`;
+
+    const body = new URLSearchParams({
+      ac: "subscribe",
+      s: streamId,
+      a: `user/-/label/${folderLabel}`,
+      T: actionToken,
+    });
+    if (title) body.append("t", title);
+
+    logger.info(`[INOREADER-API] subscribeFeed called`, { streamId, folderLabel });
+
+    try {
+      const response = await fetch("https://www.inoreader.com/reader/api/0/subscription/edit", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: body.toString(),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error(`[INOREADER-API] subscribeFeed FAILED: ${response.status}`, { streamId, errorText });
+        throw new Error(
+          `Failed to subscribe to ${streamId}: ${response.status} ${response.statusText} - ${errorText}`
+        );
+      }
+
+      logger.info(`[INOREADER-API] subscribeFeed SUCCESS`, { streamId, folderLabel });
+    } catch (error) {
+      logger.error(`Error subscribing to ${streamId}`, error);
+      throw error;
+    }
+  }
 }
 
 export function createInoreaderClient(): InoreaderClient {
