@@ -3,9 +3,13 @@
 Description=Daily trigger for Code Intelligence Digest local ingestion
 
 [Timer]
-# 06:00 local time daily. Persistent=true runs a missed job on next boot
-# (linger is enabled for this user, so it also fires without an active login).
-OnCalendar=*-*-* 06:00:00
+# 04:00 local time daily. cron-daily-sync.ts only runs 07:00-22:00 ET plus two
+# off-hours ticks at 01:00 and 04:00 ET; a 06:00 trigger fell in the dead zone
+# and every scheduled run skipped. 04:00 is an allowed tick and lands before the
+# website digest cron reads the corpus at 06:00 ET.
+# Persistent=true runs a missed job on next boot (linger is enabled for this
+# user, so it also fires without an active login).
+OnCalendar=*-*-* 04:00:00
 Persistent=true
 RandomizedDelaySec=300
 
