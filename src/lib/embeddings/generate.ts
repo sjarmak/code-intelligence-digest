@@ -121,13 +121,31 @@ export async function generateEmbeddingsBatch(
       logger.warn("Batch embedding failed, retrying items individually", {
         error: error instanceof Error ? error.message : String(error),
       });
+      let recovered = 0;
+      let firstItemError: string | undefined;
       for (const item of batch) {
         try {
           embeddings.set(item.id, await generateEmbedding(item.text));
-        } catch {
-          // generateEmbedding already recorded the degradation; just skip.
-          logger.warn(`Skipping un-embeddable item ${item.id}`);
+          recovered++;
+        } catch (itemError) {
+          // generateEmbedding already recorded the degradation. Carry the
+          // reason through: a bare `catch {}` here hid a dead OPENAI_API_KEY
+          // for two months behind a wall of "un-embeddable item" warnings
+          // (dv0.7), because a credential failure looks exactly like bad input
+          // when the message is dropped.
+          const message = itemError instanceof Error ? itemError.message : String(itemError);
+          firstItemError ??= message;
+          logger.warn(`Skipping un-embeddable item ${item.id}: ${message}`);
         }
+      }
+      // Zero recoveries across a whole batch is not "bad inputs" — it is the
+      // signature of a broken credential or endpoint. Say so at error level so
+      // it surfaces without reading every warning.
+      if (recovered === 0) {
+        logger.error(
+          `Embedding batch fully failed: 0/${batch.length} items embedded — check OPENAI_API_KEY / endpoint`,
+          { error: firstItemError },
+        );
       }
     }
   }

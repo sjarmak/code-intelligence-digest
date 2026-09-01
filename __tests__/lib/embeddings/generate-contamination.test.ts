@@ -19,6 +19,7 @@ vi.mock("@/src/lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+import { logger } from "@/src/lib/logger";
 import {
   generateEmbedding,
   generateEmbeddingsBatch,
@@ -106,5 +107,90 @@ describe("generateEmbeddingsBatch — omits, never fabricates", () => {
       expect(vec).toHaveLength(1536);
       expect(vec.some((x) => x !== 0)).toBe(true); // never an all-zero fabrication
     }
+  });
+});
+
+/**
+ * dv0.7: a dead OPENAI_API_KEY went unnoticed for two months because the
+ * per-item catch was bare (`catch {}`) — every 401 rendered as an
+ * indistinguishable "Skipping un-embeddable item" warning. The reason must
+ * reach the log, and a batch that recovers NOTHING must announce itself at
+ * error level rather than hiding among per-item warnings.
+ */
+describe("generateEmbeddingsBatch — a broken credential is diagnosable", () => {
+  function alwaysFailingClient(message: string) {
+    return {
+      embeddings: {
+        create: vi.fn(async () => {
+          throw new Error(message);
+        }),
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(logger.warn).mockClear();
+    vi.mocked(logger.error).mockClear();
+  });
+
+  it("carries the underlying failure reason into the per-item warning", async () => {
+    clientMock.mockReturnValue(alwaysFailingClient("401 Incorrect API key provided"));
+
+    const out = await generateEmbeddingsBatch([
+      { id: "a", text: "alpha" },
+      { id: "b", text: "beta" },
+    ]);
+    expect(out.size).toBe(0);
+
+    const perItem = vi
+      .mocked(logger.warn)
+      .mock.calls.map((c) => String(c[0]))
+      .filter((m) => m.includes("Skipping un-embeddable item"));
+    expect(perItem).toHaveLength(2);
+    for (const message of perItem) {
+      expect(message).toContain("401 Incorrect API key provided");
+    }
+  });
+
+  it("logs an error naming the count when the whole batch recovers nothing", async () => {
+    clientMock.mockReturnValue(alwaysFailingClient("401 Incorrect API key provided"));
+
+    await generateEmbeddingsBatch([
+      { id: "a", text: "alpha" },
+      { id: "b", text: "beta" },
+      { id: "c", text: "gamma" },
+    ]);
+
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    const [message, meta] = vi.mocked(logger.error).mock.calls[0];
+    expect(String(message)).toContain("0/3");
+    expect(String(message)).toContain("OPENAI_API_KEY");
+    expect((meta as { error?: string })?.error).toContain("401 Incorrect API key provided");
+  });
+
+  it("stays quiet at error level when at least one item is recovered", async () => {
+    // Batch request fails, but the per-item retry succeeds for everything —
+    // that is a degraded-but-working run, not a credential failure.
+    let firstCall = true;
+    clientMock.mockReturnValue({
+      embeddings: {
+        create: vi.fn(async ({ input }: { input: string | string[] }) => {
+          if (firstCall) {
+            firstCall = false;
+            throw new Error("500 transient batch failure");
+          }
+          const inputs = Array.isArray(input) ? input : [input];
+          return { data: inputs.map(() => ({ embedding: realVec() })) };
+        }),
+      },
+    });
+
+    const out = await generateEmbeddingsBatch([
+      { id: "a", text: "alpha" },
+      { id: "b", text: "beta" },
+    ]);
+
+    expect(out.size).toBe(2);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });
