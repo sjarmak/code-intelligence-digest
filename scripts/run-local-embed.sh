@@ -44,8 +44,12 @@ export USE_LOCAL_DB=true
 if [ -d .gpu-libs ] && command -v nvidia-smi >/dev/null 2>&1; then
   export LD_LIBRARY_PATH="$(find "$PWD/.gpu-libs/nvidia" -name lib -type d | tr '\n' ':')${LD_LIBRARY_PATH:-}"
   export NOMIC_DEVICE="${NOMIC_DEVICE:-cuda}"
-  PAGE_SIZE="${PAGE_SIZE:-256}"
-  BATCH_SIZE="${BATCH_SIZE:-16}"
+  # Measured 2026-09-01: page=256/batch=16 dies partway through the corpus with
+  # an onnxruntime BFCArena allocation failure (a [16, 1956] batch asks for a
+  # 2.9GB BiasSoftmax buffer: batch x heads x seq^2 x 4B). page=64/batch=4 keeps
+  # the peak near 8.7GB of the 32GB card and completed the corpus.
+  PAGE_SIZE="${PAGE_SIZE:-64}"
+  BATCH_SIZE="${BATCH_SIZE:-4}"
   echo "GPU mode: NOMIC_DEVICE=$NOMIC_DEVICE page=$PAGE_SIZE batch=$BATCH_SIZE"
 else
   PAGE_SIZE="${PAGE_SIZE:-64}"
@@ -53,33 +57,69 @@ else
   echo "CPU mode: page=$PAGE_SIZE batch=$BATCH_SIZE (no .gpu-libs / no GPU)"
 fi
 
-# `--missing` paginates to exhaustion in ONE process, so a single successful pass
-# embeds every currently-missing item. Retry ONLY on a non-zero exit (an OOM /
-# SIGKILL mid-pass): --missing re-derives the set, so a retry naturally resumes
-# from whatever already committed. We deliberately do NOT loop until coverage is
-# green — coverage can never reach 100% while the permanently-unembeddable tail
-# exists (URL-unresolvable / empty-text / norm-poisoned items; see i4t.3 notes),
-# and looping on it would spin every night and mask a real failure.
-MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"
-attempt=0
-embedded_ok=0
-while [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
-  attempt=$((attempt + 1))
-  echo "=== embed pass ${attempt}/${MAX_ATTEMPTS} start $(date -u +%FT%TZ) ==="
-  if npx tsx scripts/populate-model-embeddings.ts --missing \
-      --page-size "$PAGE_SIZE" --batch-size "$BATCH_SIZE"; then
-    embedded_ok=1
-    echo "=== embed pass ${attempt} ok $(date -u +%FT%TZ) ==="
+# Bounded passes, each in a FRESH process. onnxruntime's BFC arena grows to the
+# largest batch it has seen and never shrinks, so one long-lived process walking
+# the whole corpus eventually fails even a small allocation (measured
+# 2026-09-01: died at 92.5% coverage, then could not allocate 89MB). Exiting
+# between chunks resets the arena. A pass killed mid-flight (SIGABRT/rc=134)
+# still commits what it embedded, and --missing re-derives the set, so the next
+# pass resumes with no bookkeeping.
+#
+# Stop on the first pass that makes NO progress. Two things look alike there,
+# and the pass's own exit code separates them:
+#   rc == 0, no progress -> converged. Everything still missing is the
+#            permanently-unembeddable tail (URL-unresolvable / empty-text /
+#            norm-poisoned items; see i4t.3 notes), or the ingest added nothing
+#            new. Steady state, not an error.
+#   rc != 0, no progress -> the pass died without committing anything. Real
+#            failure; surface it.
+# Looping past a no-progress pass would spin every night and mask both.
+PASS_LIMIT="${PASS_LIMIT:-2000}"
+MAX_PASSES="${MAX_PASSES:-60}"
+
+missing_count() {
+  psql "$LOCAL_DATABASE_URL" -tAc "select count(*) from items i where not exists (select 1 from item_model_embeddings e where e.item_id = i.id and e.model_name = 'nomic-embed-text-v1.5');"
+}
+
+# The progress probe needs the URL in the shell. Read it through dotenv rather
+# than sourcing .env.local, so shell word-splitting can never parse it
+# differently from the way the app does.
+LOCAL_DATABASE_URL="$(npx tsx -e "
+require('dotenv').config({ path: '.env.local', quiet: true });
+process.stdout.write(process.env.LOCAL_DATABASE_URL || '');
+")"
+
+prev_missing="$(missing_count)"
+echo "=== embed start $(date -u +%FT%TZ): ${prev_missing} item(s) missing a nomic row ==="
+pass=0
+stalled=0
+while [ "$pass" -lt "$MAX_PASSES" ]; do
+  pass=$((pass + 1))
+  pass_rc=0
+  npx tsx scripts/populate-model-embeddings.ts --missing \
+      --page-size "$PAGE_SIZE" --batch-size "$BATCH_SIZE" --limit "$PASS_LIMIT" || pass_rc=$?
+  now_missing="$(missing_count)"
+  echo "=== embed pass ${pass}: rc=${pass_rc} missing ${prev_missing} -> ${now_missing} $(date -u +%FT%TZ) ==="
+  if [ "$now_missing" -eq 0 ]; then
     break
   fi
-  echo "=== embed pass ${attempt} exited non-zero $(date -u +%FT%TZ); retrying ===" >&2
+  if [ "$now_missing" -ge "$prev_missing" ]; then
+    if [ "$pass_rc" -ne 0 ]; then
+      stalled=1
+      echo "=== embed pass ${pass} died (rc=${pass_rc}) without embedding anything; ${now_missing} remaining ===" >&2
+    else
+      echo "=== embed converged: ${now_missing} item(s) remain unembeddable ==="
+    fi
+    break
+  fi
+  prev_missing="$now_missing"
 done
 
 # Coverage report for visibility only — non-fatal (it exits non-zero on the
 # unembeddable tail by design, which is not a failure of this job).
 npx tsx scripts/model-embedding-coverage.ts || true
 
-if [ "$embedded_ok" -ne 1 ]; then
-  echo "run-local-embed: all ${MAX_ATTEMPTS} embed passes failed" >&2
+if [ "$stalled" -ne 0 ]; then
+  echo "run-local-embed: embed pass failed without committing any embeddings" >&2
   exit 1
 fi
