@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "node:child_process";
-import { writeFile, mkdtemp, stat } from "node:fs/promises";
+import { writeFile, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { logger } from "@/src/lib/logger";
@@ -25,7 +25,21 @@ import {
   parsePublishBody,
   buildPublishSpec,
   resolveAudioFile,
+  type PublishSpec,
 } from "@/src/lib/publish/publish-spec";
+import {
+  LOCK_TIMEOUT_EXIT,
+  attachEnv,
+  attachOutcome,
+  lockTimeoutMessage,
+  lockedCommand,
+  parsePublishOutput,
+  shouldAttach,
+  websiteMediaSetup,
+  type AudioReport,
+  type PublishOutput,
+  type WebsiteMediaSetup,
+} from "@/src/lib/publish/website-media";
 
 export const dynamic = "force-dynamic";
 
@@ -37,12 +51,15 @@ interface PublishResult {
   slug?: string;
   path?: string;
   pushed?: boolean;
+  audio?: AudioReport;
   error?: string;
 }
 
-function run(cmd: string, args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
+type RunResult = { code: number; stdout: string; stderr: string };
+
+function run(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<RunResult> {
   return new Promise((resolve) => {
-    const proc = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (d) => (stdout += d.toString()));
@@ -59,6 +76,55 @@ async function websiteRepoAvailable(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function publish(setup: WebsiteMediaSetup, spec: PublishSpec): Promise<PublishOutput> {
+  const dir = await mkdtemp(path.join(tmpdir(), "digest-publish-"));
+  try {
+    const specPath = path.join(dir, "spec.json");
+    await writeFile(specPath, JSON.stringify(spec), "utf8");
+    await mkdir(path.dirname(setup.lockFile), { recursive: true });
+    const command = ["node", "scripts/digest/publish-digest.mjs", "--spec", specPath, "--commit"];
+    const result = await run("flock", lockedCommand(setup, command), WEBSITE_REPO, setup.env);
+    if (result.code === LOCK_TIMEOUT_EXIT) {
+      throw new Error(`${lockTimeoutMessage(setup)}; nothing was published`);
+    }
+    if (result.code !== 0) {
+      logger.error("publish-digest script failed", { stderr: result.stderr, code: result.code });
+      throw new Error(`publish-digest failed: ${result.stderr.trim() || result.stdout.trim()}`);
+    }
+    return parsePublishOutput(result.stdout);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function pushMain(setup: WebsiteMediaSetup): Promise<boolean> {
+  const command = ["sh", "-c", "git pull --rebase --autostash && git push"];
+  const result = await run("flock", lockedCommand(setup, command), WEBSITE_REPO, setup.env);
+  if (result.code !== 0) logger.error("publish-digest: git push failed", { stderr: result.stderr, code: result.code });
+  return result.code === 0;
+}
+
+async function attachPending(
+  setup: WebsiteMediaSetup,
+  slug: string,
+  pending: AudioReport,
+  pushed: boolean,
+): Promise<AudioReport> {
+  const script = path.join(WEBSITE_REPO, "scripts", "digest", "run.sh");
+  const result = await run(script, ["attach-pending"], WEBSITE_REPO, attachEnv(setup, pushed));
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (result.code !== 0) logger.warn("publish-digest: audio not attached yet", { code: result.code, output: output.slice(-4000) });
+  return attachOutcome(result.code, output, slug, pending, setup);
+}
+
+async function audioFileFor(audioUrl: string | null | undefined): Promise<{ file?: string; dropped?: AudioReport }> {
+  if (!audioUrl) return {};
+  const file = await resolveAudioFile(audioUrl, AUDIO_DIR);
+  if (file) return { file };
+  logger.warn("publish-digest: audio URL is not a rendered file, publishing without audio", { url: audioUrl });
+  return { dropped: { status: "none", reason: `${audioUrl} is not a rendered file under ${AUDIO_DIR}` } };
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse<PublishResult>> {
@@ -79,54 +145,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<PublishRe
   }
 
   try {
+    const setup = websiteMediaSetup(WEBSITE_REPO);
     const { slug, spec } = buildPublishSpec(body, new Date().toISOString().slice(0, 10));
+    const audioInput = await audioFileFor(body.audioUrl);
+    if (audioInput.file) spec.audioFile = audioInput.file;
 
-    // Resolve audio to a local file so the static website self-hosts it (durable).
-    if (body.audioUrl) {
-      const resolved = await resolveAudioFile(body.audioUrl, AUDIO_DIR);
-      if (resolved) {
-        spec.audioFile = resolved;
-      } else if (/^https?:\/\//.test(body.audioUrl)) {
-        spec.audioUrl = body.audioUrl;
-        logger.warn("publish-digest: using remote audio URL (may not be durable)", { url: body.audioUrl });
-      } else {
-        logger.warn("publish-digest: audio URL did not resolve to a file, publishing without audio", {
-          url: body.audioUrl,
-        });
-      }
-    }
+    const out = await publish(setup, spec);
+    const publishedSlug = out.slug ?? slug;
+    const pushed = body.push ? await pushMain(setup) : false;
+    const audio = shouldAttach(setup, pushed, out.audio)
+      ? await attachPending(setup, publishedSlug, out.audio, pushed)
+      : (audioInput.dropped ?? out.audio);
 
-    const dir = await mkdtemp(path.join(tmpdir(), "digest-publish-"));
-    const specPath = path.join(dir, "spec.json");
-    await writeFile(specPath, JSON.stringify(spec), "utf8");
-
-    const publish = await run("node", ["scripts/digest/publish-digest.mjs", "--spec", specPath, "--commit"], WEBSITE_REPO);
-    if (publish.code !== 0) {
-      logger.error("publish-digest script failed", { stderr: publish.stderr, code: publish.code });
-      return NextResponse.json(
-        { success: false, error: `publish-digest failed: ${publish.stderr.trim() || publish.stdout.trim()}` },
-        { status: 500 },
-      );
-    }
-
-    // Push only on explicit request opt-in (UI checkbox, default off).
-    let pushed = false;
-    if (body.push) {
-      const pull = await run("git", ["pull", "--rebase", "--autostash"], WEBSITE_REPO);
-      const push = pull.code === 0 ? await run("git", ["push"], WEBSITE_REPO) : pull;
-      pushed = push.code === 0;
-      if (!pushed) logger.error("publish-digest: git push failed", { stderr: push.stderr });
-    }
-
-    const out = (() => {
-      try {
-        return JSON.parse(publish.stdout.trim().split("\n").pop() ?? "{}");
-      } catch {
-        return {};
-      }
-    })();
-
-    return NextResponse.json({ success: true, slug: out.slug ?? slug, path: out.path, pushed });
+    return NextResponse.json({ success: true, slug: publishedSlug, path: out.path, pushed, audio });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     logger.error("publish-digest endpoint error", { error: message });

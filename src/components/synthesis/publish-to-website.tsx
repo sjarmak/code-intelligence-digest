@@ -34,6 +34,25 @@ interface PublishState {
   message?: string;
 }
 
+interface AudioResult {
+  status: "none" | "verified" | "pending" | "unverified";
+  reason?: string;
+  retry?: string;
+  fix?: string;
+}
+
+function describeAudio(audio?: AudioResult): string {
+  if (!audio) return "";
+  if (audio.status === "verified") return "; audio is live";
+  if (audio.status === "pending") {
+    const why = audio.reason ?? "not verified yet";
+    if (audio.fix) return `; audio pending (${why}), fix: ${audio.fix}`;
+    return `; audio pending (${why}), the next digest run attaches it, or run: ${audio.retry ?? "scripts/digest/run.sh attach-pending"}`;
+  }
+  if (audio.status === "unverified") return "; audio URL published without verification";
+  return audio.reason ? `; no audio: ${audio.reason}` : "";
+}
+
 function durationToSeconds(value?: string): number | undefined {
   if (!value) return undefined;
   const parts = value.split(":").map((p) => Number.parseInt(p, 10));
@@ -88,7 +107,8 @@ export function PublishToWebsite({
         setState({ status: "error", message: data.error ?? response.statusText });
         return;
       }
-      setState({ status: "done", slug: data.slug, message: data.pushed ? "published & pushed" : "committed locally" });
+      const published = data.pushed ? "published & pushed" : "committed locally";
+      setState({ status: "done", slug: data.slug, message: `${published}${describeAudio(data.audio)}` });
     } catch (error) {
       setState({ status: "error", message: error instanceof Error ? error.message : "Request failed" });
     }
